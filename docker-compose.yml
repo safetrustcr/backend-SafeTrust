@@ -1,11 +1,13 @@
 services:
   postgres:
-    image: postgres:15
+    image: postgis/postgis:15-3.3
     restart: always
     volumes:
       - db_data:/var/lib/postgresql/data
     environment:
       POSTGRES_PASSWORD: postgrespassword
+    ports:
+      - "5432:5432"
   graphql-engine:
     image: hasura/graphql-engine:v2.42.0
     ports:
