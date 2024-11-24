@@ -90,3 +90,22 @@ hasura console
 ```
 
 And you should be good to go to start and work on this.
+
+
+## 📋 **Known Issues**
+
+### 📝 **Title**  
+**Error Running Docker Compose**
+
+### ❌ **Error Message**  
+> `Rosetta error: Rosetta is only intended to run on Apple Silicon with a macOS host using Virtualization.framework with Rosetta mode enabled`
+
+### 🔍 **Error Description**  
+1. Run `docker compose up -d`.  
+2. If the **Backend postgres-1 module** can't start and shows the error above:  
+   - This is due to an issue with Rosetta settings on Apple Silicon devices.  
+3. ✅ **Solution:**  
+   - Go to **Docker Settings** and disable the:  
+     `Use Rosetta for x86_64/amd64 emulation on Apple Silicon` selection button.  
+   - 🔄 Restart Docker.  
+   - 🚀 It should now run great!
