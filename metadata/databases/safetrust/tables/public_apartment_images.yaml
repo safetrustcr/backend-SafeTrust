@@ -1,0 +1,3 @@
+table:
+  name: apartment_images
+  schema: public
