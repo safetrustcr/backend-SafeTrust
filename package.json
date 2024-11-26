@@ -19,6 +19,9 @@
   "homepage": "https://github.com/Josue19-08/Backend#readme",
   "dependencies": {
     "express": "^4.21.1",
-    "graphql-request": "^7.1.2"
+    "express-rate-limit": "^7.4.1",
+    "graphql-request": "^7.1.2",
+    "nodemailer": "^6.9.16",
+    "winston": "^3.17.0"
   }
 }
