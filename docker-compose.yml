@@ -41,16 +41,14 @@ services:
       start_period: 5s
 
   hasura-cli:
-    image: hasura/graphql-engine:v2.42.0.cli-migrations-v3
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/bash"]
+    tty: true
     volumes:
-      - .:/workdir
-    working_dir: /workdir
-    environment:
-      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:8080
-      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET}
-      HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/postgres
-    depends_on:
-      - graphql-engine
+      - ./hasura-project:/hasura-project # Mount your Hasura project directory
+    working_dir: /app
 
 volumes:
   db_data:
