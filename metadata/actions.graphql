@@ -1,0 +1,28 @@
+
+type Mutation {
+  sendVerificationCode(
+    input: SendVerificationInput!
+  ): VerificationResponse!
+}
+
+type Mutation {
+  verifyEmailCode(
+    input: VerifyCodeInput!
+  ): VerificationResponse!
+}
+
+input SendVerificationInput {
+  email: String!
+}
+
+input VerifyCodeInput {
+  email: String!
+  code: String!
+}
+
+type VerificationResponse {
+  success: Boolean!
+  message: String!
+  expiresAt: timestamptz
+}
+
