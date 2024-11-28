@@ -1,5 +1,6 @@
 import { GraphQLClient } from "graphql-request";
 import express from "express";
+import cors from "cors";
 import transporter from "./emailConfig.mjs";
 import rateLimit from "express-rate-limit"; 
 
@@ -235,6 +236,14 @@ const logToDatabase = async (level, message, details) => {
  * - Listens on port 3000 and binds to all network interfaces (0.0.0.0).
  * - Logs a message when the server is running.
  */
+app.use(cors({
+  origin: '*', 
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+
+
 app.listen(3000, "0.0.0.0", () => {
   console.log("Verification server running on http://0.0.0.0:3000");
 });
