@@ -1,0 +1,13 @@
+ALTER TABLE users
+DROP CONSTRAINT IF EXISTS valid_phone_format,
+DROP CONSTRAINT IF EXISTS valid_country_code;
+
+ALTER TABLE users
+DROP COLUMN IF EXISTS first_name,
+DROP COLUMN IF EXISTS last_name,
+DROP COLUMN IF EXISTS summary,
+DROP COLUMN IF EXISTS phone_number,
+DROP COLUMN IF EXISTS country_code,
+DROP COLUMN IF EXISTS location,
+DROP COLUMN IF EXISTS profile_image_url,
+DROP COLUMN IF EXISTS profile_image_r2_key;
