@@ -27,8 +27,81 @@ select_permissions:
         id:
           _eq: X-Hasura-User-Id
     comment: ""
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: ""
+  - role: tenant
+    permission:
+      columns:
+        - country_code
+        - email
+        - first_name
+        - id
+        - last_name
+        - last_seen
+        - location
+        - phone_number
+        - profile_image_url
+        - summary
+      filter:
+        id:
+          _eq: X-Hasura-User-Id
+    comment: ""
+  - role: landlord
+    permission:
+      columns:
+        - country_code
+        - email
+        - first_name
+        - id
+        - last_name
+        - last_seen
+        - location
+        - phone_number
+        - profile_image_url
+        - summary
+      filter:
+        id:
+          _eq: X-Hasura-User-Id
+    comment: ""
 update_permissions:
   - role: users
+    permission:
+      columns:
+        - country_code
+        - first_name
+        - last_name
+        - location
+        - phone_number
+        - profile_image_url
+        - summary
+      filter:
+        id:
+          _eq: X-Hasura-User-Id
+      check:
+        id:
+          _eq: X-Hasura-User-Id
+    comment: ""
+  - role: tenant
+    permission:
+      columns:
+        - country_code
+        - first_name
+        - last_name
+        - location
+        - phone_number
+        - profile_image_url
+        - summary
+      filter:
+        id:
+          _eq: X-Hasura-User-Id
+      check:
+        id:
+          _eq: X-Hasura-User-Id
+    comment: ""
+  - role: landlord
     permission:
       columns:
         - country_code
