@@ -10,9 +10,13 @@ yarn-error.log*
 
 # Environment variables
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*
 .env.test
 .env.production
-.env.*.local
 
 # Runtime data
 pids/
@@ -20,37 +24,43 @@ pids/
 *.seed
 *.pid.lock
 
-# Coverage reports
-coverage/
-*.lcov
-
 # Temporary files
 tmp/
 temp/
+*.tmp
+
+# Cache and build artifacts
+.cache/
+dist/
+build/
 
 # Editor-specific files
+.vscode/
+.idea/
 *.swp
 *.swo
-*.idea/
-.vscode/
-*.DS_Store
-Thumbs.db
+*~
 
 # OS-specific files
 .DS_Store
 Desktop.ini
+Thumbs.db
 
 # Debug files
 debug/
 
-# Build artifacts
-build/
-dist/
+# Coverage reports
+coverage/
+*.lcov
+*.lcov.info
 
 # Dependency directories
 bower_components/
 
+# Compressed files
+*.tgz
+*.lock
 
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Test output
+test-output/
+*.tap
