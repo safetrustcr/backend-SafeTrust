@@ -1,4 +1,3 @@
--- Move function from apartments migration
 CREATE OR REPLACE FUNCTION find_nearby_apartments(
     search_location POINT,
     radius_meters FLOAT,
