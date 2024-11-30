@@ -63,7 +63,7 @@ Name your database as `safetrust` (instead of default) when prompted to do so.
 Now, run the migrations.
 
 ```shell
-hasura migrate apply
+hasura migrate apply --admin-secret myadminsecretkey
 ```
 
 4. Adding migrations.
@@ -71,7 +71,7 @@ hasura migrate apply
 You can add migrations either with the hasura console or by the command:
 
 ```shell
-hasura migrate create [enable_postgis]
+hasura migrate create [enable_postgis] --admin-secret myadminsecretkey
 ```
 
 where `enable_postgis` is the name of the migration. Please make sure to use descriptive names with verbs about what the migration is doing!
@@ -79,14 +79,14 @@ where `enable_postgis` is the name of the migration. Please make sure to use des
 Then to apply them:
 
 ```shell
-hasura migrate apply
+hasura migrate apply --admin-secret myadminsecretkey
 ```
 
 If you wanna use the hasura web console and access it on `http://localhost:9695/`:
 
 
 ```shell
-hasura console
+hasura console --admin-secret myadminsecretkey
 ```
 
 And you should be good to go to start and work on this.
