@@ -1,0 +1,56 @@
+# Node.js dependencies
+node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.test
+.env.production
+.env.*.local
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Temporary files
+tmp/
+temp/
+
+# Editor-specific files
+*.swp
+*.swo
+*.idea/
+.vscode/
+*.DS_Store
+Thumbs.db
+
+# OS-specific files
+.DS_Store
+Desktop.ini
+
+# Debug files
+debug/
+
+# Build artifacts
+build/
+dist/
+
+# Dependency directories
+bower_components/
+
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
