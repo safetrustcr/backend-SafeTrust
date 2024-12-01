@@ -3,3 +3,6 @@
 - "!include public_spatial_ref_sys.yaml"
 - "!include public_user_wallets.yaml"
 - "!include public_users.yaml"
+- "!include escrow_api_calls.yaml"
+- "!include escrow_transactions.yaml"
+- "!include escrow_xdr_transactions.yaml"
