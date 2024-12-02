@@ -1,0 +1,17 @@
+services:
+  karate:
+    build:
+      context: ..
+      dockerfile: Dockerfile.test
+    volumes:
+      - ./karate:/karate
+      - ./results:/results
+    environment:
+      HASURA_ENDPOINT: http://graphql-engine:8080/v1/graphql
+      HASURA_ADMIN_SECRET: myadminsecretkey
+      FIREBASE_PROJECT_ID: safetrust-dev
+    depends_on:
+      postgres:
+        condition: service_started
+      graphql-engine:
+        condition: service_started

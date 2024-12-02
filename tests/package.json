@@ -1,0 +1,14 @@
+{
+  "name": "safetrust-api-tests",
+  "version": "1.0.0",
+  "description": "API tests for SafeTrust using Karate",
+  "scripts": {
+    "test": "mvn test",
+    "test:users": "mvn test -Dtest=UsersRunner",
+    "report": "node generateReport.js"
+  },
+  "dependencies": {
+    "cucumber-html-reporter": "^5.5.0",
+    "karate-core": "^1.4.0"
+  }
+}
