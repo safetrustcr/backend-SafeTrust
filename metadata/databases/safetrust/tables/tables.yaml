@@ -6,3 +6,5 @@
 - "!include escrow_api_calls.yaml"
 - "!include escrow_transactions.yaml"
 - "!include escrow_xdr_transactions.yaml"
+- "!include public_apartments.yaml"
+- "!include public_apartment_images.yaml"
