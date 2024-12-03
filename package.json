@@ -23,6 +23,8 @@
     "express-rate-limit": "^7.4.1",
     "graphql-request": "^7.1.2",
     "nodemailer": "^6.9.16",
-    "winston": "^3.17.0"
+    "winston": "^3.17.0",
+    "cucumber-html-reporter": "^5.5.0",
+    "karate-core": "^1.4.0"
   }
 }
