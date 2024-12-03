@@ -1,0 +1,12 @@
+FROM maven:3.8-openjdk-17
+
+WORKDIR /app
+
+# Copy the POM file
+COPY pom.xml .
+
+# Copy the test files
+COPY . .
+
+# Wait for GraphQL engine to be ready and then run tests
+CMD ["sh", "-c", "sleep 10 && mvn test"] 
