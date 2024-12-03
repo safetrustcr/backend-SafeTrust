@@ -8,5 +8,8 @@ COPY pom.xml .
 # Copy the test files
 COPY . .
 
+# Create directory for reports
+RUN mkdir -p target/karate-reports
+
 # Wait for GraphQL engine to be ready and then run tests
 CMD ["sh", "-c", "sleep 10 && mvn test"] 
