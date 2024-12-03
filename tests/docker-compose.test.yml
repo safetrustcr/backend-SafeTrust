@@ -42,6 +42,7 @@ services:
       dockerfile: Dockerfile.test
     volumes:
       - ./:/app
+      - ./results:/app/target/karate-reports
     environment:
       HASURA_ENDPOINT: http://graphql-engine:8080/v1/graphql
       HASURA_ADMIN_SECRET: myadminsecretkey
