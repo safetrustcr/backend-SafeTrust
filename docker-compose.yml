@@ -1,7 +1,6 @@
 services:
   postgres:
     image: postgis/postgis:15-3.3
-    platform: linux/amd64
     restart: always
     volumes:
       - db_data:/var/lib/postgresql/data
@@ -9,6 +8,12 @@ services:
       POSTGRES_PASSWORD: postgrespassword
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   graphql-engine:
     image: hasura/graphql-engine:v2.42.0
@@ -21,22 +26,18 @@ services:
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
       HASURA_GRAPHQL_DEV_MODE: "true"
       HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
-      ## uncomment next line to run console offline (i.e load console assets from server instead of CDN)
-      # HASURA_GRAPHQL_CONSOLE_ASSETS_DIR: /srv/console-assets
-      ## uncomment next line to set an admin secret
-      HASURA_GRAPHQL_ADMIN_SECRET: myadminsecretkey
       HASURA_GRAPHQL_METADATA_DEFAULTS: '{"backend_configs":{"dataconnector":{"athena":{"uri":"http://data-connector-agent:8081/api/v1/athena"},"mariadb":{"uri":"http://data-connector-agent:8081/api/v1/mariadb"},"mysql8":{"uri":"http://data-connector-agent:8081/api/v1/mysql"},"oracle":{"uri":"http://data-connector-agent:8081/api/v1/oracle"},"snowflake":{"uri":"http://data-connector-agent:8081/api/v1/snowflake"}}}}'
-      HASURA_GRAPHQL_JWT_SECRET: '{"type":"RS256","jwk_url": "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com","audience": "safetrust-dev", "claims_map": {"x-hasura-allowed-roles": ["user","anonymous","tenant","landlord"],"x-hasura-default-role": "user","x-hasura-user-id": {"path": "$.sub"}},"issuer": "https://securetoken.google.com/safetrust-dev"}'
     depends_on:
+      postgres:
+        condition: service_healthy
       data-connector-agent:
         condition: service_healthy
 
   data-connector-agent:
     image: hasura/graphql-data-connector:v2.42.0
-    platform: linux/amd64
     restart: always
     ports:
-      - 8081:8081
+      - "8081:8081"
     environment:
       QUARKUS_LOG_LEVEL: ERROR
       QUARKUS_OPENTELEMETRY_ENABLED: "false"
@@ -51,11 +52,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    entrypoint: ["/bin/bash"]
     tty: true
     volumes:
-      - ./hasura-project:/hasura-project # Mount your Hasura project directory
+      - .:/app # Mount your Hasura project directory
+    environment:
+      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:8080
+      PG_DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/postgres
     working_dir: /app
+    command: hasura console --address 0.0.0.0 --console-port 9695
+    ports:
+      - "9695:9695"
+    depends_on:
+      graphql-engine:
+        condition: service_healthy
+
 
 volumes:
   db_data:
