@@ -1,6 +1,25 @@
-actions: []
+actions:
+  - name: sendVerificationCode
+    definition:
+      kind: synchronous
+      handler: http://192.168.0.167:3000/send-verification
+      forward_client_headers: true
+    permissions:
+      - role: anonymous
+  - name: verifyEmailCode
+    definition:
+      kind: synchronous
+      handler: http://localhost:3000/verify-code
+      forward_client_headers: true
+    permissions:
+      - role: anonymous
+
 custom_types:
   enums: []
-  input_objects: []
-  objects: []
+  input_objects:
+    - name: SendVerificationInput
+    - name: VerifyCodeInput
+  objects:
+    - name: VerificationResponse
   scalars: []
+  
