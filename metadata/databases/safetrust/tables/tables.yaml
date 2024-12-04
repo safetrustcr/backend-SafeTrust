@@ -4,3 +4,4 @@
 - "!include public_user_wallets.yaml"
 - "!include public_users.yaml"
 - "!include public_apartment_images.yaml"
+- "!include public_bid_tables.yaml"
