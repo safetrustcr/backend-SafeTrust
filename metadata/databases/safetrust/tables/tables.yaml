@@ -8,3 +8,4 @@
 - "!include escrow_xdr_transactions.yaml"
 - "!include public_apartments.yaml"
 - "!include public_apartment_images.yaml"
+- "!include public_bid_tables.yaml"
