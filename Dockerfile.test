@@ -1,0 +1,21 @@
+FROM node:18
+
+WORKDIR /app
+
+# Install Java (required for Karate)
+RUN apt-get update && \
+    apt-get install -y openjdk-17-jdk && \
+    apt-get clean
+
+# Copy package files and install dependencies (if any)
+COPY package*.json ./
+RUN npm install --only=production
+
+# Copy the Karate JAR file and test files
+COPY tests/karate.jar /app/tests/karate.jar
+COPY tests /app/tests/
+RUN chmod -R 755 /app/tests
+
+
+# Set the entry point
+CMD ["npm", "test"] 
