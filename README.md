@@ -47,7 +47,7 @@ Ensures funds are automatically released based on the terms of the agreement, wi
 
 0. Install Docker and Docker Compose
 1. Download the Hasura global binary. See steps [here](https://hasura.io/docs/2.0/hasura-cli/install-hasura-cli/)
-2. Run 
+2. Run
 
 ```shell
 
@@ -84,28 +84,128 @@ hasura migrate apply --admin-secret myadminsecretkey
 
 If you wanna use the hasura web console and access it on `http://localhost:9695/`:
 
-
 ```shell
 hasura console --admin-secret myadminsecretkey
 ```
 
 And you should be good to go to start and work on this.
 
-
 ## 📋 **Known Issues**
 
-### 📝 **Title**  
+### 📝 **Title**
+
 **Error Running Docker Compose**
 
-### ❌ **Error Message**  
+### ❌ **Error Message**
+
 > `Rosetta error: Rosetta is only intended to run on Apple Silicon with a macOS host using Virtualization.framework with Rosetta mode enabled`
 
-### 🔍 **Error Description**  
-1. Run `docker compose up -d`.  
-2. If the **Backend postgres-1 module** can't start and shows the error above:  
-   - This is due to an issue with Rosetta settings on Apple Silicon devices.  
-3. ✅ **Solution:**  
+### 🔍 **Error Description**
+
+1. Run `docker compose up -d`.
+2. If the **Backend postgres-1 module** can't start and shows the error above:
+   - This is due to an issue with Rosetta settings on Apple Silicon devices.
+3. ✅ **Solution:**
    - Go to **Docker Settings** and disable the:  
-     `Use Rosetta for x86_64/amd64 emulation on Apple Silicon` selection button.  
-   - 🔄 Restart Docker.  
+     `Use Rosetta for x86_64/amd64 emulation on Apple Silicon` selection button.
+   - 🔄 Restart Docker.
    - 🚀 It should now run great!
+
+# Backend Tests
+
+This project uses Karate framework for API testing. The tests are designed to run in a Docker environment.
+
+## Prerequisites
+
+- Docker
+- Docker Compose
+
+## Project Structure
+
+```
+backend/
+└── tests/
+    ├── karate.jar
+    └── karate/
+        ├── karate-config.js
+        ├── helpers/
+        │   └── generate-token.js
+        └── features/
+            ├── auth/
+            │   ├── login.feature
+            │   └── permissions.feature
+            └── users/
+                ├── create.feature
+                ├── query.feature
+                └── wallets.feature
+```
+
+## Running Tests
+
+1. **Build the Test Environment**
+
+   ```bash
+   docker-compose -f docker-compose-test.yml build
+   ```
+
+2. **Run the Tests**
+
+   ```bash
+   docker-compose -f docker-compose-test.yml run --rm karate
+   ```
+
+3. **Clean Up After Testing**
+   ```bash
+   docker-compose -f docker-compose-test.yml down
+   ```
+
+## Test Configuration
+
+The test configuration is managed through `karate-config.js`. Key configurations include:
+
+- GraphQL endpoint URL
+- JWT authentication settings
+- Admin secret
+
+## Test Features
+
+- **Auth Tests** (`features/auth/`)
+
+  - Login functionality
+  - Permission checks
+
+- **User Tests** (`features/users/`)
+  - User creation
+  - User queries
+  - Wallet management
+
+## Troubleshooting
+
+If you encounter any issues:
+
+1. **Docker Network Issues**
+
+   ```bash
+   docker-compose -f docker-compose-test.yml down
+   docker system prune -a --volumes
+   docker-compose -f docker-compose-test.yml up -d
+   ```
+
+2. **Test Container Access**
+   ```bash
+   docker-compose -f docker-compose-test.yml run --rm karate sh
+   ```
+
+## Development
+
+To add new tests:
+
+1. Create a new `.feature` file in the appropriate directory under `features/`
+2. Follow the Karate framework's Gherkin syntax
+3. Run the tests to verify the new features
+
+## Notes
+
+- Tests run against a dedicated test database
+- JWT tokens are generated automatically for test authentication
+- GraphQL queries are executed against the Hasura GraphQL engine
