@@ -1,0 +1,32 @@
+<!DOCTYPE HTML>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <title>Karate Timeline</title>
+    <style>
+      body, html { font-family: arial, sans-serif; font-size: 11pt; }
+      #visualization { box-sizing: border-box; width: 100%; height: 300px; }
+      .vis-item.failed { background-color: #F2928C; }
+      .page-heading { padding: 0.5em; margin-bottom: 0.5em; background-color: lightcyan; border: 1px solid gray; }
+    </style>
+    <script src="res/vis.min.js"></script>
+    <link href="res/vis.min.css" rel="stylesheet" type="text/css" />
+  </head>
+  <body>
+    <div class="page-heading">
+      <a href="karate-summary.html">Summary</a>
+    </div>     
+    <div id="visualization"></div>
+    <script>
+var groups = [{"content":"main","id":1}];
+var items = [{"id":1,"group":1,"content":"tests\/karate\/features\/auth\/login[1:9]","start":1733887141639,"end":1733887141762,"title":"tests\/karate\/features\/auth\/login[1:9] 03:19:01.639-03:19:01.762 Check test database connection"},{"id":2,"group":1,"content":"tests\/karate\/features\/auth\/login[2:23]","start":1733887141782,"end":1733887142049,"title":"tests\/karate\/features\/auth\/login[2:23] 03:19:01.782-03:19:02.049 Check test environment health"},{"id":3,"group":1,"content":"tests\/karate\/features\/auth\/permissions[1:8]","start":1733887137972,"end":1733887139811,"title":"tests\/karate\/features\/auth\/permissions[1:8] 03:18:57.972-03:18:59.811 User can access their own data"},{"id":4,"group":1,"content":"tests\/karate\/features\/users\/create[1:8]","start":1733887144001,"end":1733887144096,"title":"tests\/karate\/features\/users\/create[1:8] 03:19:04.001-03:19:04.096 Check Hasura health"},{"id":5,"group":1,"content":"tests\/karate\/features\/users\/query[1:9]","start":1733887142681,"end":1733887142800,"title":"tests\/karate\/features\/users\/query[1:9] 03:19:02.681-03:19:02.800 Query existing user"},{"id":6,"group":1,"content":"tests\/karate\/features\/users\/query[2:15]","start":1733887142813,"end":1733887143026,"title":"tests\/karate\/features\/users\/query[2:15] 03:19:02.813-03:19:03.026 Query non-existing user"},{"id":7,"group":1,"content":"tests\/karate\/features\/users\/wallets[1:8]","start":1733887143454,"end":1733887143584,"title":"tests\/karate\/features\/users\/wallets[1:8] 03:19:03.454-03:19:03.584 Get schema information"}];
+</script>
+    <script>
+      var container = document.getElementById('visualization');
+      var timeline = new vis.Timeline(container);
+      timeline.setOptions({groupOrder: 'content'});
+      timeline.setGroups(new vis.DataSet(groups));
+      timeline.setItems(new vis.DataSet(items));
+    </script>
+  </body>
+</html>
