@@ -41,7 +41,7 @@ services:
       context: .
       dockerfile: Dockerfile.test
     volumes:
-      - ./target:/app/target
+      - ./tests/results:/app/target/karate-reports
     depends_on:
       graphql-engine-test:
         condition: service_started

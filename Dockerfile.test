@@ -7,6 +7,8 @@ COPY tests /app/tests
 
 # Make sure karate-config.js is in the right place
 RUN mkdir -p /app/tests/karate/src/test/resources
+# Create directory for test results
+RUN mkdir -p /app/target/karate-reports
 
 # Set default command
 CMD ["java", "-jar", "/app/tests/karate.jar", "--configdir", "/app/tests/karate/src/test/resources", "/app/tests/karate/features"] 
