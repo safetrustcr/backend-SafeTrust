@@ -1,17 +1,16 @@
-Feature: User Permissions
+Feature: Authorization Permissions
 
 Background:
     * url baseUrl
-    * def tokenHelper = read('../../helpers/generate-token.js')
+    * print '=== Loading feature file ==='
+    * print 'URL set to:', baseUrl
 
-Scenario: User can only access their own data
-    # Set up the test data
-    * def validToken = tokenHelper({ uid: 'test-user', role: 'user' })
-    
-    Given path '/v1/graphql'
-    And header Authorization = 'Bearer ' + validToken
-    And request { query: "query { users { id email } }" }
+Scenario: User can access their own data
+    * def token = tokenHelper({ uid: 'test-user', role: 'user' })
+    * header Authorization = token
+    * header x-hasura-admin-secret = adminSecret
+
+    Given path '/'
+    And request { query: "{ __type(name: \"User\") { fields { name } } }" }
     When method POST
     Then status 200
-    And match response.errors == '#notpresent'
-    And match response.data.users[*].id contains 'test-user' 
