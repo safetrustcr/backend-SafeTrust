@@ -4,9 +4,10 @@ services:
     restart: always
     environment:
       POSTGRES_PASSWORD: postgrespassword
-      POSTGRES_DB: safetrust
     ports:
-      - "5433:5432" # Changed from 5432 to 5433 for the host port
+      - "5432:5432"
+    networks:
+      - test-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -14,30 +15,39 @@ services:
       retries: 5
 
   graphql-engine-test:
-    image: hasura/graphql-engine:v2.33.4
+    image: hasura/graphql-engine:latest
     ports:
-      - "8081:8080" # Make sure this port is also unique
+      - "8081:8080"
     depends_on:
       postgres_test:
         condition: service_healthy
-    restart: always
     environment:
-      HASURA_GRAPHQL_DATABASE_URL: "postgres://postgres:postgrespassword@postgres_test:5432/safetrust?sslmode=disable"
+      HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:postgrespassword@postgres_test:5432/postgres
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
       HASURA_GRAPHQL_DEV_MODE: "true"
-      HASURA_GRAPHQL_ADMIN_SECRET: "myadminsecretkey"
+      HASURA_GRAPHQL_ADMIN_SECRET: myadminsecretkey
       HASURA_GRAPHQL_JWT_SECRET: '{"type":"HS256", "key": "12345678901234567890123456789012", "claims_format": "json", "claims_namespace": "https://hasura.io/jwt/claims"}'
       HASURA_GRAPHQL_UNAUTHORIZED_ROLE: "anonymous"
       HASURA_GRAPHQL_LOG_LEVEL: "debug"
       HASURA_GRAPHQL_ENABLED_LOG_TYPES: "startup,http-log,webhook-log,websocket-log,query-log"
+      ACTION_BASE_URL: http://action-handler:3000
+    volumes:
+      - ./tests/metadata:/hasura-metadata
+    networks:
+      - test-network
 
   karate:
     build:
       context: .
       dockerfile: Dockerfile.test
     volumes:
-      - ./:/app
+      - ./tests/results:/app/target/karate-reports
     depends_on:
-      - graphql-engine-test
-    environment:
-      - NODE_ENV=test
+      graphql-engine-test:
+        condition: service_started
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
