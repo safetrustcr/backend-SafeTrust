@@ -1,0 +1,25 @@
+- table:
+    schema: public
+    name: bid_requests
+    configuration:
+      custom_root_fields: {}
+      custom_column_names: {}
+  array_relationships:
+    - name: status_histories
+      using:
+        foreign_key_constraint_on:
+          column: bid_request_id
+          table:
+            schema: public
+            name: bid_status_histories
+
+- table:
+    schema: public
+    name: bid_status_histories
+    configuration:
+      custom_root_fields: {}
+      custom_column_names: {}
+  object_relationships:
+    - name: bid_request
+      using:
+        foreign_key_constraint_on: bid_request_id
