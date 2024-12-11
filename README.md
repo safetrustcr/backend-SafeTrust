@@ -162,8 +162,8 @@ This command will:
 
 After running the tests, you can find the HTML reports at:
 
-- Summary: `target/karate-reports/karate-summary.html`
-- Detailed: `target/karate-reports/karate-tags.html`
+- Summary: `tests/results/karate-summary.html`
+- Detailed: `tests/results/karate-tags.html`
 
 ## Development
 
