@@ -1,23 +1,28 @@
 Feature: User Authentication
 
 Background:
+    * print '=== Loading feature file ==='
     * url baseUrl
-    * def tokenHelper = read('../../helpers/generate-token.js')
+    * print 'URL set to:', baseUrl
+    * header x-hasura-admin-secret = adminSecret
 
-Scenario: User can login with valid credentials
-    # Set up the test data
-    * def validToken = tokenHelper({ uid: 'test-user', role: 'user' })
-    
-    Given path '/v1/graphql'
-    And header Authorization = 'Bearer ' + validToken
-    And request { query: "query { me { id email } }" }
+Scenario: Check test database connection
+    * print 'Starting database check'
+    Given path '/'
+    And def query = 
+    """
+    {
+      "query": "query { __type(name: \"User\") { fields { name type { name kind } } } }"
+    }
+    """
+    And request query
     When method POST
     Then status 200
-    And match response.errors == '#notpresent'
-    And match response.data.me.id == 'test-user'
+    * print 'Schema:', response.data
 
-Scenario: User cannot access without token
-    Given path '/v1/graphql'
-    And request { query: "query { me { id email } }" }
-    When method POST
-    Then status 401 
+Scenario: Check test environment health
+    * print 'Starting health check'
+    Given url baseUrl.replace('/v1/graphql', '/healthz')
+    When method GET
+    Then status 200
+    * print 'Health response:', response

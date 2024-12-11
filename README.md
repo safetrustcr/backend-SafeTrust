@@ -124,88 +124,65 @@ This project uses Karate framework for API testing. The tests are designed to ru
 
 ```
 backend/
+├── docker-compose-test.yml
+├── Dockerfile.test
 └── tests/
     ├── karate.jar
     └── karate/
-        ├── karate-config.js
-        ├── helpers/
-        │   └── generate-token.js
-        └── features/
-            ├── auth/
-            │   ├── login.feature
-            │   └── permissions.feature
-            └── users/
-                ├── create.feature
-                ├── query.feature
-                └── wallets.feature
+        ├── features/
+        │   ├── auth/
+        │   │   ├── login.feature
+        │   │   └── permissions.feature
+        │   └── users/
+        │       ├── create.feature
+        │       └── query.feature
+        └── src/
+            └── test/
+                └── resources/
+                    └── karate-config.js
 ```
 
 ## Running Tests
 
-1. **Build the Test Environment**
+To run all tests:
 
-   ```bash
-   docker-compose -f docker-compose-test.yml build
-   ```
+```bash
+docker compose -f docker-compose-test.yml up --build --abort-on-container-exit
+```
 
-2. **Run the Tests**
+This command will:
 
-   ```bash
-   docker-compose -f docker-compose-test.yml run --rm karate
-   ```
+1. Build the test container
+2. Start PostgreSQL and Hasura containers
+3. Run all Karate tests
+4. Show test results in the console
+5. Generate HTML reports in `target/karate-reports/`
 
-3. **Clean Up After Testing**
-   ```bash
-   docker-compose -f docker-compose-test.yml down
-   ```
+## Test Reports
 
-## Test Configuration
+After running the tests, you can find the HTML reports at:
 
-The test configuration is managed through `karate-config.js`. Key configurations include:
-
-- GraphQL endpoint URL
-- JWT authentication settings
-- Admin secret
-
-## Test Features
-
-- **Auth Tests** (`features/auth/`)
-
-  - Login functionality
-  - Permission checks
-
-- **User Tests** (`features/users/`)
-  - User creation
-  - User queries
-  - Wallet management
-
-## Troubleshooting
-
-If you encounter any issues:
-
-1. **Docker Network Issues**
-
-   ```bash
-   docker-compose -f docker-compose-test.yml down
-   docker system prune -a --volumes
-   docker-compose -f docker-compose-test.yml up -d
-   ```
-
-2. **Test Container Access**
-   ```bash
-   docker-compose -f docker-compose-test.yml run --rm karate sh
-   ```
+- Summary: `target/karate-reports/karate-summary.html`
+- Detailed: `target/karate-reports/karate-tags.html`
 
 ## Development
 
-To add new tests:
+### Adding New Tests
 
-1. Create a new `.feature` file in the appropriate directory under `features/`
-2. Follow the Karate framework's Gherkin syntax
-3. Run the tests to verify the new features
+1. Create new `.feature` files in `tests/karate/features/`
+2. Follow the Karate DSL syntax
+3. Tests will be automatically picked up when running the test command
 
-## Notes
+### Configuration
 
-- Tests run against a dedicated test database
-- JWT tokens are generated automatically for test authentication
-- GraphQL queries are executed against the Hasura GraphQL engine
+- Main config: `tests/karate/src/test/resources/karate-config.js`
+- Database config: `docker-compose-test.yml`
+- Test environment: `Dockerfile.test`
+
+## Troubleshooting
+
+If tests fail with connection errors:
+
+1. Ensure all containers are running: `docker compose -f docker-compose-test.yml ps`
+2. Check container logs: `docker compose -f docker-compose-test.yml logs`
+3. Verify network connectivity: `docker network inspect backend_test-network`
