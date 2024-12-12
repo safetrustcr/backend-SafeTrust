@@ -47,7 +47,7 @@ Ensures funds are automatically released based on the terms of the agreement, wi
 
 0. Install Docker and Docker Compose
 1. Download the Hasura global binary. See steps [here](https://hasura.io/docs/2.0/hasura-cli/install-hasura-cli/)
-2. Run 
+2. Run
 
 ```shell
 
@@ -84,28 +84,105 @@ hasura migrate apply --admin-secret myadminsecretkey
 
 If you wanna use the hasura web console and access it on `http://localhost:9695/`:
 
-
 ```shell
 hasura console --admin-secret myadminsecretkey
 ```
 
 And you should be good to go to start and work on this.
 
-
 ## 📋 **Known Issues**
 
-### 📝 **Title**  
+### 📝 **Title**
+
 **Error Running Docker Compose**
 
-### ❌ **Error Message**  
+### ❌ **Error Message**
+
 > `Rosetta error: Rosetta is only intended to run on Apple Silicon with a macOS host using Virtualization.framework with Rosetta mode enabled`
 
-### 🔍 **Error Description**  
-1. Run `docker compose up -d`.  
-2. If the **Backend postgres-1 module** can't start and shows the error above:  
-   - This is due to an issue with Rosetta settings on Apple Silicon devices.  
-3. ✅ **Solution:**  
+### 🔍 **Error Description**
+
+1. Run `docker compose up -d`.
+2. If the **Backend postgres-1 module** can't start and shows the error above:
+   - This is due to an issue with Rosetta settings on Apple Silicon devices.
+3. ✅ **Solution:**
    - Go to **Docker Settings** and disable the:  
-     `Use Rosetta for x86_64/amd64 emulation on Apple Silicon` selection button.  
-   - 🔄 Restart Docker.  
+     `Use Rosetta for x86_64/amd64 emulation on Apple Silicon` selection button.
+   - 🔄 Restart Docker.
    - 🚀 It should now run great!
+
+# Backend Tests
+
+This project uses Karate framework for API testing. The tests are designed to run in a Docker environment.
+
+## Prerequisites
+
+- Docker
+- Docker Compose
+
+## Project Structure
+
+```
+backend/
+├── docker-compose-test.yml
+├── Dockerfile.test
+└── tests/
+    ├── karate.jar
+    └── karate/
+        ├── features/
+        │   ├── auth/
+        │   │   ├── login.feature
+        │   │   └── permissions.feature
+        │   └── users/
+        │       ├── create.feature
+        │       └── query.feature
+        └── src/
+            └── test/
+                └── resources/
+                    └── karate-config.js
+```
+
+## Running Tests
+
+To run all tests:
+
+```bash
+docker compose -f docker-compose-test.yml up --build --abort-on-container-exit
+```
+
+This command will:
+
+1. Build the test container
+2. Start PostgreSQL and Hasura containers
+3. Run all Karate tests
+4. Show test results in the console
+5. Generate HTML reports in `target/karate-reports/`
+
+## Test Reports
+
+After running the tests, you can find the HTML reports at:
+
+- Summary: `tests/results/karate-summary.html`
+- Detailed: `tests/results/karate-tags.html`
+
+## Development
+
+### Adding New Tests
+
+1. Create new `.feature` files in `tests/karate/features/`
+2. Follow the Karate DSL syntax
+3. Tests will be automatically picked up when running the test command
+
+### Configuration
+
+- Main config: `tests/karate/src/test/resources/karate-config.js`
+- Database config: `docker-compose-test.yml`
+- Test environment: `Dockerfile.test`
+
+## Troubleshooting
+
+If tests fail with connection errors:
+
+1. Ensure all containers are running: `docker compose -f docker-compose-test.yml ps`
+2. Check container logs: `docker compose -f docker-compose-test.yml logs`
+3. Verify network connectivity: `docker network inspect backend_test-network`
