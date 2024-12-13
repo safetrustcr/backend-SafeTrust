@@ -186,3 +186,27 @@ If tests fail with connection errors:
 1. Ensure all containers are running: `docker compose -f docker-compose-test.yml ps`
 2. Check container logs: `docker compose -f docker-compose-test.yml logs`
 3. Verify network connectivity: `docker network inspect backend_test-network`
+
+## Seeds 🌱
+
+Seeds are files that allow you to create test data in an automated way
+
+Creating a seed:
+``` bash
+hasura seed create seed_name
+```
+
+At this moment you need to write the SQL code in the seed file
+
+Applying all seeds:
+``` bash
+hasura seed apply
+```
+
+Applying an specific seed:
+``` bash
+hasura seed apply --file seed_name.sql
+```
+
+
+
