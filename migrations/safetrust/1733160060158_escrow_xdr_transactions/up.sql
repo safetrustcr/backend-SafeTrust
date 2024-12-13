@@ -1,9 +1,12 @@
--- Crear tipos ENUM para xdr_status si no existe
 CREATE TYPE xdr_status AS ENUM (
-    'PENDING', 'GENERATED', 'SIGNED', 'SUBMITTED', 'CONFIRMED', 'FAILED'
+    'PENDING',
+    'GENERATED',
+    'SIGNED',
+    'SUBMITTED',
+    'CONFIRMED',
+    'FAILED'
 );
 
--- Crear tabla escrow_xdr_transactions
 CREATE TABLE escrow_xdr_transactions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     escrow_transaction_id UUID REFERENCES escrow_transactions(id) ON DELETE CASCADE,
@@ -14,5 +17,11 @@ CREATE TABLE escrow_xdr_transactions (
     signing_address TEXT,
     error_message TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT valid_xdr_fields CHECK (
+        (status = 'SIGNED' AND signed_xdr IS NOT NULL) OR
+        (status != 'SIGNED')
+    )
 );
+
+CREATE INDEX idx_escrow_xdr_transaction ON escrow_xdr_transactions(escrow_transaction_id);
