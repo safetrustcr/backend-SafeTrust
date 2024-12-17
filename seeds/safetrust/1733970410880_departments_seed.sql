@@ -13,7 +13,7 @@ INSERT INTO apartments (
     available_until
 ) VALUES (
     uuid_generate_v4(), 
-    (SELECT id FROM users WHERE email = 'john.doe@example.com'), 
+    (SELECT id FROM users WHERE email = 'john.doe@example.com' LIMIT 1), 
     'Modern Loft in Heredia', 
     'Spacious and bright loft in the heart of San José, perfect for professionals and digital nomads.', 
     1250.00, 
@@ -27,7 +27,7 @@ INSERT INTO apartments (
 ),
 (
  uuid_generate_v4(),
- (SELECT id FROM users WHERE email = 'john.doe@example.com'),
+ (SELECT id FROM users WHERE email = 'john.doe@example.com' LIMIT 1),
  'Modern Loft in San Jose',
  'Spacious and bright loft in the heart of San José, perfect for professionals and digital nomads',
  1250.00,
