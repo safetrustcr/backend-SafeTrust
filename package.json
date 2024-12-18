@@ -18,13 +18,12 @@
   },
   "homepage": "https://github.com/Josue19-08/Backend#readme",
   "dependencies": {
-    "backend": "file:",
-    "cucumber-html-reporter": "^5.5.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
     "express-rate-limit": "^7.4.1",
     "graphql-request": "^7.1.2",
     "nodemailer": "^6.9.16",
-    "winston": "^3.17.0"
+    "winston": "^3.17.0",
+    "cucumber-html-reporter": "^5.5.0"
   }
 }
