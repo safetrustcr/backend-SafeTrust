@@ -41,7 +41,7 @@ BEGIN
         ) VALUES (
             NEW.id,
             NEW.current_status,
-            current_setting('hasura.user', true)::text
+            (SELECT tenant_id from bid_requests WHERE id = NEW.id)
         );
     END IF;
     RETURN NEW;
