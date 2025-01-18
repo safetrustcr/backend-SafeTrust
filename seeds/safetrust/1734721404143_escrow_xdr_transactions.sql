@@ -1,4 +1,4 @@
-INSERT INTO public.escrow_xdr_transactions (
+INSERT INTO escrow_xdr_transactions (
     id, 
     escrow_transaction_id, 
     xdr_type, 
