@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Safetrust Backend issue
+    url: https://github.com/safetrustcr/Backend/issues/new?template=issues_template.md
+    about: Please, create a backend issue for SafeTrust.
