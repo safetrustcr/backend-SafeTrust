@@ -39,7 +39,7 @@ Scenario: Create new apartment image
     }
     """
     When method POST
-    Then status 200
+    Then status 201
     And match response.errors == '#notpresent'
     * def created_id = response.data.insert_apartment_images_one.id
 
@@ -220,6 +220,6 @@ Scenario: Delete apartment image
     }
     """
     When method POST
-    Then status 200
+    Then status 204
     And match response.errors == '#notpresent'
     And match response.data.delete_apartment_images_by_pk != null 
