@@ -1,9 +1,0 @@
-- table:
-    name: apartments
-    schema: public
-    source: default
-
-- table:
-    name: apartment_images
-    schema: public
-    source: default 
