@@ -1,0 +1,70 @@
+table:
+  name: apartment_contracts
+  schema: public
+
+object_relationships:
+  - name: apartment
+    using:
+      foreign_key_constraint_on: apartment_id
+
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: ""
+  - role: tenant
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - tenant_id
+        - start_date
+        - end_date
+        - status
+        - rent_amount
+        - security_deposit
+        - terms_conditions
+        - created_at
+        - updated_at
+      filter:
+        tenant_id:
+          _eq: X-Hasura-User-Id
+    comment: "Tenants can view their own contracts"
+  - role: landlord
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - tenant_id
+        - start_date
+        - end_date
+        - status
+        - rent_amount
+        - security_deposit
+        - terms_conditions
+        - created_at
+        - updated_at
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+    comment: "Landlords can view contracts for their properties"
+
+update_permissions:
+  - role: landlord
+    permission:
+      columns:
+        - status
+        - terms_conditions
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+        status:
+          _in: ["DRAFT", "PENDING"]
+      check:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+    comment: "Landlords can update contract status and terms for their properties"
