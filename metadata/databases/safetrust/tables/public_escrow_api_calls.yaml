@@ -1,0 +1,46 @@
+table:
+  name: escrow_api_calls
+  schema: public
+
+object_relationships:
+  - name: escrow_transaction
+    using:
+      foreign_key_constraint_on: escrow_transaction_id
+
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: ""
+  - role: tenant
+    permission:
+      columns:
+        - id
+        - escrow_transaction_id
+        - endpoint
+        - method
+        - http_status_code
+        - created_at
+      filter:
+        escrow_transaction:
+          bid_request:
+            tenant_id:
+              _eq: X-Hasura-User-Id
+    comment: "Tenants can view basic status of API calls related to their transactions"
+  - role: landlord
+    permission:
+      columns:
+        - id
+        - escrow_transaction_id
+        - endpoint
+        - method
+        - http_status_code
+        - created_at
+      filter:
+        escrow_transaction:
+          bid_request:
+            apartment:
+              owner_id:
+                _eq: X-Hasura-User-Id
+    comment: "Landlords can view basic status of API calls related to their properties"
