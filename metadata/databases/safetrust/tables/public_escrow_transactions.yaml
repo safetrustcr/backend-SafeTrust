@@ -1,0 +1,109 @@
+table:
+  name: escrow_transactions
+  schema: public
+
+object_relationships:
+  - name: bid_request
+    using:
+      foreign_key_constraint_on: bid_request_id
+
+array_relationships:
+  - name: escrow_xdr_transactions
+    using:
+      foreign_key_constraint_on:
+        column: escrow_transaction_id
+        table:
+          name: escrow_xdr_transactions
+          schema: public
+
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: ""
+  - role: tenant
+    permission:
+      columns:
+        - id
+        - bid_request_id
+        - engagement_id
+        - contract_id
+        - transaction_type
+        - status
+        - amount
+        - initial_deposit_percentage
+        - cancellation_reason
+        - cancelled_by
+        - refund_status
+        - created_at
+        - updated_at
+        - completed_at
+      filter:
+        bid_request:
+          tenant_id:
+            _eq: X-Hasura-User-Id
+    comment: "Tenants can view their own escrow transactions"
+  - role: landlord
+    permission:
+      columns:
+        - id
+        - bid_request_id
+        - engagement_id
+        - contract_id
+        - transaction_type
+        - status
+        - amount
+        - initial_deposit_percentage
+        - cancellation_reason
+        - cancelled_by
+        - refund_status
+        - created_at
+        - updated_at
+        - completed_at
+      filter:
+        bid_request:
+          apartment:
+            owner_id:
+              _eq: X-Hasura-User-Id
+    comment: "Landlords can view escrow transactions for their properties"
+
+update_permissions:
+  - role: tenant
+    permission:
+      columns:
+        - cancellation_reason
+      filter:
+        _and:
+          - bid_request:
+              tenant_id:
+                _eq: X-Hasura-User-Id
+          - status:
+              _in: ["PENDING", "INITIATED"]
+      check:
+        bid_request:
+          tenant_id:
+            _eq: X-Hasura-User-Id
+      set:
+        cancelled_by: X-Hasura-User-Id
+    comment: "Tenants can only cancel their pending transactions"
+  - role: landlord
+    permission:
+      columns:
+        - cancellation_reason
+      filter:
+        _and:
+          - bid_request:
+              apartment:
+                owner_id:
+                  _eq: X-Hasura-User-Id
+          - status:
+              _in: ["PENDING", "INITIATED"]
+      check:
+        bid_request:
+          apartment:
+            owner_id:
+              _eq: X-Hasura-User-Id
+      set:
+        cancelled_by: X-Hasura-User-Id
+    comment: "Landlords can only cancel pending transactions"
