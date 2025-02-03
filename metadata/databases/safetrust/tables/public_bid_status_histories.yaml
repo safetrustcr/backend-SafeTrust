@@ -1,0 +1,73 @@
+table:
+  name: bid_status_histories
+  schema: public
+
+object_relationships:
+  - name: bid_request
+    using:
+      foreign_key_constraint_on: bid_request_id
+
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: ""
+  - role: tenant
+    permission:
+      columns:
+        - id
+        - bid_request_id
+        - status
+        - notes
+        - changed_by
+        - created_at
+      filter:
+        bid_request:
+          tenant_id:
+            _eq: X-Hasura-User-Id
+    comment: "Tenants can view status history of their own bids"
+  - role: landlord
+    permission:
+      columns:
+        - id
+        - bid_request_id
+        - status
+        - notes
+        - changed_by
+        - created_at
+      filter:
+        bid_request:
+          apartment:
+            owner_id:
+              _eq: X-Hasura-User-Id
+    comment: "Landlords can view status history of bids on their properties"
+
+insert_permissions:
+  - role: tenant
+    permission:
+      check:
+        bid_request:
+          tenant_id:
+            _eq: X-Hasura-User-Id
+      columns:
+        - bid_request_id
+        - status
+        - notes
+      set:
+        changed_by: X-Hasura-User-Id
+    comment: "Tenants can add status history when updating their bids"
+  - role: landlord
+    permission:
+      check:
+        bid_request:
+          apartment:
+            owner_id:
+              _eq: X-Hasura-User-Id
+      columns:
+        - bid_request_id
+        - status
+        - notes
+      set:
+        changed_by: X-Hasura-User-Id
+    comment: "Landlords can add status history when responding to bids"
