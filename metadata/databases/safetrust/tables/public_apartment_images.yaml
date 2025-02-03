@@ -1,3 +1,56 @@
 table:
   name: apartment_images
   schema: public
+
+object_relationships:
+  - name: apartment
+    using:
+      foreign_key_constraint_on: apartment_id
+
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: ""
+  - role: tenant
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - image_url
+        - uploaded_at
+      filter:
+        apartment:
+          is_available:
+            _eq: true
+          deleted_at:
+            _is_null: true
+    comment: "Tenants can view images of available apartments"
+  - role: landlord
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - image_url
+        - uploaded_at
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+    comment: "Landlords can view images of their own apartments"
+
+update_permissions:
+  - role: landlord
+    permission:
+      columns:
+        - image_url
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+      check:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+    comment: "Landlords can update images of their own apartments"
