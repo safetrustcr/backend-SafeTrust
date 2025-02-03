@@ -1,0 +1,99 @@
+table:
+  name: apartments
+  schema: public
+
+array_relationships:
+  - name: apartment_images
+    using:
+      foreign_key_constraint_on:
+        column: apartment_id
+        table:
+          name: apartment_images
+          schema: public
+  - name: bid_requests
+    using:
+      foreign_key_constraint_on:
+        column: apartment_id
+        table:
+          name: bid_requests
+          schema: public
+  - name: apartment_contracts
+    using:
+      foreign_key_constraint_on:
+        column: apartment_id
+        table:
+          name: apartment_contracts
+          schema: public
+
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: ""
+  - role: tenant
+    permission:
+      columns:
+        - id
+        - owner_id
+        - name
+        - description
+        - price
+        - warranty_deposit
+        - coordinates
+        - location_area
+        - address
+        - is_available
+        - available_from
+        - available_until
+        - created_at
+      filter:
+        is_available:
+          _eq: true
+        deleted_at:
+          _is_null: true
+    comment: "Tenants can view all available apartments"
+  - role: landlord
+    permission:
+      columns:
+        - id
+        - owner_id
+        - name
+        - description
+        - price
+        - warranty_deposit
+        - coordinates
+        - location_area
+        - address
+        - is_available
+        - available_from
+        - available_until
+        - created_at
+        - updated_at
+        - deleted_at
+      filter:
+        owner_id:
+          _eq: X-Hasura-User-Id
+    comment: "Landlords can view their own apartments"
+
+update_permissions:
+  - role: landlord
+    permission:
+      columns:
+        - name
+        - description
+        - price
+        - warranty_deposit
+        - coordinates
+        - location_area
+        - address
+        - is_available
+        - available_from
+        - available_until
+      filter:
+        owner_id:
+          _eq: X-Hasura-User-Id
+      check:
+        owner_id:
+          _eq: X-Hasura-User-Id
+    comment: "Landlords can update their own apartments"
