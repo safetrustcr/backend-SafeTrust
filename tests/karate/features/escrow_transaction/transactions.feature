@@ -16,6 +16,12 @@ Feature: Escrow Transactions Management
     Then status 200
     And match response contains { "id": 1, "amount": 1000 }
 
+  Scenario: Query non-existent escrow transaction by ID
+    Given path 'escrow_transactions', 999
+    When method get
+    Then status 404
+    And match response == { "error": "resource does not exist", "path": "$", "code": "not-found" }
+
   Scenario: Update escrow transaction details
     Given path 'escrow_transactions', 1
     And request { "amount": 1500 }
