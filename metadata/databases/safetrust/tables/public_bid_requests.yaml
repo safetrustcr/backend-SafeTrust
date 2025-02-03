@@ -1,0 +1,108 @@
+table:
+  name: bid_requests
+  schema: public
+
+object_relationships:
+  - name: apartment
+    using:
+      foreign_key_constraint_on: apartment_id
+  - name: tenant
+    using:
+      foreign_key_constraint_on: tenant_id
+
+array_relationships:
+  - name: bid_status_histories
+    using:
+      foreign_key_constraint_on:
+        column: bid_request_id
+        table:
+          name: bid_status_histories
+          schema: public
+
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: ""
+  - role: tenant
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - tenant_id
+        - current_status
+        - proposed_price
+        - desired_move_in
+        - created_at
+        - updated_at
+      filter:
+        tenant_id:
+          _eq: X-Hasura-User-Id
+        deleted_at:
+          _is_null: true
+    comment: "Tenants can view their own bid requests"
+  - role: landlord
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - tenant_id
+        - current_status
+        - proposed_price
+        - desired_move_in
+        - created_at
+        - updated_at
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+        deleted_at:
+          _is_null: true
+    comment: "Landlords can view bid requests for their apartments"
+
+update_permissions:
+  - role: tenant
+    permission:
+      columns:
+        - proposed_price
+        - desired_move_in
+      filter:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-User-Id
+          - current_status:
+              _in: ["DRAFT", "PENDING"]
+          - deleted_at:
+              _is_null: true
+      check:
+        tenant_id:
+          _eq: X-Hasura-User-Id
+    comment: "Tenants can update their own pending bid requests"
+  - role: landlord
+    permission:
+      columns:
+        - current_status
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+        deleted_at:
+          _is_null: true
+      check: {}
+    comment: "Landlords can update status of bid requests for their apartments"
+
+insert_permissions:
+  - role: tenant
+    permission:
+      check:
+        tenant_id:
+          _eq: X-Hasura-User-Id
+      columns:
+        - apartment_id
+        - proposed_price
+        - desired_move_in
+      set:
+        tenant_id: X-Hasura-User-Id
+        current_status: "DRAFT"
+    comment: "Tenants can create new bid requests"
