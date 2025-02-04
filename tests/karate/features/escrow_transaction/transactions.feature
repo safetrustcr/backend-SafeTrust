@@ -1,41 +1,141 @@
 Feature: Escrow Transactions Management
 
-  Background:
+Background:
     * url baseUrl
+    * header x-hasura-admin-secret = 'myadminsecretkey'
+    * def uuid = function() { return java.util.UUID.randomUUID() + '' }
+    * def testEscrowTransaction =
+      """
+      {
+        transaction_type: "CREATE_ESCROW",
+        status: "PENDING",
+        amount: 1000.00,
+        initial_deposit_percentage: 50
+      }
+      """
 
-  Scenario: Create escrow transaction with all required fields
-    Given path 'escrow_transactions'
-    And request { "amount": 1000, "currency": "USD", "sender_id": 1, "receiver_id": 2 }
-    When method post
-    Then status 201
-    And match response contains { "id": '#notnull', "amount": 1000 }
-
-  Scenario: Query escrow transaction by ID
-    Given path 'escrow_transactions', 1
-    When method get
+@create
+Scenario: Create and Delete Escrow Transaction
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    And request
+    """
+    {
+      query: "mutation CreateEscrowTransaction($object: escrow_transactions_insert_input!) {
+        insert_escrow_transactions_one(object: $object) {
+          id
+          transaction_type
+          status
+          amount
+          initial_deposit_percentage
+        }
+      }",
+      variables: {
+        object: #(testEscrowTransaction)
+      }
+    }
+    """
+    When method POST
     Then status 200
-    And match response contains { "id": 1, "amount": 1000 }
+    And match response.errors == '#notpresent'
+    * def createdEscrowId = response.data.insert_escrow_transactions_one.id
 
-  Scenario: Query non-existent escrow transaction by ID
-    Given path 'escrow_transactions', 999
-    When method get
-    Then status 404
-    And match response == { "error": "resource does not exist", "path": "$", "code": "not-found" }
-
-  Scenario: Update escrow transaction details
-    Given path 'escrow_transactions', 1
-    And request { "amount": 1500 }
-    When method put
+    # Cleanup - Add header again as Karate resets between steps
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    And request
+    """
+    {
+      query: "mutation DeleteEscrowTransaction($id: uuid!) {
+        delete_escrow_transactions(where: {id: {_eq: $id}}) {
+          affected_rows
+        }
+      }",
+      variables: {
+        id: '#(createdEscrowId)'
+      }
+    }
+    """
+    When method POST
     Then status 200
-    And match response contains { "amount": 1500 }
+    And match response.data.delete_escrow_transactions.affected_rows == 1
 
-  Scenario: Delete escrow transaction
-    Given path 'escrow_transactions', 1
-    When method delete
-    Then status 204
-
-  Scenario: List escrow transactions
-    Given path 'escrow_transactions'
-    When method get
+@query
+Scenario: Query Escrow Transaction by ID
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    And request
+    """
+    {
+      query: "mutation CreateEscrowTransaction($object: escrow_transactions_insert_input!) {
+        insert_escrow_transactions_one(object: $object) {
+          id
+        }
+      }",
+      variables: {
+        object: #(testEscrowTransaction)
+      }
+    }
+    """
+    When method POST
     Then status 200
-    And match response contains [ { "id": '#notnull', "amount": '#number' } ]
+    * def escrowId = response.data.insert_escrow_transactions_one.id
+
+    # Query with header
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    And request
+    """
+    {
+      query: "query GetEscrowTransaction($id: uuid!) {
+        escrow_transactions_by_pk(id: $id) {
+          id
+          transaction_type
+          status
+          amount
+          initial_deposit_percentage
+        }
+      }",
+      variables: {
+        id: '#(escrowId)'
+      }
+    }
+    """
+    When method POST
+    Then status 200
+    And match response.errors == '#notpresent'
+
+    # Cleanup
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    And request
+    """
+    {
+      query: "mutation DeleteEscrowTransaction($id: uuid!) {
+        delete_escrow_transactions(where: {id: {_eq: $id}}) {
+          affected_rows
+        }
+      }",
+      variables: {
+        id: '#(escrowId)'
+      }
+    }
+    """
+    When method POST
+    Then status 200
+
+@validation
+Scenario: Create with Negative Amount (Invalid)
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    * def invalidEscrow = { transaction_type: "CREATE_ESCROW", status: "PENDING", amount: -100.00 }
+    And request
+    """
+    {
+      query: "mutation CreateEscrowTransaction($object: escrow_transactions_insert_input!) {
+        insert_escrow_transactions_one(object: $object) {
+          id
+        }
+      }",
+      variables: {
+        object: #(invalidEscrow)
+      }
+    }
+    """
+    When method POST
+    Then status 200
+    And match response.errors != '#notpresent'
