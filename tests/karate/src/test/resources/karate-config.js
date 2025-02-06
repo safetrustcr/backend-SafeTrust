@@ -12,13 +12,13 @@ function fn() {
   };
 
   // Token helper function
-  config.tokenHelper = function (claims) {
+  config.tokenHelper = function(claims) {
     var Base64 = Java.type("java.util.Base64");
     var defaultClaims = {
       "https://hasura.io/jwt/claims": {
         "x-hasura-allowed-roles": ["user"],
         "x-hasura-default-role": "user",
-        "x-hasura-user-id": "00000000-0000-0000-0000-000000000000",
+        "x-hasura-user-id": claims.uid || "00000000-0000-0000-0000-000000000000",
       },
     };
 
@@ -40,10 +40,10 @@ function fn() {
   };
 
   // Set default headers
-  config.headers = {
-    "Content-Type": "application/json",
-    "X-Hasura-Admin-Secret": config.adminSecret,
-  };
+  karate.configure('headers', {
+    'Content-Type': 'application/json',
+    'x-hasura-admin-secret': config.adminSecret
+  });
 
   karate.log("Config initialized:", config);
   return config;
