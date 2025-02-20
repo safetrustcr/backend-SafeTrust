@@ -66,5 +66,5 @@ test-output/
 *.tap
 
 # Karate reports
-tests/target/
+target/
 tests/results/

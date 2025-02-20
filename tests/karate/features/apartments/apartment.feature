@@ -2,9 +2,9 @@ Feature: Apartment Management
 
 Background:
     * url baseUrl
-    * print '=== Loading feature file ==='
-    * print 'URL set to:', baseUrl
     * header x-hasura-admin-secret = adminSecret
+    * def apartment_created_response = callonce read('./create-apartment.feature')
+    * def apartment_created_id = apartment_created_response["response"]["data"]["insert_apartments_one"]["id"]
 
 # Check GraphQL endpoint health
 Scenario: Check GraphQL endpoint health
@@ -28,33 +28,6 @@ Scenario: Check apartments schema
     And match response.errors == '#notpresent'
     * print 'Schema:', response.data.__type
 
-# Create new apartment
-Scenario: Create new apartment
-    Given path '/'
-    And request
-    """
-    {
-      "query": "mutation($owner_id: String!, $name: String!, $price: Float!, $warranty_deposit: Float!, $coordinates: point!, $location_area: geometry!, $address: jsonb!, $available_from: timestamptz!) { 
-        insert_apartments_one(object: { owner_id: $owner_id, name: $name, price: $price, warranty_deposit: $warranty_deposit, coordinates: $coordinates, location_area: $location_area, address: $address, available_from: $available_from }) { 
-          id 
-        } 
-      }",
-      "variables": {
-        "owner_id": "user-123",
-        "name": "Cozy Apartment",
-        "price": 1200.00,
-        "warranty_deposit": 2400.00,
-        "coordinates": { "x": 40.7128, "y": -74.0060 },
-        "location_area": "POLYGON((...))",
-        "address": { "street": "Main St", "city": "New York", "zip": "10001" },
-        "available_from": "2025-02-02T00:00:00Z"
-      }
-    }
-    """
-    When method POST
-    Then status 201
-    And match response.errors == '#notpresent'
-    * def created_id = response.data.insert_apartments_one.id
 
 # Query apartment by ID
 Scenario: Query apartment by ID
@@ -76,7 +49,7 @@ Scenario: Query apartment by ID
         }
       }",
       "variables": {
-        "id": "#(created_id)"
+        "id": "#(apartment_created_id)"
       }
     }
     """
@@ -91,7 +64,7 @@ Scenario: Update apartment details
     And request
     """
     {
-      "query": "mutation UpdateApartment($id: uuid!, $price: Float!) {
+      "query": "mutation UpdateApartment($id: uuid!, $price: numeric!) {
         update_apartments_by_pk(
           pk_columns: {id: $id},
           _set: {price: $price}
@@ -101,7 +74,7 @@ Scenario: Update apartment details
         }
       }",
       "variables": {
-        "id": "#(created_id)",
+        "id": "#(apartment_created_id)",
         "price": 1300.00
       }
     }
@@ -123,14 +96,14 @@ Scenario: Delete apartment
         }
       }",
       "variables": {
-        "id": "#(created_id)"
+        "id": "#(apartment_created_id)"
       }
     }
     """
     When method POST
     Then status 200
     And match response.errors == '#notpresent'
-    And match response.data.delete_apartments_by_pk.id == "#(created_id)"
+    And match response.data.delete_apartments_by_pk.id == "#(apartment_created_id)"
 
 # List apartments
 Scenario: List apartments
