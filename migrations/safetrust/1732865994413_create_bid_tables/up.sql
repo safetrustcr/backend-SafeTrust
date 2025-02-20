@@ -66,7 +66,6 @@ CREATE TRIGGER update_bid_requests_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Función para verificar ofertas activas
 CREATE OR REPLACE FUNCTION check_active_bids()
 RETURNS TRIGGER AS $$
 BEGIN

@@ -32,6 +32,11 @@ services:
         condition: service_healthy
       data-connector-agent:
         condition: service_healthy
+    healthcheck:
+      test: nc -z localhost 8080
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
 
   data-connector-agent:
     image: hasura/graphql-data-connector:v2.42.0
@@ -47,25 +52,23 @@ services:
       timeout: 10s
       retries: 5
       start_period: 5s
-
-  hasura-cli:
+  console:
     build:
       context: .
       dockerfile: Dockerfile
-    tty: true
-    volumes:
-      - .:/app # Mount your Hasura project directory
-    environment:
-      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:8080
-      PG_DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/postgres
-    working_dir: /app
-    command: hasura console --address 0.0.0.0 --console-port 9695
     ports:
+      - "9693:9693"
       - "9695:9695"
+    environment:
+      HASURA_GRAPHQL_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/app
+      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET}
+      HASURA_GRAPHQL_ENDPOINT: http://127.0.0.1:8080
+      HASURA_RUN_CONSOLE: "true"
+    volumes:
+      - .:/usr/src/hasura
     depends_on:
       graphql-engine:
         condition: service_healthy
-
 
 volumes:
   db_data:
