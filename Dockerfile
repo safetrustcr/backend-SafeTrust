@@ -1,18 +1,14 @@
-# Use a lightweight Linux base image
-FROM debian:bullseye-slim
+FROM debian:buster-slim
 
-# Set environment variables for non-interactive installations
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install necessary dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Download and install Hasura CLI
+RUN apt-get update -y && apt-get install -y curl socat
+# RUN curl -L -o /usr/local/bin/hasura 
 RUN curl -L https://github.com/hasura/graphql-engine/raw/stable/cli/get.sh | bash
+RUN chmod +x /usr/local/bin/hasura
 
-# Set the default command to show Hasura CLI help
-CMD ["hasura", "console"]
+WORKDIR /app
+
+COPY . .
+
+RUN chmod +x ./start.sh
+
+CMD "./start.sh"

@@ -1,11 +1,13 @@
-- "!include public_geography_columns.yaml"
-- "!include public_geometry_columns.yaml"
-- "!include public_spatial_ref_sys.yaml"
-- "!include public_user_wallets.yaml"
-- "!include public_users.yaml"
-- "!include escrow_api_calls.yaml"
-- "!include escrow_transactions.yaml"
-- "!include escrow_xdr_transactions.yaml"
-- "!include public_apartments.yaml"
-- "!include public_apartment_images.yaml"
-- "!include public_bid_tables.yaml"
+- '!include public_geography_columns.yaml'
+- '!include public_geometry_columns.yaml'
+- '!include public_spatial_ref_sys.yaml'
+- '!include public_user_wallets.yaml'
+- '!include public_users.yaml'
+- '!include escrow_api_calls.yaml'
+- '!include escrow_transactions.yaml'
+- '!include escrow_xdr_transactions.yaml'
+- '!include public_apartments.yaml'
+- '!include public_apartment_images.yaml'
+- '!include public_bid_requests.yaml'
+- '!include public_bid_status_histories.yaml'
+
