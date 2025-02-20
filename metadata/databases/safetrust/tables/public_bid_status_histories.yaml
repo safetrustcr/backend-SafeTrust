@@ -1,0 +1,7 @@
+table:
+  schema: public
+  name: bid_status_histories
+object_relationships:
+  - name: bid_request
+    using:
+      foreign_key_constraint_on: bid_request_id

@@ -46,24 +46,11 @@ Ensures funds are automatically released based on the terms of the agreement, wi
 ### **Prerequisites**
 
 0. Install Docker and Docker Compose
-1. Download the Hasura global binary. See steps [here](https://hasura.io/docs/2.0/hasura-cli/install-hasura-cli/)
 2. Run
 
 ```shell
-
-docker compose up -d
-```
-
-3. Connect with database. For this run `hasura console` and follow this [guide](https://hasura.io/docs/2.0/databases/quickstart/#on-hasura-deployed-via-docker)
-
-Connect using an environment variable and just type `PG_DATABASE_URL`
-
-Name your database as `safetrust` (instead of default) when prompted to do so.
-
-Now, run the migrations.
-
-```shell
-hasura migrate apply --admin-secret myadminsecretkey
+bin/dc_prep
+bin/dc_console
 ```
 
 4. Adding migrations.
@@ -76,17 +63,15 @@ hasura migrate create [enable_postgis] --admin-secret myadminsecretkey
 
 where `enable_postgis` is the name of the migration. Please make sure to use descriptive names with verbs about what the migration is doing!
 
-Then to apply them:
-
-```shell
-hasura migrate apply --admin-secret myadminsecretkey
-```
+Then to apply them, stop the `bin/dc_worker` running with CTRL + C and re-start it again. Migrations are applied when the console runs in docker-compose.
 
 If you wanna use the hasura web console and access it on `http://localhost:9695/`:
 
 ```shell
 hasura console --admin-secret myadminsecretkey
 ```
+
+Don't forget to apply the metadata. Migrations and metadata are applied each time you stop the `bin/dc_console` command and run it again.
 
 And you should be good to go to start and work on this.
 
@@ -147,7 +132,7 @@ backend/
 To run all tests:
 
 ```bash
-docker compose -f docker-compose-test.yml up --build --abort-on-container-exit
+docker compose -f docker-compose-test.yml run --rm --build karate
 ```
 
 This command will:
@@ -178,14 +163,6 @@ After running the tests, you can find the HTML reports at:
 - Main config: `tests/karate/src/test/resources/karate-config.js`
 - Database config: `docker-compose-test.yml`
 - Test environment: `Dockerfile.test`
-
-## Troubleshooting
-
-If tests fail with connection errors:
-
-1. Ensure all containers are running: `docker compose -f docker-compose-test.yml ps`
-2. Check container logs: `docker compose -f docker-compose-test.yml logs`
-3. Verify network connectivity: `docker network inspect backend_test-network`
 
 ## Seeds 🌱
 
