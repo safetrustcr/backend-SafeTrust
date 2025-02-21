@@ -13,6 +13,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    volumes:
+      - ./migrations:/docker-entrypoint-initdb.d/migrations
       start_period: 10s
     networks:
       - test-network
