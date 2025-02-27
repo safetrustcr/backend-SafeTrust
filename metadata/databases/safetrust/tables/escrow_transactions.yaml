@@ -58,3 +58,29 @@ table:
         foreign_key_constraint_on:
           column: escrow_transaction_id
           table: escrow_api_calls
+  event_triggers:
+    - name: escrow_transaction_webhook
+      definition:
+        enable_manual: true
+        insert:
+          columns: '*'
+        update:
+          columns: '*'
+        delete:
+          columns: '*'
+      retry_conf:
+        num_retries: 5
+        interval_sec: 15
+        timeout_sec: 60
+        exponential_backoff: true
+        tolerance_seconds: 21600  # 6 hours tolerance for event processing
+      webhook: '{{WEBHOOK_BASE_URL}}/webhook/escrow-transaction'
+      headers:
+        - name: Authorization
+          value_from_env: WEBHOOK_SECRET
+        - name: Content-Type
+          value: application/json
+        - name: X-Hasura-Event-Id
+          value_from_env: EVENT_ID
+        - name: X-Idempotency-Key
+          value_from_env: EVENT_ID
