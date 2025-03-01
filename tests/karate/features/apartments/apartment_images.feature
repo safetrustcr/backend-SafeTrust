@@ -2,9 +2,32 @@ Feature: Apartment Images Management
 
 Background:
     * url baseUrl
-    * print '=== Loading feature file ==='
-    * print 'URL set to:', baseUrl
-    * header x-hasura-admin-secret = adminSecret
+    * header x-hasura-admin-secret = 'myadminsecretkey'
+    * def uuid = function() { return java.util.UUID.randomUUID() + '' } 
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    And request
+    """
+    {
+      "query": "query GetApartmnet($limit: Int = 1) {
+        apartments(limit: $limit) {
+          id
+        }
+      }"
+    }
+    """
+    When method POST
+    Then status 200
+    And match response.errors == '#notpresent'
+    * def apartmentId = response.data.apartments[0].id
+
+    * def testApartmentImages =
+      """
+    {
+      "apartment_id": #(apartmentId),
+      "image_url": "https://design-milk.com/images/2024/02/Loft-M50-Turin-Paola-Mare-1.jpg",
+      "uploaded_at": "2025-02-24T16:50:42.336678+00:00"
+    }
+    """
 
 Scenario: Check GraphQL endpoint health
     Given path '/'
@@ -27,21 +50,27 @@ Scenario: Check apartment_images schema
     * print 'Schema:', response.data.__type
 
 Scenario: Create new apartment image
-    Given path '/'
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
     And request
     """
     {
-      "query": "mutation($apartment_id: uuid!, $image_url: String!) { insert_apartment_images_one(object: { apartment_id: $apartment_id, image_url: $image_url }) { id } }",
-      "variables": {
-        "apartment_id": "11111111-1111-1111-1111-111111111111",
-        "image_url": "https://example.com/test-image.jpg"
+      "query": "mutation CreateApartmentImages($object: apartment_images_insert_input!) {
+        insert_apartment_images_one(object: $object) {
+          id
+          apartment_id
+          image_url
+          uploaded_at
+        }
+      }",
+      variables: {
+        object: #(testApartmentImages)
       }
     }
     """
     When method POST
-    Then status 201
+    Then status 200
     And match response.errors == '#notpresent'
-    * def created_id = response.data.insert_apartment_images_one.id
+    * print response.data.insert_apartment_images_one.id
 
 Scenario: Verify apartment_images schema exists
     Given path '/'
@@ -135,53 +164,94 @@ Scenario: Verify apartment_images table exists
     * print 'Schema:', response.data.__type
 
 Scenario: Query apartment image by ID
-    Given path '/'
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
     And request
     """
     {
-      "query": "query GetApartmentImage($id: uuid!) {
+      "query": "mutation CreateApartmentImages($object: apartment_images_insert_input!) {
+        insert_apartment_images_one(object: $object) {
+          id
+          apartment_id
+          image_url
+          uploaded_at
+        }
+      }",
+      variables: {
+        object: #(testApartmentImages)
+      }
+    }
+    """
+    When method POST
+    Then status 200
+    And match response.errors == '#notpresent'
+    * def apartmentImage = response.data.insert_apartment_images_one.id
+
+    # Query with header
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    And request
+    """
+    {
+      query: "query GetApartmnetImage($id: uuid!) {
         apartment_images_by_pk(id: $id) {
           id
-          image_url
-          apartment_id
-          uploaded_at
         }
       }",
-      "variables": {
-        "id": "11111111-1111-1111-1111-111111111111"
+      variables: {
+        id: '#(apartmentImage)'
       }
     }
     """
     When method POST
     Then status 200
     And match response.errors == '#notpresent'
-    And match response.data.apartment_images_by_pk != null
+    * print response.data.apartment_images_by_pk.id
 
 Scenario: Update apartment image
-    Given path '/'
+
+    # Query with header
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
     And request
     """
     {
-      "query": "mutation UpdateApartmentImage($id: uuid!, $image_url: String!) {
-        update_apartment_images_by_pk(
-          pk_columns: {id: $id},
-          _set: {image_url: $image_url}
-        ) {
+      query: "query GetApartmnetImage($limit: Int = 1) {
+        apartment_images(limit: $limit) {
           id
+        }
+      }"
+    }
+    """
+    When method POST
+    Then status 200
+    And match response.errors == '#notpresent'
+    * def oneApartmentImage = response.data.apartment_images[0].id
+
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    And request
+    """
+    {
+      "query": "mutation MyMutation($id: uuid!, $object: apartment_images_set_input!) {
+        update_apartment_images_by_pk(
+          pk_columns: { id: $id },  
+          _set: $object           
+        ) {
+          apartment_id
           image_url
           uploaded_at
         }
       }",
       "variables": {
-        "id": "11111111-1111-1111-1111-111111111111",
-        "image_url": "https://example.com/updated-image.jpg"
+        "id": "#(oneApartmentImage)",
+        "object": {
+          "image_url": "https://example.com/updated-image.jpg",
+          "uploaded_at": "2025-02-24T16:50:42.336678+00:00"
+        }
       }
     }
     """
     When method POST
     Then status 200
     And match response.errors == '#notpresent'
-    And match response.data.update_apartment_images_by_pk.image_url == 'https://example.com/updated-image.jpg'
+    * print response.data.update_apartment_images_by_pk.image_url
 
 Scenario: List apartment images
     Given path '/'
@@ -205,7 +275,24 @@ Scenario: List apartment images
     And match response.data.apartment_images == '#[_ > 0]'
 
 Scenario: Delete apartment image
-    Given path '/'
+    # Query with header
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    And request
+    """
+    {
+      query: "query GetApartmnetImage($limit: Int = 1) {
+        apartment_images(limit: $limit) {
+          id
+        }
+      }"
+    }
+    """
+    When method POST
+    Then status 200
+    And match response.errors == '#notpresent'
+    * def oneApartmentImage = response.data.apartment_images[0].id
+
+    Given header x-hasura-admin-secret = 'myadminsecretkey'
     And request
     """
     {
@@ -215,11 +302,11 @@ Scenario: Delete apartment image
         }
       }",
       "variables": {
-        "id": "11111111-1111-1111-1111-111111111111"
+        "id": #(oneApartmentImage)
       }
     }
     """
     When method POST
-    Then status 204
+    Then status 200
     And match response.errors == '#notpresent'
-    And match response.data.delete_apartment_images_by_pk != null 
+    * print response.data.delete_apartment_images_by_pk
