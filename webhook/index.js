@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
-const webhooksRoutes = require('./routes/webhooks');
+const webhooksRoutes = require('./webhooks');
 
 const app = express();
 
