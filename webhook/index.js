@@ -2,7 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
-const storageRoutes = require('./routes/storage');
+const webhooksRoutes = require('./routes/webhooks');
+
 const app = express();
 
 // Middleware
@@ -17,7 +18,8 @@ app.disable('x-powered-by');
 
 
 // Routes
-app.use('/storage', storageRoutes);
+app.use('/webhooks', webhooksRoutes);
+
 
 // Error handler
 app.use((err, req, res, next) => {
