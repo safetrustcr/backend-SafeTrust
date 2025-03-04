@@ -7,26 +7,20 @@ event_triggers:
       enable_manual: false
       update:
         columns:
-          - id
           - refund_status
-          - created_at
-          - amount
     retry_conf:
       interval_sec: 10
       num_retries: 0
       timeout_sec: 60
-    webhook: http://host.docker.internal:3000/webhooks/escrow_refund_status_update
+    webhook: http://localhost:3000/webhooks/escrow_refund_status_update
   - name: escrow_status_update
     definition:
       enable_manual: false
       update:
         columns:
           - status
-          - id
-          - created_at
-          - amount
     retry_conf:
       interval_sec: 10
       num_retries: 0
       timeout_sec: 60
-    webhook: http://host.docker.internal:3000/webhooks/escrow_status_update
+    webhook: http://localhost:3000/webhooks/escrow_status_update
