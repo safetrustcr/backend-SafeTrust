@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const storageRoutes = require('./routes/storage');
+const webhooksRoutes = require('./routes/webhooks');
 
 const app = express();
 
@@ -14,6 +15,8 @@ app.use(cors({
 }));
 app.use(morgan('tiny'));
 app.disable('x-powered-by');
+app.use('/webhooks', webhooksRoutes);
+
 
 // Routes
 app.use('/storage', storageRoutes);
