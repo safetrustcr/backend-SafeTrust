@@ -1,22 +1,33 @@
 const express = require('express');
 const router = express.Router();
 const { Pool } = require('pg');
-const { logger } = require('../config/logger');
+const winston = require('winston');
+const config = require('../config/webhook');
 
 // Configure database connection
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+// Configure logger
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'escrow-transaction-webhook' },
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'logs/escrow-webhook-error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'logs/escrow-webhook.log' })
+  ],
+});
+
 // Authentication middleware
 const authenticateWebhook = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const expectedSecret = process.env.WEBHOOK_SECRET;
-
-  logger.info('Auth debug', {
-    receivedHeader: authHeader,
-    expectedSecret: expectedSecret
-  });
 
   if (!authHeader || authHeader !== expectedSecret) {
     logger.error('Authentication failed for webhook request', {
@@ -28,11 +39,11 @@ const authenticateWebhook = (req, res, next) => {
   next();
 };
 
-// Idempotency check middleware
+// Idempotency check middleware using escrow_transactions table
 const checkIdempotency = async (req, res, next) => {
-  const idempotencyKey = req.headers['x-idempotency-key'];
+  const eventId = req.headers['x-idempotency-key'] || req.headers['x-hasura-event-id'];
   
-  if (!idempotencyKey) {
+  if (!eventId) {
     logger.warn('Missing idempotency key', {
       requestId: req.headers['x-hasura-event-id']
     });
@@ -40,49 +51,58 @@ const checkIdempotency = async (req, res, next) => {
   }
 
   try {
+    // Get transaction ID from request body
+    const eventData = req.body;
+    const operation = eventData.event?.op;
+    const transactionData = operation === 'DELETE' ? eventData.event?.data?.old : eventData.event?.data?.new;
+    
+    if (!transactionData || !transactionData.id) {
+      logger.warn('Missing transaction ID in event payload', {
+        eventId: eventId
+      });
+      return next();
+    }
+
+    // Check if this transaction has already processed this event ID
     const result = await pool.query(
-      'SELECT id FROM webhook_processed_events WHERE event_id = $1',
-      [idempotencyKey]
+      `SELECT id, webhook_status, webhook_attempts 
+       FROM escrow_transactions 
+       WHERE id = $1 AND http_response_body->>'eventId' = $2`,
+      [transactionData.id, eventId]
     );
     
     if (result.rows.length > 0) {
       logger.info('Duplicate event detected, skipping processing', {
-        eventId: idempotencyKey
+        eventId: eventId,
+        transactionId: transactionData.id
       });
-      return res.status(200).json({ message: 'Event already processed' });
+      return res.status(200).json({ message: 'Event already processed', eventId: eventId });
     }
     
     next();
   } catch (error) {
     logger.error('Error checking idempotency', {
-      eventId: idempotencyKey,
+      eventId: eventId,
       error: error.message
     });
     next();
   }
 };
 
-// Record processed event
-const recordProcessedEvent = async (eventId, status, details) => {
-  try {
-    await pool.query(
-      'INSERT INTO webhook_processed_events (event_id, status, details, processed_at) VALUES ($1, $2, $3, NOW())',
-      [eventId, status, JSON.stringify(details)]
-    );
-  } catch (error) {
-    logger.error('Failed to record processed event', {
-      eventId,
-      error: error.message
-    });
-  }
-};
-
 // Update escrow transaction with webhook response
-const updateEscrowTransaction = async (id, status, responseData) => {
+const updateTransactionWithResponse = async (id, status, responseData, eventId) => {
   try {
     await pool.query(
-      'UPDATE escrow_transactions SET http_status_code = $1, http_response_body = $2, updated_at = NOW() WHERE id = $3',
-      [status, responseData, id]
+      `UPDATE escrow_transactions 
+       SET http_status_code = $1, 
+           http_response_body = $2, 
+           webhook_status = $3,
+           webhook_attempts = COALESCE(webhook_attempts, 0) + 1,
+           last_webhook_attempt = NOW(),
+           updated_at = NOW()
+       WHERE id = $4`,
+      [status, JSON.stringify({ ...responseData, eventId }), 
+       status >= 200 && status < 300 ? 'success' : 'failed', id]
     );
   } catch (error) {
     logger.error('Failed to update escrow transaction', {
@@ -101,7 +121,7 @@ router.post('/escrow-transaction', authenticateWebhook, checkIdempotency, async 
     eventId,
     operation: eventData.event?.op,
     table: eventData.table?.name,
-    transactionId: eventData.event?.data?.new?.id
+    transactionId: eventData.event?.data?.new?.id || eventData.event?.data?.old?.id
   });
 
   try {
@@ -117,7 +137,6 @@ router.post('/escrow-transaction', authenticateWebhook, checkIdempotency, async 
     const transactionType = transactionData.transaction_type;
     const status = transactionData.status;
     
-    // Example processing logic - customize based on your requirements
     let processingResult;
     
     switch (operation) {
@@ -134,17 +153,12 @@ router.post('/escrow-transaction', authenticateWebhook, checkIdempotency, async 
         throw new Error(`Unsupported operation: ${operation}`);
     }
     
-    // Record the processed event
-    await recordProcessedEvent(eventId, 'success', {
-      transactionId: transactionData.id,
-      result: processingResult
-    });
-    
     // Update the transaction with response data
-    await updateEscrowTransaction(
+    await updateTransactionWithResponse(
       transactionData.id, 
       200, 
-      { processed: true, result: processingResult }
+      { processed: true, result: processingResult },
+      eventId
     );
     
     logger.info('Successfully processed escrow transaction webhook', {
@@ -156,7 +170,8 @@ router.post('/escrow-transaction', authenticateWebhook, checkIdempotency, async 
     return res.status(200).json({
       success: true,
       message: 'Webhook processed successfully',
-      data: processingResult
+      data: processingResult,
+      eventId: eventId
     });
     
   } catch (error) {
@@ -166,28 +181,35 @@ router.post('/escrow-transaction', authenticateWebhook, checkIdempotency, async 
       stack: error.stack
     });
     
-    // Record the failed event
-    await recordProcessedEvent(eventId, 'error', {
-      error: error.message,
-      stack: error.stack
-    });
-    
     // For certain errors, we might want to return a 4xx status to prevent retries
     const isClientError = error.message.includes('Invalid') || error.message.includes('Unsupported');
+    const statusCode = isClientError ? 400 : 500;
     
-    if (isClientError) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid webhook data',
-        error: error.message
+    // If we can extract the transaction ID, update it with the error details
+    try {
+      const operation = req.body.event?.op;
+      const transactionData = operation === 'DELETE' ? req.body.event?.data?.old : req.body.event?.data?.new;
+      
+      if (transactionData && transactionData.id) {
+        await updateTransactionWithResponse(
+          transactionData.id,
+          statusCode,
+          { success: false, error: error.message },
+          eventId
+        );
+      }
+    } catch (updateError) {
+      logger.error('Failed to update transaction with error details', {
+        error: updateError.message
       });
     }
     
-    // For server errors, return 500 to trigger retry mechanism
-    return res.status(500).json({
+    // Return error response
+    return res.status(statusCode).json({
       success: false,
-      message: 'Internal server error processing webhook',
-      error: error.message
+      message: isClientError ? 'Invalid webhook data' : 'Internal server error processing webhook',
+      error: error.message,
+      eventId: eventId
     });
   }
 });
@@ -206,6 +228,7 @@ async function handleNewTransaction(transactionData) {
 }
 
 async function handleUpdatedTransaction(newData, oldData) {
+  
   logger.info('Processing updated escrow transaction', {
     transactionId: newData.id,
     oldStatus: oldData.status,

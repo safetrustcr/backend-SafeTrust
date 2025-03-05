@@ -74,7 +74,7 @@ class WebhookMonitor {
       await pool.query(
         `UPDATE escrow_transactions 
          SET webhook_status = 'failed', 
-             webhook_attempts = webhook_attempts + 1,
+             webhook_attempts = COALESCE(webhook_attempts, 0) + 1,
              last_webhook_attempt = NOW(),
              http_status_code = $1,
              http_error_details = $2

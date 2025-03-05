@@ -1,16 +1,3 @@
--- Create table for tracking processed webhook events
-CREATE TABLE IF NOT EXISTS webhook_processed_events (
-  id SERIAL PRIMARY KEY,
-  event_id TEXT NOT NULL,
-  status TEXT NOT NULL,
-  details JSONB,
-  processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Create index for fast lookups by event_id
-CREATE UNIQUE INDEX IF NOT EXISTS webhook_processed_events_event_id_idx ON webhook_processed_events (event_id);
-
 -- Add column for webhook_status to escrow_transactions if it doesn't exist
 DO $$ 
 BEGIN
