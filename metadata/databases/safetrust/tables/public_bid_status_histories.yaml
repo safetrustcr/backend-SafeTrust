@@ -1,6 +1,6 @@
 table:
-  schema: public
   name: bid_status_histories
+  schema: public
 object_relationships:
   - name: bid_request
     using:

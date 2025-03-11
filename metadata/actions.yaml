@@ -13,7 +13,6 @@ actions:
       forward_client_headers: true
     permissions:
       - role: anonymous
-
 custom_types:
   enums: []
   input_objects:
@@ -22,4 +21,3 @@ custom_types:
   objects:
     - name: VerificationResponse
   scalars: []
-  
