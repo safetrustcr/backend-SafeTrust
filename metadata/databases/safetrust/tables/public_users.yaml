@@ -10,7 +10,12 @@ array_relationships:
           name: user_wallets
           schema: public
 select_permissions:
-  - role: users
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: ""
+  - role: landlord
     permission:
       columns:
         - country_code
@@ -26,11 +31,6 @@ select_permissions:
       filter:
         id:
           _eq: X-Hasura-User-Id
-    comment: ""
-  - role: anonymous
-    permission:
-      columns: []
-      filter: {}
     comment: ""
   - role: tenant
     permission:
@@ -49,7 +49,7 @@ select_permissions:
         id:
           _eq: X-Hasura-User-Id
     comment: ""
-  - role: landlord
+  - role: users
     permission:
       columns:
         - country_code
@@ -67,7 +67,7 @@ select_permissions:
           _eq: X-Hasura-User-Id
     comment: ""
 update_permissions:
-  - role: users
+  - role: landlord
     permission:
       columns:
         - country_code
@@ -101,7 +101,7 @@ update_permissions:
         id:
           _eq: X-Hasura-User-Id
     comment: ""
-  - role: landlord
+  - role: users
     permission:
       columns:
         - country_code
