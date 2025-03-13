@@ -46,14 +46,14 @@ Ensures funds are automatically released based on the terms of the agreement, wi
 ### **Prerequisites**
 
 0. Install Docker and Docker Compose
-2. Run
+1. Run
 
 ```shell
 bin/dc_prep
 bin/dc_console
 ```
 
-4. Adding migrations.
+2. Adding migrations.
 
 You can add migrations either with the hasura console or by the command:
 
