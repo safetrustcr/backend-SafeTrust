@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_PASSWORD: postgrespassword
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -18,7 +18,7 @@ services:
   graphql-engine:
     image: hasura/graphql-engine:v2.42.0
     ports:
-      - "8080:8080"
+      - "8082:8080"  # Changed from 8081 to 8082
     restart: always
     environment:
       HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/postgres
@@ -26,7 +26,7 @@ services:
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
       HASURA_GRAPHQL_DEV_MODE: "true"
       HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
-      HASURA_GRAPHQL_METADATA_DEFAULTS: '{"backend_configs":{"dataconnector":{"athena":{"uri":"http://data-connector-agent:8081/api/v1/athena"},"mariadb":{"uri":"http://data-connector-agent:8081/api/v1/mariadb"},"mysql8":{"uri":"http://data-connector-agent:8081/api/v1/mysql"},"oracle":{"uri":"http://data-connector-agent:8081/api/v1/oracle"},"snowflake":{"uri":"http://data-connector-agent:8081/api/v1/snowflake"}}}}'
+      HASURA_GRAPHQL_METADATA_DEFAULTS: '{"backend_configs":{"dataconnector":{"athena":{"uri":"http://data-connector-agent:8083/api/v1/athena"},"mariadb":{"uri":"http://data-connector-agent:8083/api/v1/mariadb"},"mysql8":{"uri":"http://data-connector-agent:8083/api/v1/mysql"},"oracle":{"uri":"http://data-connector-agent:8083/api/v1/oracle"},"snowflake":{"uri":"http://data-connector-agent:8083/api/v1/snowflake"}}}}'
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,7 +42,7 @@ services:
     image: hasura/graphql-data-connector:v2.42.0
     restart: always
     ports:
-      - "8081:8081"
+      - "8083:8081"  # Changed from 8081:8081 to 8083:8081
     environment:
       QUARKUS_LOG_LEVEL: ERROR
       QUARKUS_OPENTELEMETRY_ENABLED: "false"
@@ -62,7 +62,7 @@ services:
     environment:
       HASURA_GRAPHQL_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/app
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET}
-      HASURA_GRAPHQL_ENDPOINT: http://127.0.0.1:8080
+      HASURA_GRAPHQL_ENDPOINT: http://127.0.0.1:8082  # Updated to match new graphql-engine port
       HASURA_RUN_CONSOLE: "true"
     volumes:
       - .:/usr/src/hasura
