@@ -1,0 +1,67 @@
+table:
+  name: rooms
+  schema: public
+configuration:
+  column_config:
+    room_id:
+      custom_name: room_id
+    hotel_id:
+      custom_name: hotel_id
+    room_number:
+      custom_name: room_number
+    room_type:
+      custom_name: room_type
+    price_night:
+      custom_name: price_night
+    status:
+      custom_name: status
+    capacity:
+      custom_name: capacity
+    created_at:
+      custom_name: created_at
+    updated_at:
+      custom_name: updated_at
+  custom_root_fields: {}
+object_relationships:
+  - name: hotel
+    using:
+      foreign_key_constraint_on: hotel_id
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - room_id
+        - hotel_id
+        - room_number
+        - room_type
+        - price_night
+        - status
+        - capacity
+        - created_at
+        - updated_at
+      filter: {}
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns:
+        - hotel_id
+        - room_number
+        - room_type
+        - price_night
+        - status
+        - capacity
+update_permissions:
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - room_number
+        - room_type
+        - price_night
+        - status
+        - capacity
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}
