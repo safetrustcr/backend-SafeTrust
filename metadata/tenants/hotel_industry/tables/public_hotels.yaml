@@ -1,0 +1,76 @@
+table:
+  name: hotels
+  schema: public
+  columns:
+    - name: id
+      type: uuid
+      default: gen_random_uuid()
+      is_nullable: false
+      is_primary_key: true
+    - name: name
+      type: varchar(20)
+      is_nullable: false
+    - name: description
+      type: varchar(50)
+      is_nullable: true
+    - name: address
+      type: varchar(50)
+      is_nullable: false
+    - name: location_area
+      type: varchar(20)
+      is_nullable: true
+    - name: created_at
+      type: timestamptz
+      default: now()
+      is_nullable: false
+    - name: updated_at
+      type: timestamptz
+      default: now()
+      is_nullable: false
+  # Defining basic permissions - can be adjusted as needed
+select_permissions:
+  - role: anonymous
+    permission:
+      columns:
+        - id
+        - name
+        - description
+        - address
+        - location_area
+        - created_at
+      filter: {}
+  - role: user
+    permission:
+      columns:
+        - id
+        - name
+        - description
+        - address
+        - location_area
+        - created_at
+        - updated_at
+      filter: {}
+insert_permissions:
+  - role: admin
+    permission:
+      columns:
+        - name
+        - description
+        - address
+        - location_area
+      check: {}
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - name
+        - description
+        - address
+        - location_area
+        - updated_at
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {} 
