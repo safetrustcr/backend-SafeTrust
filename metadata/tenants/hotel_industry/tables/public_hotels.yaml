@@ -73,4 +73,13 @@ update_permissions:
 delete_permissions:
   - role: admin
     permission:
-      filter: {} 
+      filter: {}
+  # Add trigger to automatically update updated_at
+  triggers:
+    - name: update_updated_at
+      definition:
+        enable_manual: false
+        events:
+          - update
+        function: update_updated_at_column
+        function_schema: public 
