@@ -242,7 +242,7 @@ Scenario: Update apartment image
       "variables": {
         "id": "#(oneApartmentImage)",
         "object": {
-          "image_url": "https://example.com/updated-image.jpg",
+          "image_url": testApartmentImages,
           "uploaded_at": "2025-02-24T16:50:42.336678+00:00"
         }
       }

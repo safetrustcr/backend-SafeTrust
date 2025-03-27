@@ -7,14 +7,12 @@ services:
     environment:
       POSTGRES_PASSWORD: postgrespassword
     ports:
-      - "5433:5432"
+      - "5434:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
-    volumes:
-      - ./migrations:/docker-entrypoint-initdb.d/migrations
       start_period: 10s
     networks:
       - test-network
@@ -44,7 +42,7 @@ services:
     image: hasura/graphql-data-connector:v2.42.0
     restart: always
     ports:
-      - "8082:8081"
+      - "8080:8081"
     environment:
       QUARKUS_LOG_LEVEL: ERROR
       QUARKUS_OPENTELEMETRY_ENABLED: "false"
