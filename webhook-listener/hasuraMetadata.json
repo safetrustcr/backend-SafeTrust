@@ -1,0 +1,427 @@
+{
+    "resource_version": 10,
+    "metadata": {
+      "version": 3,
+      "sources": [
+        {
+          "name": "safetrust",
+          "kind": "postgres",
+          "tables": [
+            {
+              "table": {
+                "name": "apartment_images",
+                "schema": "public"
+              }
+            },
+            {
+              "table": {
+                "name": "apartments",
+                "schema": "public"
+              }
+            },
+            {
+              "table": {
+                "name": "bid_requests",
+                "schema": "public"
+              }
+            },
+            {
+              "table": {
+                "name": "bid_status_histories",
+                "schema": "public"
+              },
+              "object_relationships": [
+                {
+                  "name": "bid_request",
+                  "using": {
+                    "foreign_key_constraint_on": "bid_request_id"
+                  }
+                }
+              ]
+            },
+            {
+              "table": {
+                "name": "escrow_api_calls",
+                "schema": "public"
+              }
+            },
+            {
+              "table": {
+                "name": "escrow_transactions",
+                "schema": "public"
+              },
+              "event_triggers": [
+                {
+                  "name": "escrow_transaction_insert_trigger",
+                  "definition": {
+                    "enable_manual": false,
+                    "insert": {
+                      "columns": "*"
+                    }
+                  },
+                  "retry_conf": {
+                    "interval_sec": 10,
+                    "num_retries": 3,
+                    "timeout_sec": 60
+                  },
+                  "webhook": "http://localhost:3000/event/escrow-transaction",
+                  "request_transform": {
+                    "body": {
+                      "action": "transform",
+                      "template": "{\r\n  \"event\": {\r\n    \"op\": \"INSERT\",\r\n    \"data\": {\r\n      \"old\": \"null\",\r\n      \"new\": {\r\n        \"id\": \"{$body.escrow_transactions.id}\",\r\n        \"transaction_type\": \"{$body.escrow_transactions.transaction_type}\",\r\n        \"status\": \"{$body.escrow_transactions.status}\",\r\n        \"refund_status\": \"{$body.escrow_transactions.refund_status}\",\r\n        \"amount\": \"{$body.escrow_transactions.amount}\",\r\n        \"contract_id\": \"{$body.escrow_transactions.contract_id}\",\r\n        \"engagement_id\": \"{$body.escrow_transactions.engagement_id}\",\r\n        \"bid_request_id\": \"{$body.escrow_transactions.bid_request_id}\",\r\n        \"signer_address\": \"{$body.escrow_transactions.signer_address}\",\r\n        \"initial_deposit_percentage\": \"{$body.escrow_transactions.initial_deposit_percentage}\",\r\n        \"cancelled_by\": \"{$body.escrow_transactions.cancelled_by}\",\r\n        \"cancellation_reason\": \"{$body.escrow_transactions.cancellation_reason}\",\r\n        \"metadata\": \"{$body.escrow_transactions.metadata}\",\r\n        \"created_at\": \"{$body.escrow_transactions.created_at}\",\r\n        \"updated_at\": \"{$body.escrow_transactions.updated_at}\",\r\n        \"completed_at\": \"{$body.escrow_transactions.completed_at}\"\r\n      }\r\n    }\r\n  },\r\n  \"trigger\": {\r\n    \"name\": \"escrow_transaction_insert_trigger\"\r\n  },\r\n  \"table\": {\r\n    \"schema\": \"public\",\r\n    \"name\": \"escrow_transactions\"\r\n  }\r\n}\r\n"
+                    },
+                    "template_engine": "Kriti",
+                    "version": 2
+                  }
+                }
+              ]
+            },
+            {
+              "table": {
+                "name": "escrow_xdr_transactions",
+                "schema": "public"
+              }
+            },
+            {
+              "table": {
+                "name": "geography_columns",
+                "schema": "public"
+              }
+            },
+            {
+              "table": {
+                "name": "geometry_columns",
+                "schema": "public"
+              }
+            },
+            {
+              "table": {
+                "name": "spatial_ref_sys",
+                "schema": "public"
+              }
+            },
+            {
+              "table": {
+                "name": "user_wallets",
+                "schema": "public"
+              },
+              "object_relationships": [
+                {
+                  "name": "user",
+                  "using": {
+                    "foreign_key_constraint_on": "user_id"
+                  }
+                }
+              ]
+            },
+            {
+              "table": {
+                "name": "users",
+                "schema": "public"
+              },
+              "array_relationships": [
+                {
+                  "name": "user_wallets",
+                  "using": {
+                    "foreign_key_constraint_on": {
+                      "column": "user_id",
+                      "table": {
+                        "name": "user_wallets",
+                        "schema": "public"
+                      }
+                    }
+                  }
+                }
+              ],
+              "select_permissions": [
+                {
+                  "role": "anonymous",
+                  "permission": {
+                    "columns": [],
+                    "filter": {}
+                  },
+                  "comment": ""
+                },
+                {
+                  "role": "landlord",
+                  "permission": {
+                    "columns": [
+                      "country_code",
+                      "email",
+                      "first_name",
+                      "id",
+                      "last_name",
+                      "last_seen",
+                      "location",
+                      "phone_number",
+                      "profile_image_url",
+                      "summary"
+                    ],
+                    "filter": {
+                      "id": {
+                        "_eq": "X-Hasura-User-Id"
+                      }
+                    }
+                  },
+                  "comment": ""
+                },
+                {
+                  "role": "tenant",
+                  "permission": {
+                    "columns": [
+                      "country_code",
+                      "email",
+                      "first_name",
+                      "id",
+                      "last_name",
+                      "last_seen",
+                      "location",
+                      "phone_number",
+                      "profile_image_url",
+                      "summary"
+                    ],
+                    "filter": {
+                      "id": {
+                        "_eq": "X-Hasura-User-Id"
+                      }
+                    }
+                  },
+                  "comment": ""
+                },
+                {
+                  "role": "users",
+                  "permission": {
+                    "columns": [
+                      "country_code",
+                      "email",
+                      "first_name",
+                      "id",
+                      "last_name",
+                      "last_seen",
+                      "location",
+                      "phone_number",
+                      "profile_image_url",
+                      "summary"
+                    ],
+                    "filter": {
+                      "id": {
+                        "_eq": "X-Hasura-User-Id"
+                      }
+                    }
+                  },
+                  "comment": ""
+                }
+              ],
+              "update_permissions": [
+                {
+                  "role": "landlord",
+                  "permission": {
+                    "columns": [
+                      "country_code",
+                      "first_name",
+                      "last_name",
+                      "location",
+                      "phone_number",
+                      "profile_image_url",
+                      "summary"
+                    ],
+                    "filter": {
+                      "id": {
+                        "_eq": "X-Hasura-User-Id"
+                      }
+                    },
+                    "check": {
+                      "id": {
+                        "_eq": "X-Hasura-User-Id"
+                      }
+                    }
+                  },
+                  "comment": ""
+                },
+                {
+                  "role": "tenant",
+                  "permission": {
+                    "columns": [
+                      "country_code",
+                      "first_name",
+                      "last_name",
+                      "location",
+                      "phone_number",
+                      "profile_image_url",
+                      "summary"
+                    ],
+                    "filter": {
+                      "id": {
+                        "_eq": "X-Hasura-User-Id"
+                      }
+                    },
+                    "check": {
+                      "id": {
+                        "_eq": "X-Hasura-User-Id"
+                      }
+                    }
+                  },
+                  "comment": ""
+                },
+                {
+                  "role": "users",
+                  "permission": {
+                    "columns": [
+                      "country_code",
+                      "first_name",
+                      "last_name",
+                      "location",
+                      "phone_number",
+                      "profile_image_url",
+                      "summary"
+                    ],
+                    "filter": {
+                      "id": {
+                        "_eq": "X-Hasura-User-Id"
+                      }
+                    },
+                    "check": {
+                      "id": {
+                        "_eq": "X-Hasura-User-Id"
+                      }
+                    }
+                  },
+                  "comment": ""
+                }
+              ]
+            }
+          ],
+          "configuration": {
+            "connection_info": {
+              "database_url": {
+                "from_env": "PG_DATABASE_URL"
+              },
+              "isolation_level": "read-committed",
+              "use_prepared_statements": false
+            }
+          }
+        }
+      ],
+      "actions": [
+        {
+          "name": "sendVerificationCode",
+          "definition": {
+            "handler": "http://192.168.0.167:3000/send-verification",
+            "output_type": "VerificationResponse!",
+            "forward_client_headers": true,
+            "ignored_client_headers": [
+              "Content-Length",
+              "Content-MD5",
+              "User-Agent",
+              "Host",
+              "Origin",
+              "Referer",
+              "Accept",
+              "Accept-Encoding",
+              "Accept-Language",
+              "Accept-Datetime",
+              "Cache-Control",
+              "Connection",
+              "DNT",
+              "Content-Type"
+            ],
+            "arguments": [
+              {
+                "name": "input",
+                "type": "SendVerificationInput!"
+              }
+            ],
+            "type": "mutation",
+            "kind": "synchronous"
+          },
+          "permissions": [
+            {
+              "role": "anonymous"
+            }
+          ]
+        },
+        {
+          "name": "verifyEmailCode",
+          "definition": {
+            "handler": "http://localhost:3000/verify-code",
+            "output_type": "VerificationResponse!",
+            "forward_client_headers": true,
+            "ignored_client_headers": [
+              "Content-Length",
+              "Content-MD5",
+              "User-Agent",
+              "Host",
+              "Origin",
+              "Referer",
+              "Accept",
+              "Accept-Encoding",
+              "Accept-Language",
+              "Accept-Datetime",
+              "Cache-Control",
+              "Connection",
+              "DNT",
+              "Content-Type"
+            ],
+            "arguments": [
+              {
+                "name": "input",
+                "type": "VerifyCodeInput!"
+              }
+            ],
+            "type": "mutation",
+            "kind": "synchronous"
+          },
+          "permissions": [
+            {
+              "role": "anonymous"
+            }
+          ]
+        }
+      ],
+      "custom_types": {
+        "input_objects": [
+          {
+            "name": "SendVerificationInput",
+            "fields": [
+              {
+                "name": "email",
+                "type": "String!"
+              }
+            ]
+          },
+          {
+            "name": "VerifyCodeInput",
+            "fields": [
+              {
+                "name": "email",
+                "type": "String!"
+              },
+              {
+                "name": "code",
+                "type": "String!"
+              }
+            ]
+          }
+        ],
+        "objects": [
+          {
+            "name": "VerificationResponse",
+            "fields": [
+              {
+                "name": "success",
+                "type": "Boolean!"
+              },
+              {
+                "name": "message",
+                "type": "String!"
+              },
+              {
+                "name": "expiresAt",
+                "type": "timestamptz"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
