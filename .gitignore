@@ -68,3 +68,4 @@ test-output/
 # Karate reports
 target/
 tests/results/
+venv/
