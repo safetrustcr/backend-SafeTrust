@@ -88,9 +88,9 @@ services:
       - SMTP_HOST=smtp-relay.brevo.com
       - SMTP_PORT=465
       - SMTP_SECURE=true
-      - SMTP_USER=758cd3002@smtp-brevo.com
-      - SMTP_PASS=xsmtpsib-7dd1ffa5113ed3f7a32c6df919f44c6cecb7fcd06640501d0c67ba6b88965d07-gFazbwU56YHGTcjt
-      - SMTP_FROM=contacto@fivemy.cl
+      - SMTP_USER=your-user
+      - SMTP_PASS=your-password
+      - SMTP_FROM=your-email@example.com
     volumes:
       - ./webhook:/usr/src/webhook
       - /usr/src/webhook/node_modules
