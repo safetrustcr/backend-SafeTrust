@@ -62,13 +62,47 @@ services:
     environment:
       HASURA_GRAPHQL_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/app
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET}
-      HASURA_GRAPHQL_ENDPOINT: http://127.0.0.1:8082  # Updated to match new graphql-engine port
+      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:8080/v1/graphql  # Using Docker service name and internal port
       HASURA_RUN_CONSOLE: "true"
     volumes:
       - .:/usr/src/hasura
     depends_on:
       graphql-engine:
         condition: service_healthy
+
+  webhook:
+    build:
+      context: ./webhook
+      dockerfile: Dockerfile
+    ports:
+      - "8084:3000"
+    environment:
+      - NODE_ENV=development
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET=${S3_BUCKET}
+      - FRONTEND_URL=http://localhost:3000
+      - NEXT_PUBLIC_HASURA_GRAPHQL_URL=http://graphql-engine:8080/v1/graphql
+      - HASURA_GRAPHQL_ADMIN_SECRET=${HASURA_GRAPHQL_ADMIN_SECRET}
+      - SMTP_HOST=smtp-relay.brevo.com
+      - SMTP_PORT=465
+      - SMTP_SECURE=true
+      - SMTP_USER=758cd3002@smtp-brevo.com
+      - SMTP_PASS=xsmtpsib-7dd1ffa5113ed3f7a32c6df919f44c6cecb7fcd06640501d0c67ba6b88965d07-gFazbwU56YHGTcjt
+      - SMTP_FROM=contacto@fivemy.cl
+    volumes:
+      - ./webhook:/usr/src/webhook
+      - /usr/src/webhook/node_modules
+    depends_on:
+      - postgres
+      - graphql-engine
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 volumes:
   db_data:
