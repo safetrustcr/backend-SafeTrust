@@ -85,7 +85,7 @@ services:
       - FRONTEND_URL=http://localhost:3000
       - NEXT_PUBLIC_HASURA_GRAPHQL_URL=http://graphql-engine:8080/v1/graphql
       - HASURA_GRAPHQL_ADMIN_SECRET=${HASURA_GRAPHQL_ADMIN_SECRET}
-      - SMTP_HOST=smtp-relay.brevo.com
+      - SMTP_HOST=smtp.host.com
       - SMTP_PORT=465
       - SMTP_SECURE=true
       - SMTP_USER=your-user
