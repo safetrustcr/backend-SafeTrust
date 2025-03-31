@@ -1,1 +1,2 @@
-- "!include public_hotels.yaml" 
+- "!include public_hotels.yaml"
+- "!include public_rooms.yaml" 
