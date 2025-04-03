@@ -1,5 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const forgotPasswordRouter = require('./forgot-password');
+
+// Include forgot password routes
+router.use('/', forgotPasswordRouter);
 
 router.post('/escrow_refund_status_update', async (req, res) => {
     console.log("escrow_refund_status_update");

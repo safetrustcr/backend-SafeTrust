@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const webhooksRoutes = require('./webhooks');
+const forgotPasswordRoutes = require('./forgot-password');
+const resetPasswordRoutes = require('./reset-password');
 
 const app = express();
 
@@ -15,11 +17,21 @@ app.use(cors({
 app.use(morgan('tiny'));
 app.disable('x-powered-by');
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
 
+// Debug middleware to log all requests
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  next();
+});
 
 // Routes
 app.use('/webhooks', webhooksRoutes);
-
+app.use('/api/auth', forgotPasswordRoutes);
+app.use('/api/auth', resetPasswordRoutes);
 
 // Error handler
 app.use((err, req, res, next) => {
@@ -32,5 +44,10 @@ app.use((err, req, res, next) => {
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`listening on port ${port}`);
+  console.log(`Webhook service listening on port ${port}`);
+  console.log('Available routes:');
+  console.log('- GET /health');
+  console.log('- GET /api/auth/validate-reset-token');
+  console.log('- POST /api/auth/reset-password');
+  console.log('- POST /api/auth/forgot-password');
 });
