@@ -18,7 +18,10 @@ table:
       is_nullable: false
     - name: location_area
       type: varchar(20)
-      is_nullable: true
+      is_nullable: false
+    - name: coordinates 
+      type: point
+      is_nullable: false
     - name: created_at
       type: timestamptz
       default: now()
@@ -37,6 +40,7 @@ select_permissions:
         - description
         - address
         - location_area
+        - coordinates 
         - created_at
       filter: {}
   - role: user
@@ -47,6 +51,7 @@ select_permissions:
         - description
         - address
         - location_area
+        - coordinates 
         - created_at
         - updated_at
       filter: {}
@@ -58,6 +63,7 @@ insert_permissions:
         - description
         - address
         - location_area
+        - coordinates 
       check: {}
 update_permissions:
   - role: admin
@@ -67,6 +73,7 @@ update_permissions:
         - description
         - address
         - location_area
+        - coordinates 
         - updated_at
       filter: {}
       check: {}
