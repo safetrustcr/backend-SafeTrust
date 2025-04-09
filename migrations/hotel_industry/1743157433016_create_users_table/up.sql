@@ -13,8 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     last_login_at TIMESTAMP WITH TIME ZONE,
     is_active BOOLEAN DEFAULT true,
-    CONSTRAINT email_format CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'),
-    CONSTRAINT wallet_address_format CHECK (wallet_address ~* '^G[A-Z2-7]{55}$')
+    CONSTRAINT email_format CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
 );
 
 -- Create indexes for performance optimization
