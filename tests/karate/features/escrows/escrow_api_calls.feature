@@ -13,7 +13,7 @@ Scenario: Check GraphQL endpoint health
     Then status 200
     And match response == { data: { __typename: 'query_root' } }
 
-Scenario: Verify escrow_api_callss schema exists
+Scenario: Verify escrow_api_calls schema exists
     Given path '/'
     And request
     """
@@ -32,7 +32,7 @@ Scenario: Verify escrow_api_callss schema exists
     """
     {
       "query": "query GetEscrowsApiCalls {
-        escrow_api_calls {
+        public_escrow_api_calls {
           http_status_code
           error_details
           request_body
