@@ -1,0 +1,43 @@
+table:
+  name: users
+  schema: public
+  columns:
+    - name: id
+      type: uuid
+      default: gen_random_uuid()
+      is_nullable: false
+      is_primary_key: true
+    - name: email
+      type: varchar(150)
+      is_nullable: false
+    - name: first_name
+      type: varchar(20)
+      is_nullable: true
+    - name: last_name
+      type: varchar(20)
+      is_nullable: true
+    - name: phone_number
+      type: varchar(15)
+      is_nullable: true
+    - name: created_at
+      type: timestamp with time zone
+      default: now()
+      is_nullable: false
+    - name: updated_at
+      type: timestamp with time zone
+      default: now()
+      is_nullable: false
+
+  constraints:
+    - name: users_email_key
+      type: unique
+      columns:
+        - email
+
+  indexes:
+    - name: users_email_idx
+      columns:
+        - email
+    - name: users_created_at_idx
+      columns:
+        - created_at
