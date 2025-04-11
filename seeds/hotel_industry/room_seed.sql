@@ -1,3 +1,7 @@
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+
+
 -- Insert sample hotels
 INSERT INTO hotels (id, name, description, address, location_area) VALUES
     (uuid_generate_v4(), 'Grand Hotel', 'Luxury hotel in the city', '123 Main St', 'Downtown'),
