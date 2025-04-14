@@ -52,8 +52,66 @@ Ensures funds are automatically released based on the terms of the agreement, wi
 bin/dc_prep
 bin/dc_console
 ```
+2. Multi-Tenant Architecture (Database per Tenant).
 
-2. Adding migrations.
+Metadata folder contains the architecture, the database per tenant,
+
+
+```
+backend/
+└── metadata/
+    └── base/
+        │   ├── actions.graphql
+        │   ├── actions.yaml
+        │   ├── allow_list.yaml
+        │   ├── api_limits.yaml
+        │   ├── backend_configs.yaml
+        │   ├── cron_triggers.yaml
+        │   ├── graphql_schema_introspection.yaml
+        │   ├── inherited_roles.yaml
+        │   ├── metrics_config.yaml
+        │   ├── network.yaml
+        │   ├── opentelemetry.yaml
+        │   ├── query_collections.yaml
+        │   ├── remote_schemas.yaml
+        │   ├── rest_endpoints.yaml
+        │   ├── version.yaml
+        └── build/
+        │   └── tenant_a/
+        │   └── tenant_b/
+        │   └── ....
+        └── tenants/
+        │   └── tenant_a/
+        │   │          ├── databases/
+        │   │          ├── tables/
+        │   │          ├── functions/
+        │   │          ├── databases.yaml
+        │   └── tenant_b/
+        │   │          ├── databases/
+        │   │          ├── tables/
+        │   │          ├── functions/
+        │   │          ├── databases.yaml
+        │   └── ....
+        │   ├── build-metadata.sh
+        │   ├── deploy-tenant.sh
+            
+```
+Architecture multitenant guide:
+
+- base/ folder: contains all graphql and hasura dependencies necessary for tenants.
+- build/ folder: prepare tenants with all graphql and hasura dependencies. 
+- tenants/ folder: contains all tenant database files, tables, functions, relations, triggers, etc.
+- build-metadata.sh file: prepares the tenants with their dependencies and corresponding configurations.
+- deploy-tenant.sh: deploys to the database with the tenants, their tables and relationships.
+
+Steps to execute the metadata:
+
+- Run commands to build tenants individually: /build-metadata.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
+- Verify build folder contains correct tenant data
+- Successfully deploy tenants: ./deploy-tenant.sh "tenant_name" "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
+
+
+3. Adding migrations.
 
 You can add migrations either with the hasura console or by the command:
 

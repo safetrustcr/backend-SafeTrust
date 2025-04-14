@@ -4,26 +4,14 @@ Background:
     * url baseUrl
     * header x-hasura-admin-secret = 'myadminsecretkey'
     * def uuid = function() { return java.util.UUID.randomUUID() + '' } 
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
-    And request
-    """
-    {
-      "query": "query GetApartmnet($limit: Int = 1) {
-        apartments(limit: $limit) {
-          id
-        }
-      }"
-    }
-    """
-    When method POST
-    Then status 200
-    And match response.errors == '#notpresent'
-    * def apartmentId = response.data.apartments[0].id
+    * def apartment_created_response = callonce read('./create-apartment.feature')
+    * def apartment_created_id = apartment_created_response["response"]["data"]["insert_apartments_one"]["id"]
+
 
     * def testApartmentImages =
       """
     {
-      "apartment_id": #(apartmentId),
+      "apartment_id": #(apartment_created_id),
       "image_url": "https://design-milk.com/images/2024/02/Loft-M50-Turin-Paola-Mare-1.jpg",
       "uploaded_at": "2025-02-24T16:50:42.336678+00:00"
     }
