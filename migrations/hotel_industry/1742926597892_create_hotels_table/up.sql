@@ -6,9 +6,11 @@ CREATE TABLE IF NOT EXISTS hotels (
     description VARCHAR(50),
     address VARCHAR(50) NOT NULL,
     location_area VARCHAR(20),
+    coordinates POINT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE INDEX idx_hotels_name ON hotels(name);
 CREATE INDEX idx_hotels_location_area ON hotels(location_area);
+CREATE INDEX idx_hotels_coordinates ON hotels USING GIST (coordinates::geometry);
