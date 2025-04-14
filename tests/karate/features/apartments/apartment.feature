@@ -84,27 +84,6 @@ Scenario: Update apartment details
     And match response.errors == '#notpresent'
     And match response.data.update_apartments_by_pk.price == 1300.00
 
-# Delete apartment
-Scenario: Delete apartment
-    Given path '/'
-    And request
-    """
-    {
-      "query": "mutation DeleteApartment($id: uuid!) {
-        delete_apartments_by_pk(id: $id) {
-          id
-        }
-      }",
-      "variables": {
-        "id": "#(apartment_created_id)"
-      }
-    }
-    """
-    When method POST
-    Then status 200
-    And match response.errors == '#notpresent'
-    And match response.data.delete_apartments_by_pk.id == "#(apartment_created_id)"
-
 # List apartments
 Scenario: List apartments
     Given path '/'
@@ -127,3 +106,24 @@ Scenario: List apartments
     And match response.errors == '#notpresent'
     And match response.data.apartments != null
     And match response.data.apartments == '#[_ > 0]'
+
+# Delete apartment
+Scenario: Delete apartment
+    Given path '/'
+    And request
+    """
+    {
+      "query": "mutation DeleteApartment($id: uuid!) {
+        delete_apartments_by_pk(id: $id) {
+          id
+        }
+      }",
+      "variables": {
+        "id": "#(apartment_created_id)"
+      }
+    }
+    """
+    When method POST
+    Then status 200
+    And match response.errors == '#notpresent'
+    And match response.data.delete_apartments_by_pk.id == "#(apartment_created_id)"
