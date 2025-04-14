@@ -1,0 +1,39 @@
+
+version: 1
+tables:
+  - name: users_wallets
+    schema: public
+    columns:
+      - name: id
+        type: uuid
+        is_primary_key: true
+        default: "uuid_generate_v4()"
+      - name: user_id
+        type: uuid
+        references:
+          table: public.users
+          column: id
+      - name: wallet_address
+        type: varchar(255)
+      - name: chain_type
+        type: date
+      - name: is_primary
+        type: boolean
+        default: false
+      - name: created_at
+        type: timestamp with time zone
+        default: "now()"
+      - name: updated_at
+        type: timestamp with time zone
+        default: "now()"
+    indexes:
+      - name: idx_user_id
+        columns:
+          - user_id
+    constraints:
+      - foreign_key:
+          columns:
+            - user_id
+          references:
+            table: public.users
+            column: id
