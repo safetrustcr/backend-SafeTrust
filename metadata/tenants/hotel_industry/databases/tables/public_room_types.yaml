@@ -1,0 +1,36 @@
+table:
+  name: room_types
+  schema: public
+configuration:
+  column_config:
+    id:
+      custom_name: id
+    type_id:
+      custom_name: type_id
+    name: 
+      custom_name: type_name
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - type_id
+        - type_name
+      filter: {}
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns:
+        - type_id
+        - type_name
+update_permissions:
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - type_id
+        - type_name
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}
