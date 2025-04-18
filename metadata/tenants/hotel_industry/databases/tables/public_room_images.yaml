@@ -1,0 +1,46 @@
+table:
+  name: room_images
+  schema: public
+configuration:
+  column_config:
+    id:
+      custom_name: id
+    room_id:
+      custom_name: room_id
+    image_url:
+      custom_name: image_url
+    uploaded_at:
+      custom_name: uploaded_at
+object_relationships:
+  - name: rooms
+    using:
+      foreign_key_constraint_on: room_id
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - room_id
+        - image_url
+        - uploaded_at
+      filter: {}
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns:
+        - room_id
+        - image_url
+        - uploaded_at
+update_permissions:
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - id
+        - room_id
+        - image_url
+        - uploaded_at
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}

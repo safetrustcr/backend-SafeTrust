@@ -1,0 +1,75 @@
+table:
+  name: reservations
+  schema: public
+configuration:
+  column_config:
+    id:
+      custom_name: id
+    reservation_id:
+      custom_name: reservation_id
+    wallet_address:
+      custom_name: wallet_address
+    room_id:
+      custom_name: room_id
+    check_in:
+      custom_name: check_in
+    check_out:
+      custom_name: check_out
+    capacity:
+      custom_name: capacity
+    reservation_status:
+      custom_name: reservation_status
+    total_amount:
+      custom_name: total_amount
+object_relationships:
+  - name: rooms
+    using:
+      foreign_ky_constraint_on: room_id
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - reservation_id
+        - wallet_address
+        - room_id
+        - check_in
+        - check_out
+        - capacity
+        - reservation_status
+        - total_amount
+        - room_id
+      filter: {}
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns:
+        - reservation_id
+        - wallet_address
+        - room_id
+        - check_in
+        - check_out
+        - capacity
+        - reservation_status
+        - total_amount
+        - room_id
+update_permissions:
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - reservation_id
+        - wallet_address
+        - room_id
+        - check_in
+        - check_out
+        - capacity
+        - reservation_status
+        - total_amount
+        - room_id
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}
+
+    
