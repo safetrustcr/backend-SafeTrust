@@ -1,0 +1,6 @@
+table:
+  name: escrow_api_calls
+  schema: public
+configuration:
+  column_config:
+    
