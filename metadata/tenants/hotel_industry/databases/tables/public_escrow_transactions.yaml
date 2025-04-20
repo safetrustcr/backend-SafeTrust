@@ -1,37 +1,139 @@
 table:
   name: escrow_transactions
   schema: public
-configuration:
-  column_config:
-    id:
-      custom_name: id
-    escrow_transaction_id:
-      custom_name: escrow_transaction_id
-    reservation_id:
-      custom_name: reservation_id
-    contract_id:
-      custom_name: contract_id
-    signer_address:
-      custom_name: signer_address
-    transaction_type:
-      custom_name: transaction_type
-    escrow_transaction_type:
-      custom_name: escrow_transaction_type
-    http_status_code: 
-      custom_name: http_status_code
-    http_response_body:
-      custom_name: http_response_body
-    http_error_details:
-      custom_name: http_error_details
-    total_amount:
-      custom_name: total_amount
-    deposit_percentage:
-      custom_name: deposit_percentage
-    cancellation_reason:
-      custom_name: cancellation_reason
-    created_at:
-      custom_name: created_at
-    updated_at:
-      custom_name: updated_at
-    completed_at:
-      custom_name: completed_at
+  columns:
+    - name: id
+      type: uuid
+      is_primary_key: true
+      default: "uuid_generate_v4()"
+    - name: escrow_transaction_id
+      type: uuid
+      references:
+        table: public.escrow_transaction_users
+        column: id
+    - name: reservation_id
+      type: uuid
+      references:
+        table: public.reservations
+        column: id
+    - name: contract_id
+    - name: escrow_status
+      type: varchar(15)
+      default: "PENDING"
+      type: varchar(200)
+    - name: signer_address
+      type: varchar(200)
+    - name: transaction_type
+      type: varchar(150)
+    - name: escrow_transaction_type
+      type: varchar(150)
+    - name: http_status_code
+      type: integer
+    - name: http_response_body
+      type: jsonb
+    - name: http_error_details
+      type: jsonb
+    - name: total_amount
+      type: numeric(19, 2)
+    - name: deposit_percentage
+      type: integer
+      default: 0
+    - name: cancellation_reason
+      type: varchar(200)
+    - name: creted_at
+      ype: timestamp with time zone
+      default: "now()"
+    - name: uploaded_at
+      type: timestamp with time zone
+      default: "now()"
+    - name: completed_at
+      type: timestamp with time zone
+  indexes:
+    - name: idx_escrow_transaction_reservation
+      columns:
+        - reservation_id
+    - name: idx_escrow_transaction_contract
+      columns:
+        - contract_id
+    - name: idx_escrow_transactions_status
+      columns:
+        - escrow_status
+    - name: idx_escrow_transactions_type_status
+      columns:
+        - transaction_type
+        - escrow_status
+object_relationships:
+  - name: reservations
+    using: 
+      foreign_key_constraint_on: reservation_id
+object_relationships:
+  - name: rooms
+    using:
+      foreign_ky_constraint_on: room_id
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - escrow_transaction_id
+        - contract_id
+        - reservation_id
+        - escrow_status
+        - signer_address
+        - transaction_type
+        - escrow_transaction_type
+        - http_status_code
+        - http_response_body
+        - http_error_details
+        - total_amount
+        - deposit_percentage
+        - cancellation_reason
+        - created_at
+        - updated_at
+        - completed_at
+      filter: {}
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns:
+        - escrow_transaction_id
+        - contract_id
+        - reservation_id
+        - escrow_status
+        - signer_address
+        - transaction_type
+        - escrow_transaction_type
+        - http_status_code
+        - http_response_body
+        - http_error_details
+        - total_amount
+        - deposit_percentage
+        - cancellation_reason
+        - created_at
+        - updated_at
+        - completed_at
+update_permissions:
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - escrow_transaction_id
+        - contract_id
+        - reservation_id
+        - escrow_status
+        - signer_address
+        - transaction_type
+        - escrow_transaction_type
+        - http_status_code
+        - http_response_body
+        - http_error_details
+        - total_amount
+        - deposit_percentage
+        - cancellation_reason
+        - created_at
+        - updated_at
+        - completed_at
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}

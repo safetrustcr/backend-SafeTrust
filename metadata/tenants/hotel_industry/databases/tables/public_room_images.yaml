@@ -1,16 +1,22 @@
 table:
   name: room_images
   schema: public
-configuration:
-  column_config:
-    id:
-      custom_name: id
-    room_id:
-      custom_name: room_id
-    image_url:
-      custom_name: image_url
-    uploaded_at:
-      custom_name: uploaded_at
+  columns:
+    - name: id
+      type: uuid
+      is_primary_key: true
+      default: "uuid_generate_v4()"
+    - name: room_id
+      type: uuid
+    - name: image_url
+      type: varchar(150)
+    - name: uploaded_at
+      type: timestamp with time zone
+      default: "now()"
+  indexes:
+    - name: idx_room_id
+      columns:
+        - room_id
 object_relationships:
   - name: rooms
     using:

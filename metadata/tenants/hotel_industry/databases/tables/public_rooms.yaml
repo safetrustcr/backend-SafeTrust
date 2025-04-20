@@ -1,26 +1,41 @@
 table:
   name: rooms
   schema: public
-configuration:
-  column_config:
-    room_id:
-      custom_name: room_id
-    hotel_id:
-      custom_name: hotel_id
-    room_number:
-      custom_name: room_number
-    room_type:
-      custom_name: room_type
-    price_night:
-      custom_name: price_night
-    status:
-      custom_name: status
-    capacity:
-      custom_name: capacity
-    created_at:
-      custom_name: created_at
-    updated_at:
-      custom_name: updated_at
+  columns:
+    - name: id
+      type: uuid
+      is_primary_key: true
+      default: "uuid_generate_v4()"
+    - name: room_id
+      type: uuid
+      references:
+        table: public.rooms
+        column: id
+    - name: hotel_id
+      type: uuid
+      references:
+        table: public.hotels
+        column: id
+    - name: room_number
+      type: varchar(3)
+    - name: room_type
+      type: uuid
+      references:
+        table: public.room_types
+        column: type_id
+    - name: price_night
+      type: numeric(10, 2)
+    - name: status
+      type: boolean
+      default: true
+    - name: capacity
+      type: integer
+    - name: created_at
+      type: timestamp with time zone
+      default: "now()"
+    - name: updated_at
+      type: timestamp with time zone
+      default: "now()"
   custom_root_fields: {}
 object_relationships:
   - name: hotel
