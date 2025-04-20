@@ -1,14 +1,19 @@
 table:
   name: room_types
   schema: public
-configuration:
-  column_config:
-    id:
-      custom_name: id
-    type_id:
-      custom_name: type_id
-    name: 
-      custom_name: type_name
+  columns:
+    - name: id
+      type: uuid
+      is_primary_key: true
+      default: "uuid_generate_v4()"
+    - name: type_id
+      type: uuid
+    - name: name
+      type: varchar(25)
+  indexes:
+    - name: idx_type_id
+      columns:
+        - type_id
 select_permissions:
   - role: user
     permission:

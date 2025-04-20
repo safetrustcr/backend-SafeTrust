@@ -1,26 +1,51 @@
 table:
   name: reservations
   schema: public
-configuration:
-  column_config:
-    id:
-      custom_name: id
-    reservation_id:
-      custom_name: reservation_id
-    wallet_address:
-      custom_name: wallet_address
-    room_id:
-      custom_name: room_id
-    check_in:
-      custom_name: check_in
-    check_out:
-      custom_name: check_out
-    capacity:
-      custom_name: capacity
-    reservation_status:
-      custom_name: reservation_status
-    total_amount:
-      custom_name: total_amount
+  columns:
+    - name: id
+      type: uuid
+      is_primary_key: true
+      default: "uuid_generate_v4()"
+    - name: reservation_id
+      type: uuid
+    - name: wallet_address
+      type: varchar(255)
+    - name: room_id
+      type: uuid
+      references:
+        table: public.rooms
+        column: id
+    - name: check_in
+      type: timestamp with time zone
+    - name: check_out
+      type: timestamp with time zone
+    - name: capacity
+      type: integer
+    - name: reservation_status
+      type: varchar(15)
+      default: "PENDING"
+    - name: total_amount
+      type: numeric(10, 2)
+    - name: created_at
+      type: timestamp with time zone
+      default: "now()"
+    - name: updated_at
+      type: timestamp with time zone
+      default: "now()"
+  indexes:
+    - name: idx_user_id
+      columns:
+        - user_id
+    - name: idx_room_id
+      columns:
+        - room_id
+    - name: idx_reservation_status
+      columns:
+        - reservation_status
+    - name: idx_reservation_dates
+      columns:
+        - check_in
+        - check_out
 object_relationships:
   - name: rooms
     using:
