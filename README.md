@@ -106,9 +106,9 @@ Architecture multitenant guide:
 
 Steps to execute the metadata:
 
-- Run commands to build tenants individually: /build-metadata.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
+- Run commands to build tenants individually: ```./build-metadata.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint" ```
 - Verify build folder contains correct tenant data
-- Successfully deploy tenants: ./deploy-tenant.sh "tenant_name" "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
+- Successfully deploy tenants: ```./deploy-tenant.sh "tenant_name" "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"```
 
 
 3. Adding migrations.
