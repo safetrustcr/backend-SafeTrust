@@ -1,0 +1,65 @@
+table:
+  name: escrow_transaction_users
+  columns:
+    - name: id
+      type: uuid
+      is_primary_key: true
+      default: "uuid_generate_v4()"
+    - name: user_id
+      type: uuid
+      references:
+        table: public.users
+        column: id
+    - name: role
+      type: varchar(20)
+    - name: status
+      type: varchar(20)
+    - name: is_primary
+      type: boolean
+      default: false
+    - name: created_at
+      type: timestamp with time zone
+      default: "now()"
+  unique_constraints:
+    - name: unique_escrow_user_role
+      columns:
+        - escrow_transaction_id
+        - user_id
+        - role
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - user_id
+        - role
+        - status
+        - is_primary
+        - created_at
+      filter: {}
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns:
+        - id
+        - user_id
+        - role
+        - status
+        - is_primary
+        - created_at
+update_permissions:
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - id
+        - user_id
+        - role
+        - status
+        - is_primary
+        - created_at
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}
