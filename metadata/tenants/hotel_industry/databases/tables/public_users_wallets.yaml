@@ -37,3 +37,40 @@ tables:
           references:
             table: public.users
             column: id
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - user_id
+        - wallet_address
+        - chain_type
+        - is_primary
+        - created_at
+        - updated_at
+      filter: {}
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns:
+        - user_id
+        - wallet_address
+        - chain_type
+        - is_primary
+        - created_at
+        - updated_at
+update_permissions:
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - user_id
+        - wallet_address
+        - chain_type
+        - is_primary
+        - created_at
+        - updated_at
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}
