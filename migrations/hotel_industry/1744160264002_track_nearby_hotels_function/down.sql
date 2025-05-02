@@ -1,0 +1,1 @@
+DROP FUNCTION IF EXISTS find_nearby_hotels;
