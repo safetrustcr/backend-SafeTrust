@@ -82,7 +82,7 @@ delete_permissions:
     permission:
       filter: {}
   # Add trigger to automatically update updated_at
-  triggers:
+triggers:
     - name: update_updated_at
       definition:
         enable_manual: false
