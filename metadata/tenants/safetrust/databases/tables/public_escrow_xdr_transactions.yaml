@@ -1,3 +1,28 @@
 table:
   name: escrow_xdr_transactions
   schema: public
+  columns:
+    - name: id
+      type: uuid
+    - name: escrow_transaction_id
+      type: uuid
+    - name: xdr_type
+      type: escrow_transaction_type
+    - name: unsigned_xdr
+      type: text
+    - name: signed_xdr
+      type: text
+    - name: status
+      type: xdr_status
+    - name: signing_address
+      type: text
+    - name: error_message
+      type: text
+    - name: created_at
+      type: timestamptz
+    - name: updated_at
+      type: timestamptz
+  object_relationships:
+    - name: escrow_transaction
+      using:
+        foreign_key_constraint_on: escrow_transaction_id
