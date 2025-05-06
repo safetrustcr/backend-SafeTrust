@@ -14,11 +14,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-
   graphql-engine:
-    image: hasura/graphql-engine:v2.42.0
+    image: hasura/graphql-engine:v2.47.0
     ports:
-      - "8082:8080"  # Changed from 8081 to 8082
+      - "8080:8080" 
     restart: always
     environment:
       HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/postgres
@@ -27,19 +26,19 @@ services:
       HASURA_GRAPHQL_DEV_MODE: "true"
       HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
       HASURA_GRAPHQL_METADATA_DEFAULTS: '{"backend_configs":{"dataconnector":{"athena":{"uri":"http://data-connector-agent:8083/api/v1/athena"},"mariadb":{"uri":"http://data-connector-agent:8083/api/v1/mariadb"},"mysql8":{"uri":"http://data-connector-agent:8083/api/v1/mysql"},"oracle":{"uri":"http://data-connector-agent:8083/api/v1/oracle"},"snowflake":{"uri":"http://data-connector-agent:8083/api/v1/snowflake"}}}}'
+      HASURA_GRAPHQL_ADMIN_SECRET: myadminsecretkey
     depends_on:
       postgres:
         condition: service_healthy
       data-connector-agent:
         condition: service_healthy
     healthcheck:
-      test: nc -z localhost 8080
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 5s
       timeout: 5s
       start_period: 10s
-
   data-connector-agent:
-    image: hasura/graphql-data-connector:v2.42.0
+    image: hasura/graphql-data-connector:v2.47.0
     restart: always
     ports:
       - "8083:8081"  # Changed from 8081:8081 to 8083:8081
@@ -60,16 +59,15 @@ services:
       - "9693:9693"
       - "9695:9695"
     environment:
-      HASURA_GRAPHQL_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/app
-      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET}
-      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:8080/v1/graphql  # Using Docker service name and internal port
+      # Fixed the port to match the GraphQL engine's actual port
+      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:8080
+      HASURA_GRAPHQL_ADMIN_SECRET: myadminsecretkey
       HASURA_RUN_CONSOLE: "true"
     volumes:
       - .:/usr/src/hasura
     depends_on:
       graphql-engine:
         condition: service_healthy
-
   webhook:
     build:
       context: ./webhook
@@ -84,7 +82,7 @@ services:
       - S3_BUCKET=${S3_BUCKET}
       - FRONTEND_URL=http://localhost:3000
       - NEXT_PUBLIC_HASURA_GRAPHQL_URL=http://graphql-engine:8080/v1/graphql
-      - HASURA_GRAPHQL_ADMIN_SECRET=${HASURA_GRAPHQL_ADMIN_SECRET}
+      - HASURA_GRAPHQL_ADMIN_SECRET=myadminsecretkey
       - SMTP_HOST=smtp.host.com
       - SMTP_PORT=465
       - SMTP_SECURE=true
@@ -103,6 +101,5 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
 volumes:
   db_data:
