@@ -1,1 +1,0 @@
-DROP FUNCTION IF EXISTS find_nearby_apartments;

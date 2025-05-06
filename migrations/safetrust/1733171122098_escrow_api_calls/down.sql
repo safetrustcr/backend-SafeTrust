@@ -1,1 +1,0 @@
-DROP TABLE IF EXISTS escrow_api_calls CASCADE;
