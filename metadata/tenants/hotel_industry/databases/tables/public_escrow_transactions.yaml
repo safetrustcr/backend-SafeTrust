@@ -17,22 +17,16 @@ table:
         table: public.reservations
         column: id
     - name: contract_id
+      type: varchar(200)
     - name: escrow_status
       type: varchar(15)
       default: "PENDING"
-      type: varchar(200)
     - name: signer_address
       type: varchar(200)
     - name: transaction_type
       type: varchar(150)
     - name: escrow_transaction_type
       type: varchar(150)
-    - name: http_status_code
-      type: integer
-    - name: http_response_body
-      type: jsonb
-    - name: http_error_details
-      type: jsonb
     - name: total_amount
       type: numeric(19, 2)
     - name: deposit_percentage
@@ -41,7 +35,7 @@ table:
     - name: cancellation_reason
       type: varchar(200)
     - name: creted_at
-      ype: timestamp with time zone
+      type: timestamp with time zone
       default: "now()"
     - name: uploaded_at
       type: timestamp with time zone
@@ -81,9 +75,6 @@ select_permissions:
         - signer_address
         - transaction_type
         - escrow_transaction_type
-        - http_status_code
-        - http_response_body
-        - http_error_details
         - total_amount
         - deposit_percentage
         - cancellation_reason
@@ -103,9 +94,6 @@ insert_permissions:
         - signer_address
         - transaction_type
         - escrow_transaction_type
-        - http_status_code
-        - http_response_body
-        - http_error_details
         - total_amount
         - deposit_percentage
         - cancellation_reason
@@ -124,9 +112,6 @@ update_permissions:
         - signer_address
         - transaction_type
         - escrow_transaction_type
-        - http_status_code
-        - http_response_body
-        - http_error_details
         - total_amount
         - deposit_percentage
         - cancellation_reason
