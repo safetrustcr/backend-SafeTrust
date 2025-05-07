@@ -1,12 +1,13 @@
 -- Create the escrow_transaction_users table
-CREATE TABLE public.escrow_transaction_users (
+CREATE TABLE escrow_transaction_users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID REFERENCES public.users(id),
+    user_id UUID REFERENCES users(id),
     escrow_transaction_id UUID NOT NULL,
     role VARCHAR(20),
     status VARCHAR(20),
     is_primary BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
     CONSTRAINT unique_escrow_user_role UNIQUE (escrow_transaction_id, user_id, role)
 );
 
