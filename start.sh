@@ -1,5 +1,4 @@
 #!/bin/bash
-
 HASURA_FOLDER=/app
 cd $HASURA_FOLDER || {
     echo "Hasura folder '$HASURA_FOLDER' not found"
@@ -10,13 +9,14 @@ cd $HASURA_FOLDER || {
 socat TCP-LISTEN:8080,fork TCP:graphql-engine:8080 &
 socat TCP-LISTEN:9695,fork,reuseaddr,bind=console TCP:127.0.0.1:9695 &
 socat TCP-LISTEN:9693,fork,reuseaddr,bind=console TCP:127.0.0.1:9693 &
+
 {
-    # Apply migrations
-    hasura migrate apply --database-name=safetrust || exit 1
-
-    # Apply metadata changes
-    hasura metadata apply || exit 1
-
+    # Skip migrations for safetrust since it will be created during tenant deployment
+    echo "Skipping migrations for safetrust database as it will be created during tenant deployment"
+    
+    # Apply only metadata changes
+    echo "Applying metadata..."
+    
     # Run console if specified
     if [[ -v HASURA_RUN_CONSOLE ]]; then
         echo "Starting console..."

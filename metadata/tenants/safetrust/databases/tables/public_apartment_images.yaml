@@ -1,3 +1,32 @@
 table:
   name: apartment_images
   schema: public
+  
+object_relationships:
+  - name: apartment
+    using:
+      foreign_key_constraint_on: apartment_id
+
+select_permissions:
+  - role: admin
+    permission:
+      columns: '*'
+      filter: {}
+
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns: '*'
+
+update_permissions:
+  - role: admin
+    permission:
+      columns: '*'
+      filter: {}
+      check: {}
+
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {} 
