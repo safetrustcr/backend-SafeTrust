@@ -1,10 +1,10 @@
-# 🌟 SafeTrust 🌟
+### SafeTrust Description:
 
 **SafeTrust** is a decentralized platform designed to revolutionize P2P transactions, providing secure deposits and payments powered by blockchain and trustless technologies. 🌐✨ Experience transparency and reliability in every cryptocurrency transaction. 💸🔒
 
 ---
 
-## 🚀 **Why Choose SafeTrust?**
+### **Why Choose SafeTrust?**
 
 🔐 **Trustless Technology**: Secure and block deposits without intermediaries.  
 💾 **Blockchain-Powered Transparency**: Immutable, auditable, and verifiable transactions.  
@@ -13,7 +13,7 @@
 
 ---
 
-## 🌟 **Key Features**
+## **Key Features**
 
 🛠️ **Trustless Escrow**:  
 Funds are securely held in blockchain-based escrow accounts until all terms are met.
@@ -30,29 +30,22 @@ Verified trustlines between parties add an extra layer of transaction security. 
 📤 **Automated Refund System**:  
 Ensures funds are automatically released based on the terms of the agreement, with no manual intervention required.
 
----
-
-## ⚙️ **How It Works**
-
-1. **Create Escrow**: The renter creates a secure escrow account. 🏗️
-2. **Fund Escrow**: The deposit is funded by the renter. 💵
-3. **Rental Agreement**: Terms are agreed upon and stored on the blockchain. 📃
-4. **Completion or Cancellation**: Funds are released based on contract outcomes. 🎯
-
----
-
 ## 📋 **Getting Started**
 
 ### **Prerequisites**
 
-0. Install Docker and Docker Compose
-1. Run
+1. Install Docker and Docker Compose
+2. Run
 
 ```shell
 bin/dc_prep
 bin/dc_console
 ```
-2. Multi-Tenant Architecture (Database per Tenant).
+3. Run
+```shell
+docker-compose up -d
+```
+
 
 Metadata folder contains the architecture, the database per tenant,
 
@@ -96,19 +89,31 @@ backend/
         │   ├── deploy-tenant.sh
             
 ```
-Architecture multitenant guide:
 
-- base/ folder: contains all graphql and hasura dependencies necessary for tenants.
-- build/ folder: prepare tenants with all graphql and hasura dependencies. 
-- tenants/ folder: contains all tenant database files, tables, functions, relations, triggers, etc.
-- build-metadata.sh file: prepares the tenants with their dependencies and corresponding configurations.
-- deploy-tenant.sh: deploys to the database with the tenants, their tables and relationships.
 
-Steps to execute the metadata:
+> Architecture multitenant guide:
 
-- Run commands to build tenants individually: ```./build-metadata.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint" ```
-- Verify build folder contains correct tenant data
-- Successfully deploy tenants: ```./deploy-tenant.sh "tenant_name" "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"```
+> - base/ folder: contains all graphql and hasura dependencies necessary for tenants.
+> - build/ folder: prepare tenants with all graphql and hasura dependencies. 
+> - tenants/ folder: contains all tenant database files, tables, functions, relations, triggers, etc.
+> - build-metadata.sh file: prepares the tenants with their dependencies and corresponding configurations.
+> - deploy-tenant.sh: deploys to the database with the tenants, their tables and relationships.
+
+### Steps to execute the metadata:
+
+1. Go to the directory called metadata and run the following command:
+
+``` shell
+./build-metadata.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
+```
+2. Verify build folder contains correct tenant data
+3. Deploy the tenants running the following command:
+
+  ``` shell
+  ./deploy-tenant.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
+  ```
+    * **tenant_name** is the name of the tenant that you will work on
+    * **endpoint** is the endpoint where you are running the hasura, commonly it's localhost:8080
 
 
 3. Adding migrations.
