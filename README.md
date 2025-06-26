@@ -46,6 +46,58 @@ bin/dc_console
 docker-compose up -d
 ```
 
+Metadata folder contains the architecture, the database per tenant,
+
+
+```
+backend/
+└── metadata/
+    └── base/
+        │   ├── actions.graphql
+        │   ├── actions.yaml
+        │   ├── allow_list.yaml
+        │   ├── api_limits.yaml
+        │   ├── backend_configs.yaml
+        │   ├── cron_triggers.yaml
+        │   ├── graphql_schema_introspection.yaml
+        │   ├── inherited_roles.yaml
+        │   ├── metrics_config.yaml
+        │   ├── network.yaml
+        │   ├── opentelemetry.yaml
+        │   ├── query_collections.yaml
+        │   ├── remote_schemas.yaml
+        │   ├── rest_endpoints.yaml
+        │   ├── version.yaml
+        └── build/
+        │   └── tenant_a/
+        │   └── tenant_b/
+        │   └── ....
+        └── tenants/
+        │   └── tenant_a/
+        │   │          ├── databases/
+        │   │          ├── tables/
+        │   │          ├── functions/
+        │   │          ├── databases.yaml
+        │   └── tenant_b/
+        │   │          ├── databases/
+        │   │          ├── tables/
+        │   │          ├── functions/
+        │   │          ├── databases.yaml
+        │   └── ....
+        │   ├── build-metadata.sh
+        │   ├── deploy-tenant.sh
+            
+```
+
+
+> Architecture multitenant guide:
+
+> - base/ folder: contains all graphql and hasura dependencies necessary for tenants.
+> - build/ folder: prepare tenants with all graphql and hasura dependencies. 
+> - tenants/ folder: contains all tenant database files, tables, functions, relations, triggers, etc.
+> - build-metadata.sh file: prepares the tenants with their dependencies and corresponding configurations.
+> - deploy-tenant.sh: deploys to the database with the tenants, their tables and relationships.
+
 ### Steps to execute the metadata:
 
 1. Go to the directory called metadata and run the following command:
@@ -105,59 +157,3 @@ After running the tests, you can find the HTML reports at:
 - Main config: `tests/karate/src/test/resources/karate-config.js`
 - Database config: `docker-compose-test.yml`
 - Test environment: `Dockerfile.test`
-
-
----
-
-Metadata folder contains the architecture, the database per tenant,
-
-
-```
-backend/
-└── metadata/
-    └── base/
-        │   ├── actions.graphql
-        │   ├── actions.yaml
-        │   ├── allow_list.yaml
-        │   ├── api_limits.yaml
-        │   ├── backend_configs.yaml
-        │   ├── cron_triggers.yaml
-        │   ├── graphql_schema_introspection.yaml
-        │   ├── inherited_roles.yaml
-        │   ├── metrics_config.yaml
-        │   ├── network.yaml
-        │   ├── opentelemetry.yaml
-        │   ├── query_collections.yaml
-        │   ├── remote_schemas.yaml
-        │   ├── rest_endpoints.yaml
-        │   ├── version.yaml
-        └── build/
-        │   └── tenant_a/
-        │   └── tenant_b/
-        │   └── ....
-        └── tenants/
-        │   └── tenant_a/
-        │   │          ├── databases/
-        │   │          ├── tables/
-        │   │          ├── functions/
-        │   │          ├── databases.yaml
-        │   └── tenant_b/
-        │   │          ├── databases/
-        │   │          ├── tables/
-        │   │          ├── functions/
-        │   │          ├── databases.yaml
-        │   └── ....
-        │   ├── build-metadata.sh
-        │   ├── deploy-tenant.sh
-            
-```
-
-
-> Architecture multitenant guide:
-
-> - base/ folder: contains all graphql and hasura dependencies necessary for tenants.
-> - build/ folder: prepare tenants with all graphql and hasura dependencies. 
-> - tenants/ folder: contains all tenant database files, tables, functions, relations, triggers, etc.
-> - build-metadata.sh file: prepares the tenants with their dependencies and corresponding configurations.
-> - deploy-tenant.sh: deploys to the database with the tenants, their tables and relationships.
-
