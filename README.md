@@ -46,6 +46,68 @@ bin/dc_console
 docker-compose up -d
 ```
 
+### Steps to execute the metadata:
+
+1. Go to the directory called metadata and run the following command:
+
+``` shell
+./build-metadata.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
+```
+2. Verify build folder contains correct tenant data
+3. Deploy the tenants running the following command:
+
+  ``` shell
+  ./deploy-tenant.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
+  ```
+
+* **tenant_name** is the name of the tenant that you will work on
+
+* **endpoint** is the endpoint where you are running the hasura, commonly it's localhost:8080
+
+
+# Backend Tests
+
+This project uses Karate framework for API testing. The tests are designed to run in a Docker environment.
+
+## Running Tests
+
+To run all tests:
+
+```bash
+docker compose -f docker-compose-test.yml run --rm --build karate
+```
+
+This command will:
+
+1. Build the test container
+2. Start PostgreSQL and Hasura containers
+3. Run all Karate tests
+4. Show test results in the console
+5. Generate HTML reports in `target/karate-reports/`
+
+## Test Reports
+
+After running the tests, you can find the HTML reports at:
+
+- Summary: `tests/results/karate-summary.html`
+- Detailed: `tests/results/karate-tags.html`
+
+## Development
+
+### Adding New Tests
+
+1. Create new `.feature` files in `tests/karate/features/`
+2. Follow the Karate DSL syntax
+3. Tests will be automatically picked up when running the test command
+
+### Configuration
+
+- Main config: `tests/karate/src/test/resources/karate-config.js`
+- Database config: `docker-compose-test.yml`
+- Test environment: `Dockerfile.test`
+
+
+---
 
 Metadata folder contains the architecture, the database per tenant,
 
@@ -98,155 +160,4 @@ backend/
 > - tenants/ folder: contains all tenant database files, tables, functions, relations, triggers, etc.
 > - build-metadata.sh file: prepares the tenants with their dependencies and corresponding configurations.
 > - deploy-tenant.sh: deploys to the database with the tenants, their tables and relationships.
-
-### Steps to execute the metadata:
-
-1. Go to the directory called metadata and run the following command:
-
-``` shell
-./build-metadata.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
-```
-2. Verify build folder contains correct tenant data
-3. Deploy the tenants running the following command:
-
-  ``` shell
-  ./deploy-tenant.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
-  ```
-    * **tenant_name** is the name of the tenant that you will work on
-    * **endpoint** is the endpoint where you are running the hasura, commonly it's localhost:8080
-
-
-3. Adding migrations.
-
-You can add migrations either with the hasura console or by the command:
-
-```shell
-hasura migrate create [enable_postgis] --admin-secret myadminsecretkey
-```
-
-where `enable_postgis` is the name of the migration. Please make sure to use descriptive names with verbs about what the migration is doing!
-
-Then to apply them, stop the `bin/dc_worker` running with CTRL + C and re-start it again. Migrations are applied when the console runs in docker-compose.
-
-If you wanna use the hasura web console and access it on `http://localhost:9695/`:
-
-```shell
-hasura console --admin-secret myadminsecretkey
-```
-
-Don't forget to apply the metadata. Migrations and metadata are applied each time you stop the `bin/dc_console` command and run it again.
-
-And you should be good to go to start and work on this.
-
-## 📋 **Known Issues**
-
-### 📝 **Title**
-
-**Error Running Docker Compose**
-
-### ❌ **Error Message**
-
-> `Rosetta error: Rosetta is only intended to run on Apple Silicon with a macOS host using Virtualization.framework with Rosetta mode enabled`
-
-### 🔍 **Error Description**
-
-1. Run `docker compose up -d`.
-2. If the **Backend postgres-1 module** can't start and shows the error above:
-   - This is due to an issue with Rosetta settings on Apple Silicon devices.
-3. ✅ **Solution:**
-   - Go to **Docker Settings** and disable the:  
-     `Use Rosetta for x86_64/amd64 emulation on Apple Silicon` selection button.
-   - 🔄 Restart Docker.
-   - 🚀 It should now run great!
-
-# Backend Tests
-
-This project uses Karate framework for API testing. The tests are designed to run in a Docker environment.
-
-## Prerequisites
-
-- Docker
-- Docker Compose
-
-## Project Structure
-
-```
-backend/
-├── docker-compose-test.yml
-├── Dockerfile.test
-└── tests/
-    ├── karate.jar
-    └── karate/
-        ├── features/
-        │   ├── auth/
-        │   │   ├── login.feature
-        │   │   └── permissions.feature
-        │   └── users/
-        │       ├── create.feature
-        │       └── query.feature
-        └── src/
-            └── test/
-                └── resources/
-                    └── karate-config.js
-```
-
-## Running Tests
-
-To run all tests:
-
-```bash
-docker compose -f docker-compose-test.yml run --rm --build karate
-```
-
-This command will:
-
-1. Build the test container
-2. Start PostgreSQL and Hasura containers
-3. Run all Karate tests
-4. Show test results in the console
-5. Generate HTML reports in `target/karate-reports/`
-
-## Test Reports
-
-After running the tests, you can find the HTML reports at:
-
-- Summary: `tests/results/karate-summary.html`
-- Detailed: `tests/results/karate-tags.html`
-
-## Development
-
-### Adding New Tests
-
-1. Create new `.feature` files in `tests/karate/features/`
-2. Follow the Karate DSL syntax
-3. Tests will be automatically picked up when running the test command
-
-### Configuration
-
-- Main config: `tests/karate/src/test/resources/karate-config.js`
-- Database config: `docker-compose-test.yml`
-- Test environment: `Dockerfile.test`
-
-## Seeds 🌱
-
-Seeds are files that allow you to create test data in an automated way
-
-Creating a seed:
-``` bash
-hasura seed create seed_name
-```
-
-At this moment you need to write the SQL code in the seed file
-
-Applying all seeds:
-``` bash
-hasura seed apply
-```
-
-Applying an specific seed:
-``` bash
-hasura seed apply --file seed_name.sql
-```
-
-
 
