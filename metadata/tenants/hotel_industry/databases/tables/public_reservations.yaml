@@ -14,11 +14,11 @@ table:
       type: uuid
       references:
         table: public.rooms
-        column: id
+        column: room_id
     - name: check_in
-      type: timestamp with time zone
+      type: timestamptz
     - name: check_out
-      type: timestamp with time zone
+      type: timestamptz
     - name: capacity
       type: integer
     - name: reservation_status
@@ -27,15 +27,15 @@ table:
     - name: total_amount
       type: numeric(10, 2)
     - name: created_at
-      type: timestamp with time zone
+      type: timestamptz
       default: "now()"
     - name: updated_at
-      type: timestamp with time zone
+      type: timestamptz
       default: "now()"
   indexes:
     - name: idx_user_id
       columns:
-        - user_id
+        - wallet_address
     - name: idx_room_id
       columns:
         - room_id
@@ -47,9 +47,9 @@ table:
         - check_in
         - check_out
 object_relationships:
-  - name: rooms
+  - name: room
     using:
-      foreign_ky_constraint_on: room_id
+      foreign_key_constraint_on: room_id
 select_permissions:
   - role: user
     permission:
@@ -62,7 +62,6 @@ select_permissions:
         - capacity
         - reservation_status
         - total_amount
-        - room_id
       filter: {}
 insert_permissions:
   - role: admin
@@ -77,7 +76,6 @@ insert_permissions:
         - capacity
         - reservation_status
         - total_amount
-        - room_id
 update_permissions:
   - role: admin
     permission:
@@ -91,7 +89,6 @@ update_permissions:
         - capacity
         - reservation_status
         - total_amount
-        - room_id
 delete_permissions:
   - role: admin
     permission:
