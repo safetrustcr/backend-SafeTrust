@@ -90,13 +90,13 @@ backend/
 ```
 
 
-> Architecture multitenant guide:
+###  Architecture multitenant guide:
 
-> - base/ folder: contains all graphql and hasura dependencies necessary for tenants.
-> - build/ folder: prepare tenants with all graphql and hasura dependencies. 
-> - tenants/ folder: contains all tenant database files, tables, functions, relations, triggers, etc.
-> - build-metadata.sh file: prepares the tenants with their dependencies and corresponding configurations.
-> - deploy-tenant.sh: deploys to the database with the tenants, their tables and relationships.
+ - base/ folder: contains all graphql and hasura dependencies necessary for tenants.
+ - build/ folder: prepare tenants with all graphql and hasura dependencies. 
+ - tenants/ folder: contains all tenant database files, tables, functions, relations, triggers, etc.
+ - build-metadata.sh file: prepares the tenants with their dependencies and corresponding configurations.
+ - deploy-tenant.sh: deploys to the database with the tenants, their tables and relationships.
 
 ### Steps to execute the metadata:
 
