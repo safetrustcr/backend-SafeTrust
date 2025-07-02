@@ -1,43 +1,92 @@
 table:
   name: users
   schema: public
-  columns:
-    - name: id
-      type: uuid
-      default: gen_random_uuid()
-      is_nullable: false
-      is_primary_key: true
-    - name: email
-      type: varchar(150)
-      is_nullable: false
-    - name: first_name
-      type: varchar(20)
-      is_nullable: true
-    - name: last_name
-      type: varchar(20)
-      is_nullable: true
-    - name: phone_number
-      type: varchar(15)
-      is_nullable: true
-    - name: created_at
-      type: timestamp with time zone
-      default: now()
-      is_nullable: false
-    - name: updated_at
-      type: timestamp with time zone
-      default: now()
-      is_nullable: false
 
-  constraints:
-    - name: users_email_key
-      type: unique
-      columns:
-        - email
+columns:
+  - name: id
+    type: uuid
+    default: "uuid_generate_v4()"
+    is_nullable: false
+    is_primary_key: true
 
-  indexes:
-    - name: users_email_idx
+  - name: email
+    type: varchar(150)
+    is_nullable: false
+
+  - name: first_name
+    type: varchar(20)
+    is_nullable: true
+
+  - name: last_name
+    type: varchar(20)
+    is_nullable: true
+
+  - name: phone_number
+    type: varchar(15)
+    is_nullable: true
+
+  - name: created_at
+    type: timestamp with time zone
+    default: "now()"
+    is_nullable: false
+
+  - name: updated_at
+    type: timestamp with time zone
+    default: "now()"
+    is_nullable: false
+
+constraints:
+  - name: users_email_key
+    type: unique
+    columns:
+      - email
+
+indexes:
+  - name: users_email_idx
+    columns:
+      - email
+  - name: users_created_at_idx
+    columns:
+      - created_at
+
+select_permissions:
+  - role: user
+    permission:
       columns:
+        - id
         - email
-    - name: users_created_at_idx
-      columns:
+        - first_name
+        - last_name
+        - phone_number
         - created_at
+        - updated_at
+      filter: {}
+
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns:
+        - email
+        - first_name
+        - last_name
+        - phone_number
+        - created_at
+        - updated_at
+
+update_permissions:
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - email
+        - first_name
+        - last_name
+        - phone_number
+        - created_at
+        - updated_at
+
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}
