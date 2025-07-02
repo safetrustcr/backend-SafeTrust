@@ -9,7 +9,7 @@ RETURNS TABLE (
     name VARCHAR(20),
     description VARCHAR(50),
     address VARCHAR(50),
-    location_area VARCHAR(20),
+    hotel_area VARCHAR(20), 
     coordinates POINT
 ) AS $$
 BEGIN
@@ -23,7 +23,7 @@ BEGIN
         h.name,
         h.description,
         h.address,
-        h.location_area,
+        h.location_area,  
         h.coordinates
     FROM hotels h
     WHERE 
