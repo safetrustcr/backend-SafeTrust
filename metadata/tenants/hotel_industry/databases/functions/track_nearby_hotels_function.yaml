@@ -12,7 +12,7 @@
         name VARCHAR(20),
         description VARCHAR(50),
         address VARCHAR(50),
-        location_area VARCHAR(20),
+        hotel_area VARCHAR(20),
         coordinates POINT
     ) AS $$
     BEGIN

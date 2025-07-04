@@ -5,6 +5,5 @@
 - "!include public_reservations.yaml"
 - "!include public_room_types.yaml"
 - "!include public_user_wallets.yaml"
-- "!include public_escrow_api_calls.yaml"
 - "!include public_escrow_transaction_users.yaml"
 - "!include public_escrow_transactions.yaml"
