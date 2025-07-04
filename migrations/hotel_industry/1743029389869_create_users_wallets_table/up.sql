@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS postgis;
 -- Create users_wallets table with relationship to users table
 CREATE TABLE IF NOT EXISTS users_wallets (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

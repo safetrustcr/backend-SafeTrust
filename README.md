@@ -41,10 +41,6 @@ Ensures funds are automatically released based on the terms of the agreement, wi
 bin/dc_prep
 bin/dc_console
 ```
-3. Run
-```shell
-docker-compose up -d
-```
 
 Metadata folder contains the architecture, the database per tenant,
 
@@ -103,13 +99,13 @@ backend/
 1. Go to the directory called metadata and run the following command:
 
 ``` shell
-./build-metadata.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
+./build-metadata.sh <tenant_name> --admin-secret myadminsecretkey --endpoint <endpoint>
 ```
 2. Verify build folder contains correct tenant data
 3. Deploy the tenants running the following command:
 
   ``` shell
-  ./deploy-tenant.sh "tenant_name" --admin-secret myadminsecretkey --endpoint "endpoint"
+  ./deploy-tenant.sh <tenant_name> --admin-secret myadminsecretkey --endpoint <endpoint>
   ```
 
 * **tenant_name** is the name of the tenant that you will work on
