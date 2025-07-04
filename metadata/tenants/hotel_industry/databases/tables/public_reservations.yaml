@@ -1,0 +1,97 @@
+table:
+  name: reservations
+  schema: public
+  columns:
+    - name: id
+      type: uuid
+      is_primary_key: true
+      default: "uuid_generate_v4()"
+    - name: reservation_id
+      type: uuid
+    - name: wallet_address
+      type: varchar(255)
+    - name: room_id
+      type: uuid
+      references:
+        table: public.rooms
+        column: room_id
+    - name: check_in
+      type: timestamptz
+    - name: check_out
+      type: timestamptz
+    - name: capacity
+      type: integer
+    - name: reservation_status
+      type: varchar(15)
+      default: "PENDING"
+    - name: total_amount
+      type: numeric(10, 2)
+    - name: created_at
+      type: timestamptz
+      default: "now()"
+    - name: updated_at
+      type: timestamptz
+      default: "now()"
+  indexes:
+    - name: idx_user_id
+      columns:
+        - wallet_address
+    - name: idx_room_id
+      columns:
+        - room_id
+    - name: idx_reservation_status
+      columns:
+        - reservation_status
+    - name: idx_reservation_dates
+      columns:
+        - check_in
+        - check_out
+object_relationships:
+  - name: room
+    using:
+      foreign_key_constraint_on: room_id
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - reservation_id
+        - wallet_address
+        - room_id
+        - check_in
+        - check_out
+        - capacity
+        - reservation_status
+        - total_amount
+      filter: {}
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns:
+        - reservation_id
+        - wallet_address
+        - room_id
+        - check_in
+        - check_out
+        - capacity
+        - reservation_status
+        - total_amount
+update_permissions:
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - reservation_id
+        - wallet_address
+        - room_id
+        - check_in
+        - check_out
+        - capacity
+        - reservation_status
+        - total_amount
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}
+
+    
