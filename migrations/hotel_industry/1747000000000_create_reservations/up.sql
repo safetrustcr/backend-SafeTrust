@@ -16,6 +16,6 @@ CREATE TABLE reservations (
 );
 
 CREATE INDEX idx_user_id ON reservations(wallet_address);
-CREATE INDEX idx_room_id ON reservations(room_id);
+CREATE INDEX idx_room_reservation_id ON reservations(room_id);
 CREATE INDEX idx_reservation_status ON reservations(reservation_status);
 CREATE INDEX idx_reservation_dates ON reservations(check_in, check_out);
