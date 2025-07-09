@@ -8,4 +8,4 @@ CREATE TABLE room_images (
     uploaded_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_room_id ON room_images (room_id);
+CREATE INDEX idx_room_image_id ON room_images (room_id);
