@@ -5,6 +5,7 @@ const morgan = require('morgan');
 const webhooksRoutes = require('./webhooks');
 const forgotPasswordRoutes = require('./forgot-password');
 const resetPasswordRoutes = require('./reset-password');
+const prepareEscrowContractRoutes = require('./prepare-escrow-contract');
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use((req, res, next) => {
 app.use('/webhooks', webhooksRoutes);
 app.use('/api/auth', forgotPasswordRoutes);
 app.use('/api/auth', resetPasswordRoutes);
+app.use(prepareEscrowContractRoutes);
 
 // Error handler
 app.use((err, req, res, next) => {

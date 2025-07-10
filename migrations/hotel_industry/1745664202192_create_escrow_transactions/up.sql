@@ -25,3 +25,6 @@ CREATE INDEX idx_escrow_transactions_created_at ON escrow_transactions(created_a
 -- ALTER TABLE escrow_transactions
 --   ADD CONSTRAINT fk_reservation FOREIGN KEY (reservation_id) REFERENCES reservations(id);
 --
+
+ALTER TABLE escrow_transactions
+ADD COLUMN escrow_payload JSONB;
