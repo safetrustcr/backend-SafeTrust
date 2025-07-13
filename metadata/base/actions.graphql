@@ -25,3 +25,44 @@ type VerificationResponse {
   expiresAt: timestamptz
 }
 
+input EscrowRoleInput {
+  approver: String!
+  serviceProvider: String!
+  platformAddress: String!
+  releaseSigner: String!
+  disputeResolver: String!
+  receiver: String!
+}
+
+input EscrowMilestoneInput {
+  description: String!
+}
+
+input TrustlineInput {
+  address: String!
+  decimals: Int!
+}
+
+input PrepareEscrowContractInput {
+  signer: String!
+  engagementId: String!
+  title: String!
+  description: String!
+  roles: EscrowRoleInput!
+  amount: String!
+  platformFee: String!
+  milestones: [EscrowMilestoneInput!]!
+  trustline: TrustlineInput!
+  receiverMemo: String
+}
+
+type PrepareEscrowContractOutput {
+  id: uuid!
+  engagementId: String!
+  escrow_payload: jsonb!
+}
+
+type Mutation {
+  prepare_escrow_contract(input: PrepareEscrowContractInput!): PrepareEscrowContractOutput
+}
+
