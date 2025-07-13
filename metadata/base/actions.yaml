@@ -13,6 +13,15 @@ actions:
       forward_client_headers: true
     permissions:
       - role: anonymous
+  - name: prepare_escrow_contract
+    definition:
+      kind: synchronous
+      handler: http://webhook:3000/prepare-escrow-contract
+      forward_client_headers: true
+    permissions:
+      - role: user
+        permission:
+          allow: true
 custom_types:
   enums: []
   input_objects:
