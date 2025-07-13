@@ -2,34 +2,25 @@ table:
   name: rooms
   schema: public
   columns:
-    - name: id
+    - name: room_id
       type: uuid
       is_primary_key: true
       default: "uuid_generate_v4()"
-    - name: room_id
-      type: uuid
-      references:
-        table: public.rooms
-        column: id
     - name: hotel_id
       type: uuid
       references:
         table: public.hotels
         column: id
     - name: room_number
-      type: varchar(3)
+      type: varchar(5)
     - name: room_type
-      type: uuid
-      references:
-        table: public.room_types
-        column: type_id
+      type: varchar(50)
     - name: price_night
       type: numeric(10, 2)
-    - name: status
-      type: boolean
-      default: true
     - name: capacity
       type: integer
+    - name: status
+      type: boolean
     - name: created_at
       type: timestamp with time zone
       default: "now()"
@@ -41,9 +32,6 @@ object_relationships:
   - name: hotel
     using:
       foreign_key_constraint_on: hotel_id
-  - name: room_type
-    using: 
-      foreign_key_constraint_on: type_id
 select_permissions:
   - role: user
     permission:
