@@ -3,16 +3,16 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Create Rooms table with foreign key to Hotels
 CREATE TABLE rooms (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    room_id UUID REFERENCES rooms(id), 
-    hotel_id UUID REFERENCES hotels(id),
-    room_number VARCHAR(3),
-    room_type UUID REFERENCES room_types(type_id),
-    price_night NUMERIC(10, 2),
-    status BOOLEAN DEFAULT TRUE,
-    capacity INTEGER,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    room_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    hotel_id UUID NOT NULL REFERENCES hotels(id) ON DELETE CASCADE,
+    room_number VARCHAR(5) NOT NULL,
+    room_type VARCHAR(50) NOT NULL,
+    price_night DECIMAL(10,2) NOT NULL CHECK (price_night > 0),
+    capacity INTEGER NOT NULL,
+    status Boolean,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(hotel_id, room_number)
 );
 
 
