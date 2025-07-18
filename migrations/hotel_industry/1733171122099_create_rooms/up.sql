@@ -15,6 +15,7 @@ CREATE TABLE rooms (
     UNIQUE(hotel_id, room_number)
 );
 
+
 -- Create indexes for performance
 CREATE INDEX idx_rooms_hotel_id ON rooms(hotel_id);
 CREATE INDEX idx_rooms_room_type ON rooms(room_type); 
