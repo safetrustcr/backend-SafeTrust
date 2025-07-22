@@ -1,37 +1,43 @@
 table:
   name: rooms
   schema: public
-  columns:
-    - name: room_id
-      type: uuid
-      is_primary_key: true
-      default: "uuid_generate_v4()"
-    - name: hotel_id
-      type: uuid
-      references:
-        table: public.hotels
-        column: id
-    - name: room_number
-      type: varchar(5)
-    - name: room_type
-      type: varchar(50)
-    - name: price_night
-      type: numeric(10, 2)
-    - name: capacity
-      type: integer
-    - name: status
-      type: boolean
-    - name: created_at
-      type: timestamp with time zone
-      default: "now()"
-    - name: updated_at
-      type: timestamp with time zone
-      default: "now()"
-  custom_root_fields: {}
+columns:
+  - name: room_id
+    type: uuid
+    is_primary_key: true
+    default: "uuid_generate_v4()"
+  - name: hotel_id
+    type: uuid
+    references:
+      table: public.hotels
+      column: id
+  - name: room_number
+    type: varchar(5)
+  - name: room_type_id
+    type: uuid
+    references:
+      table: public.room_types
+      column: id
+  - name: price_night
+    type: numeric(10,2)
+  - name: capacity
+    type: integer
+  - name: status
+    type: boolean
+  - name: created_at
+    type: timestamp with time zone
+    default: "now()"
+  - name: updated_at
+    type: timestamp with time zone
+    default: "now()"
+custom_root_fields: {}
 object_relationships:
   - name: hotel
     using:
       foreign_key_constraint_on: hotel_id
+  - name: room_type
+    using:
+      foreign_key_constraint_on: room_type_id
 select_permissions:
   - role: user
     permission:
@@ -39,7 +45,7 @@ select_permissions:
         - room_id
         - hotel_id
         - room_number
-        - room_type
+        - room_type_id
         - price_night
         - status
         - capacity
@@ -53,7 +59,7 @@ insert_permissions:
       columns:
         - hotel_id
         - room_number
-        - room_type
+        - room_type_id
         - price_night
         - status
         - capacity
@@ -63,7 +69,7 @@ update_permissions:
       filter: {}
       columns:
         - room_number
-        - room_type
+        - room_type_id
         - price_night
         - status
         - capacity
