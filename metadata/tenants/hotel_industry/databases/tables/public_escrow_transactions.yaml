@@ -1,7 +1,6 @@
 table:
   name: escrow_transactions
   schema: public
-
 columns:
   - name: id
     type: uuid
@@ -32,7 +31,12 @@ columns:
   - name: updated_at
     type: timestamp with time zone
     default: "now()"
-
+  - name: escrow_payload
+    type: jsonb
+    is_nullable: true
+  - name: fund_payload
+    type: jsonb
+    is_nullable: true
 indexes:
   - name: idx_escrow_transactions_reservation
     columns:
@@ -46,12 +50,16 @@ indexes:
   - name: idx_escrow_transactions_created_at
     columns:
       - created_at
-
 object_relationships:
   - name: reservation
     using:
       foreign_key_constraint_on: reservation_id
-
+array_relationships:
+  - name: escrow_transaction_users
+    using:
+      foreign_key_constraint_on:
+        table: public.escrow_transaction_users
+        column: escrow_transaction_id
 select_permissions:
   - role: user
     permission:
@@ -66,8 +74,9 @@ select_permissions:
         - http_status_code
         - created_at
         - updated_at
+        - escrow_payload
+        - fund_payload
       filter: {}
-
 insert_permissions:
   - role: admin
     permission:
@@ -82,7 +91,8 @@ insert_permissions:
         - http_status_code
         - created_at
         - updated_at
-
+        - escrow_payload
+        - fund_payload
 update_permissions:
   - role: admin
     permission:
@@ -97,7 +107,8 @@ update_permissions:
         - http_status_code
         - created_at
         - updated_at
-
+        - escrow_payload
+        - fund_payload
 delete_permissions:
   - role: admin
     permission:
