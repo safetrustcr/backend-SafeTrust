@@ -12,10 +12,10 @@ columns:
       table: public.users
       column: email
   - name: escrow_transaction_id
-    type: text
+    type: uuid
     references:
       table: public.escrow_transactions
-      column: contract_id
+      column: id
   - name: role
     type: varchar(20)
   - name: status
