@@ -1,3 +1,4 @@
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/sotoJ24/SafeTrust-Backend?utm_source=oss&utm_medium=github&utm_campaign=sotoJ24%2FSafeTrust-Backend&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 ### SafeTrust Description:
 
 **SafeTrust** is a decentralized platform designed to revolutionize P2P transactions, providing secure deposits and payments powered by blockchain and trustless technologies. 🌐✨ Experience transparency and reliability in every cryptocurrency transaction. 💸🔒
@@ -86,13 +87,13 @@ backend/
 ```
 
 
-> Architecture multitenant guide:
+Architecture multitenant guide:
 
-> - base/ folder: contains all graphql and hasura dependencies necessary for tenants.
-> - build/ folder: prepare tenants with all graphql and hasura dependencies. 
-> - tenants/ folder: contains all tenant database files, tables, functions, relations, triggers, etc.
-> - build-metadata.sh file: prepares the tenants with their dependencies and corresponding configurations.
-> - deploy-tenant.sh: deploys to the database with the tenants, their tables and relationships.
+ - base/ folder: contains all graphql and hasura dependencies necessary for tenants.
+ - build/ folder: prepare tenants with all graphql and hasura dependencies. 
+ - tenants/ folder: contains all tenant database files, tables, functions, relations, triggers, etc.
+ - build-metadata.sh file: prepares the tenants with their dependencies and corresponding configurations.
+ - deploy-tenant.sh: deploys to the database with the tenants, their tables and relationships.
 
 ### Steps to execute the metadata:
 
@@ -112,6 +113,19 @@ backend/
 
 * **endpoint** is the endpoint where you are running the hasura, commonly it's localhost:8080
 
+# Steps to execute the migrations:
+Go to migrations folder: `cd migrations/`
+ ``` shell
+    hasura migrate apply
+ ```
+Then select the tenant to migrate it !
+
+# Steps to execute the seeds:
+Go to seeds folder: `cd seeds/`
+ ``` shell
+    hasura seed apply
+ ```
+Then select the tenant to seed it !
 
 # Backend Tests
 
