@@ -1,33 +1,12 @@
+-- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS postgis;
 
-INSERT INTO rooms (hotel_id, room_number, room_type, price_night, status, capacity)
-SELECT 
-    h.id, 
-    '101', 
-    (SELECT type_id FROM room_types WHERE type_name = 'Deluxe'), 
-    120.50, 
-    TRUE, 
-    2 
-FROM hotels h WHERE h.name = 'Grand Hotel'
-
-UNION ALL
-
-SELECT 
-    h.id, 
-    '102', 
-    (SELECT type_id FROM room_types WHERE type_name = 'Standard'), 
-    80.00, 
-    TRUE, 
-    2 
-FROM hotels h WHERE h.name = 'Grand Hotel'
-
-UNION ALL
-
-SELECT 
-    h.id, 
-    '201', 
-    (SELECT type_id FROM room_types WHERE type_name = 'Suite'), 
-    200.00, 
-    TRUE, 
-    4 
-FROM hotels h WHERE h.name = 'Cozy Inn';
+-- Seed data for room_types
+INSERT INTO room_types (type_id, name) VALUES
+    (uuid_generate_v4(), 'Deluxe'),
+    (uuid_generate_v4(), 'Standard'),
+    (uuid_generate_v4(), 'Suite'),
+    (uuid_generate_v4(), 'Single'),
+    (uuid_generate_v4(), 'Double'),
+    (uuid_generate_v4(), 'Family');
