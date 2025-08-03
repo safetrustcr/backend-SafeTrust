@@ -1,4 +1,6 @@
+-- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS postgis;
 
 INSERT INTO rooms (hotel_id, room_number, room_type_id, price_night, status, capacity)
 SELECT 

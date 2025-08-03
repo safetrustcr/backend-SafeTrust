@@ -19,12 +19,7 @@ CREATE INDEX idx_escrow_transactions_status ON escrow_transactions(escrow_status
 CREATE INDEX idx_escrow_transactions_type ON escrow_transactions(transaction_type);
 CREATE INDEX idx_escrow_transactions_created_at ON escrow_transactions(created_at);
 
-
--- TODO: Add foreign keys later when the related tables are created:
-
--- ALTER TABLE escrow_transactions
---   ADD CONSTRAINT fk_reservation FOREIGN KEY (reservation_id) REFERENCES reservations(id);
---
+ALTER TABLE escrow_transactions ADD CONSTRAINT fk_reservation FOREIGN KEY (reservation_id) REFERENCES reservations(id);
 
 ALTER TABLE escrow_transactions
 ADD COLUMN escrow_payload JSONB;
