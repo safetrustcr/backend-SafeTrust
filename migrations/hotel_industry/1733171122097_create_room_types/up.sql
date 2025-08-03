@@ -1,14 +1,21 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS postgis;
 -- Create room_types table
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 CREATE TABLE room_types (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    type_id UUID,
-    name VARCHAR(25) NOT NULL
+    name VARCHAR(25) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(name)
 );
 
+-- Index for performance (especially if you'll search by name)
+CREATE INDEX idx_room_types_name ON room_types(name);
 -- Create index on type_id
-CREATE INDEX idx_type_id ON room_types(type_id);
+CREATE INDEX idx_type_id ON room_types(id);
 
 -- Grant permissions
 CREATE ROLE authenticated;
