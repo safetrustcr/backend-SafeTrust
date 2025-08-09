@@ -1,0 +1,3 @@
+tables:
+  - !include public_pricing_rules.yaml
+  - !include public_tenant_pricing_overrides.yaml
