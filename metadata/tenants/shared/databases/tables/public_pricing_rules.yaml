@@ -1,0 +1,11 @@
+table:
+  schema: public
+  name: pricing_rules
+array_relationships:
+  - name: overrides
+    using:
+      foreign_key_constraint_on:
+        table:
+          schema: shared
+          name: tenant_pricing_overrides
+        column: pricing_rule_id
