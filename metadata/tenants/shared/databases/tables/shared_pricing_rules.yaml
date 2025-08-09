@@ -1,5 +1,5 @@
 table:
-  schema: public
+  schema: shared
   name: pricing_rules
 array_relationships:
   - name: overrides
