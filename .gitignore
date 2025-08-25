@@ -65,6 +65,10 @@ bower_components/
 test-output/
 *.tap
 
-# Karate reports
+# Karate reports and artifacts
 target/
 tests/results/
+tests/karate.jar
+
+# Build artifacts
+*.jar
