@@ -2,8 +2,15 @@ FROM openjdk:17
 
 WORKDIR /app
 
-# Copy test files
-COPY tests /app/tests
+# Install curl for downloading Karate JAR
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+# Copy test feature files and config
+COPY tests/karate /app/tests/karate
+
+# Download Karate JAR
+RUN mkdir -p /app/tests && \
+    curl -L -o /app/tests/karate.jar https://github.com/karatelabs/karate/releases/download/v1.5.0/karate-1.5.0.jar
 
 # Make sure karate-config.js is in the right place
 RUN mkdir -p /app/tests/karate/src/test/resources
