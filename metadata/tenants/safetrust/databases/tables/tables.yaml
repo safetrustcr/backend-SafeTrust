@@ -7,6 +7,7 @@
 - "!include public_escrow_xdr_transactions.yaml"
 - "!include public_geography_columns.yaml"
 - "!include public_geometry_columns.yaml"
+- "!include public_pricing_overrides.yaml"
 - "!include public_spatial_ref_sys.yaml"
 - "!include public_user_wallets.yaml"
 - "!include public_users.yaml"
