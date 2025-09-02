@@ -1,0 +1,207 @@
+table:
+  name: pricing_rules
+  schema: hotel_industry
+
+columns:
+  - name: id
+    type: uuid
+    default: gen_random_uuid()
+    is_nullable: false
+    is_primary_key: true
+
+  - name: rule_name
+    type: varchar(100)
+    is_nullable: false
+
+  - name: rule_type
+    type: varchar(50)
+    is_nullable: false
+
+  - name: currency
+    type: varchar(10)
+    is_nullable: false
+
+  - name: base_amount
+    type: numeric(20,7)
+    default: 0
+    is_nullable: true
+
+  - name: percentage
+    type: numeric(5,4)
+    default: 0
+    is_nullable: true
+
+  - name: min_amount
+    type: numeric(20,7)
+    default: 0
+    is_nullable: true
+
+  - name: max_amount
+    type: numeric(20,7)
+    default: 999999999
+    is_nullable: true
+
+  - name: room_type
+    type: varchar(50)
+    is_nullable: true
+
+  - name: season
+    type: varchar(30)
+    is_nullable: true
+
+  - name: advance_booking_days
+    type: integer
+    is_nullable: true
+
+  - name: priority
+    type: integer
+    default: 100
+    is_nullable: true
+
+  - name: is_active
+    type: boolean
+    default: true
+    is_nullable: false
+
+  - name: created_at
+    type: timestamptz
+    default: now()
+    is_nullable: false
+
+  - name: updated_at
+    type: timestamptz
+    default: now()
+    is_nullable: false
+
+indexes:
+  - name: idx_hotel_pricing_rules_type_currency_active
+    columns:
+      - rule_type
+      - currency
+      - is_active
+    where: "is_active = true"
+
+  - name: idx_hotel_pricing_rules_room_season
+    columns:
+      - room_type
+      - season
+      - is_active
+    where: "is_active = true"
+
+  - name: idx_hotel_pricing_rules_priority
+    columns:
+      - priority
+      - is_active
+    where: "is_active = true"
+
+  - name: idx_hotel_pricing_rules_advance_booking
+    columns:
+      - advance_booking_days
+      - is_active
+    where: "is_active = true AND advance_booking_days IS NOT NULL"
+
+constraints:
+  - name: unique_hotel_rule_type_currency
+    type: unique
+    columns:
+      - rule_type
+      - currency
+      - room_type
+      - season
+
+select_permissions:
+  - role: anonymous
+    permission:
+      columns:
+        - id
+        - rule_name
+        - rule_type
+        - currency
+        - base_amount
+        - percentage
+        - min_amount
+        - max_amount
+        - room_type
+        - season
+        - advance_booking_days
+        - priority
+        - is_active
+        - created_at
+      filter:
+        is_active:
+          _eq: true
+
+  - role: user
+    permission:
+      columns:
+        - id
+        - rule_name
+        - rule_type
+        - currency
+        - base_amount
+        - percentage
+        - min_amount
+        - max_amount
+        - room_type
+        - season
+        - advance_booking_days
+        - priority
+        - is_active
+        - created_at
+        - updated_at
+      filter:
+        is_active:
+          _eq: true
+
+insert_permissions:
+  - role: admin
+    permission:
+      columns:
+        - rule_name
+        - rule_type
+        - currency
+        - base_amount
+        - percentage
+        - min_amount
+        - max_amount
+        - room_type
+        - season
+        - advance_booking_days
+        - priority
+        - is_active
+      check: {}
+
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - rule_name
+        - rule_type
+        - currency
+        - base_amount
+        - percentage
+        - min_amount
+        - max_amount
+        - room_type
+        - season
+        - advance_booking_days
+        - priority
+        - is_active
+        - updated_at
+      filter: {}
+      check: {}
+
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}
+
+triggers:
+  - name: update_hotel_pricing_rules_updated_at
+    table: pricing_rules
+    schema: hotel_industry
+    definition:
+      enable_manual: false
+      events:
+        - update
+      function: update_updated_at_column

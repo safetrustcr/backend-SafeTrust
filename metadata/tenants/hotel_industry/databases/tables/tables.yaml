@@ -7,3 +7,4 @@
 - "!include public_user_wallets.yaml"
 - "!include public_escrow_transaction_users.yaml"
 - "!include public_escrow_transactions.yaml"
+- "!include hotel_industry_pricing_rules.yaml"
