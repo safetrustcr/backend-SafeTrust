@@ -1,0 +1,8 @@
+table:
+  name: pricing_overrides
+  schema: public
+
+object_relationships:
+  - name: base_rule
+    using:
+      foreign_key_constraint_on: base_rule_id
