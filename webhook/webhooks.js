@@ -1,9 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const forgotPasswordRouter = require('./forgot-password');
+const firebaseWebhooksRouter = require('./firebase-webhooks');
 
 // Include forgot password routes
 router.use('/', forgotPasswordRouter);
+
+// Include Firebase webhook routes
+router.use('/firebase', firebaseWebhooksRouter);
 
 router.post('/escrow_refund_status_update', async (req, res) => {
     console.log("escrow_refund_status_update");

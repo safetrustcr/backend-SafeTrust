@@ -52,4 +52,8 @@ app.listen(port, () => {
   console.log('- GET /api/auth/validate-reset-token');
   console.log('- POST /api/auth/reset-password');
   console.log('- POST /api/auth/forgot-password');
+  console.log('- POST /webhooks/firebase/user-created');
+  console.log('- POST /webhooks/firebase/user-updated');
+  console.log('- POST /webhooks/firebase/user-deleted');
+  console.log('- GET /webhooks/firebase/health');
 });
