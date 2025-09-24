@@ -1,6 +1,7 @@
 {
   "name": "backend",
   "version": "1.0.0",
+  "type": "module",
   "description": "**SafeTrust** is a decentralized platform designed to revolutionize P2P transactions, providing secure deposits and payments powered by blockchain and trustless technologies. 🌐✨ Experience transparency and reliability in every cryptocurrency transaction. 💸🔒",
   "main": "index.js",
   "scripts": {
@@ -24,6 +25,7 @@
     "express-rate-limit": "^7.4.1",
     "graphql-request": "^7.1.2",
     "nodemailer": "^6.10.0",
+    "pg": "^8.16.3",
     "winston": "^3.17.0"
   },
   "devDependencies": {
