@@ -1,0 +1,154 @@
+table:
+  name: trustless_work_escrows
+  schema: public
+configuration:
+  column_config:
+    id:
+      custom_name: id
+    contract_id:
+      custom_name: contractId
+    escrow_type:
+      custom_name: escrowType
+    asset_code:
+      custom_name: assetCode
+    asset_issuer:
+      custom_name: assetIssuer
+    booking_id:
+      custom_name: bookingId
+    room_id:
+      custom_name: roomId
+    hotel_id:
+      custom_name: hotelId
+    guest_id:
+      custom_name: guestId
+    check_in_date:
+      custom_name: checkInDate
+    check_out_date:
+      custom_name: checkOutDate
+    booking_created_at:
+      custom_name: bookingCreatedAt
+    escrow_metadata:
+      custom_name: escrowMetadata
+    booking_metadata:
+      custom_name: bookingMetadata
+    created_at:
+      custom_name: createdAt
+    updated_at:
+      custom_name: updatedAt
+    tenant_id:
+      custom_name: tenantId
+  custom_column_names:
+    contract_id: contractId
+    escrow_type: escrowType
+    asset_code: assetCode
+    asset_issuer: assetIssuer
+    booking_id: bookingId
+    room_id: roomId
+    hotel_id: hotelId
+    guest_id: guestId
+    check_in_date: checkInDate
+    check_out_date: checkOutDate
+    booking_created_at: bookingCreatedAt
+    escrow_metadata: escrowMetadata
+    booking_metadata: bookingMetadata
+    created_at: createdAt
+    updated_at: updatedAt
+    tenant_id: tenantId
+  custom_root_fields: {}
+  custom_name: trustlessWorkEscrows
+array_relationships:
+  - name: milestones
+    using:
+      foreign_key_constraint_on:
+        column: escrow_id
+        table:
+          name: escrow_milestones
+          schema: public
+  - name: webhookEvents
+    using:
+      foreign_key_constraint_on:
+        column: contract_id
+        table:
+          name: trustless_work_webhook_events
+          schema: public
+object_relationships: []
+insert_permissions:
+  - role: user
+    permission:
+      check:
+        tenant_id:
+          _eq: X-Hasura-Tenant-Id
+      columns:
+        - contract_id
+        - marker
+        - approver
+        - releaser
+        - resolver
+        - escrow_type
+        - status
+        - asset_code
+        - asset_issuer
+        - amount
+        - balance
+        - booking_id
+        - room_id
+        - hotel_id
+        - guest_id
+        - check_in_date
+        - check_out_date
+        - booking_created_at
+        - escrow_metadata
+        - booking_metadata
+        - tenant_id
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - contract_id
+        - marker
+        - approver
+        - releaser
+        - resolver
+        - escrow_type
+        - status
+        - asset_code
+        - asset_issuer
+        - amount
+        - balance
+        - booking_id
+        - room_id
+        - hotel_id
+        - guest_id
+        - check_in_date
+        - check_out_date
+        - booking_created_at
+        - escrow_metadata
+        - booking_metadata
+        - created_at
+        - updated_at
+        - tenant_id
+      filter:
+        tenant_id:
+          _eq: X-Hasura-Tenant-Id
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - status
+        - balance
+        - escrow_metadata
+        - booking_metadata
+        - updated_at
+      filter:
+        tenant_id:
+          _eq: X-Hasura-Tenant-Id
+      check:
+        tenant_id:
+          _eq: X-Hasura-Tenant-Id
+delete_permissions:
+  - role: user
+    permission:
+      filter:
+        tenant_id:
+          _eq: X-Hasura-Tenant-Id
