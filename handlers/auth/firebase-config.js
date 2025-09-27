@@ -1,9 +1,9 @@
-const admin = require("firebase-admin");
-const config = require("./serviceAccountKey.json");
+import admin from "firebase-admin";
+import config from "./serviceAccountKey.json" assert { type: "json" };
 
 let firebaseApp;
 
-const initializeFirebase = () => {
+export const initializeFirebase = () => {
   if (!firebaseApp) {
     try {
       firebaseApp = admin.initializeApp({
@@ -20,19 +20,12 @@ const initializeFirebase = () => {
   return firebaseApp;
 };
 
-const getAuth = () => {
+export const getAuth = () => {
   const app = initializeFirebase();
   return admin.auth(app);
 };
 
-const getFirestore = () => {
+export const getFirestore = () => {
   const app = initializeFirebase();
   return admin.firestore(app);
-};
-
-module.exports = {
-  initializeFirebase,
-  getAuth,
-  getFirestore,
-  admin,
 };

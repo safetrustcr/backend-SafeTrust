@@ -1,6 +1,6 @@
-const { getAuth } = require("./firebase-config");
+import { getAuth } from "./firebase-config.js";
 
-const authenticateToken = async (req, res, next) => {
+export const authenticateToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -12,7 +12,7 @@ const authenticateToken = async (req, res, next) => {
       });
     }
 
-    const token = authHeader.startsWith("Bearer")
+    const token = authHeader.startsWith("Bearer ")
       ? authHeader.slice(7)
       : authHeader;
 
@@ -33,7 +33,7 @@ const authenticateToken = async (req, res, next) => {
       emailVerified: decodedToken.email_verified,
       name: decodedToken.name,
       picture: decodedToken.picture,
-      role: decodedToken.role || "user",
+      role: decodedToken.role,
     };
 
     next();
@@ -57,8 +57,4 @@ const authenticateToken = async (req, res, next) => {
       code,
     });
   }
-};
-
-module.exports = {
-  authenticateToken,
 };
