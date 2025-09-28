@@ -12,3 +12,4 @@
 - "!include public_spatial_ref_sys.yaml"
 - "!include public_user_wallets.yaml"
 - "!include public_users.yaml"
+- "!include public_trustless_work_escrows.yaml"
