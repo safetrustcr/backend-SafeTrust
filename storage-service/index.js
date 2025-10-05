@@ -1,3 +1,7 @@
+import { config } from "./config";
+
+console.log("Environment loaded for project:", config.FIREBASE_PROJECT_ID);
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
