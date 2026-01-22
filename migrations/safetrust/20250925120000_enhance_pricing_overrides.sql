@@ -1,118 +1,165 @@
--- Test suite for enhanced pricing_overrides table
--- Issue: #188 - SafeTrust Pricing Overrides Enhancement
--- Author: ricaxvi
--- Run after applying migration
+-- Migration: Enhance SafeTrust pricing_overrides table
+-- Issue: #188 - Data validation, performance optimization, and documentation
+-- Author: Majormaxx
 
-\echo 'Starting SafeTrust Pricing Overrides Enhancement Tests...';
+-- ============================================================================
+-- SECTION 1: DATA VALIDATION CONSTRAINTS
+-- ============================================================================
 
-BEGIN;
+-- Constraint 1: Ensure at least one override value is specified
+-- Prevents invalid records where all override fields are NULL
+ALTER TABLE safetrust.pricing_overrides
+ADD CONSTRAINT check_override_values_specified CHECK (
+    override_base_amount IS NOT NULL OR
+    override_percentage IS NOT NULL
+);
 
--- Test 1: Data integrity constraints
-\echo 'Test 1: Data validation constraints';
+-- Constraint 2: Validate effective date ranges
+-- End date must be after start date when both are specified
+ALTER TABLE safetrust.pricing_overrides
+ADD CONSTRAINT check_effective_dates CHECK (
+    effective_until IS NULL OR
+    effective_from IS NULL OR
+    effective_until > effective_from
+);
 
--- Test 1a: Should FAIL - all override values NULL
+-- Constraint 3: Validate transaction amount ranges
+-- Maximum must be greater than or equal to minimum when both are specified
+ALTER TABLE safetrust.pricing_overrides
+ADD CONSTRAINT check_transaction_amounts CHECK (
+    max_transaction_amount IS NULL OR
+    min_transaction_amount IS NULL OR
+    max_transaction_amount >= min_transaction_amount
+);
+
+-- ============================================================================
+-- SECTION 2: ENSURE AUDIT FIELDS EXIST
+-- ============================================================================
+
+-- Add updated_at column if not already present (idempotent)
 DO $$
 BEGIN
-    INSERT INTO safetrust.pricing_overrides 
-    (base_rule_id, user_tier, effective_from, effective_until, priority, is_active)
-    VALUES (1, 'PREMIUM', NOW(), NOW() + INTERVAL '30 days', 1, true);
-    
-    RAISE EXCEPTION 'TEST FAILED: Should not allow all NULL override values';
-EXCEPTION
-    WHEN check_violation THEN
-        RAISE NOTICE '✅ Test 1a PASSED: CHECK constraint prevents NULL override values';
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'safetrust'
+        AND table_name = 'pricing_overrides'
+        AND column_name = 'updated_at'
+    ) THEN
+        ALTER TABLE safetrust.pricing_overrides
+        ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();
+    END IF;
 END $$;
 
--- Test 1b: Should SUCCEED - valid override record
-INSERT INTO safetrust.pricing_overrides 
-(base_rule_id, user_tier, override_percentage, effective_from, effective_until, priority, is_active)
-VALUES (1, 'PREMIUM', 10.00, NOW(), NOW() + INTERVAL '30 days', 1, true);
+-- ============================================================================
+-- SECTION 3: PERFORMANCE INDEXES (Partial Indexes for Active Records)
+-- ============================================================================
 
-\echo '✅ Test 1b PASSED: Valid override record inserted successfully';
+-- Index 1: Active overrides by effective dates and priority
+-- Optimizes: Time-based promotional queries
+CREATE INDEX IF NOT EXISTS idx_safetrust_pricing_overrides_active_effective
+ON safetrust.pricing_overrides(is_active, effective_from, effective_until, priority)
+WHERE is_active = true;
 
--- Test 2: Date validation constraints
-\echo 'Test 2: Date validation constraints';
+-- Index 2: Active overrides by base rule
+-- Optimizes: Rule-based override lookups and joins
+CREATE INDEX IF NOT EXISTS idx_safetrust_pricing_overrides_base_rule
+ON safetrust.pricing_overrides(base_rule_id, is_active, priority)
+WHERE is_active = true;
 
--- Test 2a: Should FAIL - end date before start date
+-- Index 3: Active overrides by user tier
+-- Optimizes: User-tier specific pricing lookups
+CREATE INDEX IF NOT EXISTS idx_safetrust_pricing_overrides_user_tier
+ON safetrust.pricing_overrides(user_tier, is_active)
+WHERE is_active = true AND user_tier IS NOT NULL;
+
+-- Index 4: Effective period range queries
+-- Optimizes: Date range filtering for promotions
+CREATE INDEX IF NOT EXISTS idx_safetrust_pricing_overrides_effective_period
+ON safetrust.pricing_overrides(effective_from, effective_until)
+WHERE is_active = true;
+
+-- Index 5: Transaction amount-based lookups
+-- Optimizes: Amount-based override queries
+CREATE INDEX IF NOT EXISTS idx_safetrust_pricing_overrides_transaction_amounts
+ON safetrust.pricing_overrides(min_transaction_amount, max_transaction_amount, is_active)
+WHERE is_active = true AND (min_transaction_amount IS NOT NULL OR max_transaction_amount IS NOT NULL);
+
+-- Index 6: Priority ordering for active overrides
+-- Optimizes: Priority-based override selection
+CREATE INDEX IF NOT EXISTS idx_safetrust_pricing_overrides_priority_active
+ON safetrust.pricing_overrides(priority, is_active, effective_from)
+WHERE is_active = true;
+
+-- ============================================================================
+-- SECTION 4: FOREIGN KEY JOIN OPTIMIZATION
+-- ============================================================================
+
+-- Index on pricing_rules for optimized joins with overrides
 DO $$
 BEGIN
-    INSERT INTO safetrust.pricing_overrides 
-    (base_rule_id, override_percentage, effective_from, effective_until, priority, is_active)
-    VALUES (1, 15.00, NOW(), NOW() - INTERVAL '1 day', 1, true);
-    
-    RAISE EXCEPTION 'TEST FAILED: Should not allow end date before start date';
-EXCEPTION
-    WHEN check_violation THEN
-        RAISE NOTICE '✅ Test 2a PASSED: Date validation constraint works correctly';
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'shared'
+        AND tablename = 'pricing_rules'
+        AND indexname = 'idx_shared_pricing_rules_id_active'
+    ) THEN
+        CREATE INDEX idx_shared_pricing_rules_id_active
+        ON shared.pricing_rules(id, is_active)
+        WHERE is_active = true;
+    END IF;
 END $$;
 
--- Test 3: Transaction amount validation
-\echo 'Test 3: Transaction amount validation';
+-- ============================================================================
+-- SECTION 5: AUTO-UPDATE TRIGGER
+-- ============================================================================
 
--- Test 3a: Should FAIL - max amount less than min amount
-DO $$
+-- Create or replace the update function (idempotent)
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
 BEGIN
-    INSERT INTO safetrust.pricing_overrides 
-    (base_rule_id, override_percentage, min_transaction_amount, max_transaction_amount, 
-     effective_from, priority, is_active)
-    VALUES (1, 25.00, 1000.00, 500.00, NOW(), 3, true);
-    
-    RAISE EXCEPTION 'TEST FAILED: Should not allow max < min transaction amounts';
-EXCEPTION
-    WHEN check_violation THEN
-        RAISE NOTICE '✅ Test 3a PASSED: Transaction amount validation works correctly';
-END $$;
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- Test 4: Check that indexes were created
-\echo 'Test 4: Verifying performance indexes';
+-- Drop and recreate trigger to ensure latest function is used
+DROP TRIGGER IF EXISTS update_safetrust_pricing_overrides_updated_at
+ON safetrust.pricing_overrides;
 
-SELECT 
-    schemaname,
-    tablename,
-    indexname,
-    CASE 
-        WHEN indexname LIKE 'idx_safetrust_pricing_overrides%' THEN '✅ Created'
-        ELSE '❌ Missing'
-    END as status
-FROM pg_indexes 
-WHERE schemaname = 'safetrust' 
-    AND tablename = 'pricing_overrides'
-    AND indexname LIKE 'idx_safetrust_pricing_overrides%'
-ORDER BY indexname;
+CREATE TRIGGER update_safetrust_pricing_overrides_updated_at
+BEFORE UPDATE ON safetrust.pricing_overrides
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
 
--- Test 5: Check updated_at trigger functionality
-\echo 'Test 5: Testing updated_at trigger';
+-- ============================================================================
+-- SECTION 6: DOCUMENTATION COMMENTS
+-- ============================================================================
 
--- Update a record and verify updated_at changes
-UPDATE safetrust.pricing_overrides 
-SET priority = 2 
-WHERE user_tier = 'PREMIUM';
+-- Enhanced table comment
+COMMENT ON TABLE safetrust.pricing_overrides IS 
+'Pricing overrides for SafeTrust tenant - enables promotional pricing, user-tier discounts, and time-limited offers within hybrid architecture. Enhanced with data validation, performance indexes, and audit trail.';
 
--- Check that updated_at was automatically updated
-SELECT 
-    id,
-    priority,
-    created_at,
-    updated_at,
-    CASE 
-        WHEN updated_at IS NOT NULL THEN '✅ Trigger working'
-        ELSE '❌ Trigger failed'
-    END as trigger_status
-FROM safetrust.pricing_overrides 
-WHERE user_tier = 'PREMIUM'
-LIMIT 1;
+-- Enhanced column comments
+COMMENT ON COLUMN safetrust.pricing_overrides.base_rule_id IS 
+'Foreign key reference to shared.pricing_rules - base rule being overridden';
 
--- Test 6: Verify constraint names and definitions
-\echo 'Test 6: Verifying constraint definitions';
+COMMENT ON COLUMN safetrust.pricing_overrides.user_tier IS 
+'User tier for targeted pricing (PREMIUM, ENTERPRISE, VIP, etc.)';
 
-SELECT 
-    conname as constraint_name,
-    contype as constraint_type,
-    pg_get_constraintdef(oid) as constraint_definition
-FROM pg_constraint 
-WHERE conrelid = 'safetrust.pricing_overrides'::regclass
-    AND contype = 'c'  -- CHECK constraints
-ORDER BY conname;
+COMMENT ON COLUMN safetrust.pricing_overrides.effective_from IS 
+'Start date/time for time-limited promotional overrides';
 
-ROLLBACK;
+COMMENT ON COLUMN safetrust.pricing_overrides.effective_until IS 
+'End date/time for promotions (NULL = permanent override). Must be after effective_from.';
 
+COMMENT ON COLUMN safetrust.pricing_overrides.priority IS 
+'Override priority - lower numbers take precedence over higher numbers';
+
+COMMENT ON COLUMN safetrust.pricing_overrides.min_transaction_amount IS 
+'Minimum transaction amount for amount-based overrides. Must be <= max_transaction_amount.';
+
+COMMENT ON COLUMN safetrust.pricing_overrides.max_transaction_amount IS 
+'Maximum transaction amount for amount-based overrides. Must be >= min_transaction_amount.';
+
+COMMENT ON COLUMN safetrust.pricing_overrides.updated_at IS 
+'Automatic timestamp tracking for audit trail - updated via trigger on every modification';
