@@ -1,3 +1,133 @@
 table:
   name: bid_requests
   schema: public
+object_relationships:
+  - name: apartment
+    using:
+      foreign_key_constraint_on: apartment_id
+  - name: tenant
+    using:
+      foreign_key_constraint_on: tenant_id
+array_relationships:
+  - name: bid_status_histories
+    using:
+      foreign_key_constraint_on:
+        column: bid_request_id
+        table:
+          name: bid_status_histories
+          schema: public
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: "Anonymous users cannot access bid requests"
+  - role: user
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - tenant_id
+        - current_status
+        - proposed_price
+        - desired_move_in
+        - created_at
+        - updated_at
+      filter:
+        # Row-level security: users can see bids they made or bids on their apartments
+        _or:
+          # User is the tenant (bid maker)
+          - tenant_id:
+              _eq: X-Hasura-User-Id
+          # User is the apartment owner
+          - apartment:
+              owner_id:
+                _eq: X-Hasura-User-Id
+      comment: "Users can see bids they made or bids on their apartments"
+  - role: admin
+    permission:
+      columns: "*"
+      filter:
+        # Admins can view all bid requests in their tenant
+        apartment:
+          owner_id:
+            _neq: ""
+      comment: "Admins can view all bid requests in their tenant"
+insert_permissions:
+  - role: user
+    permission:
+      check:
+        # Row-level security: users can only create bids for their own tenant_id
+        tenant_id:
+          _eq: X-Hasura-User-Id
+      columns:
+        - apartment_id
+        - proposed_price
+        - desired_move_in
+      set:
+        # Automatically set tenant_id to current user
+        tenant_id: X-Hasura-User-Id
+      comment: "Users can create bids for apartments in their tenant"
+  - role: admin
+    permission:
+      check:
+        apartment:
+          owner_id:
+            _neq: ""
+      columns:
+        - apartment_id
+        - tenant_id
+        - proposed_price
+        - desired_move_in
+        - current_status
+      comment: "Admins can create bid requests in their tenant"
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - proposed_price
+        - desired_move_in
+      filter:
+        _and:
+          # Row-level security: users can only update their own bids
+          - tenant_id:
+              _eq: X-Hasura-User-Id
+          # Users can only update pending or viewed bids
+          - current_status:
+              _in: ["PENDING", "VIEWED"]
+      check:
+        tenant_id:
+          _eq: X-Hasura-User-Id
+      comment: "Users can update their pending bids"
+  - role: admin
+    permission:
+      columns:
+        - current_status
+      filter:
+        apartment:
+          owner_id:
+            _neq: ""
+      check:
+        apartment:
+          owner_id:
+            _neq: ""
+      comment: "Admins can update bid status for bids in their tenant"
+delete_permissions:
+  - role: user
+    permission:
+      filter:
+        _and:
+          # Row-level security: users can only delete their own bids
+          - tenant_id:
+              _eq: X-Hasura-User-Id
+          # Users can only delete cancelled bids
+          - current_status:
+              _eq: "CANCELLED"
+      comment: "Users can delete their own cancelled bids"
+  - role: admin
+    permission:
+      filter:
+        apartment:
+          owner_id:
+            _neq: ""
+      comment: "Admins can delete bids in their tenant"
