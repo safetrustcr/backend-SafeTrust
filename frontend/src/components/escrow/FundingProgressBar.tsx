@@ -10,6 +10,11 @@ interface Participant {
   user: {
     id: string;
     email: string;
+    first_name: string | null;
+    last_name: string | null;
+    user_wallets: Array<{
+      wallet_address: string;
+    }>;
   };
 }
 
@@ -63,9 +68,18 @@ export function FundingProgressBar({
                 }`}
               />
               <div>
-                <p className="text-sm font-medium">{participant.user.email}</p>
+                <p className="text-sm font-medium">
+                  {participant.user.first_name && participant.user.last_name
+                    ? `${participant.user.first_name} ${participant.user.last_name}`
+                    : participant.user.email}
+                </p>
                 <p className="text-xs text-gray-500">
                   {participant.role} • ${participant.amount.toLocaleString()}
+                  {participant.user.user_wallets?.[0] && (
+                    <span className="ml-2 text-gray-400">
+                      • {participant.user.user_wallets[0].wallet_address.slice(0, 6)}...
+                    </span>
+                  )}
                 </p>
               </div>
             </div>

@@ -26,6 +26,8 @@ export const SUBSCRIBE_ESCROW_STATUS = gql`
         user {
           id
           email
+          first_name
+          last_name
         }
       }
       conditions {
@@ -60,6 +62,11 @@ export const SUBSCRIBE_FUNDING_PROGRESS = gql`
       user {
         id
         email
+        first_name
+        last_name
+        user_wallets(where: { is_primary: { _eq: true } }, limit: 1) {
+          wallet_address
+        }
       }
     }
     escrow_transaction_users_aggregate(
@@ -97,6 +104,8 @@ export const SUBSCRIBE_CONDITION_UPDATES = gql`
       verifier {
         id
         email
+        first_name
+        last_name
       }
     }
     escrow_conditions_aggregate(

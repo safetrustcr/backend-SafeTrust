@@ -14,6 +14,11 @@ interface FundingProgressData {
     user: {
       id: string;
       email: string;
+      first_name: string | null;
+      last_name: string | null;
+      user_wallets: Array<{
+        wallet_address: string;
+      }>;
     };
   }>;
   escrow_transaction_users_aggregate: {
@@ -78,8 +83,11 @@ export function useFundingProgress(
         // Show toast notification if enabled
         if (showToast && typeof window !== 'undefined') {
           import('sonner').then(({ toast }) => {
+            const displayName = newlyFunded.user.first_name && newlyFunded.user.last_name
+              ? `${newlyFunded.user.first_name} ${newlyFunded.user.last_name}`
+              : newlyFunded.user.email;
             toast.success(
-              `💰 ${newlyFunded.user.email} has funded the escrow! (${fundedCount}/${totalParticipants})`
+              `💰 ${displayName} has funded the escrow! (${fundedCount}/${totalParticipants})`
             );
           });
         }

@@ -21,6 +21,20 @@ export const SUBSCRIBE_USER_NOTIFICATIONS = gql`
       read
       created_at
       escrow_transaction_id
+      escrow_transaction {
+        contract_id
+        status
+      }
+    }
+    notifications_aggregate(
+      where: { 
+        user_id: { _eq: $user_id }
+        read: { _eq: false }
+      }
+    ) {
+      aggregate {
+        count
+      }
     }
   }
 `;
