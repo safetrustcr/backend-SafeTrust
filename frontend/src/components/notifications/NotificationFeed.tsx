@@ -9,10 +9,6 @@ interface Notification {
   read: boolean;
   created_at: string;
   escrow_transaction_id: string | null;
-  escrow_transaction: {
-    contract_id: string;
-    status: string;
-  } | null;
 }
 
 interface NotificationFeedProps {
@@ -64,9 +60,9 @@ export function NotificationFeed({
                 <p className="text-sm text-gray-500 mt-1">
                   {notification.message}
                 </p>
-                {notification.escrow_transaction && (
+                {notification.escrow_transaction_id && (
                   <p className="text-xs text-gray-400 mt-1">
-                    Escrow: {notification.escrow_transaction.contract_id}
+                    Escrow ID: {notification.escrow_transaction_id}
                   </p>
                 )}
                 <p className="text-xs text-gray-400 mt-1">

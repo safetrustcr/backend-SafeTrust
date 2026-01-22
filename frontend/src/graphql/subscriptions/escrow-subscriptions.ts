@@ -28,7 +28,7 @@ export const SUBSCRIBE_ESCROW_STATUS = gql`
           email
         }
       }
-      conditions: escrow_conditions {
+      conditions {
         id
         condition_type
         description

@@ -11,19 +11,10 @@ interface Notification {
   read: boolean;
   created_at: string;
   escrow_transaction_id: string | null;
-  escrow_transaction: {
-    contract_id: string;
-    status: string;
-  } | null;
 }
 
 interface NotificationsData {
   notifications: Notification[];
-  notifications_aggregate: {
-    aggregate: {
-      count: number;
-    };
-  };
 }
 
 interface UseNotificationsOptions {
@@ -51,7 +42,8 @@ export function useNotifications(
   );
 
   const notifications = data?.notifications || [];
-  const unreadCount = data?.notifications_aggregate.aggregate.count || 0;
+  // Calculate unread count from notifications array (all are unread by filter)
+  const unreadCount = loading ? 0 : notifications.length;
 
   // Detect new notifications
   useEffect(() => {
