@@ -14,107 +14,78 @@ select_permissions:
     permission:
       columns: []
       filter: {}
-    comment: ""
-  - role: landlord
+    comment: "Anonymous users cannot view any user data"
+  - role: user
     permission:
       columns:
-        - country_code
-        - email
-        - first_name
         - id
-        - last_name
+        - email
         - last_seen
-        - location
-        - phone_number
-        - profile_image_url
-        - summary
       filter:
+        # Row-level security: users can only see their own profile
         id:
           _eq: X-Hasura-User-Id
-    comment: ""
-  - role: tenant
+      comment: "Users can only see their own profile"
+  - role: admin
     permission:
       columns:
-        - country_code
-        - email
-        - first_name
         - id
-        - last_name
+        - email
         - last_seen
-        - location
-        - phone_number
-        - profile_image_url
-        - summary
       filter:
+        # Admins can view all users in their tenant
         id:
-          _eq: X-Hasura-User-Id
-    comment: ""
-  - role: users
+          _neq: ""
+      comment: "Admins can view all users in their tenant"
+insert_permissions:
+  - role: user
     permission:
-      columns:
-        - country_code
-        - email
-        - first_name
-        - id
-        - last_name
-        - last_seen
-        - location
-        - phone_number
-        - profile_image_url
-        - summary
-      filter:
+      check:
+        # Row-level security: users can only create records for themselves
         id:
           _eq: X-Hasura-User-Id
-    comment: ""
+      columns:
+        - id
+        - email
+      comment: "Users can only create records for themselves"
+  - role: admin
+    permission:
+      check:
+        id:
+          _neq: ""
+      columns:
+        - id
+        - email
+      comment: "Admins can create user records in their tenant"
 update_permissions:
-  - role: landlord
+  - role: user
     permission:
       columns:
-        - country_code
-        - first_name
-        - last_name
-        - location
-        - phone_number
-        - profile_image_url
-        - summary
+        - last_seen
       filter:
+        # Row-level security: users can only update their own profile
         id:
           _eq: X-Hasura-User-Id
       check:
         id:
           _eq: X-Hasura-User-Id
-    comment: ""
-  - role: tenant
+      comment: "Users can only update their own last_seen timestamp"
+  - role: admin
     permission:
       columns:
-        - country_code
-        - first_name
-        - last_name
-        - location
-        - phone_number
-        - profile_image_url
-        - summary
+        - email
+        - last_seen
       filter:
         id:
-          _eq: X-Hasura-User-Id
+          _neq: ""
       check:
         id:
-          _eq: X-Hasura-User-Id
-    comment: ""
-  - role: users
+          _neq: ""
+      comment: "Admins can update user information in their tenant"
+delete_permissions:
+  - role: admin
     permission:
-      columns:
-        - country_code
-        - first_name
-        - last_name
-        - location
-        - phone_number
-        - profile_image_url
-        - summary
       filter:
         id:
-          _eq: X-Hasura-User-Id
-      check:
-        id:
-          _eq: X-Hasura-User-Id
-    comment: ""
+          _neq: ""
+      comment: "Admins can delete users in their tenant"

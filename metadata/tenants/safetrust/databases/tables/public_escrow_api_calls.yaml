@@ -24,3 +24,59 @@ table:
     - name: escrow_transaction
       using:
         foreign_key_constraint_on: escrow_transaction_id
+  select_permissions:
+    - role: anonymous
+      permission:
+        columns: []
+        filter: {}
+      comment: "Anonymous users cannot access API call logs"
+    - role: user
+      permission:
+        columns:
+          - id
+          - escrow_transaction_id
+          - endpoint
+          - method
+          - http_status_code
+          - created_at
+        filter:
+          escrow_transaction:
+            _or:
+              - bid_request:
+                  tenant_id:
+                    _eq: X-Hasura-User-Id
+              - bid_request:
+                  apartment:
+                    owner_id:
+                      _eq: X-Hasura-User-Id
+              - cancelled_by:
+                  _eq: X-Hasura-User-Id
+        comment: "Users can view non-sensitive API logs for their escrows"
+    - role: admin
+      permission:
+        columns: "*"
+        filter:
+          escrow_transaction:
+            bid_request:
+              apartment:
+                owner_id:
+                  _neq: ""
+        comment: "Admins can view all API call logs including sensitive request/response data"
+  insert_permissions:
+    - role: admin
+      permission:
+        check:
+          escrow_transaction:
+            bid_request:
+              apartment:
+                owner_id:
+                  _neq: ""
+        columns:
+          - escrow_transaction_id
+          - endpoint
+          - method
+          - request_body
+          - http_status_code
+          - response_body
+          - error_details
+        comment: "Admins can log API calls in their tenant"
