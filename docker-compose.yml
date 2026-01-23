@@ -17,7 +17,7 @@ services:
   graphql-engine:
     image: hasura/graphql-engine:v2.47.0
     ports:
-      - "8080:8080" 
+      - "8080:8080"
     restart: always
     environment:
       HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/postgres
@@ -42,7 +42,7 @@ services:
     image: hasura/graphql-data-connector:v2.47.0
     restart: always
     ports:
-      - "8083:8081"  # Changed from 8081:8081 to 8083:8081
+      - "8083:8081" # Changed from 8081:8081 to 8083:8081
     environment:
       QUARKUS_LOG_LEVEL: ERROR
       QUARKUS_OPENTELEMETRY_ENABLED: "false"
@@ -52,6 +52,19 @@ services:
       timeout: 10s
       retries: 5
       start_period: 5s
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
   console:
     build:
       context: .
@@ -90,12 +103,23 @@ services:
       - SMTP_USER=your-user
       - SMTP_PASS=your-password
       - SMTP_FROM=your-email@example.com
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=safetrust_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgrespassword
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=myadminsecretkey
+      - LOG_LEVEL=info
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
     volumes:
       - ./webhook:/usr/src/webhook
       - /usr/src/webhook/node_modules
     depends_on:
       - postgres
       - graphql-engine
+      - redis
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -104,3 +128,4 @@ services:
       start_period: 40s
 volumes:
   db_data:
+  redis_data:

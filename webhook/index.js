@@ -1,63 +1,121 @@
-import { config } from "./config";
+require("dotenv").config();
+const express = require("express");
+const cors = require("cors");
+const helmet = require("helmet");
+const morgan = require("morgan");
 
-console.log("Environment loaded for project:", config.FIREBASE_PROJECT_ID);
+const { verifyAdminSecret } = require("./middleware/auth");
+const { validateJWT } = require("./middleware/jwt-auth");
+const {
+  globalLimiter,
+  createTenantLimiter,
+} = require("./middleware/rate-limiter");
+const { validateRequest } = require("./middleware/validator");
+const ipWhitelist = require("./middleware/ip-whitelist");
+const auditLog = require("./middleware/audit-logger");
+const errorHandler = require("./middleware/error-handler");
+const { logger } = require("./utils/logger");
 
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const morgan = require('morgan');
-const webhooksRoutes = require('./webhooks');
-const forgotPasswordRoutes = require('./forgot-password');
-const resetPasswordRoutes = require('./reset-password');
-const prepareEscrowContractRoutes = require('./prepare-escrow-contract');
+// Route handlers
+const webhooksRoutes = require("./webhooks");
+const forgotPasswordRoutes = require("./forgot-password");
+const resetPasswordRoutes = require("./reset-password");
+const prepareEscrowContractRoutes = require("./prepare-escrow-contract");
 
 const app = express();
 
-// Middleware
-app.use(express.json());
-app.use(cors({
-  credentials: true,
-  origin: true,
-}));
-app.use(morgan('tiny'));
-app.disable('x-powered-by');
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+      },
+    },
+  }),
+);
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
+// CORS configuration
+app.use(
+  cors({
+    credentials: true,
+    origin: process.env.ALLOWED_ORIGINS?.split(",") || true,
+  }),
+);
+
+// Body parser with size limit (prevent large payloads)
+app.use(express.json({ limit: "1mb" }));
+
+// HTTP request logging
+app.use(morgan("combined", { stream: logger.stream }));
+
+// Disable x-powered-by header
+app.disable("x-powered-by");
+
+// Apply IP whitelist globally
+app.use(ipWhitelist);
+
+// Apply global rate limiter
+app.use(globalLimiter);
+
+// Health check endpoint (no auth required)
+app.get("/health", (req, res) => {
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || "development",
+  });
 });
 
-// Debug middleware to log all requests
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url}`);
-  next();
-});
+// Apply authentication and audit logging to webhook routes
+app.use("/webhooks", verifyAdminSecret, validateJWT, auditLog);
 
-// Routes
-app.use('/webhooks', webhooksRoutes);
-app.use('/api/auth', forgotPasswordRoutes);
-app.use('/api/auth', resetPasswordRoutes);
+// Apply validation middleware to specific webhook endpoints
+app.use(
+  "/webhooks/escrow_status_update",
+  createTenantLimiter(500),
+  validateRequest("escrowStatusUpdate"),
+);
+
+app.use(
+  "/webhooks/escrow_refund_status_update",
+  createTenantLimiter(500),
+  validateRequest("escrowRefundStatusUpdate"),
+);
+
+// Mount routes
+app.use("/webhooks", webhooksRoutes);
+app.use("/api/auth", forgotPasswordRoutes);
+app.use("/api/auth", resetPasswordRoutes);
 app.use(prepareEscrowContractRoutes);
 
-// Error handler
-app.use((err, req, res, next) => {
-  if (err) {
-    console.error(err.message);
-    console.error(err.stack);
-    return res.status(500).json({ error: err.message });
-  }
-});
+// Global error handler (must be last)
+app.use(errorHandler);
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`Webhook service listening on port ${port}`);
-  console.log('Available routes:');
-  console.log('- GET /health');
-  console.log('- GET /api/auth/validate-reset-token');
-  console.log('- POST /api/auth/reset-password');
-  console.log('- POST /api/auth/forgot-password');
-  console.log('- POST /webhooks/firebase/user-created');
-  console.log('- POST /webhooks/firebase/user-updated');
-  console.log('- POST /webhooks/firebase/user-deleted');
-  console.log('- GET /webhooks/firebase/health');
+  logger.info(`🔐 Secure webhook service listening on port ${port}`);
+  logger.info(`Environment: ${process.env.NODE_ENV || "development"}`);
+  logger.info(
+    `IP Whitelist: ${process.env.ALLOWED_IPS ? "Enabled" : "Disabled"}`,
+  );
+  logger.info("Available routes:");
+  logger.info("- GET /health");
+  logger.info("- GET /api/auth/validate-reset-token");
+  logger.info("- POST /api/auth/reset-password");
+  logger.info("- POST /api/auth/forgot-password");
+  logger.info("- POST /webhooks/firebase/user-created");
+  logger.info("- POST /webhooks/firebase/user-updated");
+  logger.info("- POST /webhooks/firebase/user-deleted");
+  logger.info("- POST /webhooks/escrow_status_update");
+  logger.info("- POST /webhooks/escrow_refund_status_update");
+  logger.info("- GET /webhooks/firebase/health");
+});
+
+// Graceful shutdown
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM signal received: closing HTTP server");
+  require("./middleware/rate-limiter").redis.quit();
+  require("./utils/database").pool.end();
+  process.exit(0);
 });
