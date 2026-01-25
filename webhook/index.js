@@ -1,6 +1,6 @@
-import { config } from "./config";
+const config = require("./config");
 
-console.log("Environment loaded for project:", config.FIREBASE_PROJECT_ID);
+console.log("Environment loaded for project:", config.firebase.projectId);
 
 require('dotenv').config();
 const express = require('express');
