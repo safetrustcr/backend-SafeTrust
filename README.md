@@ -1,4 +1,5 @@
 ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/sotoJ24/SafeTrust-Backend?utm_source=oss&utm_medium=github&utm_campaign=sotoJ24%2FSafeTrust-Backend&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+
 ### SafeTrust Description:
 
 **SafeTrust** is a decentralized platform designed to revolutionize P2P transactions, providing secure deposits and payments powered by blockchain and trustless technologies. 🌐✨ Experience transparency and reliability in every cryptocurrency transaction. 💸🔒
