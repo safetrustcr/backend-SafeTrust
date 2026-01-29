@@ -1,20 +1,23 @@
-// Try to load config if it exists (for Firebase setup)
-let config = null;
-try {
-  const configModule = require('./config');
-  config = configModule.config || configModule;
-  if (config && config.FIREBASE_PROJECT_ID) {
-    console.log("Environment loaded for project:", config.FIREBASE_PROJECT_ID);
-  }
-} catch (e) {
-  // Config file not found or not needed - continue without it
-  console.log("Config file not found, continuing without Firebase config");
-}
-
 require('dotenv').config();
+const { config } = require('./config');
+
+console.log("Environment loaded for project:", config.FIREBASE_PROJECT_ID);
 const express = require('express');
+const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
+
+// Import security middleware
+const { verifyAdminSecret } = require('./middleware/auth');
+const { validateJWT } = require('./middleware/jwt-auth');
+const { globalLimiter, createTenantLimiter, createEndpointLimiter } = require('./middleware/rate-limiter');
+const { validateRequest } = require('./middleware/validator');
+const ipWhitelist = require('./middleware/ip-whitelist');
+const auditLog = require('./middleware/audit-logger');
+const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
+const { logger } = require('./utils/logger');
+
+// Import route handlers
 const webhooksRoutes = require('./webhooks');
 const forgotPasswordRoutes = require('./forgot-password');
 const resetPasswordRoutes = require('./reset-password');
@@ -31,68 +34,99 @@ const refundRequestedHandler = require('./events/refund-requested');
 
 const app = express();
 
-// Middleware
-app.use(express.json());
+// Security headers
+app.use(helmet());
+
+// CORS configuration
 app.use(cors({
   credentials: true,
   origin: true,
 }));
-app.use(morgan('tiny'));
+
+// Request parsing
+app.use(express.json());
+
+// HTTP request logging
+app.use(morgan('combined', { stream: logger.stream }));
+
+// Disable x-powered-by header
 app.disable('x-powered-by');
 
-// Health check endpoint
+// IP whitelist (applies to all routes except /health)
+app.use(ipWhitelist);
+
+// Global rate limiting
+app.use(globalLimiter);
+
+// Health check endpoint (no auth required)
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0'
+  });
 });
 
-// Debug middleware to log all requests
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url}`);
-  next();
-});
+// Debug middleware to log all requests (development only)
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    console.log(`${req.method} ${req.url}`);
+    next();
+  });
+}
 
-// Routes
-app.use('/webhooks', webhooksRoutes);
-app.use('/api/auth', forgotPasswordRoutes);
-app.use('/api/auth', resetPasswordRoutes);
-app.use(prepareEscrowContractRoutes);
+// Protected Routes - Require Hasura admin secret verification
+// These routes are called by Hasura Actions/Events
 
-// Event trigger endpoints (Hasura event triggers)
-// Note: These endpoints should be protected with Hasura admin secret validation
-app.post('/events/escrow-created', escrowCreatedHandler);
-app.post('/events/user-funded', userFundedHandler);
-app.post('/events/all-funded', allFundedHandler);
-app.post('/events/condition-verified', conditionVerifiedHandler);
-app.post('/events/all-conditions-met', allConditionsMetHandler);
-app.post('/events/fund-released', fundReleasedHandler);
-app.post('/events/refund-requested', refundRequestedHandler);
+// Prepare Escrow Contract - Protected endpoint for Hasura Actions
+app.use('/',
+  verifyAdminSecret,
+  validateJWT,
+  auditLog,
+  createTenantLimiter(200),
+  validateRequest('prepareEscrowContract'),
+  prepareEscrowContractRoutes
+);
 
-// Error handler
-app.use((err, req, res, next) => {
-  if (err) {
-    console.error(err.message);
-    console.error(err.stack);
-    return res.status(500).json({ error: err.message });
-  }
-});
+// Hasura Webhooks - Protected endpoints
+app.use('/',
+  verifyAdminSecret,
+  validateJWT,
+  auditLog,
+  createTenantLimiter(500),
+  webhooksRoutes
+);
+
+// Public Routes - Password reset endpoints (no admin secret required)
+// These are called directly by users, so they need stricter rate limiting
+
+// Authentication routes - Public endpoints with rate limiting
+app.use('/api/auth',
+  auditLog,
+  createEndpointLimiter(10), // Max 10 requests per minute
+  forgotPasswordRoutes,
+  resetPasswordRoutes
+);
+
+// 404 handler for undefined routes
+app.use(notFoundHandler);
+
+// Global error handler (must be last)
+app.use(errorHandler);
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`Webhook service listening on port ${port}`);
-  console.log('Available routes:');
-  console.log('- GET /health');
-  console.log('- GET /api/auth/validate-reset-token');
-  console.log('- POST /api/auth/reset-password');
-  console.log('- POST /api/auth/forgot-password');
-  console.log('- POST /webhooks/firebase/user-created');
-  console.log('- POST /webhooks/firebase/user-updated');
-  console.log('- POST /webhooks/firebase/user-deleted');
-  console.log('- GET /webhooks/firebase/health');
-  console.log('- POST /events/escrow-created');
-  console.log('- POST /events/user-funded');
-  console.log('- POST /events/all-funded');
-  console.log('- POST /events/condition-verified');
-  console.log('- POST /events/all-conditions-met');
-  console.log('- POST /events/fund-released');
-  console.log('- POST /events/refund-requested');
+  logger.info(`🔐 Secure webhook service listening on port ${port}`);
+  logger.info('Available routes:');
+  logger.info('- GET  /health');
+  logger.info('- GET  /api/auth/validate-reset-token (Public)');
+  logger.info('- POST /api/auth/reset-password (Public)');
+  logger.info('- POST /api/auth/forgot-password (Public)');
+  logger.info('- POST /prepare-escrow-contract (Protected)');
+  logger.info('- POST /webhooks/* (Protected)');
+  logger.info('');
+  logger.info('Security features enabled:');
+  logger.info(`- IP Whitelist: ${process.env.IP_WHITELIST_ENABLED === 'true' ? 'Yes' : 'No'}`);
+  logger.info(`- Audit Logging: ${process.env.AUDIT_LOGGING_ENABLED === 'true' ? 'Yes' : 'No'}`);
+  logger.info(`- Rate Limiting: Yes (Redis: ${process.env.REDIS_URL ? 'Yes' : 'No (Memory)'})`);
 });
