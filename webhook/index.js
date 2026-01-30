@@ -25,6 +25,15 @@ const forgotPasswordRoutes = require('./forgot-password');
 const resetPasswordRoutes = require('./reset-password');
 const prepareEscrowContractRoutes = require('./prepare-escrow-contract');
 
+// Event trigger handlers
+const escrowCreatedHandler = require('./events/escrow-created');
+const userFundedHandler = require('./events/user-funded');
+const allFundedHandler = require('./events/all-funded');
+const conditionVerifiedHandler = require('./events/condition-verified');
+const allConditionsMetHandler = require('./events/all-conditions-met');
+const fundReleasedHandler = require('./events/fund-released');
+const refundRequestedHandler = require('./events/refund-requested');
+
 // --- Web3 Action Imports ---
 const verifyWallet = require('./actions/verify-wallet');
 const initiateFunding = require('./actions/initiate-funding');
@@ -33,8 +42,7 @@ const releaseFunds = require('./actions/release-funds');
 const processRefund = require('./actions/process-refund');
 
 // --- Middleware Imports ---
-const { authMiddleware } = require('./middleware/auth'); 
-const { logger } = require('./utils/logger');
+const { authMiddleware } = require('./middleware/auth');
 
 const app = express();
 
