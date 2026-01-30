@@ -6,7 +6,12 @@ require('dotenv').config();
  * Reuses the same connection pattern as other webhook handlers
  */
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || process.env.PG_DATABASE_URL || 'postgres://postgres:postgrespassword@postgres:5432/postgres',
+  host: process.env.POSTGRES_HOST,
+  port: process.env.POSTGRES_PORT,
+  database: process.env.POSTGRES_DB,
+  user: process.env.POSTGRES_USER,
+  password: process.env.POSTGRES_PASSWORD,
+  connectionString: process.env.DATABASE_URL || process.env.PG_DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
   max: 20,
   idleTimeoutMillis: 30000,
@@ -40,8 +45,29 @@ async function getClient() {
   return await pool.connect();
 }
 
+/**
+ * Execute a transaction
+ * @param {Function} callback - Async callback that receives the client
+ * @returns {Promise<any>} Result from callback
+ */
+const executeTransaction = async (callback) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+};
+
 module.exports = {
   query,
   getClient,
   pool,
+  executeTransaction,
 };

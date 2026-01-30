@@ -18,6 +18,8 @@ const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
 const { logger } = require('./utils/logger');
 
 // Import route handlers
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const webhooksRoutes = require('./webhooks');
 const forgotPasswordRoutes = require('./forgot-password');
 const resetPasswordRoutes = require('./reset-password');
@@ -32,12 +34,23 @@ const allConditionsMetHandler = require('./events/all-conditions-met');
 const fundReleasedHandler = require('./events/fund-released');
 const refundRequestedHandler = require('./events/refund-requested');
 
+// --- Web3 Action Imports ---
+const verifyWallet = require('./actions/verify-wallet');
+const initiateFunding = require('./actions/initiate-funding');
+const verifyTransaction = require('./actions/verify-transaction');
+const releaseFunds = require('./actions/release-funds');
+const processRefund = require('./actions/process-refund');
+
+// --- Middleware Imports ---
+const { authMiddleware } = require('./middleware/auth');
+
 const app = express();
 
-// Security headers
-app.use(helmet());
+const PORT = process.env.WEBHOOK_PORT || 3001;
 
-// CORS configuration
+// --- Middleware Setup ---
+app.use(helmet()); // Added for security headers
+app.use(express.json());
 app.use(cors({
   credentials: true,
   origin: true,
@@ -52,13 +65,39 @@ app.use(morgan('combined', { stream: logger.stream }));
 // Disable x-powered-by header
 app.disable('x-powered-by');
 
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    if (req.originalUrl.startsWith('/actions')) {
+      const duration = Date.now() - start;
+      logger.info(`[${req.method}] ${req.originalUrl} - ${res.statusCode} (${duration}ms)`);
+    }
+  });
+  next();
+});
+
+const actionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, 
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' }
+});
+
+//Async Wrapper (Prevents crashes on async errors)
+const asyncHandler = (fn) => (req, res, next) => 
+  Promise.resolve(fn(req, res, next)).catch(next);
+
+
 // IP whitelist (applies to all routes except /health)
 app.use(ipWhitelist);
 
 // Global rate limiting
 app.use(globalLimiter);
 
-// Health check endpoint (no auth required)
+// --- Endpoints ---
+
+// Health check
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -88,6 +127,20 @@ app.use('/',
   prepareEscrowContractRoutes
 );
 
+// Error handler
+app.use((err, req, res, next) => {
+  if (err) {
+    // Log to file/stream if it's an action error
+    if (req.url.startsWith('/actions')) {
+      logger.error(err.stack);
+    } else {
+      console.error(err.message);
+      console.error(err.stack);
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // Hasura Webhooks - Protected endpoints
 app.use('/',
   verifyAdminSecret,
@@ -97,26 +150,8 @@ app.use('/',
   webhooksRoutes
 );
 
-// Public Routes - Password reset endpoints (no admin secret required)
-// These are called directly by users, so they need stricter rate limiting
-
-// Authentication routes - Public endpoints with rate limiting
-app.use('/api/auth',
-  auditLog,
-  createEndpointLimiter(10), // Max 10 requests per minute
-  forgotPasswordRoutes,
-  resetPasswordRoutes
-);
-
-// 404 handler for undefined routes
-app.use(notFoundHandler);
-
-// Global error handler (must be last)
-app.use(errorHandler);
-
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  logger.info(`🔐 Secure webhook service listening on port ${port}`);
+app.listen(PORT, () => {
+  logger.info(`🔐 Secure webhook service listening on port ${PORT}`);
   logger.info('Available routes:');
   logger.info('- GET  /health');
   logger.info('- GET  /api/auth/validate-reset-token (Public)');
@@ -129,4 +164,10 @@ app.listen(port, () => {
   logger.info(`- IP Whitelist: ${process.env.IP_WHITELIST_ENABLED === 'true' ? 'Yes' : 'No'}`);
   logger.info(`- Audit Logging: ${process.env.AUDIT_LOGGING_ENABLED === 'true' ? 'Yes' : 'No'}`);
   logger.info(`- Rate Limiting: Yes (Redis: ${process.env.REDIS_URL ? 'Yes' : 'No (Memory)'})`);
+  console.log('--- Hasura Actions ---');
+  console.log('- POST /actions/verify-wallet');
+  console.log('- POST /actions/initiate-funding');
+  console.log('- POST /actions/verify-transaction');
+  console.log('- POST /actions/release-funds');
+  console.log('- POST /actions/process-refund');
 });
