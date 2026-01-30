@@ -1,23 +1,31 @@
 const Joi = require("joi");
 const { logger } = require("../utils/logger");
 
-// UUID v4 validation schema
+// Common validation patterns
 const uuidSchema = Joi.string().uuid({ version: "uuidv4" });
-
-// Ethereum address validation (0x + 40 hex chars)
 const addressSchema = Joi.string().pattern(/^0x[a-fA-F0-9]{40}$/);
-
-// Transaction hash validation (0x + 64 hex chars)
 const txHashSchema = Joi.string().pattern(/^0x[a-fA-F0-9]{64}$/);
-
-// Signature validation (0x + 130 hex chars)
 const signatureSchema = Joi.string().pattern(/^0x[a-fA-F0-9]{130}$/);
 
 /**
  * Validation schemas for different webhook endpoints
  */
 const schemas = {
-  // Escrow status update webhook
+  // Auth related
+  forgotPassword: Joi.object({
+    email: Joi.string().email().required(),
+  }).unknown(true),
+
+  resetPassword: Joi.object({
+    token: Joi.string().required(),
+    newPassword: Joi.string().min(8).required(),
+  }).unknown(true),
+
+  validateResetToken: Joi.object({
+    token: Joi.string().required(),
+  }),
+
+  // Escrow related
   escrowStatusUpdate: Joi.object({
     event: Joi.object({
       data: Joi.object({
@@ -31,7 +39,6 @@ const schemas = {
     }).required(),
   }),
 
-  // Escrow refund status update webhook
   escrowRefundStatusUpdate: Joi.object({
     event: Joi.object({
       data: Joi.object({
@@ -45,7 +52,7 @@ const schemas = {
     }).required(),
   }),
 
-  // Wallet verification action
+  // Action related
   verifyWallet: Joi.object({
     input: Joi.object({
       user_id: uuidSchema.required(),
@@ -56,7 +63,6 @@ const schemas = {
     session_variables: Joi.object().unknown(true),
   }),
 
-  // Transaction verification action
   verifyTransaction: Joi.object({
     input: Joi.object({
       escrow_transaction_id: uuidSchema.required(),
@@ -67,7 +73,6 @@ const schemas = {
     session_variables: Joi.object().unknown(true),
   }),
 
-  // Release funds action
   releaseFunds: Joi.object({
     input: Joi.object({
       escrow_transaction_id: uuidSchema.required(),
@@ -76,28 +81,66 @@ const schemas = {
     }).required(),
     session_variables: Joi.object().unknown(true),
   }),
+
+  prepareEscrowContract: Joi.object({
+    input: Joi.object({
+      input: Joi.object({
+        signer: Joi.string().required(),
+        engagementId: uuidSchema.required(),
+        title: Joi.string().required(),
+        description: Joi.string().allow(""),
+        roles: Joi.array()
+          .items(
+            Joi.object({
+              address: Joi.string().required(),
+              role: Joi.string().required(),
+            }),
+          )
+          .required(),
+        amount: Joi.number().positive().required(),
+        platformFee: Joi.number().min(0).required(),
+        milestones: Joi.array()
+          .items(
+            Joi.object({
+              description: Joi.string().required(),
+              amount: Joi.number().positive().required(),
+            }),
+          )
+          .min(1)
+          .required(),
+        trustline: Joi.object({
+          asset_code: Joi.string().required(),
+          asset_issuer: Joi.string().required(),
+        }).required(),
+        receiverMemo: Joi.string().allow("").optional(),
+      }).required(),
+    }).required(),
+    session_variables: Joi.object().optional(),
+  }),
 };
 
 /**
- * Create validation middleware for a specific schema
- * @param {string} schemaName - Name of the schema to validate against
- * @returns {Function} Express middleware
+ * Validation middleware
  */
-function validateRequest(schemaName) {
+function validateRequest(schemaName, options = {}) {
   return (req, res, next) => {
     const schema = schemas[schemaName];
 
     if (!schema) {
-      logger.error("Validation schema not found", { schemaName });
-      return res.status(500).json({
-        success: false,
-        message: "Internal server error",
-      });
+      logger.error(`Validation schema '${schemaName}' not found`);
+      return res.status(500).json({ error: "Internal server error" });
     }
 
-    const { error, value } = schema.validate(req.body, {
-      abortEarly: false, 
-      stripUnknown: true, 
+    const dataToValidate =
+      req.method === "GET" && Object.keys(req.query).length > 0
+        ? req.query
+        : req.body;
+
+    const { error, value } = schema.validate(dataToValidate, {
+      abortEarly: false,
+      stripUnknown:
+        options.stripUnknown !== undefined ? options.stripUnknown : true,
+      ...options,
     });
 
     if (error) {
@@ -117,10 +160,22 @@ function validateRequest(schemaName) {
       });
     }
 
-    // Attach validated body to request
-    req.validatedBody = value;
+    // Attach validated value
+    if (req.method === "GET") {
+      req.query = value;
+    } else {
+      req.body = value;
+      req.validatedBody = value; // Keep for backward compatibility
+    }
+
     next();
   };
 }
 
-module.exports = { validateRequest, schemas };
+module.exports = {
+  validateRequest,
+  schemas,
+  addSchema: (name, schema) => {
+    schemas[name] = schema;
+  },
+};

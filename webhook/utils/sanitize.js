@@ -1,91 +1,112 @@
 /**
- * Sanitize HTTP headers by removing sensitive authorization data
- * @param {Object} headers - Express request headers
- * @returns {Object} Sanitized headers
+ * Data Sanitization Utilities
+ * Removes sensitive data before logging or storing
+ */
+
+const SENSITIVE_FIELDS = [
+  "password",
+  "newPassword",
+  "oldPassword",
+  "confirmPassword",
+  "token",
+  "secret",
+  "apiKey",
+  "api_key",
+  "accessToken",
+  "access_token",
+  "refreshToken",
+  "refresh_token",
+  "privateKey",
+  "private_key",
+  "clientSecret",
+  "client_secret",
+  "authorization",
+  "x-hasura-admin-secret",
+  "cookie",
+  "set-cookie",
+  "signature",
+];
+
+/**
+ * Sanitizes an object by redacting sensitive fields
+ */
+const sanitizeObject = (data, maxDepth = 5) => {
+  if (maxDepth === 0) return "[Max depth reached]";
+  if (data === null || data === undefined) return data;
+
+  if (Array.isArray(data)) {
+    return data.map((item) => sanitizeObject(item, maxDepth - 1));
+  }
+
+  if (typeof data === "object") {
+    const sanitized = {};
+    for (const [key, value] of Object.entries(data)) {
+      const lowerKey = key.toLowerCase();
+      if (
+        SENSITIVE_FIELDS.some((field) => lowerKey.includes(field.toLowerCase()))
+      ) {
+        sanitized[key] = "[REDACTED]";
+      } else if (typeof value === "object" && value !== null) {
+        sanitized[key] = sanitizeObject(value, maxDepth - 1);
+      } else {
+        sanitized[key] = value;
+      }
+    }
+    return sanitized;
+  }
+
+  return data;
+};
+
+/**
+ * Sanitizes data for logging purposes
+ */
+const sanitizeForLog = (data) => {
+  try {
+    return sanitizeObject(data);
+  } catch (error) {
+    console.error("Error sanitizing data:", error);
+    return "[Sanitization failed]";
+  }
+};
+
+/**
+ * Sanitize HTTP headers
  */
 function sanitizeHeaders(headers) {
-  const sanitized = { ...headers };
-
-  // Remove sensitive headers
-  const sensitiveHeaders = [
-    "x-hasura-admin-secret",
-    "authorization",
-    "cookie",
-    "x-api-key",
-  ];
-
-  sensitiveHeaders.forEach((header) => {
-    if (sanitized[header]) {
-      sanitized[header] = "[REDACTED]";
-    }
-  });
-
-  return sanitized;
+  return sanitizeObject(headers);
 }
 
 /**
- * Sanitize request body by removing sensitive fields
- * @param {Object} body - Request body
- * @returns {Object} Sanitized body
+ * Sanitize request body
  */
 function sanitizeRequestBody(body) {
-  if (!body || typeof body !== "object") {
-    return body;
-  }
-
-  const sanitized = JSON.parse(JSON.stringify(body));
-
-  // Redact sensitive fields in input
-  if (sanitized.input) {
-    if (sanitized.input.signature) {
-      sanitized.input.signature = "[REDACTED]";
-    }
-    if (sanitized.input.private_key) {
-      sanitized.input.private_key = "[REDACTED]";
-    }
-    if (sanitized.input.password) {
-      sanitized.input.password = "[REDACTED]";
-    }
-  }
-
-  // Redact session variables (may contain sensitive claims)
-  if (sanitized.session_variables) {
-    sanitized.session_variables = "[REDACTED]";
-  }
-
-  return sanitized;
+  return sanitizeObject(body);
 }
 
 /**
- * Sanitize response body by removing sensitive fields
- * @param {Object} body - Response body
- * @returns {Object} Sanitized body
+ * Sanitize response body
  */
 function sanitizeResponseBody(body) {
-  if (!body || typeof body !== "object") {
-    return body;
-  }
-
-  const sanitized = JSON.parse(JSON.stringify(body)); 
-  // Redact sensitive response fields
-  if (sanitized.transaction_hash) {
-    sanitized.transaction_hash =
-      sanitized.transaction_hash.substring(0, 10) + "...[REDACTED]";
-  }
-
-  if (sanitized.token) {
-    sanitized.token = "[REDACTED]";
-  }
-
-  if (sanitized.private_key) {
-    sanitized.private_key = "[REDACTED]";
-  }
-
-  return sanitized;
+  return sanitizeObject(body);
 }
 
 module.exports = {
+  sanitizeObject,
+  sanitizeForLog,
   sanitizeHeaders,
   sanitizeRequestBody,
   sanitizeResponseBody,
+  truncateString: (str, maxLength = 1000) => {
+    if (typeof str !== "string") return str;
+    return str.length <= maxLength
+      ? str
+      : str.substring(0, maxLength) + "... [truncated]";
+  },
+  redactEmail: (email) => {
+    if (!email || typeof email !== "string") return email;
+    const [localPart, domain] = email.split("@");
+    if (!domain) return email;
+    return `${localPart.substring(0, 2)}***@${domain}`;
+  },
 };

@@ -8,14 +8,14 @@ const pool = new Pool({
   database: process.env.POSTGRES_DB || "safetrust_db",
   user: process.env.POSTGRES_USER || "postgres",
   password: process.env.POSTGRES_PASSWORD,
-  max: 20, 
+  max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
 });
 
 // Test connection on startup
 pool.on("connect", () => {
-  logger.info("PostgreSQL client connected to audit database");
+  logger.info("PostgreSQL client connected to database");
 });
 
 pool.on("error", (err) => {
@@ -26,9 +26,6 @@ pool.on("error", (err) => {
 
 /**
  * Execute a SQL query
- * @param {string} text - 
- * @param {Array} params - 
- * @returns {Promise<Object>} 
  */
 async function query(text, params) {
   const start = Date.now();
@@ -47,8 +44,7 @@ async function query(text, params) {
 }
 
 /**
- * Get a client from the pool for transactions
- * @returns {Promise<Object>} 
+ * Get a client from the pool
  */
 async function getClient() {
   const client = await pool.connect();

@@ -9,7 +9,7 @@ const logFormat = winston.format.combine(
   winston.format.errors({ stack: true }),
   winston.format.splat(),
   process.env.NODE_ENV === "production"
-    ? winston.format.json() 
+    ? winston.format.json() // JSON format for production (machine-readable)
     : winston.format.combine(
         winston.format.colorize(),
         winston.format.printf(({ level, message, timestamp, ...metadata }) => {

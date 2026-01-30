@@ -7,40 +7,70 @@ const { logger } = require("../utils/logger");
  */
 function validateJWT(req, res, next) {
   try {
-    const { session_variables } = req.body;
+    const sessionVariables = req.body?.session_variables;
 
     // Session variables are optional for some webhooks
-    if (!session_variables) {
+    if (!sessionVariables) {
       logger.debug("No session variables provided, skipping JWT validation");
+      // Still set a default anonymous user if needed
+      req.user = { role: "anonymous" };
       return next();
     }
 
-    // Check for JWT token in session variables
-    const token = session_variables["x-hasura-jwt"];
+    // Check for JWT token in session variables or headers
+    const token =
+      sessionVariables["x-hasura-jwt"] ||
+      sessionVariables["authorization"]?.replace("Bearer ", "") ||
+      req.headers["authorization"]?.replace("Bearer ", "");
 
     if (token) {
       try {
         // Verify JWT token
-        const decoded = jwt.verify(
-          token,
-          process.env.JWT_SECRET || process.env.HASURA_GRAPHQL_ADMIN_SECRET,
-        );
+        const jwtSecret =
+          process.env.JWT_SECRET ||
+          process.env.HASURA_GRAPHQL_JWT_SECRET ||
+          process.env.HASURA_GRAPHQL_ADMIN_SECRET;
 
-        // Attach user info to request
-        req.user = decoded;
+        if (!jwtSecret) {
+          logger.error("JWT secret is not configured");
+          return res.status(500).json({ error: "Server configuration error" });
+        }
 
-        logger.info("JWT validated successfully", {
-          user_id: decoded.sub,
-          role: decoded["https://hasura.io/jwt/claims"]?.["x-hasura-role"],
+        const decoded = jwt.verify(token, jwtSecret);
+
+        // Attach user info to request, merging session variables and decoded token
+        req.user = {
+          ...decoded,
+          userId:
+            sessionVariables["x-hasura-user-id"] ||
+            decoded.sub ||
+            decoded["https://hasura.io/jwt/claims"]?.["x-hasura-user-id"],
+          role:
+            sessionVariables["x-hasura-role"] ||
+            decoded["https://hasura.io/jwt/claims"]?.["x-hasura-role"] ||
+            "user",
+          sessionVariables,
+        };
+
+        logger.debug("JWT validated successfully", {
+          user_id: req.user.userId,
+          role: req.user.role,
         });
       } catch (jwtError) {
-        // Log JWT validation failure but don't block request
-        // (some webhooks might not have valid JWT)
         logger.warn("JWT validation failed", {
           error: jwtError.message,
           endpoint: req.path,
         });
+        // Attach anonymous role even if JWT fails, if we want to allow the request to proceed
+        req.user = { role: "anonymous", error: jwtError.message };
       }
+    } else {
+      // No token, but have session variables
+      req.user = {
+        userId: sessionVariables["x-hasura-user-id"],
+        role: sessionVariables["x-hasura-role"] || "anonymous",
+        sessionVariables,
+      };
     }
 
     next();
@@ -49,9 +79,6 @@ function validateJWT(req, res, next) {
       error: error.message,
       endpoint: req.path,
     });
-
-    // Don't block request on JWT validation errors
-    // (JWT is optional for many webhook operations)
     next();
   }
 }

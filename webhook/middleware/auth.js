@@ -7,7 +7,14 @@ const { sanitizeHeaders } = require("../utils/sanitize");
  */
 function verifyAdminSecret(req, res, next) {
   const adminSecret = req.headers["x-hasura-admin-secret"];
-  const expectedSecret = process.env.HASURA_GRAPHQL_ADMIN_SECRET;
+  // Support both variable names for compatibility
+  const expectedSecret =
+    process.env.HASURA_GRAPHQL_ADMIN_SECRET || process.env.HASURA_ADMIN_SECRET;
+
+  if (!expectedSecret) {
+    logger.error("Hasura admin secret is not configured in environment");
+    return res.status(500).json({ error: "Server configuration error" });
+  }
 
   // Check if admin secret is provided and matches
   if (!adminSecret || adminSecret !== expectedSecret) {
