@@ -40,14 +40,6 @@ table:
       type: timestamptz
     - name: completed_at
       type: timestamptz
-    - name: total_amount
-      type: numeric
-    - name: activated_at
-      type: timestamptz
-    - name: released_at
-      type: timestamptz
-    - name: blockchain_tx_hash
-      type: text
   object_relationships:
     - name: bid_request
       using:
@@ -66,41 +58,6 @@ table:
         foreign_key_constraint_on:
           column: escrow_transaction_id
           table: escrow_api_calls
-    - name: escrow_transaction_users
-      using:
-        foreign_key_constraint_on:
-          column: escrow_transaction_id
-          table: escrow_transaction_users
-    - name: escrow_transaction_users_aggregate
-      using:
-        foreign_key_constraint_on:
-          column: escrow_transaction_id
-          table: escrow_transaction_users
-    - name: conditions
-      using:
-        foreign_key_constraint_on:
-          column: escrow_transaction_id
-          table: escrow_conditions
-    - name: escrow_conditions
-      using:
-        foreign_key_constraint_on:
-          column: escrow_transaction_id
-          table: escrow_conditions
-    - name: escrow_conditions_aggregate
-      using:
-        foreign_key_constraint_on:
-          column: escrow_transaction_id
-          table: escrow_conditions
-    - name: notifications
-      using:
-        foreign_key_constraint_on:
-          column: escrow_transaction_id
-          table: notifications
-    - name: blockchain_transactions
-      using:
-        foreign_key_constraint_on:
-          column: escrow_transaction_id
-          table: blockchain_transactions
 select_permissions:
   - role: anonymous
     permission:
