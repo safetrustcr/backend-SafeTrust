@@ -5,3 +5,112 @@ object_relationships:
   - name: user
     using:
       foreign_key_constraint_on: user_id
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: "Anonymous users cannot access any wallet data"
+  - role: user
+    permission:
+      columns:
+        - id
+        - user_id
+        - wallet_address
+        - chain_type
+        - is_primary
+        - created_at
+        - updated_at
+      filter:
+        # Row-level security: users can only see their own wallets
+        user_id:
+          _eq: X-Hasura-User-Id
+      comment: "Users can only see their own wallets"
+  - role: admin
+    permission:
+      columns:
+        - id
+        - user_id
+        - wallet_address
+        - chain_type
+        - is_primary
+        - created_at
+        - updated_at
+      filter:
+        # Admins can see all wallets in their tenant
+        user:
+          id:
+            _neq: ""
+      comment: "Admins can view all wallets within their tenant"
+insert_permissions:
+  - role: user
+    permission:
+      check:
+        # Row-level security: users can only add wallets for themselves
+        user_id:
+          _eq: X-Hasura-User-Id
+      columns:
+        - wallet_address
+        - chain_type
+        - is_primary
+      set:
+        # Automatically set the user_id to the current user
+        user_id: X-Hasura-User-Id
+        created_at: now
+      comment: "Users can add their own wallets"
+  - role: admin
+    permission:
+      check:
+        user:
+          id:
+            _neq: ""
+      columns:
+        - user_id
+        - wallet_address
+        - chain_type
+        - is_primary
+      comment: "Admins can add wallets for users in their tenant"
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - is_primary
+      filter:
+        # Row-level security: users can only update their own wallets
+        user_id:
+          _eq: X-Hasura-User-Id
+      check:
+        user_id:
+          _eq: X-Hasura-User-Id
+      comment: "Users can update their own wallet settings"
+  - role: admin
+    permission:
+      columns:
+        - wallet_address
+        - chain_type
+        - is_primary
+        - updated_at
+      filter:
+        user:
+          id:
+            _neq: ""
+      check:
+        user:
+          id:
+            _neq: ""
+      comment: "Admins can manage user wallets in their tenant"
+delete_permissions:
+  - role: user
+    permission:
+      filter:
+        # Row-level security: users can delete their own wallets
+        user_id:
+          _eq: X-Hasura-User-Id
+      comment: "Users can delete their own wallets"
+  - role: admin
+    permission:
+      filter:
+        user:
+          id:
+            _neq: ""
+      comment: "Admins can delete any wallet in their tenant"

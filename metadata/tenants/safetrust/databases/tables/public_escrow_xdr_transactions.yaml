@@ -26,3 +26,75 @@ table:
     - name: escrow_transaction
       using:
         foreign_key_constraint_on: escrow_transaction_id
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: "Anonymous users cannot access XDR transactions"
+  - role: user
+    permission:
+      columns:
+        - id
+        - escrow_transaction_id
+        - xdr_type
+        - status
+        - signing_address
+        - created_at
+        - updated_at
+      filter:
+        escrow_transaction:
+          _or:
+            - bid_request:
+                tenant_id:
+                  _eq: X-Hasura-User-Id
+            - cancelled_by:
+                _eq: X-Hasura-User-Id
+      comment: "Users can view XDR transaction metadata for their escrows (not XDR data)"
+  - role: admin
+    permission:
+      columns: "*"
+      filter:
+        escrow_transaction:
+          bid_request:
+            apartment:
+              owner_id:
+                _neq: ""
+      comment: "Admins can view all XDR transactions including unsigned/signed XDR"
+insert_permissions:
+  - role: admin
+    permission:
+      check:
+        escrow_transaction:
+          bid_request:
+            apartment:
+              owner_id:
+                _neq: ""
+      columns:
+        - escrow_transaction_id
+        - xdr_type
+        - unsigned_xdr
+        - signed_xdr
+        - status
+        - signing_address
+      comment: "Admins can create XDR transaction records"
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - signed_xdr
+        - status
+        - error_message
+      filter:
+        escrow_transaction:
+          bid_request:
+            apartment:
+              owner_id:
+                _neq: ""
+      check:
+        escrow_transaction:
+          bid_request:
+            apartment:
+              owner_id:
+                _neq: ""
+      comment: "Admins can update XDR signing status"
