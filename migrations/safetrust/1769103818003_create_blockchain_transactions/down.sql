@@ -1,2 +1,0 @@
-DROP TRIGGER IF EXISTS update_blockchain_transactions_updated_at ON blockchain_transactions;
-DROP TABLE IF EXISTS blockchain_transactions;
