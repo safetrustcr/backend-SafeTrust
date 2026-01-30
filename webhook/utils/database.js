@@ -51,8 +51,28 @@ async function getClient() {
   return client;
 }
 
+/**
+ * Execute a transaction (helper from incoming change)
+ * Handles recursive BEGIN/COMMIT/ROLLBACK logic
+ */
+const executeTransaction = async (callback) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await callback(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+};
+
 module.exports = {
   query,
   getClient,
+  executeTransaction,
   pool,
 };

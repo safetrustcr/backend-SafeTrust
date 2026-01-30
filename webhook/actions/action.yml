@@ -1,0 +1,198 @@
+actions:
+  - name: verify_wallet_signature
+    definition:
+      kind: synchronous
+      handler: '{{WEBHOOK_URL}}/actions/verify-wallet'
+      headers:
+        - name: x-hasura-admin-secret
+          value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
+      forward_client_headers: true
+    permissions:
+      - role: user
+    comment: "Verify wallet ownership via cryptographic signature"
+
+  - name: initiate_escrow_funding
+    definition:
+      kind: synchronous
+      handler: '{{WEBHOOK_URL}}/actions/initiate-funding'
+      headers:
+        - name: x-hasura-admin-secret
+          value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
+      forward_client_headers: true
+    permissions:
+      - role: user
+    comment: "Prepare escrow funding transaction parameters"
+
+  - name: verify_blockchain_transaction
+    definition:
+      kind: synchronous
+      handler: '{{WEBHOOK_URL}}/actions/verify-transaction'
+      headers:
+        - name: x-hasura-admin-secret
+          value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
+      forward_client_headers: true
+      timeout: 60
+    permissions:
+      - role: user
+    comment: "Verify on-chain transaction and update funding status"
+
+  - name: trigger_fund_release
+    definition:
+      kind: synchronous
+      handler: '{{WEBHOOK_URL}}/actions/release-funds'
+      headers:
+        - name: x-hasura-admin-secret
+          value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
+      forward_client_headers: true
+      timeout: 60
+    permissions:
+      - role: admin
+    comment: "Release escrowed funds to recipient (admin only)"
+
+  - name: process_refund_request
+    definition:
+      kind: synchronous
+      handler: '{{WEBHOOK_URL}}/actions/process-refund'
+      headers:
+        - name: x-hasura-admin-secret
+          value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
+      forward_client_headers: true
+      timeout: 60
+    permissions:
+      - role: admin
+    comment: "Process refund request with on-chain execution"
+
+custom_types:
+  input_objects:
+    - name: VerifyWalletInput
+      fields:
+        - name: user_id
+          type: uuid!
+        - name: wallet_address
+          type: String!
+        - name: signature
+          type: String!
+        - name: message
+          type: String!
+
+    - name: InitiateFundingInput
+      fields:
+        - name: escrow_transaction_id
+          type: uuid!
+        - name: user_id
+          type: uuid!
+        - name: amount
+          type: String!
+        - name: wallet_address
+          type: String!
+        - name: network
+          type: String
+
+    - name: VerifyTxInput
+      fields:
+        - name: escrow_transaction_id
+          type: uuid!
+        - name: user_id
+          type: uuid!
+        - name: transaction_hash
+          type: String!
+        - name: wallet_address
+          type: String!
+        - name: network
+          type: String
+
+    - name: ReleaseFundsInput
+      fields:
+        - name: escrow_transaction_id
+          type: uuid!
+        - name: admin_user_id
+          type: uuid
+        - name: recipient_address
+          type: String!
+
+    - name: RefundRequestInput
+      fields:
+        - name: escrow_transaction_id
+          type: uuid!
+        - name: user_id
+          type: uuid!
+        - name: reason
+          type: String!
+        - name: amount
+          type: String!
+        - name: refund_address
+          type: String!
+
+  objects:
+    - name: VerifyWalletOutput
+      fields:
+        - name: success
+          type: Boolean!
+        - name: verified
+          type: Boolean!
+        - name: message
+          type: String!
+        - name: wallet_id
+          type: uuid
+
+    - name: InitiateFundingOutput
+      fields:
+        - name: success
+          type: Boolean!
+        - name: message
+          type: String!
+        - name: contract_address
+          type: String
+        - name: contract_abi
+          type: json
+        - name: required_amount
+          type: String
+        - name: gas_estimate
+          type: String
+        - name: transaction_data
+          type: json
+
+    - name: VerifyTxOutput
+      fields:
+        - name: success
+          type: Boolean!
+        - name: verified
+          type: Boolean!
+        - name: message
+          type: String!
+        - name: confirmations
+          type: Int
+        - name: block_number
+          type: Int
+        - name: funding_complete
+          type: Boolean
+
+    - name: ReleaseFundsOutput
+      fields:
+        - name: success
+          type: Boolean!
+        - name: message
+          type: String!
+        - name: transaction_hash
+          type: String
+        - name: release_amount
+          type: String
+        - name: recipient
+          type: String
+        - name: estimated_gas
+          type: String
+
+    - name: RefundRequestOutput
+      fields:
+        - name: success
+          type: Boolean!
+        - name: message
+          type: String!
+        - name: refund_id
+          type: uuid
+        - name: refund_status
+          type: String
+        - name: transaction_hash
+          type: String
+        - name: refund_amount
+          type: String
