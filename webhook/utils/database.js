@@ -1,59 +1,54 @@
-const { Pool } = require("pg");
-const { logger } = require("./logger");
+const { Pool } = require('pg');
+require('dotenv').config();
 
-// Create PostgreSQL connection pool
+/**
+ * Database connection pool for webhook handlers
+ * Reuses the same connection pattern as other webhook handlers
+ */
 const pool = new Pool({
   host: process.env.POSTGRES_HOST || "localhost",
   port: parseInt(process.env.POSTGRES_PORT || "5432", 10),
   database: process.env.POSTGRES_DB || "safetrust_db",
   user: process.env.POSTGRES_USER || "postgres",
   password: process.env.POSTGRES_PASSWORD,
+  connectionString: process.env.DATABASE_URL || process.env.PG_DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
 });
 
-// Test connection on startup
-pool.on("connect", () => {
-  logger.info("PostgreSQL client connected to database");
-});
-
-pool.on("error", (err) => {
-  logger.error("Unexpected error on idle PostgreSQL client", {
-    error: err.message,
-  });
-});
-
 /**
- * Execute a SQL query
+ * Execute a database query
+ * @param {string} text - SQL query text
+ * @param {Array} params - Query parameters
+ * @returns {Promise<Object>} Query result
  */
 async function query(text, params) {
   const start = Date.now();
   try {
     const res = await pool.query(text, params);
     const duration = Date.now() - start;
-    logger.debug("Executed query", { text, duration, rows: res.rowCount });
+    console.log('Executed query', { text, duration, rows: res.rowCount });
     return res;
   } catch (error) {
-    logger.error("Database query error", {
-      error: error.message,
-      query: text,
-    });
+    console.error('Database query error:', error);
     throw error;
   }
 }
 
 /**
- * Get a client from the pool
+ * Get a single client from the pool for transactions
+ * @returns {Promise<Object>} Database client
  */
 async function getClient() {
-  const client = await pool.connect();
-  return client;
+  return await pool.connect();
 }
 
 /**
- * Execute a transaction (helper from incoming change)
- * Handles recursive BEGIN/COMMIT/ROLLBACK logic
+ * Execute a transaction
+ * @param {Function} callback - Async callback that receives the client
+ * @returns {Promise<any>} Result from callback
  */
 const executeTransaction = async (callback) => {
   const client = await pool.connect();
@@ -73,6 +68,6 @@ const executeTransaction = async (callback) => {
 module.exports = {
   query,
   getClient,
-  executeTransaction,
   pool,
+  executeTransaction,
 };
