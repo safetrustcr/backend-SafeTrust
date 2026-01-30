@@ -1,3 +1,58 @@
 table:
   schema: safetrust
   name: pricing_rules
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: "Anonymous users cannot access pricing rules"
+  - role: user
+    permission:
+      columns:
+        - id
+        - rule_name
+        - description
+        - transaction_type
+        - fee_percentage
+        - base_amount
+        - is_active
+        - created_at
+      filter:
+        is_active:
+          _eq: true
+      comment: "Users can view active pricing rules"
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+      comment: "Admins can view all pricing rules"
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns:
+        - rule_name
+        - description
+        - transaction_type
+        - fee_percentage
+        - base_amount
+        - is_active
+      comment: "Admins can create pricing rules"
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - rule_name
+        - description
+        - fee_percentage
+        - base_amount
+        - is_active
+      filter: {}
+      check: {}
+      comment: "Admins can update pricing rules"
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}
+      comment: "Admins can delete pricing rules"

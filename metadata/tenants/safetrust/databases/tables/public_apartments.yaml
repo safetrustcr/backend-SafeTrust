@@ -1,3 +1,149 @@
 table:
   name: apartments
   schema: public
+object_relationships:
+  - name: owner
+    using:
+      foreign_key_constraint_on: owner_id
+array_relationships:
+  - name: bid_requests
+    using:
+      foreign_key_constraint_on:
+        column: apartment_id
+        table:
+          name: bid_requests
+          schema: public
+  - name: apartment_images
+    using:
+      foreign_key_constraint_on:
+        column: apartment_id
+        table:
+          name: apartment_images
+          schema: public
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: "Anonymous users cannot access apartment data"
+  - role: user
+    permission:
+      columns:
+        - id
+        - owner_id
+        - name
+        - description
+        - price
+        - warranty_deposit
+        - location_area
+        - address
+        - is_available
+        - available_from
+        - available_until
+        - created_at
+        - updated_at
+      filter:
+        _or:
+          - owner_id:
+              _eq: X-Hasura-User-Id
+          - _and:
+              - is_available:
+                  _eq: true
+              - available_from:
+                  _lte: now
+              - _or:
+                  - available_until:
+                      _is_null: true
+                  - available_until:
+                      _gte: now
+      comment: "Users can see their own apartments and available apartments within date range"
+  - role: admin
+    permission:
+      columns: "*"
+      filter:
+        owner_id:
+          _neq: ""
+      comment: "Admins can view all apartments in their tenant"
+insert_permissions:
+  - role: user
+    permission:
+      check:
+        owner_id:
+          _eq: X-Hasura-User-Id
+      columns:
+        - name
+        - description
+        - price
+        - warranty_deposit
+        - location_area
+        - address
+        - is_available
+        - available_from
+        - available_until
+      set:
+        owner_id: X-Hasura-User-Id
+      comment: "Users can list their own apartments in their tenant"
+  - role: admin
+    permission:
+      check:
+        owner_id:
+          _neq: ""
+      columns:
+        - owner_id
+        - name
+        - description
+        - price
+        - warranty_deposit
+        - location_area
+        - address
+        - is_available
+        - available_from
+        - available_until
+      comment: "Admins can create apartments in their tenant"
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - name
+        - description
+        - price
+        - warranty_deposit
+        - is_available
+        - available_until
+      filter:
+        owner_id:
+          _eq: X-Hasura-User-Id
+      check:
+        owner_id:
+          _eq: X-Hasura-User-Id
+      comment: "Users can update their own apartment listings"
+  - role: admin
+    permission:
+      columns:
+        - name
+        - description
+        - price
+        - warranty_deposit
+        - is_available
+        - available_from
+        - available_until
+      filter:
+        owner_id:
+          _neq: ""
+      check:
+        owner_id:
+          _neq: ""
+      comment: "Admins can update apartments in their tenant"
+delete_permissions:
+  - role: user
+    permission:
+      filter:
+        owner_id:
+          _eq: X-Hasura-User-Id
+      comment: "Users can delete their own apartment listings"
+  - role: admin
+    permission:
+      filter:
+        owner_id:
+          _neq: ""
+      comment: "Admins can delete any apartment in their tenant"
