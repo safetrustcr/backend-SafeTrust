@@ -255,3 +255,56 @@ delete_permissions:
             owner_id:
               _neq: ""
       comment: "Admins can delete escrows in their tenant"
+event_triggers:
+  - name: on_escrow_created
+    definition:
+      enable_manual: true
+      insert:
+        columns: "*"
+    retry_conf:
+      interval_sec: 10
+      num_retries: 3
+      timeout_sec: 60
+    webhook: "{{WEBHOOK_URL}}/events/escrow-created"
+    headers:
+      - name: x-hasura-admin-secret
+        value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
+  - name: on_fund_released
+    definition:
+      enable_manual: true
+      update:
+        columns:
+          - status
+        condition:
+          status:
+            _eq: "released"
+    retry_conf:
+      interval_sec: 10
+      num_retries: 3
+      timeout_sec: 60
+    webhook: "{{WEBHOOK_URL}}/events/fund-released"
+    headers:
+      - name: x-hasura-admin-secret
+        value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
+  - name: on_refund_requested
+    definition:
+      enable_manual: true
+      update:
+        columns:
+          - refund_status
+          - cancellation_reason
+          - cancelled_by
+        condition:
+          _or:
+            - refund_status:
+                _is_null: false
+            - cancellation_reason:
+                _is_null: false
+    retry_conf:
+      interval_sec: 10
+      num_retries: 3
+      timeout_sec: 60
+    webhook: "{{WEBHOOK_URL}}/events/refund-requested"
+    headers:
+      - name: x-hasura-admin-secret
+        value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
