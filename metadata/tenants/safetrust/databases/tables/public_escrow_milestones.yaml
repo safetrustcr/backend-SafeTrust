@@ -29,22 +29,12 @@ object_relationships:
     using:
       foreign_key_constraint_on: escrow_id
 array_relationships: []
-insert_permissions:
-  - role: user
-    permission:
-      check:
-        tenant_id:
-          _eq: X-Hasura-Tenant-Id
-      columns:
-        - escrow_id
-        - milestone_id
-        - description
-        - amount
-        - due_date
-        - status
-        - metadata
-        - tenant_id
 select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: "Anonymous users cannot access escrow milestones"
   - role: user
     permission:
       columns:
@@ -64,10 +54,87 @@ select_permissions:
         - updated_at
         - tenant_id
       filter:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-Tenant-Id
+          - escrow:
+              bid_request:
+                _or:
+                  - tenant_id:
+                      _eq: X-Hasura-User-Id
+                  - apartment:
+                      owner_id:
+                        _eq: X-Hasura-User-Id
+      comment: "Users can see milestones for their escrows within their tenant"
+  - role: admin
+    permission:
+      columns: "*"
+      filter:
         tenant_id:
           _eq: X-Hasura-Tenant-Id
+      comment: "Admins can view all milestones in their tenant"
+insert_permissions:
+  - role: user
+    permission:
+      check:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-Tenant-Id
+          - escrow:
+              bid_request:
+                tenant_id:
+                  _eq: X-Hasura-User-Id
+      columns:
+        - escrow_id
+        - milestone_id
+        - description
+        - amount
+        - due_date
+        - status
+        - metadata
+      set:
+        tenant_id: X-Hasura-Tenant-Id
+      comment: "Users can create milestones for their escrows in their tenant"
+  - role: admin
+    permission:
+      check:
+        tenant_id:
+          _eq: X-Hasura-Tenant-Id
+      columns:
+        - escrow_id
+        - milestone_id
+        - description
+        - amount
+        - due_date
+        - status
+        - metadata
+      set:
+        tenant_id: X-Hasura-Tenant-Id
+      comment: "Admins can create milestones in their tenant"
 update_permissions:
   - role: user
+    permission:
+      columns:
+        - status
+        - metadata
+      filter:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-Tenant-Id
+          - escrow:
+              bid_request:
+                tenant_id:
+                  _eq: X-Hasura-User-Id
+      check:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-Tenant-Id
+          - escrow:
+              bid_request:
+                tenant_id:
+                  _eq: X-Hasura-User-Id
+      comment: "Users can update status and metadata for their milestones in their tenant"
+  - role: admin
     permission:
       columns:
         - status
@@ -83,3 +150,31 @@ update_permissions:
       check:
         tenant_id:
           _eq: X-Hasura-Tenant-Id
+      comment: "Admins can approve and release milestones in their tenant"
+delete_permissions:
+  - role: admin
+    permission:
+      filter:
+        tenant_id:
+          _eq: X-Hasura-Tenant-Id
+      comment: "Admins can delete milestones in their tenant"
+event_triggers:
+  - name: on_condition_verified
+    definition:
+      enable_manual: true
+      update:
+        columns:
+          - status
+          - approved_at
+          - approved_by
+        condition:
+          status:
+            _eq: "approved"
+    retry_conf:
+      interval_sec: 10
+      num_retries: 3
+      timeout_sec: 60
+    webhook: "{{WEBHOOK_URL}}/events/condition-verified"
+    headers:
+      - name: x-hasura-admin-secret
+        value_from_env: HASURA_GRAPHQL_ADMIN_SECRET

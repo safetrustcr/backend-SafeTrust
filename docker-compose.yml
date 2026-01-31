@@ -14,10 +14,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - safetrust-network
   graphql-engine:
     image: hasura/graphql-engine:v2.47.0
     ports:
-      - "8080:8080" 
+      - "8080:8080"
     restart: always
     environment:
       HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/postgres
@@ -38,11 +40,13 @@ services:
       interval: 5s
       timeout: 5s
       start_period: 10s
+    networks:
+      - safetrust-network
   data-connector-agent:
     image: hasura/graphql-data-connector:v2.47.0
     restart: always
     ports:
-      - "8083:8081"  # Changed from 8081:8081 to 8083:8081
+      - "8083:8081" # Changed from 8081:8081 to 8083:8081
     environment:
       QUARKUS_LOG_LEVEL: ERROR
       QUARKUS_OPENTELEMETRY_ENABLED: "false"
@@ -52,6 +56,23 @@ services:
       timeout: 10s
       retries: 5
       start_period: 5s
+    networks:
+      - safetrust-network
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - safetrust-network
   console:
     build:
       context: .
@@ -69,38 +90,75 @@ services:
     depends_on:
       graphql-engine:
         condition: service_healthy
+    networks:
+      - safetrust-network
+
+  # --- Webhook Service ---
   webhook:
     build:
       context: ./webhook
       dockerfile: Dockerfile
+    container_name: safetrust-webhook
     ports:
-      - "8084:3000"
+      - "3001:3001"
     environment:
       - NODE_ENV=development
+      - WEBHOOK_PORT=3001
+      - HASURA_GRAPHQL_ADMIN_SECRET=${HASURA_GRAPHQL_ADMIN_SECRET}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=safetrust
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POLYGON_RPC_URL=${POLYGON_RPC_URL}
+      - ETHEREUM_RPC_URL=${ETHEREUM_RPC_URL}
+      - MIN_CONFIRMATIONS=3
+      - ADMIN_PRIVATE_KEY=${ADMIN_PRIVATE_KEY}
+      - BLOCKCHAIN_NETWORK=polygon
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=${AWS_REGION}
       - S3_BUCKET=${S3_BUCKET}
       - FRONTEND_URL=http://localhost:3000
       - NEXT_PUBLIC_HASURA_GRAPHQL_URL=http://graphql-engine:8080/v1/graphql
-      - HASURA_GRAPHQL_ADMIN_SECRET=myadminsecretkey
       - SMTP_HOST=smtp.host.com
       - SMTP_PORT=465
       - SMTP_SECURE=true
       - SMTP_USER=your-user
       - SMTP_PASS=your-password
       - SMTP_FROM=your-email@example.com
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=safetrust_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgrespassword
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=myadminsecretkey
+      - LOG_LEVEL=info
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
     volumes:
-      - ./webhook:/usr/src/webhook
-      - /usr/src/webhook/node_modules
+      - ./webhook:/app
+      - /app/node_modules  
     depends_on:
       - postgres
       - graphql-engine
+      - redis
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+    networks:
+      - safetrust-network
+    restart: unless-stopped
+
 volumes:
   db_data:
+  redis_data:
+
+networks:
+  safetrust-network:
+    driver: bridge

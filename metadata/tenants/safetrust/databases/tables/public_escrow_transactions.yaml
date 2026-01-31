@@ -58,3 +58,210 @@ table:
         foreign_key_constraint_on:
           column: escrow_transaction_id
           table: escrow_api_calls
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: "Anonymous users cannot access escrow transactions"
+  - role: user
+    permission:
+      columns:
+        - id
+        - bid_request_id
+        - engagement_id
+        - contract_id
+        - transaction_type
+        - status
+        - amount
+        - initial_deposit_percentage
+        - refund_status
+        - created_at
+        - updated_at
+        - completed_at
+      filter:
+        _and:
+          # Tenant isolation: must match user's tenant
+          - bid_request:
+              apartment:
+                owner_id:
+                  _neq: ""
+          # Row-level security: user must be participant
+          - _or:
+              # User is the tenant (bid maker)
+              - bid_request:
+                  tenant_id:
+                    _eq: X-Hasura-User-Id
+              # User is the apartment owner
+              - bid_request:
+                  apartment:
+                    owner_id:
+                      _eq: X-Hasura-User-Id
+              # User cancelled the escrow
+              - cancelled_by:
+                  _eq: X-Hasura-User-Id
+      comment: "Users can only see escrows where they are participants within their tenant"
+  - role: admin
+    permission:
+      columns: "*"
+      filter:
+        bid_request:
+          apartment:
+            owner_id:
+              _neq: ""
+      comment: "Admins can view all escrows in their tenant"
+insert_permissions:
+  - role: user
+    permission:
+      check:
+        _and:
+          # Tenant isolation check
+          - bid_request:
+              tenant_id:
+                _eq: X-Hasura-User-Id
+          # User can only create escrows for their own bid requests
+          - bid_request:
+              tenant_id:
+                _eq: X-Hasura-User-Id
+      columns:
+        - bid_request_id
+        - engagement_id
+        - contract_id
+        - signer_address
+        - transaction_type
+        - status
+        - amount
+        - initial_deposit_percentage
+        - metadata
+      set:
+        # Automatically set creator information
+        created_at: now
+      comment: "Users can create escrows for their bid requests in their tenant"
+  - role: admin
+    permission:
+      check:
+        bid_request:
+          apartment:
+            owner_id:
+              _neq: ""
+      columns:
+        - bid_request_id
+        - engagement_id
+        - contract_id
+        - signer_address
+        - transaction_type
+        - status
+        - amount
+        - initial_deposit_percentage
+        - http_status_code
+        - http_response_body
+        - http_error_details
+        - metadata
+      comment: "Admins can create and manage escrows in their tenant"
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - status
+        - refund_status
+        - cancellation_reason
+      filter:
+        _and:
+          # Tenant isolation
+          - bid_request:
+              tenant_id:
+                _eq: X-Hasura-User-Id
+          # User can only update their own escrows
+          - bid_request:
+              tenant_id:
+                _eq: X-Hasura-User-Id
+      check:
+        _and:
+          - bid_request:
+              tenant_id:
+                _eq: X-Hasura-User-Id
+      comment: "Users can only update status/refund info for their own escrows"
+  - role: admin
+    permission:
+      columns:
+        - status
+        - refund_status
+        - cancellation_reason
+        - cancelled_by
+        - http_status_code
+        - http_response_body
+        - http_error_details
+        - updated_at
+      filter:
+        bid_request:
+          apartment:
+            owner_id:
+              _neq: ""
+      check:
+        bid_request:
+          apartment:
+            owner_id:
+              _neq: ""
+      comment: "Admins can update all escrow properties and verify conditions in their tenant"
+delete_permissions:
+  - role: admin
+    permission:
+      filter:
+        bid_request:
+          apartment:
+            owner_id:
+              _neq: ""
+      comment: "Admins can delete escrows in their tenant"
+event_triggers:
+  - name: on_escrow_created
+    definition:
+      enable_manual: true
+      insert:
+        columns: "*"
+    retry_conf:
+      interval_sec: 10
+      num_retries: 3
+      timeout_sec: 60
+    webhook: "{{WEBHOOK_URL}}/events/escrow-created"
+    headers:
+      - name: x-hasura-admin-secret
+        value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
+  - name: on_fund_released
+    definition:
+      enable_manual: true
+      update:
+        columns:
+          - status
+        condition:
+          status:
+            _eq: "released"
+    retry_conf:
+      interval_sec: 10
+      num_retries: 3
+      timeout_sec: 60
+    webhook: "{{WEBHOOK_URL}}/events/fund-released"
+    headers:
+      - name: x-hasura-admin-secret
+        value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
+  - name: on_refund_requested
+    definition:
+      enable_manual: true
+      update:
+        columns:
+          - refund_status
+          - cancellation_reason
+          - cancelled_by
+        condition:
+          _or:
+            - refund_status:
+                _is_null: false
+            - cancellation_reason:
+                _is_null: false
+    retry_conf:
+      interval_sec: 10
+      num_retries: 3
+      timeout_sec: 60
+    webhook: "{{WEBHOOK_URL}}/events/refund-requested"
+    headers:
+      - name: x-hasura-admin-secret
+        value_from_env: HASURA_GRAPHQL_ADMIN_SECRET

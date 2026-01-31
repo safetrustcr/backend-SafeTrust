@@ -1,0 +1,66 @@
+name: CodeRabbit AI Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - '**' # Runs on ALL branches
+
+jobs:
+  coderabbit-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      
+      - name: Install CodeRabbit CLI
+        run: |
+          curl -fsSL https://cli.coderabbit.ai/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      
+      - name: Authenticate CodeRabbit
+        env:
+          CODERABBIT_TOKEN: ${{ secrets.CODERABBIT_TOKEN }}
+        run: |
+          coderabbit auth login --token $CODERABBIT_TOKEN
+      
+      - name: Run CodeRabbit Review
+        id: review
+        run: |
+          coderabbit review --plain > review_output.txt 2>&1
+          cat review_output.txt
+      
+      - name: Comment Review on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const review = fs.readFileSync('review_output.txt', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🐰 CodeRabbit Review\n\n\`\`\`\n${review}\n\`\`\``
+            });
+      
+      - name: Upload Review Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coderabbit-review
+          path: review_output.txt

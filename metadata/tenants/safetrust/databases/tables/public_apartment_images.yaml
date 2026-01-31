@@ -8,25 +8,101 @@ object_relationships:
       foreign_key_constraint_on: apartment_id
 
 select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: "Anonymous users cannot access apartment images"
+  - role: user
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - image_url
+        - image_key
+        - created_at
+      filter:
+        apartment:
+          _or:
+            - owner_id:
+                _eq: X-Hasura-User-Id
+            - is_available:
+                _eq: true
+      comment: "Users can see their own apartment images and images from available apartments"
   - role: admin
     permission:
-      columns: '*'
-      filter: {}
+      columns: "*"
+      filter:
+        apartment:
+          owner_id:
+            _neq: ""
+      comment: "Admins can view all apartment images"
 
 insert_permissions:
+  - role: user
+    permission:
+      check:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+      columns:
+        - apartment_id
+        - image_url
+        - image_key
+      comment: "Users can upload images for their apartments"
   - role: admin
     permission:
-      check: {}
-      columns: '*'
+      check:
+        apartment:
+          owner_id:
+            _neq: ""
+      columns:
+        - apartment_id
+        - image_url
+        - image_key
+      comment: "Admins can manage apartment images"
 
 update_permissions:
+  - role: user
+    permission:
+      columns:
+        - image_url
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+      check:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+      comment: "Users can update their apartment images"
   - role: admin
     permission:
-      columns: '*'
-      filter: {}
-      check: {}
+      columns:
+        - image_url
+        - image_key
+      filter:
+        apartment:
+          owner_id:
+            _neq: ""
+      check:
+        apartment:
+          owner_id:
+            _neq: ""
+      comment: "Admins can update apartment images"
 
 delete_permissions:
+  - role: user
+    permission:
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+      comment: "Users can delete their apartment images"
   - role: admin
     permission:
-      filter: {} 
+      filter:
+        apartment:
+          owner_id:
+            _neq: ""
+      comment: "Admins can delete any apartment image"

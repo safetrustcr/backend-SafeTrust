@@ -1,12 +1,9 @@
-
-const config = require("./config");
-
-console.log("Environment loaded for project:", config.firebase.projectId);
-
 require('dotenv').config();
+const { config } = require('./config');
 
+console.log("Environment loaded for project:", config.FIREBASE_PROJECT_ID);
 const express = require('express');
-// const helmet = require('helmet');
+const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
 

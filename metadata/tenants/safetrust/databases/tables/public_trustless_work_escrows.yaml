@@ -51,9 +51,9 @@ configuration:
     booking_created_at: bookingCreatedAt
     escrow_metadata: escrowMetadata
     booking_metadata: bookingMetadata
-    created_at: createdAt
-    updated_at: updatedAt
-    tenant_id: tenantId
+    created_at: CreatedAt
+    updated_at: UpdatedAt
+    tenant_id: TenantId
   custom_root_fields: {}
   custom_name: trustlessWorkEscrows
 array_relationships:
@@ -72,8 +72,78 @@ array_relationships:
           name: trustless_work_webhook_events
           schema: public
 object_relationships: []
+select_permissions:
+  - role: anonymous
+    permission:
+      columns: []
+      filter: {}
+    comment: "Anonymous users cannot access trustless work escrows"
+  - role: user
+    permission:
+      columns:
+        - id
+        - contract_id
+        - escrow_type
+        - status
+        - asset_code
+        - asset_issuer
+        - amount
+        - balance
+        - booking_id
+        - room_id
+        - hotel_id
+        - guest_id
+        - check_in_date
+        - check_out_date
+        - booking_created_at
+        - escrow_metadata
+        - created_at
+        - updated_at
+        - tenant_id
+      filter:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-Tenant-Id
+          - _or:
+              - guest_id:
+                  _eq: X-Hasura-User-Id
+              - marker:
+                  _eq: X-Hasura-User-Id
+      comment: "Users can see escrows they are involved in as guest or marker"
+  - role: admin
+    permission:
+      columns: "*"
+      filter:
+        tenant_id:
+          _eq: X-Hasura-Tenant-Id
+      comment: "Admins can view all escrows in their tenant"
 insert_permissions:
   - role: user
+    permission:
+      check:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-Tenant-Id
+          - guest_id:
+              _eq: X-Hasura-User-Id
+      columns:
+        - contract_id
+        - escrow_type
+        - asset_code
+        - asset_issuer
+        - amount
+        - booking_id
+        - room_id
+        - hotel_id
+        - check_in_date
+        - check_out_date
+        - escrow_metadata
+        - booking_metadata
+      set:
+        tenant_id: X-Hasura-Tenant-Id
+        guest_id: X-Hasura-User-Id
+      comment: "Users can create escrows as guests in their tenant"
+  - role: admin
     permission:
       check:
         tenant_id:
@@ -99,38 +169,9 @@ insert_permissions:
         - booking_created_at
         - escrow_metadata
         - booking_metadata
-        - tenant_id
-select_permissions:
-  - role: user
-    permission:
-      columns:
-        - id
-        - contract_id
-        - marker
-        - approver
-        - releaser
-        - resolver
-        - escrow_type
-        - status
-        - asset_code
-        - asset_issuer
-        - amount
-        - balance
-        - booking_id
-        - room_id
-        - hotel_id
-        - guest_id
-        - check_in_date
-        - check_out_date
-        - booking_created_at
-        - escrow_metadata
-        - booking_metadata
-        - created_at
-        - updated_at
-        - tenant_id
-      filter:
-        tenant_id:
-          _eq: X-Hasura-Tenant-Id
+      set:
+        tenant_id: X-Hasura-Tenant-Id
+      comment: "Admins can create and manage escrows in their tenant"
 update_permissions:
   - role: user
     permission:
@@ -138,6 +179,30 @@ update_permissions:
         - status
         - balance
         - escrow_metadata
+        - updated_at
+      filter:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-Tenant-Id
+          - guest_id:
+              _eq: X-Hasura-User-Id
+      check:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-Tenant-Id
+          - guest_id:
+              _eq: X-Hasura-User-Id
+      comment: "Users can update their own escrow status in their tenant"
+  - role: admin
+    permission:
+      columns:
+        - status
+        - balance
+        - marker
+        - approver
+        - releaser
+        - resolver
+        - escrow_metadata
         - booking_metadata
         - updated_at
       filter:
@@ -146,9 +211,20 @@ update_permissions:
       check:
         tenant_id:
           _eq: X-Hasura-Tenant-Id
+      comment: "Admins can manage all escrow properties in their tenant"
 delete_permissions:
   - role: user
     permission:
       filter:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-Tenant-Id
+          - guest_id:
+              _eq: X-Hasura-User-Id
+      comment: "Users can delete their own escrows in their tenant"
+  - role: admin
+    permission:
+      filter:
         tenant_id:
           _eq: X-Hasura-Tenant-Id
+      comment: "Admins can delete any escrow in their tenant"
