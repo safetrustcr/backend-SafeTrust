@@ -1,4 +1,4 @@
-import { config } from "./config";
+import { config } from "./config.js";
 
 console.log("Environment loaded for project:", config.FIREBASE_PROJECT_ID);
 
