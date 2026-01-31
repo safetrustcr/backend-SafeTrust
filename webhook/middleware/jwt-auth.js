@@ -1,65 +1,86 @@
+const jwt = require("jsonwebtoken");
+const { logger } = require("../utils/logger");
+
 /**
- * JWT Authentication Middleware
- * Validates JWT tokens from Hasura session variables
+ * Middleware to validate JWT tokens from Hasura session variables
+ * Extracts user identity and attaches to req.user
  */
-
-const jwt = require('jsonwebtoken');
-
-const validateJWT = (req, res, next) => {
+function validateJWT(req, res, next) {
   try {
-    // Hasura sends session variables in the request body
     const sessionVariables = req.body?.session_variables;
 
+    // Session variables are optional for some webhooks
     if (!sessionVariables) {
-      return res.status(401).json({ error: 'Missing session variables' });
-    }
-
-    // Extract JWT from session variables (common patterns)
-    const token = sessionVariables['x-hasura-jwt'] ||
-                  sessionVariables['authorization']?.replace('Bearer ', '') ||
-                  req.headers['authorization']?.replace('Bearer ', '');
-
-    if (!token) {
-      // If no JWT is required for certain routes, you can skip validation
-      // For now, we'll attach session variables to request and continue
-      req.user = {
-        role: sessionVariables['x-hasura-role'] || 'anonymous',
-        userId: sessionVariables['x-hasura-user-id'],
-        sessionVariables
-      };
+      logger.debug("No session variables provided, skipping JWT validation");
+      // Still set a default anonymous user if needed
+      req.user = { role: "anonymous" };
       return next();
     }
 
-    // Verify JWT if present
-    const jwtSecret = process.env.JWT_SECRET || process.env.HASURA_GRAPHQL_JWT_SECRET;
+    // Check for JWT token in session variables or headers
+    const token =
+      sessionVariables["x-hasura-jwt"] ||
+      sessionVariables["authorization"]?.replace("Bearer ", "") ||
+      req.headers["authorization"]?.replace("Bearer ", "");
 
-    if (!jwtSecret) {
-      console.error('JWT_SECRET is not configured');
-      return res.status(500).json({ error: 'Server configuration error' });
+    if (token) {
+      try {
+        // Verify JWT token
+        const jwtSecret =
+          process.env.JWT_SECRET ||
+          process.env.HASURA_GRAPHQL_JWT_SECRET ||
+          process.env.HASURA_GRAPHQL_ADMIN_SECRET;
+
+        if (!jwtSecret) {
+          logger.error("JWT secret is not configured");
+          return res.status(500).json({ error: "Server configuration error" });
+        }
+
+        const decoded = jwt.verify(token, jwtSecret);
+
+        // Attach user info to request, merging session variables and decoded token
+        req.user = {
+          ...decoded,
+          userId:
+            sessionVariables["x-hasura-user-id"] ||
+            decoded.sub ||
+            decoded["https://hasura.io/jwt/claims"]?.["x-hasura-user-id"],
+          role:
+            sessionVariables["x-hasura-role"] ||
+            decoded["https://hasura.io/jwt/claims"]?.["x-hasura-role"] ||
+            "user",
+          sessionVariables,
+        };
+
+        logger.debug("JWT validated successfully", {
+          user_id: req.user.userId,
+          role: req.user.role,
+        });
+      } catch (jwtError) {
+        logger.warn("JWT validation failed", {
+          error: jwtError.message,
+          endpoint: req.path,
+        });
+        // Attach anonymous role even if JWT fails, if we want to allow the request to proceed
+        req.user = { role: "anonymous", error: jwtError.message };
+      }
+    } else {
+      // No token, but have session variables
+      req.user = {
+        userId: sessionVariables["x-hasura-user-id"],
+        role: sessionVariables["x-hasura-role"] || "anonymous",
+        sessionVariables,
+      };
     }
-
-    const decoded = jwt.verify(token, jwtSecret);
-
-    // Attach user information to request
-    req.user = {
-      ...decoded,
-      role: sessionVariables['x-hasura-role'] || decoded.role,
-      userId: sessionVariables['x-hasura-user-id'] || decoded['https://hasura.io/jwt/claims']?.['x-hasura-user-id'],
-      sessionVariables
-    };
 
     next();
   } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ error: 'Invalid token' });
-    }
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired' });
-    }
-
-    console.error('JWT validation error:', error);
-    return res.status(500).json({ error: 'Authentication error' });
+    logger.error("JWT validation middleware error", {
+      error: error.message,
+      endpoint: req.path,
+    });
+    next();
   }
-};
+}
 
 module.exports = { validateJWT };

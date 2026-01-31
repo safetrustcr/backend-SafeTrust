@@ -1,40 +1,38 @@
-const { logger } = require('../utils/logger');
+const { logger } = require("../utils/logger");
+const { sanitizeHeaders } = require("../utils/sanitize");
 
-const authMiddleware = (req, res, next) => {
-  // Check for Hasura Admin Secret header
-  const secret = req.headers['x-hasura-admin-secret'];
-  
-  if (!secret || secret !== process.env.HASURA_GRAPHQL_ADMIN_SECRET) {
-    logger.warn('Unauthorized access attempt to webhook');
-    return res.status(401).json({ error: 'Unauthorized: Invalid Admin Secret' });
-  }
-  
-  next();
-};
-
-module.exports = { authMiddleware };/**
- * Admin Secret Verification Middleware
- * Verifies that requests come from a trusted source (Hasura)
+/**
+ * Middleware to verify Hasura admin secret
+ * Protects webhook endpoints from unauthorized access
  */
-
-const verifyAdminSecret = (req, res, next) => {
-  const adminSecret = req.headers['x-hasura-admin-secret'];
-  const expectedSecret = process.env.HASURA_ADMIN_SECRET;
+function verifyAdminSecret(req, res, next) {
+  const adminSecret = req.headers["x-hasura-admin-secret"];
+  // Support both variable names for compatibility
+  const expectedSecret =
+    process.env.HASURA_GRAPHQL_ADMIN_SECRET || process.env.HASURA_ADMIN_SECRET;
 
   if (!expectedSecret) {
-    console.error('HASURA_ADMIN_SECRET is not configured');
-    return res.status(500).json({ error: 'Server configuration error' });
+    logger.error("Hasura admin secret is not configured in environment");
+    return res.status(500).json({ error: "Server configuration error" });
   }
 
-  if (!adminSecret) {
-    return res.status(401).json({ error: 'Missing admin secret' });
+  // Check if admin secret is provided and matches
+  if (!adminSecret || adminSecret !== expectedSecret) {
+    logger.warn("Unauthorized webhook access attempt", {
+      ip: req.ip,
+      endpoint: req.path,
+      method: req.method,
+      headers: sanitizeHeaders(req.headers),
+    });
+
+    return res.status(401).json({
+      success: false,
+      message: "Unauthorized",
+    });
   }
 
-  if (adminSecret !== expectedSecret) {
-    return res.status(401).json({ error: 'Invalid admin secret' });
-  }
-
+  // Admin secret verified, proceed to next middleware
   next();
-};
+}
 
 module.exports = { verifyAdminSecret };

@@ -1,90 +1,54 @@
-/**
- * Winston Logger Configuration
- * Centralized logging for the webhook service
- */
+const winston = require("winston");
 
-const winston = require('winston');
-const path = require('path');
-
-// Define log levels
-const levels = {
-  error: 0,
-  warn: 1,
-  info: 2,
-  http: 3,
-  debug: 4,
-};
-
-// Define colors for each level
-const colors = {
-  error: 'red',
-  warn: 'yellow',
-  info: 'green',
-  http: 'magenta',
-  debug: 'blue',
-};
-
-// Tell winston about our colors
-winston.addColors(colors);
+// Determine log level from environment or default to 'info'
+const logLevel = process.env.LOG_LEVEL || "info";
 
 // Define log format
-const format = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+const logFormat = winston.format.combine(
+  winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
   winston.format.errors({ stack: true }),
   winston.format.splat(),
-  winston.format.json()
+  process.env.NODE_ENV === "production"
+    ? winston.format.json() // JSON format for production (machine-readable)
+    : winston.format.combine(
+        winston.format.colorize(),
+        winston.format.printf(({ level, message, timestamp, ...metadata }) => {
+          let msg = `${timestamp} [${level}]: ${message}`;
+          if (Object.keys(metadata).length > 0) {
+            msg += ` ${JSON.stringify(metadata)}`;
+          }
+          return msg;
+        }),
+      ),
 );
 
-// Define console format (for development)
-const consoleFormat = winston.format.combine(
-  winston.format.colorize({ all: true }),
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.printf(
-    (info) => `${info.timestamp} ${info.level}: ${info.message}${info.stack ? '\n' + info.stack : ''}`
-  )
-);
-
-// Define which transports to use
-const transports = [
-  // Console transport
-  new winston.transports.Console({
-    format: consoleFormat,
-  }),
-];
-
-// Add file transports if log directory is configured
-if (process.env.LOG_DIR) {
-  transports.push(
-    // Error log
-    new winston.transports.File({
-      filename: path.join(process.env.LOG_DIR, 'error.log'),
-      level: 'error',
-      maxsize: 10485760, // 10MB
-      maxFiles: 5,
-    }),
-    // Combined log
-    new winston.transports.File({
-      filename: path.join(process.env.LOG_DIR, 'combined.log'),
-      maxsize: 10485760, // 10MB
-      maxFiles: 5,
-    })
-  );
-}
-
-// Create the logger
+// Create Winston logger instance
 const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
-  levels,
-  format,
-  transports,
-  // Don't exit on error
+  level: logLevel,
+  format: logFormat,
+  transports: [
+    new winston.transports.Console(),
+    // Add file transports for production
+    ...(process.env.NODE_ENV === "production"
+      ? [
+          new winston.transports.File({
+            filename: "logs/error.log",
+            level: "error",
+          }),
+          new winston.transports.File({
+            filename: "logs/combined.log",
+          }),
+        ]
+      : []),
+  ],
+  // Don't exit on uncaught exceptions (let error handler manage it)
   exitOnError: false,
 });
 
-// Create a stream object for Morgan
+// Create a stream for Morgan HTTP logger integration
 logger.stream = {
   write: (message) => {
-    logger.http(message.trim());
+    logger.info(message.trim());
   },
 };
 
