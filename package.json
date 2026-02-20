@@ -5,7 +5,8 @@
   "description": "**SafeTrust** is a decentralized platform designed to revolutionize P2P transactions, providing secure deposits and payments powered by blockchain and trustless technologies. 🌐✨ Experience transparency and reliability in every cryptocurrency transaction. 💸🔒",
   "main": "index.js",
   "scripts": {
-    "test": "java -jar /app/tests/karate.jar /app/tests/karate/features"
+    "test": "java -jar /app/tests/karate.jar /app/tests/karate/features",
+    "start": "node index.js"
   },
   "repository": {
     "type": "git",
@@ -20,6 +21,7 @@
   "homepage": "https://github.com/Josue19-08/Backend#readme",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.701.0",
+    "axios": "^1.13.5",
     "cors": "^2.8.5",
     "cucumber-html-reporter": "^5.5.0",
     "dotenv": "^16.4.5",
