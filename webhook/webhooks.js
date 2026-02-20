@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const forgotPasswordRouter = require('./forgot-password');
 const firebaseWebhooksRouter = require('./firebase-webhooks');
+const { createEscrow } = require("../webhook/services/escrow-deployer");
 
 // Include forgot password routes
 router.use('/', forgotPasswordRouter);
@@ -30,5 +31,8 @@ router.post('/escrow_status_update', async (req, res) => {
 
     res.status(200).json({ message: 'Webhook processed successfully' });
 });
+
+
+router.post("/create", createEscrow);
 
 module.exports = router;
