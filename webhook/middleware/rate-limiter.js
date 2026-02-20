@@ -41,9 +41,9 @@ try {
 const globalLimiter = rateLimit({
   store: redis
     ? new RedisStore({
-        client: redis,
-        prefix: "rl:global:",
-      })
+      client: redis,
+      prefix: "rl:global:",
+    })
     : undefined,
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: parseInt(process.env.GLOBAL_RATE_LIMIT || "1000", 10),
@@ -71,9 +71,9 @@ function createTenantLimiter(maxRequests = 500) {
   return rateLimit({
     store: redis
       ? new RedisStore({
-          client: redis,
-          prefix: "rl:tenant:",
-        })
+        client: redis,
+        prefix: "rl:tenant:",
+      })
       : undefined,
     windowMs: 15 * 60 * 1000,
     max: maxRequests,
@@ -97,9 +97,9 @@ function createTenantLimiter(maxRequests = 500) {
 const criticalLimiter = rateLimit({
   store: redis
     ? new RedisStore({
-        client: redis,
-        prefix: "rl:critical:",
-      })
+      client: redis,
+      prefix: "rl:critical:",
+    })
     : undefined,
   windowMs: 60 * 1000, // 1 minute
   max: 10,

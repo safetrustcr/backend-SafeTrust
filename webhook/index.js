@@ -10,7 +10,7 @@ const morgan = require('morgan');
 // Import security middleware
 const { verifyAdminSecret } = require('./middleware/auth');
 const { validateJWT } = require('./middleware/jwt-auth');
-const { globalLimiter, createTenantLimiter, createEndpointLimiter } = require('./middleware/rate-limiter');
+const { globalLimiter, createTenantLimiter } = require('./middleware/rate-limiter');
 const { validateRequest } = require('./middleware/validator');
 const ipWhitelist = require('./middleware/ip-whitelist');
 const auditLog = require('./middleware/audit-logger');
@@ -18,12 +18,13 @@ const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
 const { logger } = require('./utils/logger');
 
 // Import route handlers
-const helmet = require('helmet');
+
 const rateLimit = require('express-rate-limit');
 const webhooksRoutes = require('./webhooks');
 const forgotPasswordRoutes = require('./forgot-password');
 const resetPasswordRoutes = require('./reset-password');
 const prepareEscrowContractRoutes = require('./prepare-escrow-contract');
+const fundEscrowHandler = require('./handlers/fund-escrow');
 
 // Event trigger handlers
 const escrowCreatedHandler = require('./events/escrow-created');
@@ -77,7 +78,7 @@ app.use((req, res, next) => {
 });
 
 const actionLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, 
+  windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
@@ -85,7 +86,7 @@ const actionLimiter = rateLimit({
 });
 
 //Async Wrapper (Prevents crashes on async errors)
-const asyncHandler = (fn) => (req, res, next) => 
+const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
 
@@ -150,6 +151,13 @@ app.use('/',
   webhooksRoutes
 );
 
+// Escrow Funding Endpoint - Protected by JWT (but not admin secret)
+app.post('/api/escrow/fund',
+  validateJWT,
+  createTenantLimiter(100),
+  fundEscrowHandler
+);
+
 app.listen(PORT, () => {
   logger.info(`🔐 Secure webhook service listening on port ${PORT}`);
   logger.info('Available routes:');
@@ -158,6 +166,7 @@ app.listen(PORT, () => {
   logger.info('- POST /api/auth/reset-password (Public)');
   logger.info('- POST /api/auth/forgot-password (Public)');
   logger.info('- POST /prepare-escrow-contract (Protected)');
+  logger.info('- POST /api/escrow/fund (Protected)');
   logger.info('- POST /webhooks/* (Protected)');
   logger.info('');
   logger.info('Security features enabled:');
