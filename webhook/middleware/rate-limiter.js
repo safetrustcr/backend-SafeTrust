@@ -1,10 +1,11 @@
 const rateLimit = require("express-rate-limit");
-const RedisStore = require("rate-limit-redis");
+const RedisStore = require("rate-limit-redis").default;
 const Redis = require("ioredis");
 const { logger } = require("../utils/logger");
 
 // Create Redis client for rate limiting
 let redis = null;
+
 const redisUrl = process.env.REDIS_URL;
 const redisHost = process.env.REDIS_HOST || "localhost";
 const redisPort = parseInt(process.env.REDIS_PORT || "6379", 10);
@@ -32,20 +33,29 @@ try {
     logger.error("Redis connection error", { error: err.message });
   });
 } catch (error) {
-  logger.error("Failed to initialize Redis client", { error: error.message });
+  logger.error("Failed to initialize Redis client", {
+    error: error.message,
+  });
 }
 
 /**
- * Global rate limiter for all webhook endpoints
+ * Helper to create Redis store correctly (v4 compatible)
+ */
+const createRedisStore = (prefix) => {
+  if (!redis) return undefined;
+
+  return new RedisStore({
+    sendCommand: (...args) => redis.call(...args),
+    prefix,
+  });
+};
+
+/**
+ * Global rate limiter
  */
 const globalLimiter = rateLimit({
-  store: redis
-    ? new RedisStore({
-        client: redis,
-        prefix: "rl:global:",
-      })
-    : undefined,
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  store: createRedisStore("rl:global:"),
+  windowMs: 15 * 60 * 1000,
   max: parseInt(process.env.GLOBAL_RATE_LIMIT || "1000", 10),
   message: { error: "Too many requests, please try again later" },
   standardHeaders: true,
@@ -59,22 +69,16 @@ const globalLimiter = rateLimit({
     res.status(429).json({
       success: false,
       message: "Rate limit exceeded",
-      retryAfter: Math.ceil(req.rateLimit.resetTime / 1000),
     });
   },
 });
 
 /**
- * Create a per-tenant rate limiter
+ * Per-tenant limiter
  */
 function createTenantLimiter(maxRequests = 500) {
   return rateLimit({
-    store: redis
-      ? new RedisStore({
-          client: redis,
-          prefix: "rl:tenant:",
-        })
-      : undefined,
+    store: createRedisStore("rl:tenant:"),
     windowMs: 15 * 60 * 1000,
     max: maxRequests,
     keyGenerator: (req) => {
@@ -92,18 +96,12 @@ function createTenantLimiter(maxRequests = 500) {
 }
 
 /**
- * Stricter limiter for sensitive operations
+ * Critical limiter
  */
 const criticalLimiter = rateLimit({
-  store: redis
-    ? new RedisStore({
-        client: redis,
-        prefix: "rl:critical:",
-      })
-    : undefined,
-  windowMs: 60 * 1000, // 1 minute
+  store: createRedisStore("rl:critical:"),
+  windowMs: 60 * 1000,
   max: 10,
-  skipSuccessfulRequests: false,
   message: { error: "Critical operation rate limit exceeded" },
   standardHeaders: true,
   legacyHeaders: false,
