@@ -105,6 +105,7 @@ services:
       - NODE_ENV=development
       - WEBHOOK_PORT=3001
       - HASURA_GRAPHQL_ADMIN_SECRET=${HASURA_GRAPHQL_ADMIN_SECRET}
+      - HASURA_GRAPHQL_ENDPOINT=http://graphql-engine:8080/v1/graphql
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=safetrust
