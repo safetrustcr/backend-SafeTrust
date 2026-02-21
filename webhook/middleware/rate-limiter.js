@@ -1,50 +1,13 @@
 const rateLimit = require("express-rate-limit");
-const RedisStore = require("rate-limit-redis");
-const Redis = require("ioredis");
 const { logger } = require("../utils/logger");
 
-// Create Redis client for rate limiting
-let redis = null;
-const redisUrl = process.env.REDIS_URL;
-const redisHost = process.env.REDIS_HOST || "localhost";
-const redisPort = parseInt(process.env.REDIS_PORT || "6379", 10);
-
-try {
-  if (redisUrl) {
-    redis = new Redis(redisUrl, {
-      enableOfflineQueue: false,
-      maxRetriesPerRequest: 3,
-    });
-  } else {
-    redis = new Redis({
-      host: redisHost,
-      port: redisPort,
-      password: process.env.REDIS_PASSWORD,
-      retryStrategy: (times) => Math.min(times * 50, 2000),
-    });
-  }
-
-  redis.on("connect", () => {
-    logger.info("Redis client connected for rate limiting");
-  });
-
-  redis.on("error", (err) => {
-    logger.error("Redis connection error", { error: err.message });
-  });
-} catch (error) {
-  logger.error("Failed to initialize Redis client", { error: error.message });
-}
+// Disable Redis for now - use memory store
+const redis = null;
 
 /**
  * Global rate limiter for all webhook endpoints
  */
 const globalLimiter = rateLimit({
-  store: redis
-    ? new RedisStore({
-        client: redis,
-        prefix: "rl:global:",
-      })
-    : undefined,
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: parseInt(process.env.GLOBAL_RATE_LIMIT || "1000", 10),
   message: { error: "Too many requests, please try again later" },
@@ -69,12 +32,6 @@ const globalLimiter = rateLimit({
  */
 function createTenantLimiter(maxRequests = 500) {
   return rateLimit({
-    store: redis
-      ? new RedisStore({
-          client: redis,
-          prefix: "rl:tenant:",
-        })
-      : undefined,
     windowMs: 15 * 60 * 1000,
     max: maxRequests,
     keyGenerator: (req) => {
@@ -95,12 +52,6 @@ function createTenantLimiter(maxRequests = 500) {
  * Stricter limiter for sensitive operations
  */
 const criticalLimiter = rateLimit({
-  store: redis
-    ? new RedisStore({
-        client: redis,
-        prefix: "rl:critical:",
-      })
-    : undefined,
   windowMs: 60 * 1000, // 1 minute
   max: 10,
   skipSuccessfulRequests: false,

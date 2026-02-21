@@ -18,7 +18,6 @@ const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
 const { logger } = require('./utils/logger');
 
 // Import route handlers
-const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const webhooksRoutes = require('./webhooks');
 const forgotPasswordRoutes = require('./forgot-password');
