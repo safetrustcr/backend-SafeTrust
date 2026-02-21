@@ -61,6 +61,22 @@ services:
     networks:
       - safetrust-network
 
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - safetrust-network
+
   console:
     build:
       context: .
@@ -95,7 +111,7 @@ services:
       - HASURA_GRAPHQL_ENDPOINT=http://graphql-engine:8080/v1/graphql
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=safetrust
+      - POSTGRES_DB=safetrust_db
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POLYGON_RPC_URL=${POLYGON_RPC_URL}
@@ -108,21 +124,15 @@ services:
       - AWS_REGION=${AWS_REGION}
       - S3_BUCKET=${S3_BUCKET}
       - FRONTEND_URL=http://localhost:3000
-      - NEXT_PUBLIC_HASURA_GRAPHQL_URL=http://graphql-engine:8080/v1/graphql
-      - SMTP_HOST=smtp.host.com
-      - SMTP_PORT=465
-      - SMTP_SECURE=true
-      - SMTP_USER=your-user
-      - SMTP_PASS=your-password
-      - SMTP_FROM=your-email@example.com
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=safetrust_db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgrespassword
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_SECURE=${SMTP_SECURE}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JWT_SECRET=myadminsecretkey
+      - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=info
       - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
     volumes:
