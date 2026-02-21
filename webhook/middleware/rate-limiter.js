@@ -90,11 +90,12 @@ function createTenantLimiter(maxRequests = 500) {
 }
 
 /**
- * Create a per-endpoint rate limiter
+ * Create a per-endpoint rate limiter.
+ * Each call site must provide a unique prefix to isolate its quota in Redis.
  */
-function createEndpointLimiter(maxRequests = 100, windowMs = 15 * 60 * 1000) {
+function createEndpointLimiter(maxRequests = 100, windowMs = 15 * 60 * 1000, prefix = "rl:endpoint:") {
   return rateLimit({
-    store: makeRedisStore("rl:endpoint:"),
+    store: makeRedisStore(prefix),
     windowMs,
     max: maxRequests,
     standardHeaders: true,
