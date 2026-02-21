@@ -41,6 +41,9 @@ const verifyTransaction = require('./actions/verify-transaction');
 const releaseFunds = require('./actions/release-funds');
 const processRefund = require('./actions/process-refund');
 
+// --- API Imports ---
+const releaseEscrow = require('./api/release-escrow');
+
 // --- Middleware Imports ---
 const { authMiddleware } = require('./middleware/auth');
 
@@ -114,6 +117,10 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
+// --- Trustless Work API ---
+app.post('/api/escrow/release', validateJWT, actionLimiter, asyncHandler(releaseEscrow));
+
+
 // Protected Routes - Require Hasura admin secret verification
 // These routes are called by Hasura Actions/Events
 
@@ -157,6 +164,7 @@ app.listen(PORT, () => {
   logger.info('- GET  /api/auth/validate-reset-token (Public)');
   logger.info('- POST /api/auth/reset-password (Public)');
   logger.info('- POST /api/auth/forgot-password (Public)');
+  logger.info('- POST /api/escrow/release (Protected via JWT)');
   logger.info('- POST /prepare-escrow-contract (Protected)');
   logger.info('- POST /webhooks/* (Protected)');
   logger.info('');
