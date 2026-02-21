@@ -97,13 +97,22 @@ async function getPropertyById(id) {
   const client = getHasuraClient();
 
   // Try apartment first
+  let apartmentError = null;
   try {
     const apartmentData = await client.request(GET_APARTMENT_BY_ID, { id });
     if (apartmentData.apartments_by_pk) {
       return normalizeApartment(apartmentData.apartments_by_pk);
     }
   } catch (error) {
-    logger.warn('Error querying apartment', { id, error: error.message });
+    // Only treat GraphQL "not found" / permission errors as non-fatal
+    // Network/auth failures indicate infrastructure problems
+    const isGraphQLError = error?.response?.errors?.length > 0;
+    if (!isGraphQLError) {
+      logger.error('Infrastructure error querying apartment', { id, error: error.message });
+      throw error;
+    }
+    apartmentError = error;
+    logger.warn('GraphQL error querying apartment', { id, error: error.message });
   }
 
   // Fall back to hotel
@@ -113,7 +122,17 @@ async function getPropertyById(id) {
       return normalizeHotel(hotelData.hotels_by_pk);
     }
   } catch (error) {
-    logger.warn('Error querying hotel', { id, error: error.message });
+    const isGraphQLError = error?.response?.errors?.length > 0;
+    if (!isGraphQLError) {
+      logger.error('Infrastructure error querying hotel', { id, error: error.message });
+      throw error;
+    }
+    logger.warn('GraphQL error querying hotel', { id, error: error.message });
+  }
+
+  // Log the original apartment error if both returned GraphQL errors
+  if (apartmentError) {
+    logger.warn('Property not found in either table', { id });
   }
 
   return null;
