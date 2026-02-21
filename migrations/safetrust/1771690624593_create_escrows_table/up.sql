@@ -1,3 +1,7 @@
+-- ============================================================
+-- up.sql — Create escrows table and supporting objects
+-- ============================================================
+
 -- Create escrows table for single-release security deposit escrows
 CREATE TABLE IF NOT EXISTS public.escrows (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
