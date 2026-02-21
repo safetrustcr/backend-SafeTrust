@@ -1,10 +1,15 @@
 import axios from "axios";
 
-const HASURA_URL = process.env.HASURA_URL;
-const HASURA_ADMIN_SECRET = process.env.HASURA_ADMIN_SECRET;
-
 export async function fetchProperties({ type, limit, offset }) {
+  const HASURA_URL = process.env.HASURA_URL;
+  const HASURA_ADMIN_SECRET = process.env.HASURA_ADMIN_SECRET;
+
   try {
+    // 🔥 If mock mode enabled → skip Hasura entirely
+    if (process.env.USE_MOCK_DATA === "true") {
+      return generateMockData(type, limit, offset);
+    }
+
     if (!HASURA_URL || !HASURA_ADMIN_SECRET) {
       throw new Error("Hasura environment variables not configured");
     }
@@ -21,9 +26,7 @@ export async function fetchProperties({ type, limit, offset }) {
           price
           city
           created_at
-          images(limit: 1) {
-            url
-          }
+          images(limit: 1) { url }
         }
 
         hotels(
@@ -36,19 +39,14 @@ export async function fetchProperties({ type, limit, offset }) {
           price
           city
           created_at
-          images(limit: 1) {
-            url
-          }
+          images(limit: 1) { url }
         }
       }
     `;
 
     const response = await axios.post(
       HASURA_URL,
-      {
-        query,
-        variables: { limit, offset },
-      },
+      { query, variables: { limit, offset } },
       {
         headers: {
           "Content-Type": "application/json",
@@ -57,7 +55,6 @@ export async function fetchProperties({ type, limit, offset }) {
       }
     );
 
-    // 🔎 Check for GraphQL errors
     if (response?.data?.errors) {
       throw new Error(response.data.errors[0].message);
     }
@@ -95,7 +92,6 @@ export async function fetchProperties({ type, limit, offset }) {
       );
     }
 
-    // Sort newest first
     unified.sort(
       (a, b) => new Date(b.created_at) - new Date(a.created_at)
     );
@@ -105,4 +101,35 @@ export async function fetchProperties({ type, limit, offset }) {
     console.error("Hasura fetch error:", error.message);
     throw new Error("Failed to fetch properties from Hasura");
   }
+}
+
+// 🔥 Mock generator function
+function generateMockData(type, limit, offset) {
+  const mockData = [
+    {
+      id: "mock-1",
+      type: "apartment",
+      name: "Demo Apartment",
+      price: 1500,
+      city: "Mumbai",
+      image: "https://via.placeholder.com/300",
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: "mock-2",
+      type: "hotel",
+      name: "Demo Hotel",
+      price: 2500,
+      city: "Delhi",
+      image: "https://via.placeholder.com/300",
+      created_at: new Date().toISOString(),
+    },
+  ];
+
+  let filtered =
+    type === "all"
+      ? mockData
+      : mockData.filter((item) => item.type === type);
+
+  return filtered.slice(offset, offset + limit);
 }
