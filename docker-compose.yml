@@ -16,6 +16,7 @@ services:
       start_period: 10s
     networks:
       - safetrust-network
+
   graphql-engine:
     image: hasura/graphql-engine:v2.47.0
     ports:
@@ -42,11 +43,12 @@ services:
       start_period: 10s
     networks:
       - safetrust-network
+
   data-connector-agent:
     image: hasura/graphql-data-connector:v2.47.0
     restart: always
     ports:
-      - "8083:8081" # Changed from 8081:8081 to 8083:8081
+      - "8083:8081"
     environment:
       QUARKUS_LOG_LEVEL: ERROR
       QUARKUS_OPENTELEMETRY_ENABLED: "false"
@@ -58,21 +60,7 @@ services:
       start_period: 5s
     networks:
       - safetrust-network
-  redis:
-    image: redis:7-alpine
-    restart: always
-    ports:
-      - "6380:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    networks:
-      - safetrust-network
+
   console:
     build:
       context: .
@@ -81,7 +69,6 @@ services:
       - "9693:9693"
       - "9695:9695"
     environment:
-      # Fixed the port to match the GraphQL engine's actual port
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:8080
       HASURA_GRAPHQL_ADMIN_SECRET: myadminsecretkey
       HASURA_RUN_CONSOLE: "true"
@@ -140,7 +127,7 @@ services:
       - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
     volumes:
       - ./webhook:/app
-      - /app/node_modules  
+      - /app/node_modules
     depends_on:
       - postgres
       - graphql-engine
@@ -151,7 +138,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
     networks:
       - safetrust-network
     restart: unless-stopped
