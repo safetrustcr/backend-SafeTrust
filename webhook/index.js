@@ -184,7 +184,7 @@
 
 
 
-require('dotenv').config();
+require('dotenv').config({ path: '../.env' });
 const { config } = require('./config');
 
 console.log("Environment loaded for project:", config.FIREBASE_PROJECT_ID);
