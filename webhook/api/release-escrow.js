@@ -3,7 +3,7 @@ const { logger } = require('../utils/logger');
 const axios = require('axios');
 
 async function releaseEscrow(req, res) {
-  const { contractId, senderAddress } = req.body;
+  const { contractId } = req.body; 
   
   const userRole = req.user?.role; 
   const userId = req.user?.userId;
@@ -11,19 +11,16 @@ async function releaseEscrow(req, res) {
   try {
     logger.info(`Received request to release escrow for contractId: ${contractId}`);
 
-    // Auth Check
     if (!userId || userRole === 'anonymous') {
       return res.status(401).json({ success: false, message: "Unauthorized: Valid JWT required" });
     }
 
-    // Validate Input
-    if (!contractId || !senderAddress) {
-      return res.status(400).json({ success: false, message: "Missing contractId or senderAddress" });
+    if (!contractId) {
+      return res.status(400).json({ success: false, message: "Missing contractId" });
     }
 
-    // Fetch Escrow Details
     const escrowQuery = await query(`
-      SELECT id, status, marker, releaser
+      SELECT id, status, marker
       FROM trustless_work_escrows
       WHERE contract_id = $1
     `, [contractId]);
@@ -39,15 +36,25 @@ async function releaseEscrow(req, res) {
         return res.status(400).json({ success: false, message: `Escrow cannot be released from '${escrow.status}' state.` });
     }
 
-    // Validate Permissions (Only Property Owner or Platform Admin)
-    const isPropertyOwner = escrow.marker === senderAddress;
+    const userWalletResult = await query(
+      `SELECT wallet_address FROM user_wallets WHERE user_id = $1`, 
+      [userId]
+    );
+    const userWalletAddress = userWalletResult.rows[0]?.wallet_address;
+
+    const isPropertyOwner = userWalletAddress && escrow.marker === userWalletAddress;
     const isPlatformAdmin = userRole === 'admin' || userRole === 'platform';
 
     if (!isPropertyOwner && !isPlatformAdmin) {
         return res.status(403).json({ success: false, message: "Unauthorized: Only the property owner or platform admin can release funds." });
     }
 
-    // Call Trustless Work API
+    const releaseSigner = isPropertyOwner ? userWalletAddress : (userWalletAddress || process.env.PLATFORM_WALLET_ADDRESS);
+
+    if (!releaseSigner) {
+        return res.status(400).json({ success: false, message: "Signer wallet address not found." });
+    }
+
     const trustlessWorkUrl = process.env.TRUSTLESS_WORK_API_URL || 'https://dev.api.trustlesswork.com';
     const trustlessWorkApiKey = process.env.TRUSTLESS_WORK_API_KEY;
 
@@ -61,21 +68,23 @@ async function releaseEscrow(req, res) {
             `${trustlessWorkUrl}/escrow/single-release/release-funds`, 
             {
                 contractId: contractId,
-                releaseSigner: senderAddress 
+                releaseSigner: releaseSigner 
             }, 
             {
                 headers: {
                     'x-api-key': trustlessWorkApiKey,
                     'Content-Type': 'application/json'
-                }
+                },
+                timeout: 10000 
             }
         );
     } catch (twError) {
         logger.error(`Trustless Work API Error: ${twError.response?.data?.message || twError.message}`);
+        
         return res.status(twError.response?.status || 502).json({ 
             success: false, 
             message: "Failed to communicate with Trustless Work API", 
-            details: twError.response?.data 
+            errorCode: twError.response?.data?.code || "EXTERNAL_API_ERROR"
         });
     }
 
@@ -85,18 +94,21 @@ async function releaseEscrow(req, res) {
         throw new Error("Trustless Work API did not return an unsignedTransaction");
     }
 
-    // Update Database Status to 'completed'
-    await query(`
+    const updateResult = await query(`
       UPDATE trustless_work_escrows
-      SET status = 'completed', updated_at = NOW()
+      SET status = 'release_pending', updated_at = NOW()
       WHERE contract_id = $1
+      AND status IN ('funded', 'active', 'milestone_approved')
     `, [contractId]);
 
-    // Return Response
-    logger.info(`Escrow ${contractId} released successfully. XDR generated.`);
+    if (updateResult.rowCount === 0) {
+       return res.status(409).json({ success: false, message: "Escrow state changed before release could complete." });
+    }
+
+    logger.info(`Escrow ${contractId} set to release_pending. XDR generated.`);
     return res.status(200).json({
         success: true,
-        message: "Escrow funds released successfully",
+        message: "Escrow funds ready for signature",
         contractId: contractId,
         unsignedXdr: unsignedXdr 
     });

@@ -14,7 +14,7 @@ const { globalLimiter, createTenantLimiter, createEndpointLimiter } = require('.
 const { validateRequest } = require('./middleware/validator');
 const ipWhitelist = require('./middleware/ip-whitelist');
 const auditLog = require('./middleware/audit-logger');
-const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
+const { errorHandler, notFoundHandler, asyncHandler } = require('./middleware/error-handler');
 const { logger } = require('./utils/logger');
 
 // Import route handlers
@@ -121,7 +121,7 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // --- Trustless Work API ---
-app.post('/api/escrow/release', validateJWT, actionLimiter, asyncHandler(releaseEscrow));
+app.post('/api/escrow/release', verifyAdminSecret, validateJWT, auditLog, createTenantLimiter(200), asyncHandler(releaseEscrow));
 
 
 // Protected Routes - Require Hasura admin secret verification
