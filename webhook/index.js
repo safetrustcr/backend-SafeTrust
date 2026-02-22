@@ -24,6 +24,7 @@ const forgotPasswordRoutes = require('./forgot-password');
 const resetPasswordRoutes = require('./reset-password');
 const prepareEscrowContractRoutes = require('./prepare-escrow-contract');
 const escrowStatusRoutes = require('./routes/escrow-status');
+const propertiesRoutes = require('./routes/properties');
 
 // Event trigger handlers
 const escrowCreatedHandler = require('./events/escrow-created');
@@ -98,6 +99,9 @@ app.use(globalLimiter);
 
 // --- Endpoints ---
 
+// Public property details endpoint
+app.use('/api/properties', propertiesRoutes);
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({
@@ -163,6 +167,7 @@ app.listen(PORT, () => {
   logger.info('Available routes:');
   logger.info('- GET  /health');
   logger.info('- GET  /api/escrow/status/:contractId (Protected - Firebase JWT)');
+  logger.info('- GET  /api/properties/:id (Public)');
   logger.info('- GET  /api/auth/validate-reset-token (Public)');
   logger.info('- POST /api/auth/reset-password (Public)');
   logger.info('- POST /api/auth/forgot-password (Public)');
