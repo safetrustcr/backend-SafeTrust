@@ -9,6 +9,10 @@ const config = {
   // Firebase Configuration
   FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || 'safetrust-dev',
 
+  // Trustless Work API Driver
+  TRUSTLESS_WORK_API_URL: process.env.TRUSTLESS_WORK_API_URL || 'https://api.trustlesswork.com',
+  TRUSTLESS_WORK_API_KEY: process.env.TRUSTLESS_WORK_API_KEY,
+
   // Server Configuration
   PORT: process.env.PORT || 3000,
   NODE_ENV: process.env.NODE_ENV || 'development',

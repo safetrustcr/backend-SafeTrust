@@ -9,30 +9,32 @@ const redisUrl = process.env.REDIS_URL;
 const redisHost = process.env.REDIS_HOST || "localhost";
 const redisPort = parseInt(process.env.REDIS_PORT || "6379", 10);
 
-try {
-  if (redisUrl) {
-    redis = new Redis(redisUrl, {
-      enableOfflineQueue: false,
-      maxRetriesPerRequest: 3,
+if (process.env.REDIS_ENABLED !== 'false') {
+  try {
+    if (redisUrl) {
+      redis = new Redis(redisUrl, {
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 3,
+      });
+    } else {
+      redis = new Redis({
+        host: redisHost,
+        port: redisPort,
+        password: process.env.REDIS_PASSWORD,
+        retryStrategy: (times) => Math.min(times * 50, 2000),
+      });
+    }
+
+    redis.on("connect", () => {
+      logger.info("Redis client connected for rate limiting");
     });
-  } else {
-    redis = new Redis({
-      host: redisHost,
-      port: redisPort,
-      password: process.env.REDIS_PASSWORD,
-      retryStrategy: (times) => Math.min(times * 50, 2000),
+
+    redis.on("error", (err) => {
+      logger.error("Redis connection error", { error: err.message });
     });
+  } catch (error) {
+    logger.error("Failed to initialize Redis client", { error: error.message });
   }
-
-  redis.on("connect", () => {
-    logger.info("Redis client connected for rate limiting");
-  });
-
-  redis.on("error", (err) => {
-    logger.error("Redis connection error", { error: err.message });
-  });
-} catch (error) {
-  logger.error("Failed to initialize Redis client", { error: error.message });
 }
 
 function makeRedisStore(prefix) {
