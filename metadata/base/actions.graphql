@@ -2,12 +2,18 @@ type Mutation {
   sendVerificationCode(
     input: SendVerificationInput!
   ): VerificationResponse!
-}
 
-type Mutation {
   verifyEmailCode(
     input: VerifyCodeInput!
   ): VerificationResponse!
+
+  prepare_escrow_contract(
+    input: PrepareEscrowContractInput!
+  ): PrepareEscrowContractOutput
+
+  open_dispute(
+    input: OpenDisputeInput!
+  ): OpenDisputeOutput
 }
 
 input SendVerificationInput {
@@ -62,7 +68,12 @@ type PrepareEscrowContractOutput {
   escrow_payload: jsonb!
 }
 
-type Mutation {
-  prepare_escrow_contract(input: PrepareEscrowContractInput!): PrepareEscrowContractOutput
+input OpenDisputeInput {
+  contractId: String!
+  senderAddress: String!
 }
 
+type OpenDisputeOutput {
+  contractId: String!
+  unsignedXdr: String!
+}

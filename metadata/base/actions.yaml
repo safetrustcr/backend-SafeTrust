@@ -22,6 +22,19 @@ actions:
       - role: user
         permission:
           allow: true
+  - name: open_dispute
+    definition:
+      kind: synchronous
+      handler: '{{WEBHOOK_URL}}/api/escrow/dispute'
+      headers:
+        - name: x-hasura-admin-secret
+          value_from_env: WEBHOOK_ADMIN_SECRET
+      forward_client_headers: true
+    permissions:
+      - role: user
+        permission:
+          allow: true
+
 custom_types:
   enums: []
   input_objects:

@@ -63,6 +63,19 @@ actions:
       - role: admin
     comment: Process refund request with on-chain execution
 
+  - name: open_dispute
+    definition:
+      kind: synchronous
+      handler: '{{WEBHOOK_URL}}/api/escrow/dispute'
+      forward_client_headers: true
+      headers:
+        - name: x-hasura-admin-secret
+          value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
+    permissions:
+      - role: user
+    comment: Open a dispute for property damage claims
+
+
 custom_types:
   input_objects:
     - name: VerifyWalletInput
@@ -117,6 +130,14 @@ custom_types:
           type: String!
         - name: refund_address
           type: String!
+
+    - name: OpenDisputeInput
+      fields:
+        - name: contractId
+          type: String!
+        - name: senderAddress
+          type: String!
+
 
   objects:
     - name: VerifyWalletOutput
@@ -191,3 +212,10 @@ custom_types:
           type: String
         - name: refund_amount
           type: String
+
+    - name: OpenDisputeOutput
+      fields:
+        - name: contractId
+          type: String!
+        - name: unsignedXdr
+          type: String!
