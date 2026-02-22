@@ -1,5 +1,9 @@
 const rateLimit = require("express-rate-limit");
+
 const RedisStore = require("rate-limit-redis").default;
+
+const { RedisStore } = require("rate-limit-redis");
+
 const Redis = require("ioredis");
 const { logger } = require("../utils/logger");
 
@@ -38,6 +42,14 @@ try {
   });
 }
 
+function makeRedisStore(prefix) {
+  if (!redis) return undefined;
+  return new RedisStore({
+    sendCommand: (...args) => redis.call(...args),
+    prefix,
+  });
+}
+
 /**
  * Helper to create Redis store correctly (v4 compatible)
  */
@@ -54,8 +66,13 @@ const createRedisStore = (prefix) => {
  * Global rate limiter
  */
 const globalLimiter = rateLimit({
+
   store: createRedisStore("rl:global:"),
   windowMs: 15 * 60 * 1000,
+
+  store: makeRedisStore("rl:global:"),
+  windowMs: 15 * 60 * 1000, // 15 minutes
+
   max: parseInt(process.env.GLOBAL_RATE_LIMIT || "1000", 10),
   message: { error: "Too many requests, please try again later" },
   standardHeaders: true,
@@ -78,7 +95,11 @@ const globalLimiter = rateLimit({
  */
 function createTenantLimiter(maxRequests = 500) {
   return rateLimit({
+
     store: createRedisStore("rl:tenant:"),
+
+    store: makeRedisStore("rl:tenant:"),
+
     windowMs: 15 * 60 * 1000,
     max: maxRequests,
     keyGenerator: (req) => {
@@ -96,11 +117,25 @@ function createTenantLimiter(maxRequests = 500) {
 }
 
 /**
- * Critical limiter
+ * Create a per-endpoint rate limiter.
+ * Each call site must provide a unique prefix to isolate its quota in Redis.
+ */
+function createEndpointLimiter(maxRequests = 100, windowMs = 15 * 60 * 1000, prefix = "rl:endpoint:") {
+  return rateLimit({
+    store: makeRedisStore(prefix),
+    windowMs,
+    max: maxRequests,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+}
+
+/**
+ * Stricter limiter for sensitive operations
  */
 const criticalLimiter = rateLimit({
-  store: createRedisStore("rl:critical:"),
-  windowMs: 60 * 1000,
+  store: makeRedisStore("rl:critical:"),
+  windowMs: 60 * 1000, // 1 minute
   max: 10,
   message: { error: "Critical operation rate limit exceeded" },
   standardHeaders: true,
@@ -113,6 +148,7 @@ const criticalLimiter = rateLimit({
 module.exports = {
   globalLimiter,
   createTenantLimiter,
+  createEndpointLimiter,
   criticalLimiter,
   redis,
 };
