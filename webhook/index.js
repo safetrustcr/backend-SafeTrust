@@ -18,12 +18,12 @@ const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
 const { logger } = require('./utils/logger');
 
 // Import route handlers
-const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const webhooksRoutes = require('./webhooks');
 const forgotPasswordRoutes = require('./forgot-password');
 const resetPasswordRoutes = require('./reset-password');
 const prepareEscrowContractRoutes = require('./prepare-escrow-contract');
+const propertiesRoutes = require('./routes/properties');
 
 // Event trigger handlers
 const escrowCreatedHandler = require('./events/escrow-created');
@@ -97,6 +97,9 @@ app.use(globalLimiter);
 
 // --- Endpoints ---
 
+// Public property details endpoint
+app.use('/api/properties', propertiesRoutes);
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({
@@ -154,6 +157,7 @@ app.listen(PORT, () => {
   logger.info(`🔐 Secure webhook service listening on port ${PORT}`);
   logger.info('Available routes:');
   logger.info('- GET  /health');
+  logger.info('- GET  /api/properties/:id (Public)');
   logger.info('- GET  /api/auth/validate-reset-token (Public)');
   logger.info('- POST /api/auth/reset-password (Public)');
   logger.info('- POST /api/auth/forgot-password (Public)');
