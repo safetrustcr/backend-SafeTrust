@@ -1,20 +1,33 @@
 const admin = require('firebase-admin');
 const { logger } = require('../utils/logger');
 
+// Track Firebase initialization state
+let firebaseInitialized = false;
+
 // Initialize Firebase Admin SDK if not already initialized
 if (!admin.apps.length) {
-  try {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-      }),
-    });
-    logger.info('Firebase Admin SDK initialized');
-  } catch (error) {
-    logger.error('Failed to initialize Firebase Admin SDK', { error: error.message });
+  const required = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'];
+  const missing = required.filter(k => !process.env[k]?.trim());
+
+  if (missing.length) {
+    logger.error(`Missing Firebase env vars: ${missing.join(', ')}`);
+  } else {
+    try {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        }),
+      });
+      firebaseInitialized = true;
+      logger.info('Firebase Admin SDK initialized');
+    } catch (error) {
+      logger.error('Failed to initialize Firebase Admin SDK', { error: error.message });
+    }
   }
+} else {
+  firebaseInitialized = true;
 }
 
 /**
@@ -24,6 +37,15 @@ if (!admin.apps.length) {
  */
 async function verifyFirebaseToken(req, res, next) {
   try {
+    // Check if Firebase is initialized
+    if (!firebaseInitialized) {
+      return res.status(503).json({
+        success: false,
+        message: 'Authentication service unavailable',
+        code: 'AUTH_UNAVAILABLE',
+      });
+    }
+
     // Extract token from Authorization header
     const authHeader = req.headers.authorization;
     
@@ -66,7 +88,6 @@ async function verifyFirebaseToken(req, res, next) {
 
     logger.debug('Firebase token verified', {
       userId: req.user.userId,
-      email: req.user.email,
       role: req.user.role,
     });
     

@@ -36,7 +36,7 @@ class TrustlessWorkService {
       logger.info('Fetching escrow status from Trustless Work', { contractId });
 
       const response = await axios.get(
-        `${this.baseUrl}/v1/escrow/${contractId}`,
+        `${this.baseUrl}/v1/escrow/${encodeURIComponent(contractId)}`,
         { headers: this.getHeaders(), timeout: 10000 }
       );
 
@@ -54,7 +54,6 @@ class TrustlessWorkService {
         contractId,
         error: error.message,
         status: error.response?.status,
-        data: error.response?.data,
       });
 
       // Return structured error
@@ -79,7 +78,7 @@ class TrustlessWorkService {
       logger.info('Fetching transaction history from Trustless Work', { contractId });
 
       const response = await axios.get(
-        `${this.baseUrl}/v1/escrow/${contractId}/transactions`,
+        `${this.baseUrl}/v1/escrow/${encodeURIComponent(contractId)}/transactions`,
         { headers: this.getHeaders(), timeout: 10000 }
       );
 
@@ -113,7 +112,7 @@ class TrustlessWorkService {
       logger.info('Fetching milestones from Trustless Work', { contractId });
 
       const response = await axios.get(
-        `${this.baseUrl}/v1/escrow/${contractId}/milestones`,
+        `${this.baseUrl}/v1/escrow/${encodeURIComponent(contractId)}/milestones`,
         { headers: this.getHeaders(), timeout: 10000 }
       );
 

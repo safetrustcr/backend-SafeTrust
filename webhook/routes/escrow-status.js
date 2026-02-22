@@ -115,28 +115,40 @@ router.get('/status/:contractId', asyncHandler(async (req, res) => {
         propertyDetails = propertyQuery.rows[0];
       }
     } catch (error) {
-      logger.debug('Property details not available', { contractId });
+      logger.warn('Failed to fetch property details', { 
+        contractId, 
+        error: error.message 
+      });
     }
 
     // 4. Get milestones from local database
     const milestones = await escrowStateService.getMilestones(contractId);
 
-    // 5. Get API call history
-    const apiCallsQuery = await query(
-      `SELECT 
-        id,
-        api_endpoint,
-        request_method,
-        response_status,
-        created_at
-      FROM escrow_api_calls
-      WHERE contract_id = $1
-      ORDER BY created_at DESC
-      LIMIT 10`,
-      [contractId]
-    );
+    // 5. Get API call history (if table exists)
+    let apiCallHistory = [];
+    try {
+      const apiCallsQuery = await query(
+        `SELECT 
+          id,
+          api_endpoint,
+          request_method,
+          response_status,
+          created_at
+        FROM escrow_api_calls
+        WHERE contract_id = $1
+        ORDER BY created_at DESC
+        LIMIT 10`,
+        [contractId]
+      );
 
-    const apiCallHistory = apiCallsQuery.rows;
+      apiCallHistory = apiCallsQuery.rows;
+    } catch (error) {
+      logger.warn('Failed to fetch API call history', { 
+        contractId, 
+        error: error.message 
+      });
+      // Table might not exist yet, continue with empty array
+    }
 
     // 6. Query Trustless Work API for external status
     const trustlessWorkStatus = await trustlessWorkService.getEscrowStatus(contractId);
@@ -191,7 +203,6 @@ router.get('/status/:contractId', asyncHandler(async (req, res) => {
           funded_amount: externalStatus.funded_amount,
           released_amount: externalStatus.released_amount,
           last_updated: externalStatus.last_updated,
-          ...externalStatus,
         } : null,
 
         // External API error if any
@@ -204,8 +215,8 @@ router.get('/status/:contractId', asyncHandler(async (req, res) => {
           name: p.display_name,
           first_name: p.first_name,
           last_name: p.last_name,
-          role: p.id === participants[0]?.landlord_id ? 'landlord' : 
-                p.id === participants[0]?.tenant_id ? 'tenant' : 'participant',
+          role: p.id === p.landlord_id ? 'landlord' : 
+                p.id === p.tenant_id ? 'tenant' : 'participant',
         })),
 
         // Property details
