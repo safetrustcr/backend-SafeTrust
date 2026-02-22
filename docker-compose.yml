@@ -16,6 +16,7 @@ services:
       start_period: 10s
     networks:
       - safetrust-network
+
   graphql-engine:
     image: hasura/graphql-engine:v2.47.0
     ports:
@@ -42,11 +43,12 @@ services:
       start_period: 10s
     networks:
       - safetrust-network
+
   data-connector-agent:
     image: hasura/graphql-data-connector:v2.47.0
     restart: always
     ports:
-      - "8083:8081" # Changed from 8081:8081 to 8083:8081
+      - "8083:8081"
     environment:
       QUARKUS_LOG_LEVEL: ERROR
       QUARKUS_OPENTELEMETRY_ENABLED: "false"
@@ -58,6 +60,7 @@ services:
       start_period: 5s
     networks:
       - safetrust-network
+
   redis:
     image: redis:7-alpine
     restart: always
@@ -73,6 +76,7 @@ services:
       retries: 5
     networks:
       - safetrust-network
+
   console:
     build:
       context: .
@@ -81,7 +85,6 @@ services:
       - "9693:9693"
       - "9695:9695"
     environment:
-      # Fixed the port to match the GraphQL engine's actual port
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine:8080
       HASURA_GRAPHQL_ADMIN_SECRET: myadminsecretkey
       HASURA_RUN_CONSOLE: "true"
@@ -105,9 +108,10 @@ services:
       - NODE_ENV=development
       - WEBHOOK_PORT=3001
       - HASURA_GRAPHQL_ADMIN_SECRET=${HASURA_GRAPHQL_ADMIN_SECRET}
+      - HASURA_GRAPHQL_ENDPOINT=http://graphql-engine:8080/v1/graphql
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=safetrust
+      - POSTGRES_DB=safetrust_db
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POLYGON_RPC_URL=${POLYGON_RPC_URL}
@@ -120,26 +124,20 @@ services:
       - AWS_REGION=${AWS_REGION}
       - S3_BUCKET=${S3_BUCKET}
       - FRONTEND_URL=http://localhost:3000
-      - NEXT_PUBLIC_HASURA_GRAPHQL_URL=http://graphql-engine:8080/v1/graphql
-      - SMTP_HOST=smtp.host.com
-      - SMTP_PORT=465
-      - SMTP_SECURE=true
-      - SMTP_USER=your-user
-      - SMTP_PASS=your-password
-      - SMTP_FROM=your-email@example.com
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=safetrust_db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgrespassword
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_SECURE=${SMTP_SECURE}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JWT_SECRET=myadminsecretkey
+      - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=info
       - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
     volumes:
       - ./webhook:/app
-      - /app/node_modules  
+      - /app/node_modules
     depends_on:
       - postgres
       - graphql-engine
@@ -150,7 +148,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
     networks:
       - safetrust-network
     restart: unless-stopped
