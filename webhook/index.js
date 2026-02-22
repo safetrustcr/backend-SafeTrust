@@ -18,11 +18,12 @@ const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
 const { logger } = require('./utils/logger');
 
 // Import route handlers
-const { rateLimit } = require('express-rate-limit');
+const rateLimit = require('express-rate-limit');
 const webhooksRoutes = require('./webhooks');
 const forgotPasswordRoutes = require('./forgot-password');
 const resetPasswordRoutes = require('./reset-password');
 const prepareEscrowContractRoutes = require('./prepare-escrow-contract');
+const propertiesRoutes = require('./routes/properties');
 
 // Event trigger handlers
 const escrowCreatedHandler = require('./events/escrow-created');
@@ -93,6 +94,10 @@ app.use(ipWhitelist);
 // Global rate limiting
 app.use(globalLimiter);
 
+// --- Endpoints ---
+
+// Public property details endpoint
+app.use('/api/properties', propertiesRoutes);
 // Health check
 app.get('/health', (req, res) => {
   res.json({
@@ -135,4 +140,25 @@ app.use(notFoundHandler);
 
 app.listen(PORT, () => {
   logger.info(`🔐 Secure webhook service listening on port ${PORT}`);
+  logger.info('Available routes:');
+  logger.info('- GET  /health');
+  logger.info('- GET  /api/properties/:id (Public)');
+  logger.info('- GET  /api/auth/validate-reset-token (Public)');
+  logger.info('- POST /api/auth/reset-password (Public)');
+  logger.info('- POST /api/auth/forgot-password (Public)');
+  logger.info('- POST /api/escrow/dispute (Protected)');
+  logger.info('- POST /prepare-escrow-contract (Protected)');
+  logger.info('- POST /webhooks/* (Protected)');
+  logger.info('');
+  logger.info('Security features enabled:');
+  logger.info(`- IP Whitelist: ${process.env.IP_WHITELIST_ENABLED === 'true' ? 'Yes' : 'No'}`);
+  logger.info(`- Audit Logging: ${process.env.AUDIT_LOGGING_ENABLED === 'true' ? 'Yes' : 'No'}`);
+  logger.info(`- Rate Limiting: Yes (Redis: ${process.env.REDIS_URL ? 'Yes' : 'No (Memory)'})`);
+  console.log('--- Hasura Actions ---');
+  console.log('- POST /actions/verify-wallet');
+  console.log('- POST /actions/initiate-funding');
+  console.log('- POST /actions/verify-transaction');
+  console.log('- POST /actions/release-funds');
+  console.log('- POST /actions/process-refund');
+  console.log('- POST /api/escrow/dispute');
 });
