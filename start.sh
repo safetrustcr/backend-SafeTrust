@@ -15,7 +15,8 @@ socat TCP-LISTEN:9693,fork,reuseaddr,bind=console TCP:127.0.0.1:9693 &
     echo "Skipping migrations for safetrust database as it will be created during tenant deployment"
     
     # Apply only metadata changes
-    echo "Applying metadata..."
+    echo "Applying metadata from metadata/base..."
+    hasura metadata apply --metadata-dir metadata/base --skip-update-check
     
     # Run console if specified
     if [[ -v HASURA_RUN_CONSOLE ]]; then
