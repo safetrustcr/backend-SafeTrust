@@ -55,20 +55,52 @@ const INSERT_ESCROW = `
   }
 `;
 
+/**
+ * Update an existing escrow row (identified by engagementId / contractId).
+ * Used to flip status to "pending_signature" on success or "failed" on error.
+ */
+const UPDATE_ESCROW_STATUS = `
+  mutation UpdateEscrowStatus(
+    $engagementId: String!
+    $status: String!
+    $unsignedXdr: String!
+  ) {
+    update_escrows(
+      where: { engagement_id: { _eq: $engagementId } }
+      _set: { status: $status, unsigned_xdr: $unsignedXdr }
+    ) {
+      returning {
+        id
+        contract_id
+        engagement_id
+        property_id
+        sender_address
+        receiver_address
+        amount
+        status
+        unsigned_xdr
+        created_at
+      }
+    }
+  }
+`;
+
+
 const STELLAR_REGEX = /^G[A-Z2-7]{55}$/;
 
 function validate(body) {
      const errors = [];
 
+     // At this point body fields have already been trimmed by createEscrow.
      if (!body.senderAddress) {
           errors.push("senderAddress is required");
-     } else if (!STELLAR_REGEX.test(body.senderAddress.trim())) {
+     } else if (!STELLAR_REGEX.test(body.senderAddress)) {
           errors.push("senderAddress must be a valid Stellar public key");
      }
 
      if (!body.receiverAddress) {
           errors.push("receiverAddress is required");
-     } else if (!STELLAR_REGEX.test(body.receiverAddress.trim())) {
+     } else if (!STELLAR_REGEX.test(body.receiverAddress)) {
           errors.push("receiverAddress must be a valid Stellar public key");
      }
 
@@ -86,7 +118,31 @@ function validate(body) {
      return errors;
 }
 
+// ─── Hasura helpers ───────────────────────────────────────────────────────────
+
+async function dbInsertEscrow(vars) {
+     const { data: gql } = await hasura.post("", { query: INSERT_ESCROW, variables: vars });
+     if (gql.errors) throw Object.assign(new Error("Hasura insert failed"), { gqlErrors: gql.errors });
+     return gql.data.insert_escrows_one;
+}
+
+async function dbUpdateEscrowStatus(engagementId, status, unsignedXdr) {
+     const { data: gql } = await hasura.post("", {
+          query: UPDATE_ESCROW_STATUS,
+          variables: { engagementId, status, unsignedXdr },
+     });
+     if (gql.errors) throw Object.assign(new Error("Hasura update failed"), { gqlErrors: gql.errors });
+     return gql.data.update_escrows.returning[0];
+}
+
+// ─── Handler ──────────────────────────────────────────────────────────────────
+
 async function createEscrow(req, res) {
+
+     if (req.body.senderAddress) req.body.senderAddress = req.body.senderAddress.trim();
+     if (req.body.receiverAddress) req.body.receiverAddress = req.body.receiverAddress.trim();
+     if (req.body.propertyId) req.body.propertyId = String(req.body.propertyId).trim();
+
      const errors = validate(req.body);
      if (errors.length > 0) {
           return res.status(400).json({ error: "Validation failed", details: errors });
@@ -135,11 +191,40 @@ async function createEscrow(req, res) {
 
      console.log(`[escrow] Deploying property=${propertyId} amount=${amount}`);
 
+
+     let pendingRecord;
+     try {
+          pendingRecord = await dbInsertEscrow({
+               contractId: engagementId,
+               engagementId,
+               propertyId,
+               senderAddress,
+               receiverAddress,
+               amount: Number(amount),
+               status: "deploying",
+               unsignedXdr: "",          // not yet known
+          });
+          console.log(`[escrow] Pre-insert OK — db.id=${pendingRecord.id}`);
+     } catch (err) {
+          console.error("[escrow] Pre-insert to Hasura failed — aborting to avoid orphan:", {
+               engagementId,
+               payload,
+               error: err.message,
+               gqlErrors: err.gqlErrors,
+          });
+          return res.status(500).json({ error: "Failed to initialise escrow record in DB", details: err.message });
+     }
+
+     // ── On-chain deployment ───────────────────────────────────────────────────
      let unsignedXdr;
      try {
           const { data } = await trustlessWork.post("/deployer/single-release", payload);
 
           if (data.status !== "SUCCESS" || !data.unsignedTransaction) {
+               // Mark the pre-inserted row as failed so it's easy to find.
+               await dbUpdateEscrowStatus(engagementId, "failed", "").catch((e) =>
+                    console.error("[escrow] Could not mark escrow failed in DB:", e.message)
+               );
                return res.status(502).json({ error: "Unexpected response from Trustless Work", raw: data });
           }
 
@@ -150,40 +235,25 @@ async function createEscrow(req, res) {
           const body = err.response?.data;
           console.error(`[escrow] Trustless Work error HTTP ${status}:`, body || err.message);
 
+          // Update the pre-inserted row to "failed" for reconciliation.
+          await dbUpdateEscrowStatus(engagementId, "failed", "").catch((e) =>
+               console.error("[escrow] Could not mark escrow failed in DB:", {
+                    engagementId,
+                    payload,
+                    dbError: e.message,
+               })
+          );
+
           if (status === 400) return res.status(400).json({ error: "Trustless Work rejected the request", details: body });
           if (status === 401) return res.status(500).json({ error: "Invalid Trustless Work API key" });
           if (status === 429) return res.status(429).json({ error: "Trustless Work rate limit hit" });
           return res.status(500).json({ error: "Failed to deploy escrow", details: body || err.message });
      }
 
-     // Save to Hasura
+     // ── Update the pre-inserted row to "pending_signature" + store XDR ───────
      try {
-          const { data: gql } = await hasura.post("", {
-               query: INSERT_ESCROW,
-               variables: {
-                    contractId: engagementId,
-                    engagementId,
-                    propertyId: propertyId.trim(),
-                    senderAddress: senderAddress.trim(),
-                    receiverAddress: receiverAddress.trim(),
-                    amount: Number(amount),
-                    status: "pending_signature",
-                    unsignedXdr,
-               },
-          });
-
-          if (gql.errors) {
-               console.error("[escrow] Hasura errors:", gql.errors);
-               return res.status(207).json({
-                    warning: "Escrow deployed but DB save failed",
-                    contractId: engagementId,
-                    unsignedXdr,
-                    dbErrors: gql.errors,
-               });
-          }
-
-          const saved = gql.data.insert_escrows_one;
-          console.log(`[escrow] Saved to DB — id=${saved.id}`);
+          const saved = await dbUpdateEscrowStatus(engagementId, "pending_signature", unsignedXdr);
+          console.log(`[escrow] Updated DB record — id=${saved.id}`);
 
           return res.status(201).json({
                contractId: engagementId,
@@ -196,9 +266,16 @@ async function createEscrow(req, res) {
                escrow: saved,
           });
      } catch (err) {
-          console.error("[escrow] Hasura error:", err.message);
+          // On-chain escrow exists; log everything needed for manual reconciliation.
+          console.error("[escrow] Hasura update failed after successful deployment:", {
+               engagementId,
+               unsignedXdr,
+               payload,
+               error: err.message,
+               gqlErrors: err.gqlErrors,
+          });
           return res.status(207).json({
-               warning: "Escrow deployed but DB save failed",
+               warning: "Escrow deployed but DB update failed — manual reconciliation required",
                contractId: engagementId,
                unsignedXdr,
                details: err.message,

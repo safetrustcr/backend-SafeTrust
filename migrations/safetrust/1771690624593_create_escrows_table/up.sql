@@ -13,20 +13,24 @@ CREATE TABLE IF NOT EXISTS public.escrows (
   amount           NUMERIC(20, 7) NOT NULL CHECK (amount > 0),
   status           TEXT NOT NULL DEFAULT 'pending_signature',
   unsigned_xdr     TEXT,                   -- Returned to client for signing
-  created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  -- Fix 2: NOT NULL added; DEFAULT NOW() ensures values are always present on
+  --        insert, and the updated_at trigger always writes NOW() (never NULL).
+  created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   tenant_id        VARCHAR(255) NOT NULL DEFAULT 'safetrust',
 
   -- Constraints
   CONSTRAINT valid_escrow_status CHECK (status IN (
-    'pending_signature', 'funded', 'completed', 'disputed', 'resolved', 'cancelled'
+    'deploying', 'pending_signature', 'funded', 'completed', 'disputed', 'resolved', 'cancelled'
   )),
+  -- Fix 1: UNIQUE already creates a btree index on engagement_id, so the
+  --        explicit idx_escrows_engagement_id index below has been removed.
   CONSTRAINT unique_engagement UNIQUE (engagement_id)
 );
 
 -- Create indexes
+-- (idx_escrows_engagement_id intentionally omitted — covered by unique_engagement)
 CREATE INDEX IF NOT EXISTS idx_escrows_contract_id      ON public.escrows (contract_id);
-CREATE INDEX IF NOT EXISTS idx_escrows_engagement_id    ON public.escrows (engagement_id);
 CREATE INDEX IF NOT EXISTS idx_escrows_property_id      ON public.escrows (property_id);
 CREATE INDEX IF NOT EXISTS idx_escrows_sender_address   ON public.escrows (sender_address);
 CREATE INDEX IF NOT EXISTS idx_escrows_receiver_address ON public.escrows (receiver_address);
