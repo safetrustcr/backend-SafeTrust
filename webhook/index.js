@@ -118,6 +118,13 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
+// Escrow Funding Endpoint - Protected by JWT (but not admin secret)
+app.post('/api/escrow/fund',
+  validateJWT,
+  createTenantLimiter(100),
+  fundEscrowHandler
+);
+
 // Protected Routes - Require Hasura admin secret verification
 // These routes are called by Hasura Actions/Events
 
@@ -154,33 +161,30 @@ app.use('/',
   webhooksRoutes
 );
 
-// Escrow Funding Endpoint - Protected by JWT (but not admin secret)
-app.post('/api/escrow/fund',
-  validateJWT,
-  createTenantLimiter(100),
-  fundEscrowHandler
-);
+if (require.main === module) {
+  app.listen(PORT, () => {
+    logger.info(`🔐 Secure webhook service listening on port ${PORT}`);
+    logger.info('Available routes:');
+    logger.info('- GET  /health');
+    logger.info('- GET  /api/properties/:id (Public)');
+    logger.info('- GET  /api/auth/validate-reset-token (Public)');
+    logger.info('- POST /api/auth/reset-password (Public)');
+    logger.info('- POST /api/auth/forgot-password (Public)');
+    logger.info('- POST /prepare-escrow-contract (Protected)');
+    logger.info('- POST /api/escrow/fund (Protected)');
+    logger.info('- POST /webhooks/* (Protected)');
+    logger.info('');
+    logger.info('Security features enabled:');
+    logger.info(`- IP Whitelist: ${process.env.IP_WHITELIST_ENABLED === 'true' ? 'Yes' : 'No'}`);
+    logger.info(`- Audit Logging: ${process.env.AUDIT_LOGGING_ENABLED === 'true' ? 'Yes' : 'No'}`);
+    logger.info(`- Rate Limiting: Yes (Redis: ${process.env.REDIS_URL ? 'Yes' : 'No (Memory)'})`);
+    console.log('--- Hasura Actions ---');
+    console.log('- POST /actions/verify-wallet');
+    console.log('- POST /actions/initiate-funding');
+    console.log('- POST /actions/verify-transaction');
+    console.log('- POST /actions/release-funds');
+    console.log('- POST /actions/process-refund');
+  });
+}
 
-app.listen(PORT, () => {
-  logger.info(`🔐 Secure webhook service listening on port ${PORT}`);
-  logger.info('Available routes:');
-  logger.info('- GET  /health');
-  logger.info('- GET  /api/properties/:id (Public)');
-  logger.info('- GET  /api/auth/validate-reset-token (Public)');
-  logger.info('- POST /api/auth/reset-password (Public)');
-  logger.info('- POST /api/auth/forgot-password (Public)');
-  logger.info('- POST /prepare-escrow-contract (Protected)');
-  logger.info('- POST /api/escrow/fund (Protected)');
-  logger.info('- POST /webhooks/* (Protected)');
-  logger.info('');
-  logger.info('Security features enabled:');
-  logger.info(`- IP Whitelist: ${process.env.IP_WHITELIST_ENABLED === 'true' ? 'Yes' : 'No'}`);
-  logger.info(`- Audit Logging: ${process.env.AUDIT_LOGGING_ENABLED === 'true' ? 'Yes' : 'No'}`);
-  logger.info(`- Rate Limiting: Yes (Redis: ${process.env.REDIS_URL ? 'Yes' : 'No (Memory)'})`);
-  console.log('--- Hasura Actions ---');
-  console.log('- POST /actions/verify-wallet');
-  console.log('- POST /actions/initiate-funding');
-  console.log('- POST /actions/verify-transaction');
-  console.log('- POST /actions/release-funds');
-  console.log('- POST /actions/process-refund');
-});
+module.exports = app;
