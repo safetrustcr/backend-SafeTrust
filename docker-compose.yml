@@ -61,6 +61,22 @@ services:
     networks:
       - safetrust-network
 
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - safetrust-network
+
   console:
     build:
       context: .
@@ -80,8 +96,65 @@ services:
     networks:
       - safetrust-network
 
+  # --- Webhook Service ---
+  webhook:
+    build:
+      context: ./webhook
+      dockerfile: Dockerfile
+    container_name: safetrust-webhook
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=development
+      - WEBHOOK_PORT=3001
+      - HASURA_GRAPHQL_ADMIN_SECRET=${HASURA_GRAPHQL_ADMIN_SECRET}
+      - HASURA_GRAPHQL_ENDPOINT=http://graphql-engine:8080/v1/graphql
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=safetrust_db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POLYGON_RPC_URL=${POLYGON_RPC_URL}
+      - ETHEREUM_RPC_URL=${ETHEREUM_RPC_URL}
+      - MIN_CONFIRMATIONS=3
+      - ADMIN_PRIVATE_KEY=${ADMIN_PRIVATE_KEY}
+      - BLOCKCHAIN_NETWORK=polygon
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET=${S3_BUCKET}
+      - FRONTEND_URL=http://localhost:3000
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_SECURE=${SMTP_SECURE}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=${JWT_SECRET}
+      - LOG_LEVEL=info
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
+    volumes:
+      - ./webhook:/app
+      - /app/node_modules
+    depends_on:
+      - postgres
+      - graphql-engine
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - safetrust-network
+    restart: unless-stopped
+
 volumes:
   db_data:
+  redis_data:
 
 networks:
   safetrust-network:
