@@ -8,6 +8,9 @@ class TrustlessWorkService {
     constructor() {
         this.apiUrl = config.TRUSTLESS_WORK_API_URL;
         this.apiKey = config.TRUSTLESS_WORK_API_KEY;
+        if (!this.apiKey) {
+            throw new Error('Missing required environment variable: TRUSTLESS_WORK_API_KEY');
+        }
     }
 
     /**
@@ -18,18 +21,22 @@ class TrustlessWorkService {
      */
     async fundEscrow(contractId, senderAddress, amount) {
         try {
-            const response = await fetch(`${this.apiUrl}/fund`, {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10_000); // 10 s
+            const response = await fetch(`${this.apiUrl}/escrow/single-release/fund-escrow`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.apiKey}`
+                    'x-api-key': `${this.apiKey}`
                 },
                 body: JSON.stringify({
                     contractId,
-                    senderAddress,
+                    signer: senderAddress,
                     amount
-                })
+                }),
+                signal: controller.signal
             });
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
                 const errorText = await response.text();

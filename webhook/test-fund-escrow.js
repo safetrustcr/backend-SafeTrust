@@ -2,8 +2,8 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const API_URL = 'http://localhost:3001/api/escrow/fund';
-const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_here'; // Use from .env or default
-
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) { console.error('JWT_SECRET must be set'); process.exit(1); }
 // Mock specific user
 const token = jwt.sign({
     sub: 'user-123',
@@ -12,7 +12,7 @@ const token = jwt.sign({
         'x-hasura-default-role': 'user',
         'x-hasura-user-id': 'user-123'
     }
-}, JWT_SECRET);
+}, JWT_SECRET, { expiresIn: '5m' });
 
 async function testFundEscrow() {
     console.log('Testing Fund Escrow Endpoint...');
