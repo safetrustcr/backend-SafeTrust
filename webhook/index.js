@@ -196,7 +196,7 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
 // Import security middleware
-const { verifyAdminSecret } = require('./middleware/auth');
+const { verifyAdminSecret, verifyWebhookSecret } = require('./middleware/auth');
 const { validateJWT } = require('./middleware/jwt-auth');
 const { globalLimiter, createTenantLimiter } = require('./middleware/rate-limiter');
 const { validateRequest } = require('./middleware/validator');
@@ -315,6 +315,15 @@ app.post('/api/escrow/fund',
   fundEscrowHandler
 );
 
+app.post('/webhooks/escrow/approval-required',
+  verifyWebhookSecret,
+  createTenantLimiter(300),
+  asyncHandler(async (req, res) => {
+    const { default: escrowApprovalRequiredHandler } = await import('./handlers/escrow-approval-required.mjs');
+    return escrowApprovalRequiredHandler(req, res);
+  })
+);
+
 // Protected Routes - Require Hasura admin secret verification
 // These routes are called by Hasura Actions/Events
 
@@ -377,6 +386,7 @@ if (require.main === module) {
     logger.info('- POST /prepare-escrow-contract (Protected)');
     logger.info('- POST /api/escrow/fund (Protected)');
     logger.info('- POST /api/escrow/dispute (Protected)');
+    logger.info('- POST /webhooks/escrow/approval-required (Webhook Secret)');
     logger.info('- POST /webhooks/* (Protected)');
     logger.info('');
     logger.info('Security features enabled:');

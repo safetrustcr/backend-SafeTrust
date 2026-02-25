@@ -108,6 +108,19 @@ class NotificationService {
           <p>Best regards,<br>SafeTrust Team</p>
         `,
       },
+      'escrow-approval-required': {
+        subject: 'Escrow Update Requires Your Approval',
+        html: (data) => `
+          <h2>Hello ${data.participant_name || 'User'},</h2>
+          <p>A superadmin updated your escrow and your approval is required.</p>
+          <p><strong>Escrow ID:</strong> ${data.escrow_id || 'N/A'}</p>
+          <p><strong>Wallet:</strong> ${data.customer_wallet_address || 'N/A'}</p>
+          <p><strong>Old Value:</strong> ${data.old_value ?? 'N/A'}</p>
+          <p><strong>New Value:</strong> ${data.new_value ?? 'N/A'}</p>
+          <p>Please open the app to review and approve or reject this change.</p>
+          <p>Best regards,<br>SafeTrust Team</p>
+        `,
+      },
     };
   }
 
