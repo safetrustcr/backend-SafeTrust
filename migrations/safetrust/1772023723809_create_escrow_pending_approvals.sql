@@ -58,6 +58,7 @@ RETURNS TRIGGER AS $$
 DECLARE
   v_role TEXT;
   v_user_id TEXT;
+  v_requested_status TEXT;
 BEGIN
   -- Attempt to get the role from Hasura session variable
   -- This will only work when the update comes through Hasura GraphQL API
@@ -80,6 +81,7 @@ BEGIN
   IF v_role IN ('superadmin', 'admin') THEN
     -- Check if status field was changed
     IF OLD.status IS DISTINCT FROM NEW.status THEN
+      v_requested_status := NEW.status;
       INSERT INTO public.escrow_pending_approvals (
         escrow_id,
         field_changed,
@@ -95,7 +97,7 @@ BEGIN
         NEW.id,
         'status',
         jsonb_build_object('status', OLD.status),
-        jsonb_build_object('status', NEW.status),
+        jsonb_build_object('status', v_requested_status),
         COALESCE(v_role, 'unknown'),
         CASE WHEN v_user_id IS NOT NULL AND v_user_id ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN v_user_id::UUID ELSE NULL END,
         TRUE,
@@ -103,6 +105,9 @@ BEGIN
         NEW.approver, -- Customer wallet address (guest/approver)
         NEW.tenant_id
       );
+
+      -- Keep current status until customer signs
+      NEW.status := OLD.status;
     END IF;
   END IF;
 
@@ -112,6 +117,6 @@ $$ LANGUAGE plpgsql;
 
 -- Attach trigger to trustless_work_escrows table
 CREATE TRIGGER escrow_change_approval_trigger
-  AFTER UPDATE ON public.trustless_work_escrows
+  BEFORE UPDATE ON public.trustless_work_escrows
   FOR EACH ROW
   EXECUTE FUNCTION notify_escrow_change();
