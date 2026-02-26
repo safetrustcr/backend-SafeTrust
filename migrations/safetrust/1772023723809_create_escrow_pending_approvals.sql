@@ -3,7 +3,7 @@
 -- Customer must sign off on changes via their wallet before they take effect
 CREATE TABLE IF NOT EXISTS public.escrow_pending_approvals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  escrow_id UUID NOT NULL REFERENCES public.trustless_work_escrows(id) ON DELETE CASCADE,
+  escrow_id UUID NOT NULL REFERENCES public.trustless_work_escrows(id) ON DELETE RESTRICT,
 
   field_changed VARCHAR(100) NOT NULL,
   old_value JSONB,
@@ -12,15 +12,15 @@ CREATE TABLE IF NOT EXISTS public.escrow_pending_approvals (
   changed_by_role VARCHAR(50) NOT NULL,
   changed_by_user_id UUID,
 
-  requires_customer_approval BOOLEAN DEFAULT TRUE,
-  customer_approved BOOLEAN DEFAULT FALSE,
+  requires_customer_approval BOOLEAN NOT NULL DEFAULT TRUE,
+  customer_approved BOOLEAN NOT NULL DEFAULT FALSE,
   customer_approved_at TIMESTAMP WITH TIME ZONE,
   customer_wallet_address VARCHAR(255),
 
   unsigned_xdr TEXT,
   signed_xdr TEXT,
 
-  status VARCHAR(50) DEFAULT 'pending_approval',
+  status VARCHAR(50) NOT NULL DEFAULT 'pending_approval',
   expires_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() + INTERVAL '24 hours',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   tenant_id VARCHAR(255) NOT NULL DEFAULT 'safetrust',
