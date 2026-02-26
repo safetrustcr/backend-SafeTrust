@@ -53,11 +53,6 @@ table:
         foreign_key_constraint_on:
           column: escrow_transaction_id
           table: escrow_xdr_transactions
-    - name: api_calls
-      using:
-        foreign_key_constraint_on:
-          column: escrow_transaction_id
-          table: escrow_api_calls
 select_permissions:
   - role: anonymous
     permission:
