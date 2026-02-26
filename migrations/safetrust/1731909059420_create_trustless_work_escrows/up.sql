@@ -54,7 +54,6 @@ CREATE TABLE IF NOT EXISTS public.trustless_work_escrows (
 -- ============================================================================
 -- 2. PERFORMANCE INDEXES
 -- ============================================================================
-CREATE INDEX IF NOT EXISTS idx_trustless_escrows_contract_id ON public.trustless_work_escrows(contract_id);
 CREATE INDEX IF NOT EXISTS idx_trustless_escrows_booking_id ON public.trustless_work_escrows(booking_id);
 CREATE INDEX IF NOT EXISTS idx_trustless_escrows_status ON public.trustless_work_escrows(status);
 CREATE INDEX IF NOT EXISTS idx_trustless_escrows_hotel_id ON public.trustless_work_escrows(hotel_id);
