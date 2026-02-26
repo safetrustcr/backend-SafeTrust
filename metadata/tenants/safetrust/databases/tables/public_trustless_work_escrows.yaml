@@ -71,6 +71,13 @@ array_relationships:
         table:
           name: trustless_work_webhook_events
           schema: public
+  - name: pendingApprovals
+    using:
+      foreign_key_constraint_on:
+        column: escrow_id
+        table:
+          name: escrow_pending_approvals
+          schema: public
 object_relationships: []
 select_permissions:
   - role: anonymous

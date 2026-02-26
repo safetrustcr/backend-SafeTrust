@@ -3,6 +3,7 @@ const router = express.Router();
 const forgotPasswordRouter = require('./forgot-password');
 const firebaseWebhooksRouter = require('./firebase-webhooks');
 const { createEscrow } = require("../webhook/services/escrow-deployer");
+const handleApprovalRequired = require('./webhooks/escrow/approval-required');
 
 // Include forgot password routes
 router.use('/', forgotPasswordRouter);
@@ -34,5 +35,8 @@ router.post('/escrow_status_update', async (req, res) => {
 
 
 router.post("/create", createEscrow);
+
+// Escrow approval required webhook
+router.post('/escrow/approval-required', handleApprovalRequired);
 
 module.exports = router;
