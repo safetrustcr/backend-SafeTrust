@@ -97,7 +97,7 @@ BEGIN
         jsonb_build_object('status', OLD.status),
         jsonb_build_object('status', NEW.status),
         COALESCE(v_role, 'unknown'),
-        CASE WHEN v_user_id IS NOT NULL THEN v_user_id::UUID ELSE NULL END,
+        CASE WHEN v_user_id IS NOT NULL AND v_user_id ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN v_user_id::UUID ELSE NULL END,
         TRUE,
         'pending_approval',
         NEW.approver, -- Customer wallet address (guest/approver)
