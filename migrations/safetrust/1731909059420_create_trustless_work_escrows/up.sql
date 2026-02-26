@@ -1,5 +1,11 @@
--- Create trustless work escrows table
--- Must run before: 1731909059421_create_escrow_milestones.sql
+-- Migration: Create Trustless Work Escrows Table
+-- Description: Sets up the main table for tracking escrow transactions between 
+--              Hotels, Guests, and the Platform using Trustless Work protocols.
+-- Author: Antigravity Refactor
+
+-- ============================================================================
+-- 1. TABLE DEFINITION
+-- ============================================================================
 CREATE TABLE IF NOT EXISTS public.trustless_work_escrows (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -19,7 +25,7 @@ CREATE TABLE IF NOT EXISTS public.trustless_work_escrows (
   balance DECIMAL(20, 7) DEFAULT 0,
 
   -- Hotel booking specific fields
-  booking_id VARCHAR(255), -- References hotel_bookings(id) - will add FK later
+  booking_id VARCHAR(255), -- References hotel_bookings(id)
   room_id VARCHAR(255),
   hotel_id VARCHAR(255),
   guest_id VARCHAR(255),
@@ -38,15 +44,16 @@ CREATE TABLE IF NOT EXISTS public.trustless_work_escrows (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   tenant_id VARCHAR(255) NOT NULL DEFAULT 'safetrust',
 
-  -- Constraints
+  -- Status constraints
   CONSTRAINT valid_escrow_status CHECK (status IN (
     'created', 'pending_funding', 'funded', 'active',
     'milestone_approved', 'completed', 'disputed', 'resolved', 'cancelled'
   ))
 );
 
--- Create indexes for performance
-CREATE INDEX IF NOT EXISTS idx_trustless_escrows_contract_id ON public.trustless_work_escrows(contract_id);
+-- ============================================================================
+-- 2. PERFORMANCE INDEXES
+-- ============================================================================
 CREATE INDEX IF NOT EXISTS idx_trustless_escrows_booking_id ON public.trustless_work_escrows(booking_id);
 CREATE INDEX IF NOT EXISTS idx_trustless_escrows_status ON public.trustless_work_escrows(status);
 CREATE INDEX IF NOT EXISTS idx_trustless_escrows_hotel_id ON public.trustless_work_escrows(hotel_id);
@@ -54,7 +61,9 @@ CREATE INDEX IF NOT EXISTS idx_trustless_escrows_guest_id ON public.trustless_wo
 CREATE INDEX IF NOT EXISTS idx_trustless_escrows_tenant ON public.trustless_work_escrows(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_trustless_escrows_created_at ON public.trustless_work_escrows(created_at);
 
--- Add comments for documentation
+-- ============================================================================
+-- 3. DOCUMENTATION (PostgreSQL Comments)
+-- ============================================================================
 COMMENT ON TABLE public.trustless_work_escrows IS 'Trustless Work escrow transactions for hotel bookings';
 COMMENT ON COLUMN public.trustless_work_escrows.contract_id IS 'Unique identifier from Trustless Work smart contract';
 COMMENT ON COLUMN public.trustless_work_escrows.marker IS 'Hotel wallet address that marks/creates the escrow';
