@@ -29,7 +29,6 @@ Enhanced the `safetrust.pricing_overrides` table with data validation constraint
 ## Files
 
 - Migration: `migrations/safetrust/20250925120000_enhance_pricing_overrides.sql`
-- Tests: `tests/safetrust/test_enhanced_pricing_overrides.sql`
 
 ## Performance Improvements
 
