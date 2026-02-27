@@ -2,7 +2,6 @@
 - "!include public_apartments.yaml"
 - "!include public_bid_requests.yaml"
 - "!include public_bid_status_histories.yaml"
-- "!include public_escrow_api_calls.yaml"
 - "!include public_escrow_milestones.yaml"
 - "!include public_escrow_pending_approvals.yaml"
 - "!include public_escrow_transactions.yaml"
