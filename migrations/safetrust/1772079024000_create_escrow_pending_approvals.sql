@@ -53,12 +53,12 @@ BEGIN
     IF OLD.status IS DISTINCT FROM NEW.status THEN
       INSERT INTO public.escrow_pending_approvals (
         escrow_id, field_changed, old_value, new_value,
-        changed_by_role, requires_customer_approval, status, tenant_id
+        changed_by_role, requires_customer_approval, status, tenant_id, customer_wallet_address
       ) VALUES (
         NEW.id, 'status',
         jsonb_build_object('status', OLD.status),
         jsonb_build_object('status', NEW.status),
-        v_role, TRUE, 'pending_approval', NEW.tenant_id
+        v_role, TRUE, 'pending_approval', NEW.tenant_id, NEW.approver
       );
     END IF;
   END IF;
