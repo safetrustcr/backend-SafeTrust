@@ -124,7 +124,6 @@ update_permissions:
     permission:
       columns:
         - customer_approved
-        - customer_approved_at
         - signed_xdr
         - status
       filter:
