@@ -2,6 +2,12 @@
 
 const axios = require("axios");
 
+const REQUIRED_ENV = ['TRUSTLESS_WORK_API_URL', 'TRUSTLESS_WORK_API_KEY', 'HASURA_GRAPHQL_URL', 'HASURA_ADMIN_SECRET'];
+for (const key of REQUIRED_ENV) {
+     if (!process.env[key]) throw new Error(`Missing required env var: ${key}`);
+}
+
+
 const trustlessWork = axios.create({
      baseURL: process.env.TRUSTLESS_WORK_API_URL || "https://dev.api.trustlesswork.com",
      timeout: 15000,
@@ -21,36 +27,10 @@ const hasura = axios.create({
 });
 
 const INSERT_ESCROW = `
-  mutation InsertEscrow(
-    $contractId: String!
-    $engagementId: String!
-    $propertyId: String!
-    $senderAddress: String!
-    $receiverAddress: String!
-    $amount: numeric!
-    $status: String!
-    $unsignedXdr: String!
-  ) {
-    insert_escrows_one(object: {
-      contract_id:      $contractId
-      engagement_id:    $engagementId
-      property_id:      $propertyId
-      sender_address:   $senderAddress
-      receiver_address: $receiverAddress
-      amount:           $amount
-      status:           $status
-      unsigned_xdr:     $unsignedXdr
-    }) {
+  mutation InsertEscrow($object: trustless_work_escrows_insert_input!) {
+    insert_trustless_work_escrows_one(object: $object) {
       id
       contract_id
-      engagement_id
-      property_id
-      sender_address
-      receiver_address
-      amount
-      status
-      unsigned_xdr
-      created_at
     }
   }
 `;
@@ -60,27 +40,20 @@ const INSERT_ESCROW = `
  * Used to flip status to "pending_signature" on success or "failed" on error.
  */
 const UPDATE_ESCROW_STATUS = `
-  mutation UpdateEscrowStatus(
-    $engagementId: String!
-    $status: String!
-    $unsignedXdr: String!
-  ) {
-    update_escrows(
-      where: { engagement_id: { _eq: $engagementId } }
-      _set: { status: $status, unsigned_xdr: $unsignedXdr }
+  mutation UpdateEscrowStatus($contractId: String!, $status: String!) {
+    update_trustless_work_escrows(
+      where: { contract_id: { _eq: $contractId } }
+      _set: { status: $status }
     ) {
-      returning {
-        id
-        contract_id
-        engagement_id
-        property_id
-        sender_address
-        receiver_address
-        amount
-        status
-        unsigned_xdr
-        created_at
-      }
+      returning { id contract_id status }
+    }
+  }
+`;
+
+const INSERT_XDR = `
+  mutation InsertXdr($object: escrow_xdr_transactions_insert_input!) {
+    insert_escrow_xdr_transactions_one(object: $object) {
+      id
     }
   }
 `;
@@ -121,20 +94,51 @@ function validate(body) {
 // ─── Hasura helpers ───────────────────────────────────────────────────────────
 
 async function dbInsertEscrow(vars) {
-     const { data: gql } = await hasura.post("", { query: INSERT_ESCROW, variables: vars });
+     const { data: gql } = await hasura.post("", {
+          query: INSERT_ESCROW,
+          variables: {
+               object: {
+                    contract_id: vars.contractId,
+                    marker: vars.senderAddress,
+                    approver: vars.receiverAddress,
+                    releaser: vars.receiverAddress,
+                    escrow_type: 'single_release',
+                    status: 'created',
+                    amount: vars.amount,
+                    asset_code: 'USDC',
+                    escrow_metadata: { property_id: vars.propertyId, engagement_id: vars.engagementId },
+                    tenant_id: 'safetrust',
+               }
+          }
+     });
      if (gql.errors) throw Object.assign(new Error("Hasura insert failed"), { gqlErrors: gql.errors });
-     return gql.data.insert_escrows_one;
+     return gql.data.insert_trustless_work_escrows_one;
 }
 
-async function dbUpdateEscrowStatus(engagementId, status, unsignedXdr) {
+async function dbInsertXdr(escrowId, unsignedXdr) {
+     const { data: gql } = await hasura.post("", {
+          query: INSERT_XDR,
+          variables: {
+               object: {
+                    escrow_transaction_id: escrowId,
+                    xdr_type: 'CREATE_ESCROW',
+                    unsigned_xdr: unsignedXdr,
+                    status: 'PENDING',
+               }
+          }
+     });
+     if (gql.errors) throw Object.assign(new Error("Hasura XDR insert failed"), { gqlErrors: gql.errors });
+     return gql.data.insert_escrow_xdr_transactions_one;
+}
+
+async function dbUpdateEscrowStatus(contractId, status) {
      const { data: gql } = await hasura.post("", {
           query: UPDATE_ESCROW_STATUS,
-          variables: { engagementId, status, unsignedXdr },
+          variables: { contractId, status },
      });
      if (gql.errors) throw Object.assign(new Error("Hasura update failed"), { gqlErrors: gql.errors });
-     return gql.data.update_escrows.returning[0];
+     return gql.data.update_trustless_work_escrows.returning[0];
 }
-
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 async function createEscrow(req, res) {
@@ -222,7 +226,7 @@ async function createEscrow(req, res) {
 
           if (data.status !== "SUCCESS" || !data.unsignedTransaction) {
                // Mark the pre-inserted row as failed so it's easy to find.
-               await dbUpdateEscrowStatus(engagementId, "failed", "").catch((e) =>
+               await dbUpdateEscrowStatus(engagementId, "failed").catch((e) =>
                     console.error("[escrow] Could not mark escrow failed in DB:", e.message)
                );
                return res.status(502).json({ error: "Unexpected response from Trustless Work", raw: data });
@@ -236,7 +240,7 @@ async function createEscrow(req, res) {
           console.error(`[escrow] Trustless Work error HTTP ${status}:`, body || err.message);
 
           // Update the pre-inserted row to "failed" for reconciliation.
-          await dbUpdateEscrowStatus(engagementId, "failed", "").catch((e) =>
+          await dbUpdateEscrowStatus(engagementId, "cancelled").catch((e) =>
                console.error("[escrow] Could not mark escrow failed in DB:", {
                     engagementId,
                     payload,
@@ -252,21 +256,18 @@ async function createEscrow(req, res) {
 
      // ── Update the pre-inserted row to "pending_signature" + store XDR ───────
      try {
-          const saved = await dbUpdateEscrowStatus(engagementId, "pending_signature", unsignedXdr);
+          const saved = await dbUpdateEscrowStatus(engagementId, "pending_funding");
           console.log(`[escrow] Updated DB record — id=${saved.id}`);
+
+          const xdrRecord = await dbInsertXdr(saved.id, unsignedXdr);
 
           return res.status(201).json({
                contractId: engagementId,
                unsignedXdr,
-               engagementId,
-               propertyId,
-               senderAddress,
-               receiverAddress,
-               amount: Number(amount),
-               escrow: saved,
+               escrow: { id: saved.id, status: saved.status },
+               xdrTransactionId: xdrRecord.id,
           });
      } catch (err) {
-          // On-chain escrow exists; log everything needed for manual reconciliation.
           console.error("[escrow] Hasura update failed after successful deployment:", {
                engagementId,
                unsignedXdr,

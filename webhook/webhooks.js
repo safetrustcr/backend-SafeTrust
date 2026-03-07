@@ -34,7 +34,7 @@ router.post('/escrow_status_update', async (req, res) => {
 });
 
 
-router.post("/create", createEscrow);
+router.post("/escrow/create", createEscrow);
 
 // Escrow approval required webhook
 router.post('/escrow/approval-required', handleApprovalRequired);
