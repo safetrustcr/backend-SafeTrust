@@ -2,10 +2,13 @@
 
 const axios = require("axios");
 
-const REQUIRED_ENV = ['TRUSTLESS_WORK_API_URL', 'TRUSTLESS_WORK_API_KEY', 'HASURA_GRAPHQL_URL', 'HASURA_ADMIN_SECRET'];
+const REQUIRED_ENV = ['TRUSTLESS_WORK_API_URL', 'TRUSTLESS_WORK_API_KEY', 'HASURA_ADMIN_SECRET'];
 for (const key of REQUIRED_ENV) {
      if (!process.env[key]) throw new Error(`Missing required env var: ${key}`);
 }
+const HASURA_URL_RESOLVED = process.env.HASURA_GRAPHQL_URL || process.env.HASURA_URL;
+if (!HASURA_URL_RESOLVED) throw new Error("Missing required env var: HASURA_GRAPHQL_URL or HASURA_URL");
+
 
 
 const trustlessWork = axios.create({
@@ -18,7 +21,7 @@ const trustlessWork = axios.create({
 });
 
 const hasura = axios.create({
-     baseURL: process.env.HASURA_GRAPHQL_URL || "http://localhost:8080/v1/graphql",
+     baseURL: HASURA_URL_RESOLVED,
      timeout: 10000,
      headers: {
           "Content-Type": "application/json",
