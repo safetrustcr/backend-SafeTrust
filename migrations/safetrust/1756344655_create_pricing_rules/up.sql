@@ -14,3 +14,7 @@ CREATE TABLE IF NOT EXISTS pricing_rules (
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT unique_safetrust_rule_type_token UNIQUE (rule_type, token)
 );
+
+
+ALTER TABLE pricing_rules 
+DROP CONSTRAINT IF EXISTS unique_safetrust_rule_type_token;
