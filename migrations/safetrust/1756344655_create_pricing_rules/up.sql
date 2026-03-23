@@ -1,8 +1,5 @@
--- Create SafeTrust schema if not exists
-CREATE SCHEMA IF NOT EXISTS safetrust;
-
 -- Create SafeTrust pricing_rules table
-CREATE TABLE safetrust.pricing_rules (
+CREATE TABLE IF NOT EXISTS pricing_rules (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   rule_name VARCHAR(100) NOT NULL,
   rule_type VARCHAR(50) NOT NULL,       -- BASE_FEE | PERCENTAGE_FEE | GAS_FEE | PLATFORM_FEE

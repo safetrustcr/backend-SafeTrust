@@ -14,25 +14,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Function to create Hasura metadata source for a tenant
+
+# metadata source creation function
 create_metadata_source() {
     local tenant="$1"
     local temp_dir="$2"
     local hasura_endpoint="$3"
     local admin_secret="$4"
     
-    echo "==========================================="
-    echo "Deploying metadata for tenant: $tenant"
-    echo "==========================================="
+    echo "===========================================" >&2
+    echo "Deploying metadata for tenant: $tenant" >&2
+    echo "===========================================" >&2
     
     if [ ! -d "$BUILD_DIR/$tenant" ]; then
-        echo "Error: No metadata found for tenant '$tenant'. Run build-metadata.sh first."
+        echo "Error: No metadata found for tenant '$tenant'. Run build-metadata.sh first." >&2
         return 1
     fi
     
     mkdir -p "$temp_dir/metadata/databases/default/tables"
     
-    echo "Creating Hasura project structure for $tenant..."
+    echo "Creating Hasura project structure for $tenant..." >&2
     cat > "$temp_dir/config.yaml" << EOL
 version: 3
 endpoint: ${hasura_endpoint}
@@ -41,25 +42,23 @@ metadata_directory: metadata
 EOL
 
     if [ -d "$BUILD_DIR/$tenant/databases/tables" ]; then
-        echo "Copying table definitions for $tenant..."
+        echo "Copying table definitions for $tenant..." >&2
         cp -r "$BUILD_DIR/$tenant/databases/tables"/* "$temp_dir/metadata/databases/default/tables/"
     else
-        echo "Warning: No tables directory found at $BUILD_DIR/$tenant/databases/tables/"
+        echo "Warning: No tables directory found at $BUILD_DIR/$tenant/databases/tables/" >&2
         return 1
     fi
     
-    # Determine tenant name from databases.yaml or use tenant id
     local tenant_name
     if [ -f "$BUILD_DIR/$tenant/databases/databases.yaml" ]; then
         tenant_name=$(grep -m 1 "name:" "$BUILD_DIR/$tenant/databases/databases.yaml" | sed 's/.*name:\s*\([^ ]*\).*/\1/')
-        echo "Found tenant name in databases.yaml: $tenant_name"
+        echo "Found tenant name in databases.yaml: $tenant_name" >&2
     else
         tenant_name="$tenant"
-        echo "No databases.yaml found, using tenant name: $tenant_name"
+        echo "No databases.yaml found, using tenant name: $tenant_name" >&2
     fi
     
-    # Create source configuration
-    echo "Creating database source for $tenant_name..."
+    echo "Creating database source for $tenant_name..." >&2
     cat > "$temp_dir/create_source.json" << EOL
 {
   "type": "pg_add_source",
@@ -78,17 +77,15 @@ EOL
 }
 EOL
 
-    # Check if source exists
-    echo "Checking if source ${tenant_name} already exists..."
+    echo "Checking if source ${tenant_name} already exists..." >&2
     local check_source
     check_source=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
       -H "X-Hasura-Admin-Secret: ${admin_secret}" \
       -H "Content-Type: application/json" \
       -d "{\"type\": \"pg_get_source_tables\", \"args\": {\"source\": \"${tenant_name}\"}}")
     
-    # Create source if needed
     if [[ "$check_source" == *"error"* ]]; then
-        echo "Source $tenant_name doesn't exist, creating it..."
+        echo "Source $tenant_name doesn't exist, creating it..." >&2
         local source_response
         source_response=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
           -H "X-Hasura-Admin-Secret: ${admin_secret}" \
@@ -96,16 +93,17 @@ EOL
           -d @"$temp_dir/create_source.json")
         
         if [[ "$source_response" == *"error"* ]]; then
-            echo "❌ Failed to create source for $tenant_name"
-            echo "Error: $source_response"
+            echo "❌ Failed to create source for $tenant_name" >&2
+            echo "Error: $source_response" >&2
             return 1
         fi
     else
-        echo "Source $tenant_name already exists, skipping creation "
+        echo "Source $tenant_name already exists, skipping creation" >&2
     fi
     
-    echo " Tenant source created/verified: $tenant_name"
-    # Return the tenant name for use in process_metadata_tables
+    echo "Tenant source created/verified: $tenant_name" >&2
+
+    # ✅ This is the ONLY line that goes to stdout — the return value
     echo "$tenant_name"
 }
 
@@ -196,6 +194,8 @@ deploy_tenant() {
     rm -rf "$temp_dir"
     return 0
 }
+
+
 
 # Main script execution
 main() {
