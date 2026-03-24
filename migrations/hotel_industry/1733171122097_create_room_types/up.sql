@@ -1,8 +1,8 @@
+-- Extensions — declared once at the top
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS postgis;
--- Create room_types table
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Create room_types table
 CREATE TABLE room_types (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(25) NOT NULL,
