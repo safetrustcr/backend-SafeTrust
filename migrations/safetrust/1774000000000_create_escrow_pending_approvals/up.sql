@@ -7,7 +7,7 @@
 -- ============================================================================
 -- 1. TABLE DEFINITION
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS public.escrow_pending_approvals (
+CREATE TABLE public.escrow_pending_approvals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
   -- Foreign key to main escrow table
@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS public.escrow_pending_approvals (
   approval_notes TEXT,
 
   -- Timestamps
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   approved_at TIMESTAMP WITH TIME ZONE,
 
   -- Tenant identifier for multi-tenancy support
@@ -80,3 +80,22 @@ COMMENT ON COLUMN public.escrow_pending_approvals.approved_by IS
 
 COMMENT ON COLUMN public.escrow_pending_approvals.approval_notes IS 
   'Additional notes or reason for approval/rejection decision';
+
+-- ============================================================================
+-- 4. TRIGGER FUNCTION FOR AUTOMATIC UPDATED_AT
+-- ============================================================================
+CREATE OR REPLACE FUNCTION update_escrow_pending_approvals_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- 5. TRIGGER FOR AUTO-UPDATING UPDATED_AT ON UPDATE
+-- ============================================================================
+CREATE TRIGGER trg_update_updated_at_on_escrow_pending_approvals
+  BEFORE UPDATE ON public.escrow_pending_approvals
+  FOR EACH ROW
+  EXECUTE FUNCTION update_escrow_pending_approvals_updated_at();
