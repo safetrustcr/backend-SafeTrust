@@ -1,9 +1,9 @@
 -- ============================================================
--- up.sql — Create escrows table and supporting objects
+-- up.sql — Create escrow_transactions table and supporting objects
 -- ============================================================
 
--- Create escrows table for single-release security deposit escrows
-CREATE TABLE IF NOT EXISTS public.escrows (
+-- Create escrow_transactions table for single-release security deposit escrows
+CREATE TABLE IF NOT EXISTS public.escrow_transactions (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   contract_id      TEXT NOT NULL,
   engagement_id    TEXT NOT NULL,
@@ -29,16 +29,16 @@ CREATE TABLE IF NOT EXISTS public.escrows (
 );
 
 -- Create indexes
--- (idx_escrows_engagement_id intentionally omitted — covered by unique_engagement)
-CREATE INDEX IF NOT EXISTS idx_escrows_contract_id      ON public.escrows (contract_id);
-CREATE INDEX IF NOT EXISTS idx_escrows_property_id      ON public.escrows (property_id);
-CREATE INDEX IF NOT EXISTS idx_escrows_sender_address   ON public.escrows (sender_address);
-CREATE INDEX IF NOT EXISTS idx_escrows_receiver_address ON public.escrows (receiver_address);
-CREATE INDEX IF NOT EXISTS idx_escrows_status           ON public.escrows (status);
-CREATE INDEX IF NOT EXISTS idx_escrows_tenant           ON public.escrows (tenant_id);
+-- (idx_escrow_transactions_engagement_id intentionally omitted — covered by unique_engagement)
+CREATE INDEX IF NOT EXISTS idx_escrow_transactions_contract_id      ON public.escrow_transactions (contract_id);
+CREATE INDEX IF NOT EXISTS idx_escrow_transactions_property_id      ON public.escrow_transactions (property_id);
+CREATE INDEX IF NOT EXISTS idx_escrow_transactions_sender_address   ON public.escrow_transactions (sender_address);
+CREATE INDEX IF NOT EXISTS idx_escrow_transactions_receiver_address ON public.escrow_transactions (receiver_address);
+CREATE INDEX IF NOT EXISTS idx_escrow_transactions_status           ON public.escrow_transactions (status);
+CREATE INDEX IF NOT EXISTS idx_escrow_transactions_tenant           ON public.escrow_transactions (tenant_id);
 
 -- Auto-update updated_at
-CREATE OR REPLACE FUNCTION public.set_escrows_updated_at()
+CREATE OR REPLACE FUNCTION public.set_escrow_transactions_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
   NEW.updated_at = NOW();
@@ -46,16 +46,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS escrows_set_updated_at ON public.escrows;
-CREATE TRIGGER escrows_set_updated_at
-  BEFORE UPDATE ON public.escrows
-  FOR EACH ROW EXECUTE FUNCTION public.set_escrows_updated_at();
+DROP TRIGGER IF EXISTS escrow_transactions_set_updated_at ON public.escrow_transactions;
+CREATE TRIGGER escrow_transactions_set_updated_at
+  BEFORE UPDATE ON public.escrow_transactions
+  FOR EACH ROW EXECUTE FUNCTION public.set_escrow_transactions_updated_at();
 
 -- Comments
-COMMENT ON TABLE  public.escrows                  IS 'Single-release escrow contracts for security deposits';
-COMMENT ON COLUMN public.escrows.contract_id      IS 'On-chain contract address (engagementId pre-signature)';
-COMMENT ON COLUMN public.escrows.engagement_id    IS 'Unique identifier sent to Trustless Work API';
-COMMENT ON COLUMN public.escrows.sender_address   IS 'Tenant Stellar public key (signer)';
-COMMENT ON COLUMN public.escrows.receiver_address IS 'Owner Stellar public key (receives funds on release)';
-COMMENT ON COLUMN public.escrows.unsigned_xdr     IS 'Unsigned transaction returned to client for wallet signing';
-COMMENT ON COLUMN public.escrows.tenant_id        IS 'Multi-tenant identifier';
+COMMENT ON TABLE  public.escrow_transactions                  IS 'Single-release escrow contracts for security deposits';
+COMMENT ON COLUMN public.escrow_transactions.contract_id      IS 'On-chain contract address (engagementId pre-signature)';
+COMMENT ON COLUMN public.escrow_transactions.engagement_id    IS 'Unique identifier sent to Trustless Work API';
+COMMENT ON COLUMN public.escrow_transactions.sender_address   IS 'Tenant Stellar public key (signer)';
+COMMENT ON COLUMN public.escrow_transactions.receiver_address IS 'Owner Stellar public key (receives funds on release)';
+COMMENT ON COLUMN public.escrow_transactions.unsigned_xdr     IS 'Unsigned transaction returned to client for wallet signing';
+COMMENT ON COLUMN public.escrow_transactions.tenant_id        IS 'Multi-tenant identifier';
