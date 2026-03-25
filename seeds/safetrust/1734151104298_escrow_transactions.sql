@@ -1,10 +1,10 @@
 -- Seed for escrow_transactions table
--- Using public.escrows (canonical escrow table)
+-- Using public.escrow_transactions (canonical escrow table)
 
 -- Clear existing seed data (development only)
-TRUNCATE public.escrows RESTART IDENTITY CASCADE;
+TRUNCATE public.escrow_transactions RESTART IDENTITY CASCADE;
 
-INSERT INTO public.escrows (
+INSERT INTO public.escrow_transactions (
     id,
     contract_id,
     engagement_id,
