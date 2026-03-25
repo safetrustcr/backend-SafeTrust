@@ -1,5 +1,8 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Clear existing seed data (development only)
+TRUNCATE bid_status_histories RESTART IDENTITY CASCADE;
+
 INSERT INTO bid_status_histories (id, bid_request_id, status, notes, changed_by, created_at)
 VALUES
     (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 0), 'Submitted', 'Bid request has been submitted.', (SELECT id FROM users LIMIT 1 OFFSET 0), NOW()),
