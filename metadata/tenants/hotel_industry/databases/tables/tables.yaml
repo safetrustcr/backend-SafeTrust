@@ -4,7 +4,7 @@
 - "!include public_room_images.yaml"
 - "!include public_reservations.yaml"
 - "!include public_room_types.yaml"
-- "!include public_user_wallets.yaml"
+- "!include public_users_wallets.yaml"
 - "!include public_escrow_transaction_users.yaml"
 - "!include public_escrow_transactions.yaml"
 - "!include hotel_industry_pricing_rules.yaml"
