@@ -14,8 +14,6 @@ CREATE TABLE room_types (
 
 -- Index for performance (especially if you'll search by name)
 CREATE INDEX idx_room_types_name ON room_types(name);
--- Create index on type_id
-CREATE INDEX idx_type_id ON room_types(id);
 
 -- Grant permissions
 DO $$ BEGIN
