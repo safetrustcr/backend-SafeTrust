@@ -23,10 +23,18 @@ TENANT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --admin-secret)
+    if [[ -z "${2:-}" || "${2:0:1}" == "-" ]]; then
+        echo "Error: --admin-secret requires a value"
+        exit 1
+    fi
       ADMIN_SECRET="$2"
       shift 2
       ;;
     --endpoint)
+    if [[ -z "${2:-}" || "${2:0:1}" == "-" ]]; then
+        echo "Error: --endpoint requires a value"
+        exit 1
+    fi
       ENDPOINT="$2"
       shift 2
       ;;

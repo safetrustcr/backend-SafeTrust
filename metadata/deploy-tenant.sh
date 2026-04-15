@@ -1,4 +1,3 @@
-# deploy-tenant.sh
 #!/usr/bin/env bash
 set -eo pipefail  # Exit on errors and pipe failures
 
