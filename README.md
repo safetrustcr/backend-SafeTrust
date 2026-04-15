@@ -32,109 +32,156 @@ Verified trustlines between parties add an extra layer of transaction security. 
 📤 **Automated Refund System**:  
 Ensures funds are automatically released based on the terms of the agreement, with no manual intervention required.
 
+---
+
 ## 📋 **Getting Started**
 
 ### **Prerequisites**
 
 1. Install Docker and Docker Compose
-2. Run
+2. Copy the environment file and fill in the required values:
+
+```shell
+cp .env.example .env
+```
+
+3. Start the containers:
 
 ```shell
 bin/dc_prep
 bin/dc_console
 ```
 
-Metadata folder contains the architecture, the database per tenant,
+---
 
+## 🗂️ Metadata Architecture
+
+The metadata folder contains the Hasura GraphQL Engine configuration per tenant.
 
 ```
 backend/
 └── metadata/
     └── base/
-        │   ├── actions.graphql
-        │   ├── actions.yaml
-        │   ├── allow_list.yaml
-        │   ├── api_limits.yaml
-        │   ├── backend_configs.yaml
-        │   ├── cron_triggers.yaml
-        │   ├── graphql_schema_introspection.yaml
-        │   ├── inherited_roles.yaml
-        │   ├── metrics_config.yaml
-        │   ├── network.yaml
-        │   ├── opentelemetry.yaml
-        │   ├── query_collections.yaml
-        │   ├── remote_schemas.yaml
-        │   ├── rest_endpoints.yaml
-        │   ├── version.yaml
-        └── build/
-        │   └── tenant_a/
-        │   └── tenant_b/
-        │   └── ....
-        └── tenants/
-        │   └── tenant_a/
-        │   │          ├── databases/
-        │   │          ├── tables/
-        │   │          ├── functions/
-        │   │          ├── databases.yaml
-        │   └── tenant_b/
-        │   │          ├── databases/
-        │   │          ├── tables/
-        │   │          ├── functions/
-        │   │          ├── databases.yaml
-        │   └── ....
-        │   ├── build-metadata.sh
-        │   ├── deploy-tenant.sh
-            
+    │   ├── actions.graphql
+    │   ├── actions.yaml
+    │   ├── allow_list.yaml
+    │   ├── api_limits.yaml
+    │   ├── backend_configs.yaml
+    │   ├── cron_triggers.yaml
+    │   ├── graphql_schema_introspection.yaml
+    │   ├── inherited_roles.yaml
+    │   ├── metrics_config.yaml
+    │   ├── network.yaml
+    │   ├── opentelemetry.yaml
+    │   ├── query_collections.yaml
+    │   ├── remote_schemas.yaml
+    │   ├── rest_endpoints.yaml
+    │   └── version.yaml
+    └── build/
+    │   └── tenant_a/
+    │   └── tenant_b/
+    │   └── ...
+    └── tenants/
+    │   └── tenant_a/
+    │   │   ├── databases/
+    │   │   ├── tables/
+    │   │   ├── functions/
+    │   │   └── databases.yaml
+    │   └── tenant_b/
+    │   │   ├── databases/
+    │   │   ├── tables/
+    │   │   ├── functions/
+    │   │   └── databases.yaml
+    │   └── ...
+    ├── build-metadata.sh
+    ├── deploy-tenant.sh
+    └── setup-tenant.sh
 ```
 
+**Folder guide:**
+- `base/` — Hasura base configuration and GraphQL dependencies shared across all tenants
+- `build/` — Generated output: tenants merged with base dependencies, ready to deploy
+- `tenants/` — Tenant-specific database files, tables, functions, relations, and triggers
+- `build-metadata.sh` — Prepares a tenant by merging it with base configurations
+- `deploy-tenant.sh` — Deploys a built tenant to Hasura (tracks tables and relationships)
+- `setup-tenant.sh` — **Runs both steps above in one command** ✅
 
-Architecture multitenant guide:
+---
 
- - base/ folder: contains all graphql and hasura dependencies necessary for tenants.
- - build/ folder: prepare tenants with all graphql and hasura dependencies. 
- - tenants/ folder: contains all tenant database files, tables, functions, relations, triggers, etc.
- - build-metadata.sh file: prepares the tenants with their dependencies and corresponding configurations.
- - deploy-tenant.sh: deploys to the database with the tenants, their tables and relationships.
+## 🚀 Steps to execute the metadata
 
-### Steps to execute the metadata:
+### Option A — Single command (recommended)
 
-1. Go to the directory called metadata and run the following command:
+Go to the `metadata/` directory and run:
 
-``` shell
+```shell
+./setup-tenant.sh <tenant_name> [--admin-secret SECRET] [--endpoint URL]
+```
+
+**Example:**
+
+```shell
+./setup-tenant.sh safetrust --endpoint http://localhost:8080
+```
+
+This runs `build-metadata.sh` followed by `deploy-tenant.sh` automatically in the correct order.
+
+Default values: `--admin-secret myadminsecretkey` · `--endpoint http://localhost:8080`
+
+---
+
+### Option B — Step by step (manual)
+
+1. Go to the `metadata/` directory and build the tenant:
+
+```shell
 ./build-metadata.sh <tenant_name> --admin-secret myadminsecretkey --endpoint <endpoint>
 ```
-2. Verify build folder contains correct tenant data
-3. Deploy the tenants running the following command:
 
-  ``` shell
-  ./deploy-tenant.sh <tenant_name> --admin-secret myadminsecretkey --endpoint <endpoint>
-  ```
+2. Verify the `build/` folder contains the correct tenant data.
 
-* **tenant_name** is the name of the tenant that you will work on
+3. Deploy the tenant:
 
-* **endpoint** is the endpoint where you are running the hasura, commonly it's localhost:8080
+```shell
+./deploy-tenant.sh <tenant_name> --admin-secret myadminsecretkey --endpoint <endpoint>
+```
 
-# Steps to execute the migrations:
-Go to migrations folder: `cd migrations/`
- ``` shell
-    hasura migrate apply
- ```
-Then select the tenant to migrate it !
+- **`tenant_name`** — the name of the tenant you will work on (e.g. `safetrust`)
+- **`endpoint`** — the Hasura endpoint, commonly `http://localhost:8080`
 
-# Steps to execute the seeds:
-Go to seeds folder: `cd seeds/`
- ``` shell
-    hasura seed apply
- ```
-Then select the tenant to seed it !
+---
 
-# Backend Tests
+## 🗃️ Steps to execute the migrations
 
-This project uses Karate framework for API testing. The tests are designed to run in a Docker environment.
+Go to the `migrations/` folder:
 
-## Running Tests
+```shell
+cd migrations/
+hasura migrate apply
+```
 
-To run all tests:
+Then select the tenant to migrate.
+
+---
+
+## 🌱 Steps to execute the seeds
+
+Go to the `seeds/` folder:
+
+```shell
+cd seeds/
+hasura seed apply
+```
+
+Then select the tenant to seed.
+
+---
+
+## 🧪 Backend Tests
+
+This project uses the Karate framework for API testing. Tests run in a Docker environment.
+
+### Running Tests
 
 ```bash
 docker compose -f docker-compose-test.yml run --rm --build karate
@@ -148,20 +195,18 @@ This command will:
 4. Show test results in the console
 5. Generate HTML reports in `target/karate-reports/`
 
-## Test Reports
+### Test Reports
 
-After running the tests, you can find the HTML reports at:
+After running the tests, find the HTML reports at:
 
 - Summary: `tests/results/karate-summary.html`
 - Detailed: `tests/results/karate-tags.html`
-
-## Development
 
 ### Adding New Tests
 
 1. Create new `.feature` files in `tests/karate/features/`
 2. Follow the Karate DSL syntax
-3. Tests will be automatically picked up when running the test command
+3. Tests are automatically picked up when running the test command
 
 ### Configuration
 
