@@ -127,6 +127,9 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=info
       - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
+      - FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL}
+      - FIREBASE_PRIVATE_KEY=${FIREBASE_PRIVATE_KEY}
     volumes:
       - ./webhook:/app
       - /app/node_modules
