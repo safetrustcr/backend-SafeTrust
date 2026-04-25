@@ -3,19 +3,21 @@ const router = express.Router();
 const db = require('../services/db');
 
 /**
- * @route POST /api/auth/sync-user
- * @desc Upsert user data from Firebase auth
- * @access Protected
+ * POST /api/auth/sync-user — upsert Firebase user into public.users.
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @returns {Promise<void>}
  */
 router.post('/sync-user', async (req, res) => {
   const { uid, email } = req.user;
 
   try {
     const query = `
-      INSERT INTO public.users (firebase_uid, email, last_seen)
-      VALUES ($1, $2, NOW())
+      INSERT INTO public.users (id, firebase_uid, email, last_seen)
+      VALUES ($1, $1, $2, NOW())
       ON CONFLICT (firebase_uid)
-      DO UPDATE SET last_seen = NOW()
+      DO UPDATE SET last_seen = NOW(), email = EXCLUDED.email
       RETURNING id, firebase_uid, email, last_seen
     `;
     const values = [uid, email];
@@ -25,7 +27,7 @@ router.post('/sync-user', async (req, res) => {
 
     console.log(`[sync-user] ✅ user synced — uid: ${user.firebase_uid}`);
 
-    res.status(200).json({ 
+    res.status(200).json({
       user: {
         id: user.id,
         email: user.email,

@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 
+/** Shared PostgreSQL pool for the webhook service. */
 const pool = new Pool({
   host: process.env.POSTGRES_HOST || 'localhost',
   port: parseInt(process.env.POSTGRES_PORT, 10) || 5432,

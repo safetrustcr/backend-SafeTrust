@@ -1,5 +1,13 @@
-const admin = require('../config/firebase');
+const { getAuth } = require('firebase-admin/auth');
 
+/**
+ * Express middleware: verifies Firebase ID token (or test mock-token bypass).
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
+ */
 const authenticateFirebase = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
@@ -13,7 +21,7 @@ const authenticateFirebase = async (req, res, next) => {
     return res.status(401).json({ error: 'Unauthorized: No token provided' });
   }
 
-  // Bypass for testing
+  // Bypass for integration tests (requires NODE_ENV=test)
   if (idToken === 'mock-token') {
     if (process.env.NODE_ENV !== 'test') {
       console.error('FATAL: mock-token used outside of test environment');
@@ -21,16 +29,20 @@ const authenticateFirebase = async (req, res, next) => {
     }
     req.user = {
       uid: req.headers['x-test-uid'] || 'test-user-id',
-      email: req.headers['x-test-email'] || 'test@example.com'
+      email: req.headers['x-test-email'] || 'test@example.com',
+      role: undefined,
+      admin: false,
     };
     return next();
   }
 
   try {
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const decodedToken = await getAuth().verifyIdToken(idToken);
     req.user = {
       uid: decodedToken.uid,
-      email: decodedToken.email
+      email: decodedToken.email,
+      role: decodedToken.role,
+      admin: decodedToken.admin === true,
     };
     next();
   } catch (error) {

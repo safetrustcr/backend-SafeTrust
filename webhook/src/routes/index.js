@@ -1,6 +1,9 @@
 const express = require('express')
 const router = express.Router()
 
+/**
+ * Root router: health, then Firebase-protected `/api/*` routes.
+ */
 const { authenticateFirebase } = require('../middleware/auth')
 
 const authRoutes = require('./auth')

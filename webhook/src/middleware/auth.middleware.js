@@ -1,9 +1,12 @@
 const { getAuth } = require('firebase-admin/auth');
 
 /**
- * Firebase Authentication Middleware
- * Verifies the Bearer token in the Authorization header.
- * Attaches the decoded user to req.user.
+ * Verifies a Firebase Bearer token and attaches `uid`, `email`, `name`, `role`, and `admin` to `req.user`.
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {Promise<void>}
  */
 async function authMiddleware(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -20,9 +23,11 @@ async function authMiddleware(req, res, next) {
   try {
     const decoded = await getAuth().verifyIdToken(token);
     req.user = {
-      uid:   decoded.uid,
+      uid: decoded.uid,
       email: decoded.email,
-      name:  decoded.name,
+      name: decoded.name,
+      role: decoded.role,
+      admin: decoded.admin === true,
     };
     next();
   } catch (error) {

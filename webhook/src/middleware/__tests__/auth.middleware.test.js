@@ -52,7 +52,11 @@ describe('authMiddleware', () => {
     });
 
     await authMiddleware(req, res, next);
-    expect(req.user).toEqual(mockUser);
+    expect(req.user).toMatchObject({
+      uid: mockUser.uid,
+      email: mockUser.email,
+      name: mockUser.name,
+    });
     expect(next).toHaveBeenCalled();
     expect(res.status).not.toHaveBeenCalled();
   });

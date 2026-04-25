@@ -5,6 +5,13 @@ const VALID_TRANSITIONS = {
   APPROVED: ['CONFIRMED', 'CANCELLED'],
 }
 
+/**
+ * PATCH /api/bid-requests/:id — owner updates bid status with history row.
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @returns {Promise<void>}
+ */
 async function updateBidRequestHandler(req, res) {
   const { uid } = req.user || {}
   const { id } = req.params
@@ -19,6 +26,7 @@ async function updateBidRequestHandler(req, res) {
     FROM public.bid_requests br
     JOIN public.apartments a ON br.apartment_id = a.id
     WHERE br.id = $1 AND br.deleted_at IS NULL
+    FOR UPDATE OF br
   `
 
   const UPDATE_BID = `
@@ -37,6 +45,18 @@ async function updateBidRequestHandler(req, res) {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+
+    const userRow = await client.query(
+      'SELECT id FROM public.users WHERE id = $1 OR firebase_uid = $1 LIMIT 1',
+      [uid],
+    )
+    if (userRow.rows.length === 0) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({
+        error: 'User profile not found',
+        detail: 'Call POST /api/auth/sync-user before updating bid requests.',
+      })
+    }
 
     const result = await client.query(GET_BID, [id])
     if (result.rows.length === 0) {
@@ -70,7 +90,11 @@ async function updateBidRequestHandler(req, res) {
     console.log(`[bid-requests/update] ✅ ${id} → ${newStatus}`)
     return res.status(200).json({ bidRequest: updated.rows[0] })
   } catch (error) {
-    await client.query('ROLLBACK')
+    try {
+      await client.query('ROLLBACK')
+    } catch (rollbackErr) {
+      console.error('[bid-requests/update] rollback failed', rollbackErr.message)
+    }
     console.error('[bid-requests/update] ❌', error.message)
     return res.status(500).json({ error: 'Failed to update bid request' })
   } finally {
@@ -79,4 +103,3 @@ async function updateBidRequestHandler(req, res) {
 }
 
 module.exports = { updateBidRequestHandler, VALID_TRANSITIONS }
-

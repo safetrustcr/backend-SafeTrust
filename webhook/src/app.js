@@ -1,12 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const { initializeFirebaseAdmin } = require('./config/firebase-admin');
+
+initializeFirebaseAdmin();
 const routes = require('./routes');
 
 const app = express();
-
-// Initialize Firebase Admin
-initializeFirebaseAdmin();
 
 // Middleware
 app.use(cors({

@@ -3,9 +3,10 @@ const router = express.Router();
 const db = require('../services/db');
 
 /**
- * @route GET /api/apartments
- * @desc Get list of apartments with filtering and pagination
- * @access Protected
+ * GET / — paginated apartment listing with optional filters (location, price, bedrooms, etc.).
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
  */
 router.get('/', async (req, res) => {
   try {

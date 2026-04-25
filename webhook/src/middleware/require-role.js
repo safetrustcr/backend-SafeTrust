@@ -1,6 +1,9 @@
 /**
- * Role-based Authorization Middleware
- * @param {string[]} allowedRoles - List of roles permitted to access the route
+ * Role-based authorization factory. Expects `req.user.role` and/or `req.user.admin`
+ * (set by `authenticateFirebase` or `authMiddleware` from Firebase token / custom claims).
+ *
+ * @param {string[]} allowedRoles Roles permitted for the route (e.g. `['admin']`).
+ * @returns {import('express').RequestHandler}
  */
 function requireRole(allowedRoles) {
   return (req, res, next) => {
@@ -11,9 +14,6 @@ function requireRole(allowedRoles) {
       });
     }
 
-    // Assuming roles are stored in custom claims (decoded as req.user by firebase)
-    // Map Firebase custom claims to a 'role' property if present, 
-    // or check a specific claim like 'role' or 'admin'.
     const userRole = req.user.role || (req.user.admin ? 'admin' : 'guest');
 
     if (!allowedRoles.includes(userRole)) {
