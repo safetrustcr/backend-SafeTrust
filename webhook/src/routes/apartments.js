@@ -1,16 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/db');
-const { authenticateFirebase } = require('../middleware/auth');
 
 /**
  * @route GET /api/apartments
  * @desc Get list of apartments with filtering and pagination
  * @access Protected
  */
-router.get('/', authenticateFirebase, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const {
+    let {
       location,
       minPrice,
       maxPrice,
@@ -19,44 +18,75 @@ router.get('/', authenticateFirebase, async (req, res) => {
       category,
       page = 1,
       limit = 10,
-      sortBy = 'created_at_desc'
+      sort = 'created_at'
     } = req.query;
 
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-    const queryLimit = parseInt(limit);
+    // 1. Pagination Validation & Clamping
+    const MAX_LIMIT = 100;
+    let validatedPage = parseInt(page, 10);
+    let validatedLimit = parseInt(limit, 10);
 
+    if (isNaN(validatedPage) || validatedPage < 1) validatedPage = 1;
+    if (isNaN(validatedLimit) || validatedLimit < 1) validatedLimit = 10;
+    if (validatedLimit > MAX_LIMIT) validatedLimit = MAX_LIMIT;
+
+    const offset = (validatedPage - 1) * validatedLimit;
+
+    // 2. Dynamic WHERE Builder
     let whereClause = ['a.deleted_at IS NULL'];
     let queryParams = [];
     let paramIndex = 1;
 
     if (location) {
-      whereClause.push(`a.name ILIKE $${paramIndex} OR a.description ILIKE $${paramIndex}`);
+      // Use parentheses for OR expression to prevent logic leaks
+      whereClause.push(`(a.name ILIKE $${paramIndex} OR a.description ILIKE $${paramIndex})`);
       queryParams.push(`%${location}%`);
       paramIndex++;
     }
 
     if (minPrice) {
-      whereClause.push(`a.price >= $${paramIndex}`);
-      queryParams.push(parseFloat(minPrice));
-      paramIndex++;
+      const min = parseFloat(minPrice);
+      if (!isNaN(min)) {
+        whereClause.push(`a.price >= $${paramIndex}`);
+        queryParams.push(min);
+        paramIndex++;
+      }
     }
 
     if (maxPrice) {
-      whereClause.push(`a.price <= $${paramIndex}`);
-      queryParams.push(parseFloat(maxPrice));
-      paramIndex++;
+      const max = parseFloat(maxPrice);
+      if (!isNaN(max)) {
+        whereClause.push(`a.price <= $${paramIndex}`);
+        queryParams.push(max);
+        paramIndex++;
+      }
     }
 
     if (bedrooms) {
-      whereClause.push(`a.bedrooms = $${paramIndex}`);
-      queryParams.push(parseInt(bedrooms));
-      paramIndex++;
+      const beds = parseInt(bedrooms, 10);
+      if (!isNaN(beds)) {
+        whereClause.push(`a.bedrooms = $${paramIndex}`);
+        queryParams.push(beds);
+        paramIndex++;
+      }
     }
 
     if (petFriendly !== undefined) {
-      whereClause.push(`a.pet_friendly = $${paramIndex}`);
-      queryParams.push(petFriendly === 'true');
-      paramIndex++;
+      const normalizedPet = String(petFriendly).toLowerCase();
+      const truthy = ['true', '1', 'yes'];
+      const falsy = ['false', '0', 'no'];
+      
+      if (truthy.includes(normalizedPet)) {
+        whereClause.push(`a.pet_friendly = $${paramIndex}`);
+        queryParams.push(true);
+        paramIndex++;
+      } else if (falsy.includes(normalizedPet)) {
+        whereClause.push(`a.pet_friendly = $${paramIndex}`);
+        queryParams.push(false);
+        paramIndex++;
+      } else {
+        return res.status(400).json({ error: 'Invalid petFriendly value. Expected true, false, 1, 0, yes, or no.' });
+      }
     }
 
     if (category) {
@@ -65,24 +95,31 @@ router.get('/', authenticateFirebase, async (req, res) => {
       paramIndex++;
     }
 
-    const whereString = whereClause.length > 0 ? `WHERE ${whereClause.join(' AND ')}` : '';
+    const whereString = `WHERE ${whereClause.join(' AND ')}`;
 
-    // Sorting logic
-    let orderClause = 'a.created_at DESC';
-    if (sortBy === 'price_asc') orderClause = 'a.price ASC';
-    else if (sortBy === 'price_desc') orderClause = 'a.price DESC';
-    else if (sortBy === 'created_at_desc') orderClause = 'a.created_at DESC';
+    // 3. Sorting Whitelist & Mapping
+    const allowedSorts = ['price_asc', 'price_desc', 'created_at'];
+    if (sort && !allowedSorts.includes(sort)) {
+      return res.status(400).json({ error: `Invalid sort parameter. Supported values: ${allowedSorts.join(', ')}` });
+    }
 
-    // Count query
+    const sortMapping = {
+      'price_asc': 'a.price ASC',
+      'price_desc': 'a.price DESC',
+      'created_at': 'a.created_at DESC'
+    };
+    const orderClause = sortMapping[sort] || sortMapping['created_at'];
+
+    // 4. Count Query (Must match filtering logic)
     const countQuery = `
       SELECT COUNT(*) as total 
       FROM public.apartments a
       ${whereString}
     `;
     const countResult = await db.query(countQuery, queryParams);
-    const totalCount = parseInt(countResult.rows[0].total);
+    const totalCount = parseInt(countResult.rows[0].total, 10);
 
-    // Data query
+    // 5. Data Query (Use LEFT JOIN to include apartments with missing/unsynced owners)
     const dataQuery = `
       SELECT 
         a.id, 
@@ -100,21 +137,21 @@ router.get('/', authenticateFirebase, async (req, res) => {
         a.created_at,
         u.email as owner_email
       FROM public.apartments a
-      JOIN public.users u ON a.owner_id = u.id
+      LEFT JOIN public.users u ON a.owner_id = u.id
       ${whereString}
       ORDER BY ${orderClause}
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
     
-    const finalParams = [...queryParams, queryLimit, offset];
+    const finalParams = [...queryParams, validatedLimit, offset];
     const dataResult = await db.query(dataQuery, finalParams);
 
-    const totalPages = Math.ceil(totalCount / queryLimit);
+    const totalPages = Math.ceil(totalCount / validatedLimit);
 
     res.status(200).json({
       apartments: dataResult.rows,
       total: totalCount,
-      page: parseInt(page),
+      page: validatedPage,
       totalPages
     });
   } catch (error) {

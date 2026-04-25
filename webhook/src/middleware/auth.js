@@ -7,10 +7,18 @@ const authenticateFirebase = async (req, res, next) => {
     return res.status(401).json({ error: 'Unauthorized: No token provided' });
   }
 
-  const idToken = authHeader.split('Bearer ')[1];
+  const idToken = authHeader.slice(7).trim();
+
+  if (!idToken) {
+    return res.status(401).json({ error: 'Unauthorized: No token provided' });
+  }
 
   // Bypass for testing
-  if (process.env.NODE_ENV === 'test' && idToken === 'mock-token') {
+  if (idToken === 'mock-token') {
+    if (process.env.NODE_ENV !== 'test') {
+      console.error('FATAL: mock-token used outside of test environment');
+      return res.status(500).json({ error: 'Server configuration error: mock-token not allowed in this environment' });
+    }
     req.user = {
       uid: req.headers['x-test-uid'] || 'test-user-id',
       email: req.headers['x-test-email'] || 'test@example.com'
@@ -20,7 +28,10 @@ const authenticateFirebase = async (req, res, next) => {
 
   try {
     const decodedToken = await admin.auth().verifyIdToken(idToken);
-    req.user = decodedToken;
+    req.user = {
+      uid: decodedToken.uid,
+      email: decodedToken.email
+    };
     next();
   } catch (error) {
     console.error('Error verifying Firebase ID token:', error.message);

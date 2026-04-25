@@ -6,6 +6,8 @@ require('dotenv').config();
 const authRoutes = require('./routes/auth');
 const apartmentRoutes = require('./routes/apartments');
 
+const { authenticateFirebase } = require('./middleware/auth');
+
 const app = express();
 const port = process.env.WEBHOOK_PORT || 3001;
 
@@ -15,6 +17,8 @@ app.use(morgan('dev'));
 app.use(express.json());
 
 // Routes
+// Protected API routes
+app.use('/api', authenticateFirebase);
 app.use('/api/auth', authRoutes);
 app.use('/api/apartments', apartmentRoutes);
 
