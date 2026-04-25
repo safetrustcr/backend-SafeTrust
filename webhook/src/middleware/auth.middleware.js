@@ -23,6 +23,7 @@ async function authMiddleware(req, res, next) {
       uid:   decoded.uid,
       email: decoded.email,
       name:  decoded.name,
+      ...decoded, // Include all custom claims
     };
     next();
   } catch (error) {
