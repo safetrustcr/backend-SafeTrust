@@ -11,15 +11,13 @@ function requireRole(allowedRoles) {
       });
     }
 
-    // Assuming roles are stored in custom claims (decoded as req.user by firebase)
-    // Map Firebase custom claims to a 'role' property if present, 
-    // or check a specific claim like 'role' or 'admin'.
-    const userRole = req.user.role || (req.user.admin ? 'admin' : 'guest');
+    // Extract role from custom claims (assuming 'role' or 'admin' claim)
+    const userRole = req.user.role || (req.user.admin ? 'admin' : null);
 
-    if (!allowedRoles.includes(userRole)) {
+    if (!userRole || !allowedRoles.includes(userRole)) {
       return res.status(403).json({
         error: 'Forbidden',
-        message: 'Insufficient permissions',
+        message: 'Insufficient permissions or role not assigned',
       });
     }
 
