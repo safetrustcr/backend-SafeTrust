@@ -25,7 +25,15 @@ function getPool() {
     );
   }
 
-  pool = new Pool({ connectionString });
+  const useSsl = process.env.PGSSL === 'true' || process.env.DATABASE_SSL === 'true';
+  pool = new Pool({
+    connectionString,
+    ssl: useSsl ? { rejectUnauthorized: false } : undefined,
+  });
+  pool.on('error', (err, client) => {
+    // Idle client errors would otherwise crash the process.
+    console.error('[db] unexpected pool error', err);
+  });
   return pool;
 }
 

@@ -6,7 +6,10 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node src/server.js"
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=20.13"
   },
   "dependencies": {
     "dotenv": "^16.6.1",

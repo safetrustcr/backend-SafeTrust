@@ -18,7 +18,7 @@ function requireAuth(req, res, next) {
   }
 
   try {
-    req.user = jwt.verify(token, secret);
+    req.user = jwt.verify(token, secret, { algorithms: ['HS256'] });
     return next();
   } catch (_err) {
     return res.status(401).json({ error: 'Unauthorized' });
