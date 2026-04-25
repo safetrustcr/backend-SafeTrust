@@ -39,6 +39,28 @@ function fn() {
     return "Bearer " + headerBase64 + "." + payloadBase64 + ".your-secret-key";
   };
 
+  // Minimal HS256 JWT signer for REST endpoints in this repo.
+  // Usage: config.restToken({ sub: 'user-id' })
+  config.restToken = function(payload) {
+    var Base64 = Java.type("java.util.Base64");
+    var Mac = Java.type("javax.crypto.Mac");
+    var SecretKeySpec = Java.type("javax.crypto.spec.SecretKeySpec");
+
+    var header = { alg: "HS256", typ: "JWT" };
+    var secret = java.lang.System.getenv("JWT_SECRET") || "testsecret";
+
+    var enc = Base64.getUrlEncoder().withoutPadding();
+    var headerB64 = enc.encodeToString(JSON.stringify(header).getBytes("UTF-8"));
+    var payloadB64 = enc.encodeToString(JSON.stringify(payload || {}).getBytes("UTF-8"));
+    var signingInput = headerB64 + "." + payloadB64;
+
+    var mac = Mac.getInstance("HmacSHA256");
+    mac.init(new SecretKeySpec(secret.getBytes("UTF-8"), "HmacSHA256"));
+    var sig = enc.encodeToString(mac.doFinal(signingInput.getBytes("UTF-8")));
+
+    return "Bearer " + signingInput + "." + sig;
+  };
+
   // Set default headers
   karate.configure('headers', {
     'Content-Type': 'application/json',

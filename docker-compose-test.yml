@@ -83,11 +83,32 @@ services:
     environment:
       baseUrl: http://graphql-engine-test:8080/v1/graphql
       HASURA_GRAPHQL_ADMIN_SECRET: myadminsecretkey
+      JWT_SECRET: testsecret
     volumes:
       - ./tests/results:/app/target/karate-reports
     depends_on:
       graphql-engine-test:
         condition: service_started
+    networks:
+      - test-network
+
+  api:
+    image: node:22
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "npm install && node src/server.js"
+    environment:
+      - WEBHOOK_PORT=3001
+      - POSTGRES_HOST=postgres_test
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgrespassword
+      - JWT_SECRET=testsecret
+    depends_on:
+      postgres_test:
+        condition: service_healthy
     networks:
       - test-network
 
