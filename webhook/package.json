@@ -1,0 +1,22 @@
+{
+  "name": "safetrust-webhook",
+  "version": "1.0.0",
+  "description": "SafeTrust Backend Webhook Service",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "firebase-admin": "^11.5.0",
+    "pg": "^8.10.0",
+    "dotenv": "^16.0.3",
+    "cors": "^2.8.5",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}
