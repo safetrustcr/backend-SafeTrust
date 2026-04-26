@@ -28,6 +28,12 @@ const authenticateFirebase = async (req, res, next) => {
 
   try {
     const decodedToken = await admin.auth().verifyIdToken(idToken);
+    
+    if (!decodedToken.email) {
+      console.error('Firebase token missing email claim for uid:', decodedToken.uid);
+      return res.status(403).json({ error: 'Forbidden: Email address is required for this service' });
+    }
+
     req.user = {
       uid: decodedToken.uid,
       email: decodedToken.email

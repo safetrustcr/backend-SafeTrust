@@ -46,29 +46,32 @@ router.get('/', async (req, res) => {
 
     if (minPrice) {
       const min = parseFloat(minPrice);
-      if (!isNaN(min)) {
-        whereClause.push(`a.price >= $${paramIndex}`);
-        queryParams.push(min);
-        paramIndex++;
+      if (isNaN(min)) {
+        return res.status(400).json({ error: 'Invalid minPrice value. Expected a number.' });
       }
+      whereClause.push(`a.price >= $${paramIndex}`);
+      queryParams.push(min);
+      paramIndex++;
     }
 
     if (maxPrice) {
       const max = parseFloat(maxPrice);
-      if (!isNaN(max)) {
-        whereClause.push(`a.price <= $${paramIndex}`);
-        queryParams.push(max);
-        paramIndex++;
+      if (isNaN(max)) {
+        return res.status(400).json({ error: 'Invalid maxPrice value. Expected a number.' });
       }
+      whereClause.push(`a.price <= $${paramIndex}`);
+      queryParams.push(max);
+      paramIndex++;
     }
 
     if (bedrooms) {
       const beds = parseInt(bedrooms, 10);
-      if (!isNaN(beds)) {
-        whereClause.push(`a.bedrooms = $${paramIndex}`);
-        queryParams.push(beds);
-        paramIndex++;
+      if (isNaN(beds)) {
+        return res.status(400).json({ error: 'Invalid bedrooms value. Expected an integer.' });
       }
+      whereClause.push(`a.bedrooms = $${paramIndex}`);
+      queryParams.push(beds);
+      paramIndex++;
     }
 
     if (petFriendly !== undefined) {
