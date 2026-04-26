@@ -4,7 +4,8 @@ const db = require('../services/db');
 
 /**
  * @route POST /api/auth/sync-user
- * @desc Upsert user data from Firebase auth
+ * @desc Upsert user data from Firebase auth into the local database.
+ * Updates the last_seen timestamp on every call.
  * @access Protected
  */
 router.post('/sync-user', async (req, res) => {

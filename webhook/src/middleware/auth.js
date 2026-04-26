@@ -1,5 +1,15 @@
 const admin = require('../config/firebase');
 
+/**
+ * Middleware to authenticate requests using Firebase Admin SDK.
+ * Verifies the Bearer token in the Authorization header.
+ * In test environments, allows 'mock-token' for end-to-end testing.
+ * 
+ * @param {import('express').Request} req - Express request object
+ * @param {import('express').Response} res - Express response object
+ * @param {import('express').NextFunction} next - Express next function
+ * @returns {Promise<void>}
+ */
 const authenticateFirebase = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 

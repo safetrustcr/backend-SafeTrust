@@ -4,7 +4,8 @@ const db = require('../services/db');
 
 /**
  * @route GET /api/apartments
- * @desc Get list of apartments with filtering and pagination
+ * @desc Get list of apartments with advanced filtering, sorting, and pagination.
+ * Supports filters for location, price range, bedrooms, pet policy, and category.
  * @access Protected
  */
 router.get('/', async (req, res) => {
