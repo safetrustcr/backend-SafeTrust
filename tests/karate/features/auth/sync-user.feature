@@ -12,7 +12,7 @@ Scenario: Sync a new user (first login)
     When method POST
     Then status 200
     And match response.user.email == 'new-user@example.com'
-    And match response.user.last_seen != null
+    And match response.user.last_seen == '#string'
     * def firstLastSeen = response.user.last_seen
 
     # Second login should update last_seen
@@ -22,6 +22,7 @@ Scenario: Sync a new user (first login)
     And header x-test-email = 'new-user@example.com'
     When method POST
     Then status 200
+    And match response.user.last_seen == '#string'
     And match response.user.last_seen != firstLastSeen
 
 Scenario: Sync user with invalid token

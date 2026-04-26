@@ -12,6 +12,7 @@ Scenario: List all apartments (default)
     And match response.apartments == '#array'
     And match response.total == '#number'
     And match response.page == 1
+    And match response.totalPages == '#number'
 
 Scenario: Filter by location
     Given path '/api/apartments'
