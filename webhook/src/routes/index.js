@@ -7,10 +7,9 @@ const placeholder = (name) => (req, res) => res.json({ message: `${name} route`,
 
 // In a real app, these would be imported from separate files:
 // const apartmentRoutes = require('./apartment.routes');
-// const bidRoutes = require('./bid.routes');
 // ...
 const apartmentRoutes = placeholder('Apartments');
-const bidRoutes = placeholder('Bid Requests');
+const bidRoutes = require('./bid-requests/create.route');
 const escrowRoutes = placeholder('Escrow');
 const userRoutes = placeholder('Users');
 const healthRoute = (req, res) => res.status(200).send('OK');
