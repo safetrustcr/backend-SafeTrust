@@ -28,6 +28,8 @@ async function authMiddleware(req, res, next) {
       name: decoded.name,
       role: decoded.role,
       admin: decoded.admin === true,
+      name:  decoded.name,
+      ...decoded, // Include all custom claims
     };
     next();
   } catch (error) {

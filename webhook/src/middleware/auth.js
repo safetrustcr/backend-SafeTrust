@@ -6,6 +6,16 @@ const { getAuth } = require('firebase-admin/auth');
  * @param {import('express').Request} req
  * @param {import('express').Response} res
  * @param {import('express').NextFunction} next
+const admin = require('../config/firebase');
+
+/**
+ * Middleware to authenticate requests using Firebase Admin SDK.
+ * Verifies the Bearer token in the Authorization header.
+ * In test environments, allows 'mock-token' for end-to-end testing.
+ * 
+ * @param {import('express').Request} req - Express request object
+ * @param {import('express').Response} res - Express response object
+ * @param {import('express').NextFunction} next - Express next function
  * @returns {Promise<void>}
  */
 const authenticateFirebase = async (req, res, next) => {
@@ -22,6 +32,7 @@ const authenticateFirebase = async (req, res, next) => {
   }
 
   // Bypass for integration tests (requires NODE_ENV=test)
+  // Bypass for testing
   if (idToken === 'mock-token') {
     if (process.env.NODE_ENV !== 'test') {
       console.error('FATAL: mock-token used outside of test environment');
@@ -32,6 +43,7 @@ const authenticateFirebase = async (req, res, next) => {
       email: req.headers['x-test-email'] || 'test@example.com',
       role: undefined,
       admin: false,
+      email: req.headers['x-test-email'] || 'test@example.com'
     };
     return next();
   }
@@ -43,6 +55,16 @@ const authenticateFirebase = async (req, res, next) => {
       email: decodedToken.email,
       role: decodedToken.role,
       admin: decodedToken.admin === true,
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    
+    if (!decodedToken.email) {
+      console.error('Firebase token missing email claim for uid:', decodedToken.uid);
+      return res.status(403).json({ error: 'Forbidden: Email address is required for this service' });
+    }
+
+    req.user = {
+      uid: decodedToken.uid,
+      email: decodedToken.email
     };
     next();
   } catch (error) {

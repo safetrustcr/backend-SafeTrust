@@ -9,6 +9,7 @@ function fn() {
   var config = {
     baseUrl: "http://graphql-engine-test:8080/v1/graphql",
     webhookUrl: "http://webhook:3001",
+    webhookUrl: "http://localhost:3001",
     adminSecret: "myadminsecretkey",
   };
 

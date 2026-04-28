@@ -8,6 +8,10 @@ const db = require('../services/db');
  * @param {import('express').Request} req
  * @param {import('express').Response} res
  * @returns {Promise<void>}
+ * @route POST /api/auth/sync-user
+ * @desc Upsert user data from Firebase auth into the local database.
+ * Updates the last_seen timestamp on every call.
+ * @access Protected
  */
 router.post('/sync-user', async (req, res) => {
   const { uid, email } = req.user;
@@ -18,6 +22,8 @@ router.post('/sync-user', async (req, res) => {
       VALUES ($1, $1, $2, NOW())
       ON CONFLICT (firebase_uid)
       DO UPDATE SET last_seen = NOW(), email = EXCLUDED.email
+      ON CONFLICT (id)
+      DO UPDATE SET last_seen = NOW(), firebase_uid = EXCLUDED.firebase_uid
       RETURNING id, firebase_uid, email, last_seen
     `;
     const values = [uid, email];
@@ -28,6 +34,7 @@ router.post('/sync-user', async (req, res) => {
     console.log(`[sync-user] ✅ user synced — uid: ${user.firebase_uid}`);
 
     res.status(200).json({
+    res.status(200).json({ 
       user: {
         id: user.id,
         email: user.email,

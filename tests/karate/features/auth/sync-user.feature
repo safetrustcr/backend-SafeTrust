@@ -14,6 +14,11 @@ Scenario: Sync a new user (first login)
     And match response.user.email == 'new-user@example.com'
     And match response.user.last_seen != null
     * def firstLastSeen = response.user.last_seen
+    And match response.user.last_seen == '#string'
+    * def firstLastSeen = response.user.last_seen
+    
+    # Wait to ensure timestamp updates (Postgres NOW() resolution)
+    * eval java.lang.Thread.sleep(1000)
 
     # Second login should update last_seen
     Given path '/api/auth/sync-user'
@@ -22,6 +27,7 @@ Scenario: Sync a new user (first login)
     And header x-test-email = 'new-user@example.com'
     When method POST
     Then status 200
+    And match response.user.last_seen == '#string'
     And match response.user.last_seen != firstLastSeen
 
 Scenario: Sync user with invalid token
