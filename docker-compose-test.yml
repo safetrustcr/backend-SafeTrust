@@ -76,18 +76,79 @@ services:
     networks:
       - test-network
 
+  webhook:
+    build:
+      context: ./webhook
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ENV=test
+      - WEBHOOK_PORT=3001
+      - HASURA_GRAPHQL_ADMIN_SECRET=myadminsecretkey
+      - HASURA_GRAPHQL_ENDPOINT=http://graphql-engine-test:8080/v1/graphql
+      - POSTGRES_HOST=postgres_test
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgrespassword
+      - USE_MOCK_DATA=true
+      - FIREBASE_PROJECT_ID=test-project
+      - FIREBASE_CLIENT_EMAIL=test@example.com
+      - FIREBASE_PRIVATE_KEY=dummy
+    depends_on:
+      postgres_test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - test-network
+
   karate:
     build:
       context: .
       dockerfile: Dockerfile.test
     environment:
       baseUrl: http://graphql-engine-test:8080/v1/graphql
+      webhookUrl: http://webhook:3001
       HASURA_GRAPHQL_ADMIN_SECRET: myadminsecretkey
+    command: >
+      java -cp /app/tests/karate.jar:/app/tests/postgresql-jdbc.jar:/app/tests/karate/src/test/resources
+      com.intuit.karate.Main
+      --configdir /app/tests/karate/src/test/resources
+      --tags ~@ignore
+      tests/karate/features
     volumes:
       - ./tests/results:/app/target/karate-reports
     depends_on:
+      postgres_test:
+        condition: service_healthy
+      webhook:
+        condition: service_healthy
+      migrate-test:
+        condition: service_completed_successfully
+    networks:
+      - test-network
+
+  migrate-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      HASURA_GRAPHQL_ENDPOINT: http://graphql-engine-test:8080
+      HASURA_GRAPHQL_ADMIN_SECRET: myadminsecretkey
+    working_dir: /app
+    command: >
+      sh -c "
+        until curl -s http://graphql-engine-test:8080/healthz; do echo 'Waiting for Hasura...'; sleep 2; done;
+        curl -s -X POST http://graphql-engine-test:8080/v1/metadata -H 'X-Hasura-Admin-Secret: myadminsecretkey' -H 'Content-Type: application/json' -d '{\"type\": \"pg_add_source\", \"args\": {\"name\": \"safetrust\", \"configuration\": {\"connection_info\": { \"database_url\": \"postgres://postgres:postgrespassword@postgres_test:5432/postgres\", \"isolation_level\": \"read-committed\" } } } }';
+        hasura migrate apply --database-name safetrust --endpoint http://graphql-engine-test:8080 --admin-secret myadminsecretkey;
+      "
+    depends_on:
       graphql-engine-test:
-        condition: service_started
+        condition: service_healthy
     networks:
       - test-network
 
