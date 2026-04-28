@@ -181,12 +181,14 @@ router.post('/', async (req, res) => {
     petFriendly = false,
     description = '',
   } = req.body || {};
+  const normalizedName = typeof name === 'string' ? name.trim() : '';
+  const normalizedLocation = typeof location === 'string' ? location.trim() : '';
 
   if (!ownerId) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  if (!name || !location || pricePerMonth === undefined || pricePerMonth === null) {
+  if (!normalizedName || !normalizedLocation || pricePerMonth === undefined || pricePerMonth === null) {
     return res.status(400).json({
       error: 'Missing required fields: name, location, pricePerMonth',
     });
@@ -232,7 +234,7 @@ router.post('/', async (req, res) => {
   `;
 
   const payloadAddress = {
-    location,
+    location: normalizedLocation,
     bathrooms: parsedBathrooms,
     promotionPercent,
   };
@@ -240,7 +242,7 @@ router.post('/', async (req, res) => {
   try {
     const result = await db.query(insertSql, [
       ownerId,
-      String(name).trim(),
+      normalizedName,
       String(description ?? ''),
       parsedPrice,
       parsedPrice,
