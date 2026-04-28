@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authMiddleware } = require('../middleware/auth.middleware');
+const apartmentRoutes = require('./apartments');
 
 // Dummy handlers for demonstration if real routes don't exist yet
 const placeholder = (name) => (req, res) => res.json({ message: `${name} route`, user: req.user });
@@ -9,7 +10,6 @@ const placeholder = (name) => (req, res) => res.json({ message: `${name} route`,
 // const apartmentRoutes = require('./apartment.routes');
 // const bidRoutes = require('./bid.routes');
 // ...
-const apartmentRoutes = placeholder('Apartments');
 const bidRoutes = placeholder('Bid Requests');
 const escrowRoutes = placeholder('Escrow');
 const userRoutes = placeholder('Users');
