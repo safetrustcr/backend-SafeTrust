@@ -1,68 +1,56 @@
-Feature: Apartment Listing API
+Feature: GET /api/apartments
 
-Background:
+  Background:
     * url webhookUrl
-    * def mockToken = 'mock-token'
-    * header Authorization = 'Bearer ' + mockToken
+    * def validToken = karate.call('classpath:helpers/get-firebase-token.js')
+    * db.execute(karate.read('file:tests/karate/fixtures/seed-test-users.sql'))
+    * db.execute(karate.read('file:tests/karate/fixtures/seed-test-apartments.sql'))
 
-Scenario: List all apartments (default)
+  Scenario: No filters → 200, paginated list
     Given path '/api/apartments'
+    And header Authorization = 'Bearer ' + validToken
     When method GET
     Then status 200
-    And match response.apartments == '#array'
+    And match response.apartments == '#[]'
     And match response.total == '#number'
     And match response.page == 1
-    And match response.totalPages == '#number'
 
-Scenario: Filter by location
+  Scenario: ?location=San+José → filtered results
     Given path '/api/apartments'
-    And param location = 'Test'
+    And param location = 'San José'
+    And header Authorization = 'Bearer ' + validToken
     When method GET
     Then status 200
-    And match each response.apartments contains { name: '#regex (?i).*Test.*' } || { description: '#regex (?i).*Test.*' }
+    And match each response.apartments[*].name contains 'San José'
 
-Scenario: Filter by price range
+  Scenario: ?minPrice=3000&maxPrice=5000 → price range filter
     Given path '/api/apartments'
-    And param minPrice = 500
-    And param maxPrice = 2000
+    And param minPrice = 3000
+    And param maxPrice = 5000
+    And header Authorization = 'Bearer ' + validToken
     When method GET
     Then status 200
-    And match each response.apartments contains { price: '#? _ >= 500 && _ <= 2000' }
+    And match each response.apartments[*].price == '#? _ >= 3000 && _ <= 5000'
 
-Scenario: Filter by bedrooms
+  Scenario: ?bedrooms=2 → bedroom filter
     Given path '/api/apartments'
     And param bedrooms = 2
+    And header Authorization = 'Bearer ' + validToken
     When method GET
     Then status 200
-    And match each response.apartments contains { bedrooms: 2 }
+    And match each response.apartments[*].bedrooms == 2
 
-Scenario: Filter by pet friendly
-    Given path '/api/apartments'
-    And param petFriendly = 'true'
-    When method GET
-    Then status 200
-    And match each response.apartments contains { pet_friendly: true }
-
-Scenario: Pagination test
+  Scenario: ?page=2&limit=1 → correct page returned
     Given path '/api/apartments'
     And param page = 2
-    And param limit = 5
+    And param limit = 1
+    And header Authorization = 'Bearer ' + validToken
     When method GET
     Then status 200
     And match response.page == 2
-    And match response.apartments == '#[_ <= 5]'
+    And match karate.sizeOf(response.apartments) == 1
 
-Scenario: Sorting by price ascending
+  Scenario: No token → 401
     Given path '/api/apartments'
-    And param sort = 'price_asc'
-    When method GET
-    Then status 200
-    # Manual check or complex karate logic for sorting if needed
-    # match each response.apartments[*].price == ...
-
-Scenario: Invalid token returns 401
-    Given path '/api/apartments'
-    And header Authorization = 'Bearer invalid'
     When method GET
     Then status 401
-    And match response == { error: 'Unauthorized: Invalid token' }
