@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authMiddleware } = require('../middleware/auth.middleware');
+const apartmentRoutes = require('./apartments');
 
 // Dummy handlers for demonstration if real routes don't exist yet
 const placeholder = (name) => (req, res) => res.json({ message: `${name} route`, user: req.user });
@@ -8,8 +9,7 @@ const placeholder = (name) => (req, res) => res.json({ message: `${name} route`,
 // In a real app, these would be imported from separate files:
 // const apartmentRoutes = require('./apartment.routes');
 // ...
-const apartmentRoutes = placeholder('Apartments');
-const bidRoutes = require('./bid-requests/create.route');
+const bidRoutes = placeholder('Bid Requests');
 const escrowRoutes = placeholder('Escrow');
 const userRoutes = placeholder('Users');
 const healthRoute = (req, res) => res.status(200).send('OK');
