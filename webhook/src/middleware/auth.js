@@ -38,13 +38,18 @@ const authenticateFirebase = async (req, res, next) => {
 
   try {
     const decodedToken = await getAuth().verifyIdToken(idToken);
+    if (!decodedToken.email) {
+      console.error('Firebase token missing email claim for uid:', decodedToken.uid);
+      return res.status(403).json({ error: 'Forbidden: Email address is required for this service' });
+    }
+
     req.user = {
       uid: decodedToken.uid,
       email: decodedToken.email,
       role: decodedToken.role,
       admin: decodedToken.admin === true,
     };
-    next();
+    return next();
   } catch (error) {
     console.error('Error verifying Firebase ID token:', error.message);
     return res.status(401).json({ error: 'Unauthorized: Invalid token' });
