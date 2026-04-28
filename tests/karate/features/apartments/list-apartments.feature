@@ -19,6 +19,8 @@ Scenario: Filter by location
     And param location = 'Test'
     When method GET
     Then status 200
+    * def matchesLocation = function(a){ var re = /test/i; return re.test(a.name || '') || re.test(a.description || '') }
+    And match each response.apartments == '#?matchesLocation(_)'
     And match each response.apartments contains { name: '#regex (?i).*Test.*' } || { description: '#regex (?i).*Test.*' }
 
 Scenario: Filter by price range

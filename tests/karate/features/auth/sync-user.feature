@@ -12,6 +12,8 @@ Scenario: Sync a new user (first login)
     When method POST
     Then status 200
     And match response.user.email == 'new-user@example.com'
+    And match response.user.last_seen != null
+    * def firstLastSeen = response.user.last_seen
     And match response.user.last_seen == '#string'
     * def firstLastSeen = response.user.last_seen
     
