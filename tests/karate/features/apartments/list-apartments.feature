@@ -12,6 +12,7 @@ Scenario: List all apartments (default)
     And match response.apartments == '#array'
     And match response.total == '#number'
     And match response.page == 1
+    And match response.totalPages == '#number'
 
 Scenario: Filter by location
     Given path '/api/apartments'
@@ -20,6 +21,7 @@ Scenario: Filter by location
     Then status 200
     * def matchesLocation = function(a){ var re = /test/i; return re.test(a.name || '') || re.test(a.description || '') }
     And match each response.apartments == '#?matchesLocation(_)'
+    And match each response.apartments contains { name: '#regex (?i).*Test.*' } || { description: '#regex (?i).*Test.*' }
 
 Scenario: Filter by price range
     Given path '/api/apartments'

@@ -7,6 +7,10 @@ const db = require('../services/db');
  *
  * @param {import('express').Request} req
  * @param {import('express').Response} res
+ * @route GET /api/apartments
+ * @desc Get list of apartments with advanced filtering, sorting, and pagination.
+ * Supports filters for location, price range, bedrooms, pet policy, and category.
+ * @access Protected
  */
 router.get('/', async (req, res) => {
   try {
@@ -52,6 +56,12 @@ router.get('/', async (req, res) => {
         queryParams.push(min);
         paramIndex++;
       }
+      if (isNaN(min)) {
+        return res.status(400).json({ error: 'Invalid minPrice value. Expected a number.' });
+      }
+      whereClause.push(`a.price >= $${paramIndex}`);
+      queryParams.push(min);
+      paramIndex++;
     }
 
     if (maxPrice) {
@@ -61,6 +71,12 @@ router.get('/', async (req, res) => {
         queryParams.push(max);
         paramIndex++;
       }
+      if (isNaN(max)) {
+        return res.status(400).json({ error: 'Invalid maxPrice value. Expected a number.' });
+      }
+      whereClause.push(`a.price <= $${paramIndex}`);
+      queryParams.push(max);
+      paramIndex++;
     }
 
     if (bedrooms) {
@@ -70,6 +86,12 @@ router.get('/', async (req, res) => {
         queryParams.push(beds);
         paramIndex++;
       }
+      if (isNaN(beds)) {
+        return res.status(400).json({ error: 'Invalid bedrooms value. Expected an integer.' });
+      }
+      whereClause.push(`a.bedrooms = $${paramIndex}`);
+      queryParams.push(beds);
+      paramIndex++;
     }
 
     if (petFriendly !== undefined) {

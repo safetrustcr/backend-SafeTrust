@@ -15,11 +15,13 @@ function requireRole(allowedRoles) {
     }
 
     const userRole = req.user.role || (req.user.admin ? 'admin' : 'guest');
+    // Extract role from custom claims (assuming 'role' or 'admin' claim)
+    const userRole = req.user.role || (req.user.admin ? 'admin' : null);
 
-    if (!allowedRoles.includes(userRole)) {
+    if (!userRole || !allowedRoles.includes(userRole)) {
       return res.status(403).json({
         error: 'Forbidden',
-        message: 'Insufficient permissions',
+        message: 'Insufficient permissions or role not assigned',
       });
     }
 

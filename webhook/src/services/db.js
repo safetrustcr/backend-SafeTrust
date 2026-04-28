@@ -16,5 +16,18 @@ pool.on('error', (err) => {
 
 module.exports = {
   query: (text, params) => pool.query(text, params),
+  /**
+   * Execute a SQL query against the database pool.
+   * 
+   * @param {string} text - SQL query text
+   * @param {any[]} params - Query parameters
+   * @returns {Promise<import('pg').QueryResult>}
+   */
+  query: (text, params) => pool.query(text, params),
+  
+  /**
+   * The underlying pg Pool instance.
+   * @type {import('pg').Pool}
+   */
   pool,
 };
