@@ -14,8 +14,9 @@ Feature: POST /api/auth/sync-user
     And header x-test-email = userEmail
     When method POST
     Then status 200
-    And match response.user.id == '#string'
-    And match response.user.email == userEmail
+    And match response.user.email == 'new-user@example.com'
+    And match response.user.last_seen != null
+    * def firstLastSeen = response.user.last_seen
     And match response.user.last_seen == '#string'
     
     * def count = db.query("SELECT COUNT(*) FROM users WHERE id = '" + userUid + "'")

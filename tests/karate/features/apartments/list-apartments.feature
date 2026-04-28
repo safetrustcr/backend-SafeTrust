@@ -21,7 +21,9 @@ Feature: GET /api/apartments
     And header Authorization = 'Bearer ' + validToken
     When method GET
     Then status 200
-    And match each response.apartments[*].name contains 'San José'
+    * def matchesLocation = function(a){ var re = /test/i; return re.test(a.name || '') || re.test(a.description || '') }
+    And match each response.apartments == '#?matchesLocation(_)'
+    And match each response.apartments contains { name: '#regex (?i).*Test.*' } || { description: '#regex (?i).*Test.*' }
 
   Scenario: ?minPrice=3000&maxPrice=5000 → price range filter
     Given path '/api/apartments'

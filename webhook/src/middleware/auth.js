@@ -1,3 +1,11 @@
+const { getAuth } = require('firebase-admin/auth');
+
+/**
+ * Express middleware: verifies Firebase ID token (or test mock-token bypass).
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
 const admin = require('../config/firebase');
 
 /**
@@ -23,6 +31,7 @@ const authenticateFirebase = async (req, res, next) => {
     return res.status(401).json({ error: 'Unauthorized: No token provided' });
   }
 
+  // Bypass for integration tests (requires NODE_ENV=test)
   // Bypass for testing
   if (idToken === 'mock-token') {
     if (process.env.NODE_ENV !== 'test') {
@@ -31,12 +40,26 @@ const authenticateFirebase = async (req, res, next) => {
     }
     req.user = {
       uid: req.headers['x-test-uid'] || 'test-user-id',
+      email: req.headers['x-test-email'] || 'test@example.com',
+      role: undefined,
+      admin: false,
       email: req.headers['x-test-email'] || 'test@example.com'
     };
     return next();
   }
 
   try {
+    const decodedToken = await getAuth().verifyIdToken(idToken);
+    if (!decodedToken.email) {
+      console.error('Firebase token missing email claim for uid:', decodedToken.uid);
+      return res.status(403).json({ error: 'Forbidden: Email address is required for this service' });
+    }
+
+    req.user = {
+      uid: decodedToken.uid,
+      email: decodedToken.email,
+      role: decodedToken.role,
+      admin: decodedToken.admin === true,
     const decodedToken = await admin.auth().verifyIdToken(idToken);
     
     if (!decodedToken.email) {
@@ -48,7 +71,7 @@ const authenticateFirebase = async (req, res, next) => {
       uid: decodedToken.uid,
       email: decodedToken.email
     };
-    next();
+    return next();
   } catch (error) {
     console.error('Error verifying Firebase ID token:', error.message);
     return res.status(401).json({ error: 'Unauthorized: Invalid token' });

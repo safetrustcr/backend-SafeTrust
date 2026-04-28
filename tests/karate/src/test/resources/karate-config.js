@@ -8,6 +8,7 @@ function fn() {
   // Basic configuration
   var config = {
     baseUrl: "http://graphql-engine-test:8080/v1/graphql",
+    webhookUrl: "http://webhook:3001",
     webhookUrl: karate.properties['webhookUrl'] || "http://webhook:3001",
     adminSecret: "myadminsecretkey",
   };
@@ -56,31 +57,26 @@ function fn() {
   };
 
   // Token helper function
-  config.tokenHelper = function(claims) {
+  // Minimal HS256 JWT signer for REST endpoints in this repo.
+  // Usage: config.restToken({ sub: 'user-id' })
+  config.restToken = function(payload) {
     var Base64 = Java.type("java.util.Base64");
-    var defaultClaims = {
-      "https://hasura.io/jwt/claims": {
-        "x-hasura-allowed-roles": ["user"],
-        "x-hasura-default-role": "user",
-        "x-hasura-user-id": claims.uid || "00000000-0000-0000-0000-000000000000",
-      },
-    };
-
-    if (claims && claims.role === "admin") {
-      defaultClaims["https://hasura.io/jwt/claims"] = {
-        "x-hasura-allowed-roles": ["user", "admin"],
-        "x-hasura-default-role": "admin",
-        "x-hasura-user-id": "admin-user",
-      };
-    }
+    var Mac = Java.type("javax.crypto.Mac");
+    var SecretKeySpec = Java.type("javax.crypto.spec.SecretKeySpec");
 
     var header = { alg: "HS256", typ: "JWT" };
+    var secret = java.lang.System.getenv("JWT_SECRET") || "testsecret";
 
-    // Properly encode each part
-    var headerBase64 = Base64.getUrlEncoder().withoutPadding().encodeToString(JSON.stringify(header).getBytes("UTF-8"));
-    var payloadBase64 = Base64.getUrlEncoder().withoutPadding().encodeToString(JSON.stringify(defaultClaims).getBytes("UTF-8"));
+    var enc = Base64.getUrlEncoder().withoutPadding();
+    var headerB64 = enc.encodeToString(JSON.stringify(header).getBytes("UTF-8"));
+    var payloadB64 = enc.encodeToString(JSON.stringify(payload || {}).getBytes("UTF-8"));
+    var signingInput = headerB64 + "." + payloadB64;
 
-    return "Bearer " + headerBase64 + "." + payloadBase64 + ".your-secret-key";
+    var mac = Mac.getInstance("HmacSHA256");
+    mac.init(new SecretKeySpec(secret.getBytes("UTF-8"), "HmacSHA256"));
+    var sig = enc.encodeToString(mac.doFinal(signingInput.getBytes("UTF-8")));
+
+    return "Bearer " + signingInput + "." + sig;
   };
 
   // Set default headers

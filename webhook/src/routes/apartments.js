@@ -3,6 +3,10 @@ const router = express.Router();
 const db = require('../services/db');
 
 /**
+ * GET / — paginated apartment listing with optional filters (location, price, bedrooms, etc.).
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
  * @route GET /api/apartments
  * @desc Get list of apartments with advanced filtering, sorting, and pagination.
  * Supports filters for location, price range, bedrooms, pet policy, and category.
@@ -47,6 +51,11 @@ router.get('/', async (req, res) => {
 
     if (minPrice) {
       const min = parseFloat(minPrice);
+      if (!isNaN(min)) {
+        whereClause.push(`a.price >= $${paramIndex}`);
+        queryParams.push(min);
+        paramIndex++;
+      }
       if (isNaN(min)) {
         return res.status(400).json({ error: 'Invalid minPrice value. Expected a number.' });
       }
@@ -57,6 +66,11 @@ router.get('/', async (req, res) => {
 
     if (maxPrice) {
       const max = parseFloat(maxPrice);
+      if (!isNaN(max)) {
+        whereClause.push(`a.price <= $${paramIndex}`);
+        queryParams.push(max);
+        paramIndex++;
+      }
       if (isNaN(max)) {
         return res.status(400).json({ error: 'Invalid maxPrice value. Expected a number.' });
       }
@@ -67,6 +81,11 @@ router.get('/', async (req, res) => {
 
     if (bedrooms) {
       const beds = parseInt(bedrooms, 10);
+      if (!isNaN(beds)) {
+        whereClause.push(`a.bedrooms = $${paramIndex}`);
+        queryParams.push(beds);
+        paramIndex++;
+      }
       if (isNaN(beds)) {
         return res.status(400).json({ error: 'Invalid bedrooms value. Expected an integer.' });
       }
@@ -165,83 +184,96 @@ router.get('/', async (req, res) => {
 });
 
 /**
- * @route GET /api/apartments/:id
- * @desc Get a single apartment by ID with owner details.
- * @access Protected
- */
-router.get('/:id', async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const query = `
-      SELECT 
-        a.*,
-        u.email as owner_email,
-        u.last_seen as owner_last_seen
-      FROM public.apartments a
-      LEFT JOIN public.users u ON a.owner_id = u.id
-      WHERE a.id = $1 AND a.deleted_at IS NULL
-    `;
-    const result = await db.query(query, [id]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Apartment not found' });
-    }
-
-    res.status(200).json({ apartment: result.rows[0] });
-  } catch (error) {
-    console.error('[apartments] ❌ error:', error.message);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
-
-/**
  * @route POST /api/apartments
- * @desc Create a new apartment.
+ * @desc Create apartment listing for authenticated owner
  * @access Protected
  */
 router.post('/', async (req, res) => {
-  const { 
-    name, description, price, warranty_deposit, 
-    bedrooms, pet_friendly, category,
-    address, coordinates 
-  } = req.body;
-  const owner_id = req.user.uid;
+  const ownerId = req.user?.uid;
+  const {
+    name,
+    location,
+    pricePerMonth,
+    promotionPercent = null,
+    rooms = 1,
+    bathrooms = 1,
+    petFriendly = false,
+    description = '',
+  } = req.body || {};
+  const normalizedName = typeof name === 'string' ? name.trim() : '';
+  const normalizedLocation = typeof location === 'string' ? location.trim() : '';
 
-  // Validation
-  if (!name) return res.status(400).json({ error: 'Missing name' });
-  if (price === undefined) return res.status(400).json({ error: 'Missing pricePerMonth' });
+  if (!ownerId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (!normalizedName || !normalizedLocation || pricePerMonth === undefined || pricePerMonth === null) {
+    return res.status(400).json({
+      error: 'Missing required fields: name, location, pricePerMonth',
+    });
+  }
+
+  const parsedPrice = Number(pricePerMonth);
+  if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+    return res.status(400).json({ error: 'Invalid pricePerMonth' });
+  }
+
+  const parsedRooms = Number(rooms);
+  if (!Number.isInteger(parsedRooms) || parsedRooms < 1) {
+    return res.status(400).json({ error: 'Invalid rooms value' });
+  }
+
+  if (promotionPercent !== null) {
+    const promo = Number(promotionPercent);
+    if (!Number.isFinite(promo) || promo < 0 || promo > 100) {
+      return res.status(400).json({ error: 'Invalid promotionPercent' });
+    }
+  }
+
+  const parsedBathrooms = Number(bathrooms);
+  if (!Number.isFinite(parsedBathrooms) || parsedBathrooms < 1) {
+    return res.status(400).json({ error: 'Invalid bathrooms value' });
+  }
+
+  const insertSql = `
+    INSERT INTO public.apartments (
+      owner_id,
+      name,
+      description,
+      price,
+      warranty_deposit,
+      coordinates,
+      address,
+      available_from,
+      bedrooms,
+      pet_friendly
+    )
+    VALUES ($1, $2, $3, $4, $5, point(0, 0), $6::jsonb, NOW(), $7, $8)
+    RETURNING *
+  `;
+
+  const payloadAddress = {
+    location: normalizedLocation,
+    bathrooms: parsedBathrooms,
+    promotionPercent,
+  };
 
   try {
-    const query = `
-      INSERT INTO public.apartments (
-        name, description, price, warranty_deposit, 
-        bedrooms, pet_friendly, category,
-        address, coordinates, owner_id,
-        available_from
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
-      RETURNING *
-    `;
-    
-    // Convert coordinates to Point string if object
-    let pointStr = coordinates;
-    if (typeof coordinates === 'object' && coordinates !== null) {
-      pointStr = `(${coordinates.x}, ${coordinates.y})`;
-    } else if (!coordinates) {
-      pointStr = '(0,0)';
-    }
+    const result = await db.query(insertSql, [
+      ownerId,
+      normalizedName,
+      String(description ?? ''),
+      parsedPrice,
+      parsedPrice,
+      JSON.stringify(payloadAddress),
+      parsedRooms,
+      Boolean(petFriendly),
+    ]);
 
-    const values = [
-      name, description, price, warranty_deposit || price * 2,
-      bedrooms || 1, pet_friendly || false, category || 'Apartment',
-      JSON.stringify(address || {}), pointStr, owner_id
-    ];
-
-    const result = await db.query(query, values);
-    res.status(201).json({ apartment: result.rows[0] });
+    return res.status(201).json({ apartment: result.rows[0] });
   } catch (error) {
-    console.error('[apartments] ❌ error:', error.message);
-    res.status(500).json({ error: 'Database error' });
+    console.error('[apartments/create] ❌', error.message);
+    return res.status(500).json({ error: 'Failed to create apartment' });
   }
 });
 

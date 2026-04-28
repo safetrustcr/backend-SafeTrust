@@ -106,6 +106,32 @@ services:
     networks:
       - test-network
 
+  api:
+    image: node:22
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "npm install && node src/server.js"
+    environment:
+      - WEBHOOK_PORT=3001
+      - POSTGRES_HOST=postgres_test
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgrespassword
+      - JWT_SECRET=testsecret
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/health', r => process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    depends_on:
+      postgres_test:
+        condition: service_healthy
+    networks:
+      - test-network
+
   karate:
     build:
       context: .
@@ -114,6 +140,7 @@ services:
       baseUrl: http://graphql-engine-test:8080/v1/graphql
       webhookUrl: http://webhook:3001
       HASURA_GRAPHQL_ADMIN_SECRET: myadminsecretkey
+      JWT_SECRET: testsecret
     command: >
       java -cp /app/tests/karate.jar:/app/tests/postgresql-jdbc.jar:/app/tests/karate/src/test/resources
       com.intuit.karate.Main
@@ -127,8 +154,12 @@ services:
         condition: service_healthy
       webhook:
         condition: service_healthy
+      api:
+        condition: service_healthy
       migrate-test:
         condition: service_completed_successfully
+      graphql-engine-test:
+        condition: service_started
     networks:
       - test-network
 
@@ -148,7 +179,7 @@ services:
       "
     depends_on:
       graphql-engine-test:
-        condition: service_healthy
+        condition: service_started
     networks:
       - test-network
 
