@@ -7,9 +7,9 @@ function fn() {
 
   // Basic configuration
   var config = {
-    baseUrl: "http://graphql-engine-test:8080/v1/graphql",
-    webhookUrl: "http://localhost:3001",
-    adminSecret: "myadminsecretkey",
+    baseUrl: karate.properties['baseUrl'] || 'http://graphql-engine-test:8080/v1/graphql',
+    webhookUrl: karate.properties['webhookUrl'] || 'http://localhost:3001',
+    adminSecret: 'myadminsecretkey',
   };
 
   // Token helper function

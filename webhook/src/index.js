@@ -5,6 +5,7 @@ require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
 const apartmentRoutes = require('./routes/apartments');
+const reconciliationRoutes = require('./routes/reconciliation/sync-escrows.route');
 
 const { authenticateFirebase } = require('./middleware/auth');
 
@@ -21,6 +22,11 @@ app.use(express.json());
 app.use('/api', authenticateFirebase);
 app.use('/api/auth', authRoutes);
 app.use('/api/apartments', apartmentRoutes);
+
+// ── Reconciliation (server-to-server, no Firebase auth) ───────────────────────
+// Called by Hasura cron trigger every 15 minutes.
+// Optionally protected by HASURA_EVENT_SECRET env var.
+app.use('/reconciliation', reconciliationRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
