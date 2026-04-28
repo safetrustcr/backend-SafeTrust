@@ -8,6 +8,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 # Ensure app directory is owned by node user
+RUN apk add --no-cache curl
 RUN chown node:node /app
 
 # Copy dependency files first for better caching
