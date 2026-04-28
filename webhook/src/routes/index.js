@@ -8,7 +8,6 @@ const placeholder = (name) => (req, res) => res.json({ message: `${name} route`,
 
 // In a real app, these would be imported from separate files:
 // const apartmentRoutes = require('./apartment.routes');
-// const bidRoutes = require('./bid.routes');
 // ...
 const bidRoutes = placeholder('Bid Requests');
 const escrowRoutes = placeholder('Escrow');
