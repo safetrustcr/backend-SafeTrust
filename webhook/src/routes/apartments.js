@@ -164,4 +164,85 @@ router.get('/', async (req, res) => {
   }
 });
 
+/**
+ * @route GET /api/apartments/:id
+ * @desc Get a single apartment by ID with owner details.
+ * @access Protected
+ */
+router.get('/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const query = `
+      SELECT 
+        a.*,
+        u.email as owner_email,
+        u.last_seen as owner_last_seen
+      FROM public.apartments a
+      LEFT JOIN public.users u ON a.owner_id = u.id
+      WHERE a.id = $1 AND a.deleted_at IS NULL
+    `;
+    const result = await db.query(query, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Apartment not found' });
+    }
+
+    res.status(200).json({ apartment: result.rows[0] });
+  } catch (error) {
+    console.error('[apartments] ❌ error:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+/**
+ * @route POST /api/apartments
+ * @desc Create a new apartment.
+ * @access Protected
+ */
+router.post('/', async (req, res) => {
+  const { 
+    name, description, price, warranty_deposit, 
+    bedrooms, pet_friendly, category,
+    address, coordinates 
+  } = req.body;
+  const owner_id = req.user.uid;
+
+  // Validation
+  if (!name) return res.status(400).json({ error: 'Missing name' });
+  if (price === undefined) return res.status(400).json({ error: 'Missing pricePerMonth' });
+
+  try {
+    const query = `
+      INSERT INTO public.apartments (
+        name, description, price, warranty_deposit, 
+        bedrooms, pet_friendly, category,
+        address, coordinates, owner_id,
+        available_from
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+      RETURNING *
+    `;
+    
+    // Convert coordinates to Point string if object
+    let pointStr = coordinates;
+    if (typeof coordinates === 'object' && coordinates !== null) {
+      pointStr = `(${coordinates.x}, ${coordinates.y})`;
+    } else if (!coordinates) {
+      pointStr = '(0,0)';
+    }
+
+    const values = [
+      name, description, price, warranty_deposit || price * 2,
+      bedrooms || 1, pet_friendly || false, category || 'Apartment',
+      JSON.stringify(address || {}), pointStr, owner_id
+    ];
+
+    const result = await db.query(query, values);
+    res.status(201).json({ apartment: result.rows[0] });
+  } catch (error) {
+    console.error('[apartments] ❌ error:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 module.exports = router;

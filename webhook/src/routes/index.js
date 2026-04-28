@@ -9,16 +9,20 @@ const placeholder = (name) => (req, res) => res.json({ message: `${name} route`,
 // const apartmentRoutes = require('./apartment.routes');
 // const bidRoutes = require('./bid.routes');
 // ...
-const apartmentRoutes = placeholder('Apartments');
-const bidRoutes = placeholder('Bid Requests');
+const apartmentRoutes = require('./apartments');
+const authRoutes = require('./auth');
+const bidRoutes = require('./bid-requests');
+const reconciliationRoutes = require('./reconciliation');
 const escrowRoutes = placeholder('Escrow');
 const userRoutes = placeholder('Users');
 const healthRoute = (req, res) => res.status(200).send('OK');
 const webhookRoutes = (req, res) => res.status(200).json({ status: 'received' });
 
 // --- Protected Routes ---
+router.use('/api/auth', authMiddleware, authRoutes); // sync-user is under /api/auth
 router.use('/api/apartments', authMiddleware, apartmentRoutes);
 router.use('/api/bid-requests', authMiddleware, bidRoutes);
+router.use('/api/reconciliation', authMiddleware, reconciliationRoutes);
 router.use('/api/escrow', authMiddleware, escrowRoutes);
 router.use('/api/users', authMiddleware, userRoutes);
 
