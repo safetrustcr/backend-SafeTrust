@@ -1,11 +1,14 @@
-const express = require('express');
-const router = express.Router();
-const { authMiddleware } = require('../middleware/auth.middleware');
-const apartmentRoutes = require('./apartments');
+const express = require('express')
+const router = express.Router()
 
-// Dummy handlers for demonstration if real routes don't exist yet
-const placeholder = (name) => (req, res) => res.json({ message: `${name} route`, user: req.user });
+/**
+ * Root router: health, then Firebase-protected `/api/*` routes.
+ */
+const { authenticateFirebase } = require('../middleware/auth')
 
+const authRoutes = require('./auth')
+const apartmentRoutes = require('./apartments')
+const bidRequestRoutes = require('./bid-requests')
 // In a real app, these would be imported from separate files:
 // const apartmentRoutes = require('./apartment.routes');
 // ...
@@ -15,14 +18,11 @@ const userRoutes = placeholder('Users');
 const healthRoute = (req, res) => res.status(200).send('OK');
 const webhookRoutes = (req, res) => res.status(200).json({ status: 'received' });
 
-// --- Protected Routes ---
-router.use('/api/apartments', authMiddleware, apartmentRoutes);
-router.use('/api/bid-requests', authMiddleware, bidRoutes);
-router.use('/api/escrow', authMiddleware, escrowRoutes);
-router.use('/api/users', authMiddleware, userRoutes);
+router.get('/health', (req, res) => res.status(200).send('OK'))
 
-// --- Public Routes ---
-router.use('/health', healthRoute);
-router.use('/webhooks', webhookRoutes);
+router.use('/api', authenticateFirebase)
+router.use('/api/auth', authRoutes)
+router.use('/api/apartments', apartmentRoutes)
+router.use('/api/bid-requests', bidRequestRoutes)
 
-module.exports = router;
+module.exports = router

@@ -3,6 +3,10 @@ const router = express.Router();
 const db = require('../services/db');
 
 /**
+ * GET / — paginated apartment listing with optional filters (location, price, bedrooms, etc.).
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
  * @route GET /api/apartments
  * @desc Get list of apartments with advanced filtering, sorting, and pagination.
  * Supports filters for location, price range, bedrooms, pet policy, and category.
@@ -47,6 +51,11 @@ router.get('/', async (req, res) => {
 
     if (minPrice) {
       const min = parseFloat(minPrice);
+      if (!isNaN(min)) {
+        whereClause.push(`a.price >= $${paramIndex}`);
+        queryParams.push(min);
+        paramIndex++;
+      }
       if (isNaN(min)) {
         return res.status(400).json({ error: 'Invalid minPrice value. Expected a number.' });
       }
@@ -57,6 +66,11 @@ router.get('/', async (req, res) => {
 
     if (maxPrice) {
       const max = parseFloat(maxPrice);
+      if (!isNaN(max)) {
+        whereClause.push(`a.price <= $${paramIndex}`);
+        queryParams.push(max);
+        paramIndex++;
+      }
       if (isNaN(max)) {
         return res.status(400).json({ error: 'Invalid maxPrice value. Expected a number.' });
       }
@@ -67,6 +81,11 @@ router.get('/', async (req, res) => {
 
     if (bedrooms) {
       const beds = parseInt(bedrooms, 10);
+      if (!isNaN(beds)) {
+        whereClause.push(`a.bedrooms = $${paramIndex}`);
+        queryParams.push(beds);
+        paramIndex++;
+      }
       if (isNaN(beds)) {
         return res.status(400).json({ error: 'Invalid bedrooms value. Expected an integer.' });
       }
