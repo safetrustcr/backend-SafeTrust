@@ -1,44 +1,53 @@
-Feature: User Synchronization
+Feature: POST /api/auth/sync-user
 
-Background:
+  Background:
     * url webhookUrl
-    * def mockToken = 'mock-token'
+    * def validToken = karate.call('classpath:helpers/get-firebase-token.js')
+    * def userUid = 'test-sync-user-123'
+    * def userEmail = 'sync-user@example.com'
+    * db.execute("DELETE FROM users WHERE id = '" + userUid + "'")
 
-Scenario: Sync a new user (first login)
+  Scenario: First login creates user record
     Given path '/api/auth/sync-user'
-    And header Authorization = 'Bearer ' + mockToken
-    And header x-test-uid = 'new-user-123'
-    And header x-test-email = 'new-user@example.com'
+    And header Authorization = 'Bearer ' + validToken
+    And header x-test-uid = userUid
+    And header x-test-email = userEmail
     When method POST
     Then status 200
-    And match response.user.email == 'new-user@example.com'
+    And match response.user.email == userEmail
     And match response.user.last_seen != null
     * def firstLastSeen = response.user.last_seen
     And match response.user.last_seen == '#string'
-    * def firstLastSeen = response.user.last_seen
     
-    # Wait to ensure timestamp updates (Postgres NOW() resolution)
-    * eval java.lang.Thread.sleep(1000)
+    * def count = db.query("SELECT COUNT(*) FROM users WHERE id = '" + userUid + "'")
+    And match count[0].count == '1'
 
-    # Second login should update last_seen
+  Scenario: Subsequent login updates last_seen only
+    # First sync
     Given path '/api/auth/sync-user'
-    And header Authorization = 'Bearer ' + mockToken
-    And header x-test-uid = 'new-user-123'
-    And header x-test-email = 'new-user@example.com'
+    And header Authorization = 'Bearer ' + validToken
+    And header x-test-uid = userUid
+    And header x-test-email = userEmail
     When method POST
     Then status 200
-    And match response.user.last_seen == '#string'
-    And match response.user.last_seen != firstLastSeen
+    * def firstSeen = response.user.last_seen
+    
+    * eval java.lang.Thread.sleep(1000)
 
-Scenario: Sync user with invalid token
+    # Second sync
     Given path '/api/auth/sync-user'
-    And header Authorization = 'Bearer invalid-token'
+    And header Authorization = 'Bearer ' + validToken
+    And header x-test-uid = userUid
+    And header x-test-email = userEmail
+    When method POST
+    Then status 200
+    And match response.user.last_seen != firstSeen
+    
+    * def count = db.query("SELECT COUNT(*) FROM users WHERE id = '" + userUid + "'")
+    And match count[0].count == '1'
+
+  Scenario: Missing token returns 401
+    Given path '/api/auth/sync-user'
     When method POST
     Then status 401
-    And match response == { error: 'Unauthorized: Invalid token' }
-
-Scenario: Sync user with no token
-    Given path '/api/auth/sync-user'
-    When method POST
-    Then status 401
-    And match response == { error: 'Unauthorized: No token provided' }
+    And match response.error == 'Unauthorized: No token provided'

@@ -12,7 +12,10 @@ const bidRequestRoutes = require('./bid-requests')
 // In a real app, these would be imported from separate files:
 // const apartmentRoutes = require('./apartment.routes');
 // ...
-const bidRoutes = placeholder('Bid Requests');
+const apartmentRoutes = require('./apartments');
+const authRoutes = require('./auth');
+const bidRoutes = require('./bid-requests');
+const reconciliationRoutes = require('./reconciliation');
 const escrowRoutes = placeholder('Escrow');
 const userRoutes = placeholder('Users');
 const healthRoute = (req, res) => res.status(200).send('OK');
