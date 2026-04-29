@@ -1,5 +1,5 @@
 -- Seed test apartments
-TRUNCATE public.apartments CASCADE;
+DELETE FROM public.apartments WHERE id IN ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003');
 
 INSERT INTO public.apartments (
     id, owner_id, name, description, price, warranty_deposit, 
