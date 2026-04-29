@@ -13,13 +13,12 @@ Feature: POST /api/apartments
     """
     {
       "name": "New Modern Flat",
-      "description": "City center",
-      "price": 2500.00,
-      "bedrooms": 2,
-      "pet_friendly": true,
-      "category": "Apartment",
-      "address": {"city": "San José"},
-      "coordinates": {"x": 9.9, "y": -84.1}
+      "location": "San José",
+      "pricePerMonth": 2500.00,
+      "rooms": 2,
+      "bathrooms": 1,
+      "petFriendly": true,
+      "description": "City center"
     }
     """
     When method POST
@@ -36,7 +35,7 @@ Feature: POST /api/apartments
     And request { "price": 1000 }
     When method POST
     Then status 400
-    And match response.error == 'Missing name'
+    And match response.error == 'Missing required fields: name, location, pricePerMonth'
 
   Scenario: Missing pricePerMonth → 400
     Given path '/api/apartments'
@@ -44,7 +43,7 @@ Feature: POST /api/apartments
     And request { "name": "No Price" }
     When method POST
     Then status 400
-    And match response.error == 'Missing pricePerMonth'
+    And match response.error == 'Missing required fields: name, location, pricePerMonth'
 
   Scenario: No token → 401
     Given path '/api/apartments'

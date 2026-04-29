@@ -14,7 +14,7 @@ Feature: POST /api/auth/sync-user
     And header x-test-email = userEmail
     When method POST
     Then status 200
-    And match response.user.email == 'new-user@example.com'
+    And match response.user.email == userEmail
     And match response.user.last_seen != null
     * def firstLastSeen = response.user.last_seen
     And match response.user.last_seen == '#string'
@@ -50,4 +50,4 @@ Feature: POST /api/auth/sync-user
     Given path '/api/auth/sync-user'
     When method POST
     Then status 401
-    And match response.error == 'Unauthorized'
+    And match response.error == 'Unauthorized: No token provided'

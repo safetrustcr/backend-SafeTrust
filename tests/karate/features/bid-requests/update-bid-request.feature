@@ -15,6 +15,9 @@ Feature: PATCH /api/bid-requests/:id
     When method PATCH
     Then status 200
     And match response.bid.current_status == 'APPROVED'
+    
+    * def bidState = db.query("SELECT current_status FROM bid_requests WHERE id = '11111111-1111-1111-1111-111111111111'")
+    And match bidState[0].current_status == 'APPROVED'
 
   Scenario: Owner cancels PENDING bid → 200, status = CANCELLED
     Given path '/api/bid-requests/11111111-1111-1111-1111-111111111111'
@@ -24,6 +27,9 @@ Feature: PATCH /api/bid-requests/:id
     When method PATCH
     Then status 200
     And match response.bid.current_status == 'CANCELLED'
+    
+    * def bidState = db.query("SELECT current_status FROM bid_requests WHERE id = '11111111-1111-1111-1111-111111111111'")
+    And match bidState[0].current_status == 'CANCELLED'
 
   Scenario: Non-owner tries to update → 403
     Given path '/api/bid-requests/11111111-1111-1111-1111-111111111111'

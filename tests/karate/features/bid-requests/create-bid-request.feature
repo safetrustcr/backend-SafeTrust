@@ -23,6 +23,9 @@ Feature: POST /api/bid-requests
     Then status 201
     And match response.bid.current_status == 'PENDING'
     And match response.bid.tenant_id == 'tenant-456'
+    
+    * def count = db.query("SELECT COUNT(*) FROM bid_requests WHERE apartment_id = '00000000-0000-0000-0000-000000000001' AND tenant_id = 'tenant-456'")
+    And match count[0].count == '1'
 
   Scenario: Duplicate pending bid → 409
     # First bid
