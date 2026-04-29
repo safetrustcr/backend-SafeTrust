@@ -1,6 +1,7 @@
 const express = require('express');
 
 const apartmentsGetOneRoute = require('./routes/apartments/get-one.route');
+const escrowsInitializeRoute = require('./routes/escrows/initialize.route');
 
 function createApp() {
   const app = express();
@@ -10,6 +11,7 @@ function createApp() {
   app.get('/health', (_req, res) => res.status(200).json({ ok: true }));
 
   app.use('/api/apartments', apartmentsGetOneRoute);
+  app.use('/api/escrows', escrowsInitializeRoute);
 
   // Basic JSON 404
   app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
