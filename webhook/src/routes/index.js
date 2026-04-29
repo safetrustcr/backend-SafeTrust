@@ -2,24 +2,21 @@ const express = require('express')
 const router = express.Router()
 
 /**
- * Root router: health, then Firebase-protected `/api/*` routes.
+ * Root router: health, webhooks, then Firebase-protected `/api/*` routes.
  */
 const { authenticateFirebase } = require('../middleware/auth')
 
 const authRoutes = require('./auth')
 const apartmentRoutes = require('./apartments')
 const bidRequestRoutes = require('./bid-requests')
-// In a real app, these would be imported from separate files:
-// const apartmentRoutes = require('./apartment.routes');
-// ...
-const bidRoutes = placeholder('Bid Requests');
-const escrowRoutes = placeholder('Escrow');
-const userRoutes = placeholder('Users');
-const healthRoute = (req, res) => res.status(200).send('OK');
-const webhookRoutes = (req, res) => res.status(200).json({ status: 'received' });
+const escrowRoutes = require('./escrow')
 
 router.get('/health', (req, res) => res.status(200).send('OK'))
 
+// Webhook routes — no auth required (called by external services)
+router.use('/webhooks', escrowRoutes)
+
+// API routes — Firebase auth required
 router.use('/api', authenticateFirebase)
 router.use('/api/auth', authRoutes)
 router.use('/api/apartments', apartmentRoutes)
