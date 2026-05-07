@@ -6,7 +6,7 @@ Background:
     * print 'URL set to:', baseUrl
 
 Scenario: User can access their own data
-    * def token = tokenHelper({ uid: 'test-user', role: 'user' })
+    * def token = restToken({ uid: 'test-user', role: 'user' })
     * header Authorization = token
     * header x-hasura-admin-secret = adminSecret
 

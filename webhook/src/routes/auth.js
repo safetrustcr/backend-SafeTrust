@@ -20,10 +20,8 @@ router.post('/sync-user', async (req, res) => {
     const query = `
       INSERT INTO public.users (id, firebase_uid, email, last_seen)
       VALUES ($1, $1, $2, NOW())
-      ON CONFLICT (firebase_uid)
-      DO UPDATE SET last_seen = NOW(), email = EXCLUDED.email
       ON CONFLICT (id)
-      DO UPDATE SET last_seen = NOW(), firebase_uid = EXCLUDED.firebase_uid
+      DO UPDATE SET last_seen = NOW(), email = EXCLUDED.email, firebase_uid = EXCLUDED.firebase_uid
       RETURNING id, firebase_uid, email, last_seen
     `;
     const values = [uid, email];
@@ -33,7 +31,6 @@ router.post('/sync-user', async (req, res) => {
 
     console.log(`[sync-user] ✅ user synced — uid: ${user.firebase_uid}`);
 
-    res.status(200).json({
     res.status(200).json({ 
       user: {
         id: user.id,

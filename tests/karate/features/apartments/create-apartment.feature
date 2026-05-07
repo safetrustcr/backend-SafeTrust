@@ -1,106 +1,52 @@
-@ignore
-Feature: Create Apartment
+Feature: POST /api/apartments
 
-# Create new apartment
+  Background:
+    * url webhookUrl
+    * def validToken = karate.call('classpath:helpers/get-firebase-token.js')
+    * db.execute(karate.read('file:tests/karate/fixtures/seed-test-users.sql'))
 
-Background:
-    * url baseUrl
-    * header x-hasura-admin-secret = adminSecret
+  Scenario: Valid body → 201, apartment in DB
+    Given path '/api/apartments'
+    And header Authorization = 'Bearer ' + validToken
+    And header x-test-uid = 'owner-123'
+    And request
+    """
+    {
+      "name": "New Modern Flat",
+      "location": "San José",
+      "pricePerMonth": 2500.00,
+      "rooms": 2,
+      "bathrooms": 1,
+      "petFriendly": true,
+      "description": "City center"
+    }
+    """
+    When method POST
+    Then status 201
+    And match response.apartment.name == 'New Modern Flat'
+    And match response.apartment.owner_id == 'owner-123'
     
-Scenario: Create owner and apartment
+    * def count = db.query("SELECT COUNT(*) FROM apartments WHERE name = 'New Modern Flat'")
+    And match count[0].count == '1'
 
-    Given path '/'
-    And request
-    """
-    {
-      "query": "mutation insert_new_user(  	
-        $id: String!, 
-  	    $email: String!, 
-  	    $first_name: String!,
-		    $last_name: String!,
-  	    $is_email_verified: Boolean,
-  	    $last_seen: timestamptz,
-  	    $last_verification: timestamptz,
-        $location: String!,
-  	    $password: String!,
-  	    $phone_number: String!,
-  	    $profile_image_r2: String!,
-  	    $profile_image_url: String!,
-  	    $summary: String!,
-  	    $verification_attempts: Int,
-  	    $verification_code: String!,
-  	    $verification_code_expires: timestamptz,
-  	    $country_code:String!) { 
-        insert_users_one(object: {
-          id: $id, 
-    email: $email, 
-    first_name: $first_name,
-  	last_name: $last_name,	
-    is_email_verified: $is_email_verified,
-  	last_seen:$last_seen,
-  	last_verification_request:$last_verification,
-  	location: $location,
-  	password: $password
-  	phone_number:$phone_number,
-  	profile_image_r2_key:$profile_image_r2,
-  	profile_image_url: $profile_image_url,
-  	summary:$summary,
-  	verification_attempts:$verification_attempts,
-  	verification_code:$verification_code,
-  	verification_code_expires_at:$verification_code_expires,
-  	country_code:$country_code}) {
-    id
-  }
-      }",
-      "variables": {
-  "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "email": "test@test.com",
-  "first_name": "Diego",
-  "last_name": "Smith",
-  "is_email_verified": false,
-  "last_seen": "2023-01-01T00:00:00Z",
-  "last_verification": "2023-01-01T00:00:00Z",
-  "location": "New York, USA",
-  "password": "securepassword123",
-  "phone_number": "87654321",
-  "profile_image_r2": "profile_images/r2/key123",
-  "profile_image_url": "https://example.com/profile.jpg",
-  "summary": "Software developer with 5 years of experience",
-  "verification_attempts": 0,
-  "verification_code": "123456",
-  "verification_code_expires": "2023-01-02T00:00:00Z",
-  "country_code": "+506"
-}
-    }
-    """
+  Scenario: Missing name → 400
+    Given path '/api/apartments'
+    And header Authorization = 'Bearer ' + validToken
+    And request { "price": 1000 }
     When method POST
-    Then status 200
+    Then status 400
+    And match response.error == 'Missing required fields: name, location, pricePerMonth'
 
-    Given path '/'
-    And request
-    """
-    {
-      "query": "mutation($owner_id: String!, $name: String!, $price: numeric!, $warranty_deposit: numeric!, $coordinates: point!, $location_area: geometry!, $address: jsonb!, $available_from: timestamptz!) { 
-        insert_apartments_one(object: { owner_id: $owner_id, name: $name, price: $price, warranty_deposit: $warranty_deposit, coordinates: $coordinates, location_area: $location_area, address: $address, available_from: $available_from }) { 
-          id 
-        } 
-      }",
-      "variables": {
-        "owner_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-        "name": "Cozy Apartment",
-        "price": 1200.00,
-        "warranty_deposit": 2400.00,
-        "coordinates": "40.7128,-74.0060",
-        "location_area": {
-          "type": "Polygon",
-          "coordinates": [[[40.7128, -74.0060], [40.7129, -74.0061], [40.7130, -74.0062], [40.7128, -74.0060]]]
-        },
-        "address": { "street": "Main St", "city": "New York", "zip": "10001" },
-        "available_from": "2025-02-02T00:00:00Z"
-      }
-    }
-    """
+  Scenario: Missing pricePerMonth → 400
+    Given path '/api/apartments'
+    And header Authorization = 'Bearer ' + validToken
+    And request { "name": "No Price" }
     When method POST
-    Then status 200
-    And match response.errors == '#notpresent'
-    And match response.data.insert_apartments_one.id == '#uuid'
+    Then status 400
+    And match response.error == 'Missing required fields: name, location, pricePerMonth'
+
+  Scenario: No token → 401
+    Given path '/api/apartments'
+    And request { "name": "Anon" }
+    When method POST
+    Then status 401

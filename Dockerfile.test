@@ -1,4 +1,4 @@
-FROM openjdk:17
+FROM eclipse-temurin:17-jdk-alpine
 
 WORKDIR /app
 
@@ -10,5 +10,9 @@ RUN mkdir -p /app/tests/karate/src/test/resources
 # Create directory for test results
 RUN mkdir -p /app/target/karate-reports
 
+# Download Postgres JDBC driver
+ADD https://jdbc.postgresql.org/download/postgresql-42.7.2.jar /app/tests/postgresql-jdbc.jar
+
 # Set default command
-CMD ["java", "-jar", "/app/tests/karate.jar", "--configdir", "/app/tests/karate/src/test/resources", "/app/tests/karate/features"] 
+CMD ["java", "-cp", "/app/tests/karate.jar:/app/tests/postgresql-jdbc.jar:/app/tests/karate/src/test/resources", "com.intuit.karate.Main", "--configdir", "/app/tests/karate/src/test/resources", "/app/tests/karate/features"]
+ 

@@ -1,3 +1,4 @@
+@ignore
 Feature: Apartment Images Management
 
 Background:

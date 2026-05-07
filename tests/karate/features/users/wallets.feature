@@ -6,7 +6,7 @@ Background:
     * print 'URL set to:', baseUrl
 
 Scenario: Get schema information
-    Given header Authorization = tokenHelper({ role: 'admin' })
+    Given header Authorization = restToken({ role: 'admin' })
     And header x-hasura-admin-secret = adminSecret
     And request
     """

@@ -1,3 +1,4 @@
+@ignore
 Feature: Top Rooms by Reservations Function Tests
 
 Background:

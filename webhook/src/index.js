@@ -3,6 +3,7 @@ const cors = require('cors');
 const morgan = require('morgan');
 require('dotenv').config();
 
+const routes = require('./routes');
 const authRoutes = require('./routes/auth');
 const apartmentRoutes = require('./routes/apartments');
 const reconciliationRoutes = require('./routes/reconciliation/sync-escrows.route');
@@ -18,10 +19,7 @@ app.use(morgan('dev'));
 app.use(express.json());
 
 // Routes
-// Protected API routes
-app.use('/api', authenticateFirebase);
-app.use('/api/auth', authRoutes);
-app.use('/api/apartments', apartmentRoutes);
+app.use('/', routes);
 
 // ── Reconciliation (server-to-server, no Firebase auth) ───────────────────────
 // Called by Hasura cron trigger every 15 minutes.

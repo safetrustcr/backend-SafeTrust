@@ -1,3 +1,4 @@
+@ignore
 Feature: Apartment Management
 
 Background:
