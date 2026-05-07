@@ -4,6 +4,11 @@ const morgan = require('morgan');
 require('dotenv').config();
 
 const routes = require('./routes');
+const authRoutes = require('./routes/auth');
+const apartmentRoutes = require('./routes/apartments');
+const reconciliationRoutes = require('./routes/reconciliation/sync-escrows.route');
+
+const { authenticateFirebase } = require('./middleware/auth');
 
 const app = express();
 const port = process.env.WEBHOOK_PORT || 3001;
@@ -15,6 +20,11 @@ app.use(express.json());
 
 // Routes
 app.use('/', routes);
+
+// ── Reconciliation (server-to-server, no Firebase auth) ───────────────────────
+// Called by Hasura cron trigger every 15 minutes.
+// Optionally protected by HASURA_EVENT_SECRET env var.
+app.use('/reconciliation', reconciliationRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

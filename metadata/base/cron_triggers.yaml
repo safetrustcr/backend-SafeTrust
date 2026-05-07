@@ -1,1 +1,17 @@
-[]
+- name: reconciliation_sync_escrows
+  webhook: "{{WEBHOOK_URL}}/reconciliation/sync-escrows"
+  schedule: "*/15 * * * *"
+  include_in_metadata: true
+  payload: {}
+  headers:
+    - name: x-hasura-event-secret
+      value_from_env: HASURA_EVENT_SECRET
+  retry_conf:
+    num_retries: 3
+    timeout_seconds: 60
+    tolerance_seconds: 21600
+    retry_interval_seconds: 10
+  comment: >
+    Sync TrustlessWork indexer state into public.trustless_work_escrows every
+    15 minutes. Processes contract_ids in chunks of 50 using idempotent upserts
+    (IS DISTINCT FROM) so unchanged rows are never written.
