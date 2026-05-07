@@ -13,7 +13,9 @@ router.post('/sync-escrows', async (req, res) => {
     // For this task, we'll simulate the behavior.
     
     // Check if external API is "available"
-    if (process.env.SIMULATE_API_FAILURE === 'true' || req.headers['x-simulate-failure'] === 'true') {
+    const testFailureHeader = req.headers['x-simulate-failure'] === 'true';
+    const canUseTestFailureHeader = process.env.NODE_ENV === 'test';
+    if (process.env.SIMULATE_API_FAILURE === 'true' || (canUseTestFailureHeader && testFailureHeader)) {
       return res.status(500).json({ error: 'TrustlessWork API unavailable' });
     }
 
