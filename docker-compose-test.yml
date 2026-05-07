@@ -91,9 +91,6 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgrespassword
       - USE_MOCK_DATA=true
-      - FIREBASE_PROJECT_ID=test-project
-      - FIREBASE_CLIENT_EMAIL=test@example.com
-      - FIREBASE_PRIVATE_KEY=dummy
     depends_on:
       postgres_test:
         condition: service_healthy
@@ -174,8 +171,10 @@ services:
     command: >
       sh -c "
         until curl -s http://graphql-engine-test:8080/healthz; do echo 'Waiting for Hasura...'; sleep 2; done;
+        sleep 5;
         curl -s -X POST http://graphql-engine-test:8080/v1/metadata -H 'X-Hasura-Admin-Secret: myadminsecretkey' -H 'Content-Type: application/json' -d '{\"type\": \"pg_add_source\", \"args\": {\"name\": \"safetrust\", \"configuration\": {\"connection_info\": { \"database_url\": \"postgres://postgres:postgrespassword@postgres_test:5432/postgres\", \"isolation_level\": \"read-committed\" } } } }';
-        hasura migrate apply --database-name safetrust --endpoint http://graphql-engine-test:8080 --admin-secret myadminsecretkey;
+        sleep 2;
+        for i in 1 2 3 4 5; do hasura migrate apply --database-name safetrust --endpoint http://graphql-engine-test:8080 --admin-secret myadminsecretkey && break || sleep 5; done;
       "
     depends_on:
       graphql-engine-test:
