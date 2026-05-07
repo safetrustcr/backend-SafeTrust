@@ -7,21 +7,24 @@ Feature: Auth Middleware
     Given path '/api/auth/sync-user'
     When method POST
     Then status 401
-    And match response.error == 'Unauthorized: No token provided'
+    And match response.error == 'Unauthorized'
+    And match response.message == 'Missing or malformed Authorization header'
 
   Scenario: Invalid token format (no Bearer prefix) → 401
     Given path '/api/auth/sync-user'
     And header Authorization = 'Basic abc'
     When method POST
     Then status 401
-    And match response.error == 'Unauthorized: No token provided'
+    And match response.error == 'Unauthorized'
+    And match response.message == 'Missing or malformed Authorization header'
 
   Scenario: Invalid/Expired token → 401
     Given path '/api/auth/sync-user'
     And header Authorization = restToken({ uid: 'test-user', role: 'user' })
     When method POST
     Then status 401
-    And match response.error == 'Unauthorized: Invalid token'
+    And match response.error == 'Unauthorized'
+    And match response.message == 'Invalid or expired token'
 
   Scenario: Valid token → passes through
     Given path '/api/auth/sync-user'
