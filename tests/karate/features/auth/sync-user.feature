@@ -5,7 +5,7 @@ Feature: POST /api/auth/sync-user
     * def validToken = karate.call('classpath:helpers/get-firebase-token.js')
     * def userUid = 'test-sync-user-123'
     * def userEmail = 'sync-user@example.com'
-    * db.execute("DELETE FROM users WHERE id = '" + userUid + "'")
+    * db.execute("DELETE FROM users WHERE id = '" + userUid + "' OR firebase_uid = '" + userUid + "' OR email = '" + userEmail + "'")
 
   Scenario: First login creates user record
     Given path '/api/auth/sync-user'
