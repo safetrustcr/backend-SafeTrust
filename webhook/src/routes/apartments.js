@@ -51,11 +51,6 @@ router.get('/', async (req, res) => {
 
     if (minPrice) {
       const min = parseFloat(minPrice);
-      if (!isNaN(min)) {
-        whereClause.push(`a.price >= $${paramIndex}`);
-        queryParams.push(min);
-        paramIndex++;
-      }
       if (isNaN(min)) {
         return res.status(400).json({ error: 'Invalid minPrice value. Expected a number.' });
       }
@@ -66,11 +61,6 @@ router.get('/', async (req, res) => {
 
     if (maxPrice) {
       const max = parseFloat(maxPrice);
-      if (!isNaN(max)) {
-        whereClause.push(`a.price <= $${paramIndex}`);
-        queryParams.push(max);
-        paramIndex++;
-      }
       if (isNaN(max)) {
         return res.status(400).json({ error: 'Invalid maxPrice value. Expected a number.' });
       }
@@ -81,11 +71,6 @@ router.get('/', async (req, res) => {
 
     if (bedrooms) {
       const beds = parseInt(bedrooms, 10);
-      if (!isNaN(beds)) {
-        whereClause.push(`a.bedrooms = $${paramIndex}`);
-        queryParams.push(beds);
-        paramIndex++;
-      }
       if (isNaN(beds)) {
         return res.status(400).json({ error: 'Invalid bedrooms value. Expected an integer.' });
       }
@@ -274,6 +259,31 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('[apartments/create] ❌', error.message);
     return res.status(500).json({ error: 'Failed to create apartment' });
+  }
+});
+
+/**
+ * @route GET /api/apartments/:id
+ * @desc Get a single apartment by ID
+ * @access Protected
+ */
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const query = `
+      SELECT a.*, u.email as owner_email 
+      FROM public.apartments a 
+      LEFT JOIN public.users u ON a.owner_id = u.id 
+      WHERE a.id = $1
+    `;
+    const result = await db.query(query, [id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Apartment not found' });
+    }
+    res.status(200).json({ apartment: result.rows[0] });
+  } catch (error) {
+    console.error('[apartments/get] ❌', error.message);
+    res.status(500).json({ error: 'Database error' });
   }
 });
 

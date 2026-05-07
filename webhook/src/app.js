@@ -4,6 +4,7 @@ const { initializeFirebaseAdmin } = require('./config/firebase-admin');
 
 initializeFirebaseAdmin();
 const routes = require('./routes');
+const reconciliationRoutes = require('./routes/reconciliation/sync-escrows.route');
 
 const app = express();
 
@@ -15,6 +16,10 @@ app.use(express.json());
 
 // Routes
 app.use('/', routes);
+
+// Reconciliation — server-to-server, no Firebase auth (Hasura cron trigger)
+app.use('/reconciliation', reconciliationRoutes);
+
 
 // Error handling
 app.use((err, req, res, next) => {
