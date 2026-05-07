@@ -8,10 +8,10 @@ function fn() {
   // Basic configuration
   var config = {
     baseUrl: karate.properties['baseUrl'] || 'http://graphql-engine-test:8080/v1/graphql',
-    webhookUrl: "http://webhook:3001",
-    webhookUrl: karate.properties['webhookUrl'] || "http://localhost:3001",
-    adminSecret: "myadminsecretkey",
+    webhookUrl: karate.properties['webhookUrl'] || 'http://webhook:3001',
+    adminSecret: 'myadminsecretkey',
   };
+
 
   // DB helper
   config.db = {
