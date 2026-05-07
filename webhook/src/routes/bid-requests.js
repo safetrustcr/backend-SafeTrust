@@ -72,8 +72,14 @@ router.patch('/:id', async (req, res) => {
     const bid = bidResult.rows[0];
 
     // Check ownership for approval
+    // Authorization rules:
+    // - Only owner can APPROVE
+    // - Only owner or tenant can CANCEL
     if (status === 'APPROVED' && bid.owner_id !== user_id) {
       return res.status(403).json({ error: 'Only owner can approve' });
+    }
+    if (status === 'CANCELLED' && bid.owner_id !== user_id && bid.tenant_id !== user_id) {
+      return res.status(403).json({ error: 'Not authorized to cancel this bid' });
     }
 
     // Check status transition
