@@ -10,82 +10,62 @@ array_relationships:
           name: user_wallets
           schema: public
 select_permissions:
-  - role: anonymous
-    permission:
-      columns: []
-      filter: {}
-    comment: "Anonymous users cannot view any user data"
-  - role: user
+  - role: tenant
     permission:
       columns:
         - id
+        - firebase_uid
         - email
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
         - last_seen
       filter:
-        # Row-level security: users can only see their own profile
         id:
           _eq: X-Hasura-User-Id
-      comment: "Users can only see their own profile"
-  - role: admin
+  - role: landlord
     permission:
       columns:
         - id
+        - firebase_uid
         - email
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
         - last_seen
       filter:
-        # Admins can view all users in their tenant
-        id:
-          _neq: ""
-      comment: "Admins can view all users in their tenant"
-insert_permissions:
-  - role: user
-    permission:
-      check:
-        # Row-level security: users can only create records for themselves
         id:
           _eq: X-Hasura-User-Id
-      columns:
-        - id
-        - email
-      comment: "Users can only create records for themselves"
-  - role: admin
-    permission:
-      check:
-        id:
-          _neq: ""
-      columns:
-        - id
-        - email
-      comment: "Admins can create user records in their tenant"
 update_permissions:
-  - role: user
+  - role: tenant
     permission:
       columns:
-        - last_seen
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
       filter:
-        # Row-level security: users can only update their own profile
         id:
           _eq: X-Hasura-User-Id
       check:
         id:
           _eq: X-Hasura-User-Id
-      comment: "Users can only update their own last_seen timestamp"
-  - role: admin
+  - role: landlord
     permission:
       columns:
-        - email
-        - last_seen
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
       filter:
         id:
-          _neq: ""
+          _eq: X-Hasura-User-Id
       check:
         id:
-          _neq: ""
-      comment: "Admins can update user information in their tenant"
-delete_permissions:
-  - role: admin
-    permission:
-      filter:
-        id:
-          _neq: ""
-      comment: "Admins can delete users in their tenant"
+          _eq: X-Hasura-User-Id
