@@ -1,27 +1,45 @@
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- SafeTrust demo bid status histories seed
+-- Depends on: 1734710839892_bid_requests_seed.sql (must run after bid_requests)
 
--- Clear existing seed data (development only)
-TRUNCATE bid_status_histories RESTART IDENTITY CASCADE;
+-- Idempotency: remove demo bid status histories before reinserting
+DELETE FROM public.bid_status_histories
+WHERE bid_request_id IN (
+    '660e8400-e29b-41d4-a716-446655440001'::uuid,
+    '660e8400-e29b-41d4-a716-446655440002'::uuid
+);
 
-INSERT INTO bid_status_histories (id, bid_request_id, status, notes, changed_by, created_at)
-VALUES
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 0), 'Submitted', 'Bid request has been submitted.', (SELECT id FROM users LIMIT 1 OFFSET 0), NOW()),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 1), 'Reviewed', 'Initial review completed by team lead.', (SELECT id FROM users LIMIT 1 OFFSET 1), NOW() - INTERVAL '1 day'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 2), 'Approved', 'Bid request approved by manager.', (SELECT id FROM users LIMIT 1 OFFSET 2), NOW() - INTERVAL '2 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 3), 'In_Progress', 'Work on the bid has begun.', (SELECT id FROM users LIMIT 1 OFFSET 3), NOW() - INTERVAL '3 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 4), 'Rejected', 'Bid request rejected due to insufficient budget.', (SELECT id FROM users LIMIT 1 OFFSET 4), NOW() - INTERVAL '4 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 5), 'Completed', 'All tasks related to the bid request have been completed.', (SELECT id FROM users LIMIT 1 OFFSET 5), NOW() - INTERVAL '5 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 6), 'Rejected', 'incorrect info.', (SELECT id FROM users LIMIT 1 OFFSET 6), NOW() - INTERVAL '5 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 7), 'Submitted', 'Bid request has been submitted.', (SELECT id FROM users LIMIT 1 OFFSET 7), NOW() - INTERVAL '5 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 8), 'In_Progress', 'Awaiting approval.', (SELECT id FROM users LIMIT 1 OFFSET 8), NOW() - INTERVAL '9 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 9), 'Approved', 'Reviewed and approved.', (SELECT id FROM users LIMIT 1 OFFSET 9), NOW() - INTERVAL '6 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 10), 'Rejected', 'Bid amount exceeded limit.', (SELECT id FROM users LIMIT 1 OFFSET 10), NOW() - INTERVAL '2 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 11), 'Approved', 'Bid has been finalized.', (SELECT id FROM users LIMIT 1 OFFSET 11), NOW() - INTERVAL '6 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 12), 'Submitted', 'Initial status set.', (SELECT id FROM users LIMIT 1 OFFSET 12), NOW() - INTERVAL '10 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 13), 'In_Progress', 'Work on the bid has begun.', (SELECT id FROM users LIMIT 1 OFFSET 13), NOW() - INTERVAL '3 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 14), 'Rejected', 'Insufficient details provided.', (SELECT id FROM users LIMIT 1 OFFSET 14), NOW() - INTERVAL '4 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 15), 'Completed', 'All tasks related to the bid request have been completed.', (SELECT id FROM users LIMIT 1 OFFSET 15), NOW() - INTERVAL '5 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 16), 'Approved', 'Successfully met all requirements', (SELECT id FROM users LIMIT 1 OFFSET 16), NOW() - INTERVAL '5 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 17), 'Submitted', 'Bid request has been submitted.', (SELECT id FROM users LIMIT 1 OFFSET 17), NOW() - INTERVAL '5 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 18), 'In_Progress', 'Waiting on additional documentation', (SELECT id FROM users LIMIT 1 OFFSET 18), NOW() - INTERVAL '9 days'),
-    (uuid_generate_v4(), (SELECT id FROM bid_requests LIMIT 1 OFFSET 19), 'Approved', 'Reviewed and approved.', (SELECT id FROM users LIMIT 1 OFFSET 19), NOW() - INTERVAL '6 days');
+-- Status history for Bid Request 1 (PENDING on Apartment 1)
+INSERT INTO public.bid_status_histories (id, bid_request_id, status, notes, changed_by, created_at)
+SELECT
+    '770e8400-e29b-41d4-a716-446655440001'::uuid,
+    '660e8400-e29b-41d4-a716-446655440001'::uuid,
+    'Submitted',
+    'Bid request has been submitted.',
+    u.id,
+    NOW()
+FROM public.users u WHERE u.firebase_uid = 'demo-tenant-uid-001'
+ON CONFLICT (id) DO NOTHING;
+
+-- Status history for Bid Request 2 (CANCELLED on Apartment 2) — entry 1: Submitted
+INSERT INTO public.bid_status_histories (id, bid_request_id, status, notes, changed_by, created_at)
+SELECT
+    '770e8400-e29b-41d4-a716-446655440002'::uuid,
+    '660e8400-e29b-41d4-a716-446655440002'::uuid,
+    'Submitted',
+    'Bid request has been submitted.',
+    u.id,
+    NOW() - INTERVAL '1 day'
+FROM public.users u WHERE u.firebase_uid = 'demo-tenant-uid-001'
+ON CONFLICT (id) DO NOTHING;
+
+-- Status history for Bid Request 2 (CANCELLED on Apartment 2) — entry 2: Cancelled
+INSERT INTO public.bid_status_histories (id, bid_request_id, status, notes, changed_by, created_at)
+SELECT
+    '770e8400-e29b-41d4-a716-446655440003'::uuid,
+    '660e8400-e29b-41d4-a716-446655440002'::uuid,
+    'Cancelled',
+    'Bid request cancelled by tenant.',
+    u.id,
+    NOW()
+FROM public.users u WHERE u.firebase_uid = 'demo-tenant-uid-001'
+ON CONFLICT (id) DO NOTHING;
