@@ -51,7 +51,7 @@ EOL
     
     local tenant_name
     if [ -f "$BUILD_DIR/$tenant/databases/databases.yaml" ]; then
-        tenant_name=$(grep -m 1 "name:" "$BUILD_DIR/$tenant/databases/databases.yaml" | sed 's/.*name:\s*\([^ ]*\).*/\1/')
+        tenant_name=$(grep -m 1 "name:" "$BUILD_DIR/$tenant/databases/databases.yaml" | sed 's/.*name:[[:space:]]*\([^ ]*\).*/\1/')
         echo "Found tenant name in databases.yaml: $tenant_name" >&2
     else
         tenant_name="$tenant"
