@@ -1,6 +1,6 @@
 -- SafeTrust demo bid requests seed
 -- Canonical source: dApp-SafeTrust/infra/hasura/seeds/safetrust/03_bid_requests_seed.sql
--- Depends on: 1733963959819_user_seed.sql, 1733970410880_apartments_seed.sql (must run after both)
+-- Depends on: 01_users_seed.sql, 02_apartments_seed.sql (must run after both)
 
 -- Idempotency: remove demo bid requests before reinserting
 DELETE FROM public.bid_requests
