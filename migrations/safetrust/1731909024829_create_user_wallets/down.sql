@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS user_wallets;
+DROP TABLE IF EXISTS public.user_wallets;
