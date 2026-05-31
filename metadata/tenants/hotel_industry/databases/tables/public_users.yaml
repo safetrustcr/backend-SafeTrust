@@ -73,7 +73,6 @@ select_permissions:
     permission:
       columns:
         - id
-        - firebase_uid
         - email
         - first_name
         - last_name
@@ -82,7 +81,10 @@ select_permissions:
         - hotel_id
         - created_at
         - updated_at
-      filter: {}
+      filter:
+        firebase_uid:
+          _eq: X-Hasura-User-Id
+      comment: "Users can only read their own profile"
 
 insert_permissions:
   - role: admin

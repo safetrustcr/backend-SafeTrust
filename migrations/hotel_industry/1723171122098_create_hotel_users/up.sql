@@ -12,8 +12,8 @@ CREATE TABLE IF NOT EXISTS public.users (
     phone_number VARCHAR(15),
     role VARCHAR(20) NOT NULL DEFAULT 'GUEST',
     hotel_id UUID REFERENCES public.hotels(id) ON DELETE SET NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 
     -- Constraints
     CONSTRAINT users_email_unique UNIQUE (email),
