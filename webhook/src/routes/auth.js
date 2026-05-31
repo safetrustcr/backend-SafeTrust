@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/db');
+const { syncWalletHandler } = require('./auth/sync-wallet.handler');
 
 /**
  * POST /api/auth/sync-user — upsert Firebase user into public.users.
@@ -43,5 +44,7 @@ router.post('/sync-user', async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+router.post('/sync-wallet', syncWalletHandler);
 
 module.exports = router;
