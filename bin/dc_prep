@@ -1,3 +1,194 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# =============================================================================
+# bin/dc_prep — SafeTrust unified local-development setup
+#
+# Orchestrates the full backend stack in the correct sequence:
+#   1. Start Docker services (postgres, data-connector-agent, graphql-engine)
+#   2. Wait for Hasura /healthz to pass
+#   3. Deploy tenant metadata (build + deploy)
+#   4. Apply database migrations
+#   5. Reload Hasura metadata
+#   6. Apply seed data
+#
+# Usage:
+#   ./bin/dc_prep [--tenant TENANT] [--endpoint URL] [--secret SECRET] [--skip-seeds]
+#
+# Defaults:
+#   --tenant   safetrust
+#   --endpoint http://localhost:8080
+#   --secret   myadminsecretkey
+# =============================================================================
+set -euo pipefail
 
-docker compose up -d graphql-engine
+# ── Resolve project root (directory containing this script's parent) ──────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# ── Defaults ──────────────────────────────────────────────────────────────────
+TENANT="safetrust"
+HASURA_ENDPOINT="http://localhost:8080"
+ADMIN_SECRET="myadminsecretkey"
+SKIP_SEEDS=false
+MAX_WAIT=120          # seconds to wait for Hasura to become healthy
+POLL_INTERVAL=5       # seconds between health-check polls
+
+# ── Colour helpers ────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+log_info()    { echo -e "${CYAN}[INFO]${RESET}  $*"; }
+log_success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
+log_warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
+log_error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+log_step()    { echo -e "\n${BOLD}${CYAN}══ $* ══${RESET}"; }
+
+# ── Argument parsing ──────────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tenant)
+      [[ -z "${2:-}" || "${2:0:1}" == "-" ]] && { log_error "--tenant requires a value"; exit 1; }
+      TENANT="$2"; shift 2 ;;
+    --endpoint)
+      [[ -z "${2:-}" || "${2:0:1}" == "-" ]] && { log_error "--endpoint requires a value"; exit 1; }
+      HASURA_ENDPOINT="$2"; shift 2 ;;
+    --secret)
+      [[ -z "${2:-}" || "${2:0:1}" == "-" ]] && { log_error "--secret requires a value"; exit 1; }
+      ADMIN_SECRET="$2"; shift 2 ;;
+    --skip-seeds)
+      SKIP_SEEDS=true; shift ;;
+    -h|--help)
+      sed -n '/^# Usage:/,/^# =\+$/p' "$0" | grep -v '^# ==\+$' | sed 's/^# \?//'
+      exit 0 ;;
+    *)
+      log_error "Unknown option: $1"
+      exit 1 ;;
+  esac
+done
+
+# ── Banner ────────────────────────────────────────────────────────────────────
+echo -e "\n${BOLD}${CYAN}"
+echo "  ╔══════════════════════════════════════════╗"
+echo "  ║      SafeTrust — Local Dev Setup         ║"
+echo "  ╠══════════════════════════════════════════╣"
+printf "  ║  Tenant  : %-30s║\n" "$TENANT"
+printf "  ║  Endpoint: %-30s║\n" "$HASURA_ENDPOINT"
+echo "  ╚══════════════════════════════════════════╝"
+echo -e "${RESET}"
+
+# ── Prerequisite checks ───────────────────────────────────────────────────────
+log_step "Step 0/6 — Checking prerequisites"
+
+for cmd in docker curl hasura; do
+  if ! command -v "$cmd" &>/dev/null; then
+    log_error "'$cmd' is not installed or not in PATH."
+    [[ "$cmd" == "hasura" ]] && log_error "Install the Hasura CLI: https://hasura.io/docs/latest/hasura-cli/install-hasura-cli/"
+    exit 1
+  fi
+done
+log_success "All prerequisite tools found (docker, curl, hasura)"
+
+# ── Step 1: Start Docker services ─────────────────────────────────────────────
+log_step "Step 1/6 — Starting Docker services"
+
+cd "${ROOT_DIR}"
+docker compose up -d postgres data-connector-agent graphql-engine
+log_success "Docker services started (postgres, data-connector-agent, graphql-engine)"
+
+# ── Step 2: Wait for Hasura to become healthy ─────────────────────────────────
+log_step "Step 2/6 — Waiting for Hasura GraphQL Engine to be healthy"
+
+elapsed=0
+while true; do
+  status=$(curl -s -o /dev/null -w "%{http_code}" \
+    "${HASURA_ENDPOINT}/healthz" 2>/dev/null || echo "000")
+
+  if [[ "$status" == "200" ]]; then
+    log_success "Hasura is healthy (HTTP 200) after ${elapsed}s"
+    break
+  fi
+
+  if (( elapsed >= MAX_WAIT )); then
+    log_error "Hasura did not become healthy within ${MAX_WAIT}s (last status: ${status})"
+    log_error "Check container logs: docker compose logs graphql-engine"
+    exit 1
+  fi
+
+  log_info "Waiting for Hasura... (${elapsed}s elapsed, status=${status})"
+  sleep "${POLL_INTERVAL}"
+  (( elapsed += POLL_INTERVAL ))
+done
+
+# ── Step 3: Deploy tenant metadata ───────────────────────────────────────────
+log_step "Step 3/6 — Deploying tenant metadata (${TENANT})"
+
+METADATA_DIR="${ROOT_DIR}/metadata"
+
+if [[ ! -f "${METADATA_DIR}/setup-tenant.sh" ]]; then
+  log_error "metadata/setup-tenant.sh not found. Is the project root correct? (${ROOT_DIR})"
+  exit 1
+fi
+
+bash "${METADATA_DIR}/setup-tenant.sh" "${TENANT}" \
+  --admin-secret "${ADMIN_SECRET}" \
+  --endpoint "${HASURA_ENDPOINT}"
+
+log_success "Tenant metadata deployed for: ${TENANT}"
+
+# ── Step 4: Apply migrations ──────────────────────────────────────────────────
+log_step "Step 4/6 — Applying database migrations"
+
+hasura migrate apply \
+  --project "${ROOT_DIR}" \
+  --database-name "${TENANT}" \
+  --endpoint "${HASURA_ENDPOINT}" \
+  --admin-secret "${ADMIN_SECRET}" \
+  --skip-update-check
+
+log_success "Migrations applied for database: ${TENANT}"
+
+# ── Step 5: Reload Hasura metadata ───────────────────────────────────────────
+log_step "Step 5/6 — Reloading Hasura metadata"
+
+reload_response=$(curl -s -X POST "${HASURA_ENDPOINT}/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: ${ADMIN_SECRET}" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"reload_metadata","args":{"reload_remote_schemas":true,"reload_sources":true}}')
+
+if echo "${reload_response}" | grep -q '"is_consistent":true'; then
+  log_success "Metadata reloaded and is consistent"
+elif echo "${reload_response}" | grep -q '"is_consistent":false'; then
+  log_warn "Metadata reloaded but is INCONSISTENT — check Hasura console for details"
+  log_warn "Response: ${reload_response}"
+else
+  log_warn "Metadata reload response: ${reload_response}"
+fi
+
+# ── Step 6: Apply seeds ───────────────────────────────────────────────────────
+if [[ "${SKIP_SEEDS}" == "true" ]]; then
+  log_step "Step 6/6 — Skipping seeds (--skip-seeds flag set)"
+else
+  log_step "Step 6/6 — Applying seed data"
+
+  hasura seed apply \
+    --project "${ROOT_DIR}" \
+    --database-name "${TENANT}" \
+    --endpoint "${HASURA_ENDPOINT}" \
+    --admin-secret "${ADMIN_SECRET}" \
+    --skip-update-check
+
+  log_success "Seeds applied for database: ${TENANT}"
+fi
+
+# ── Done ──────────────────────────────────────────────────────────────────────
+echo -e "\n${BOLD}${GREEN}"
+echo "  ╔══════════════════════════════════════════╗"
+echo "  ║   ✅  SafeTrust stack is ready!          ║"
+echo "  ╠══════════════════════════════════════════╣"
+printf "  ║  GraphQL API  : %-25s║\n" "${HASURA_ENDPOINT}/v1/graphql"
+printf "  ║  Hasura Console (run bin/dc_console)     ║\n"
+echo "  ╚══════════════════════════════════════════╝"
+echo -e "${RESET}"
