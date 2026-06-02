@@ -14,14 +14,28 @@ socat TCP-LISTEN:9693,fork,reuseaddr,bind=console TCP:127.0.0.1:9693 &
     # Skip migrations for safetrust since it will be created during tenant deployment
     echo "Skipping migrations for safetrust database as it will be created during tenant deployment"
     
-    # Apply only metadata changes
-    echo "Applying metadata from metadata/base..."
-    hasura metadata apply --metadata-dir metadata/base --skip-update-check
+    # Apply only metadata changes (disabled: metadata is already fully built and applied via bin/dc_prep)
+    # echo "Applying metadata from metadata/base..."
+    # mkdir -p /tmp/hasura_project
+    # cat > /tmp/hasura_project/config.yaml << EOL
+    # version: 3
+    # metadata_directory: /app/metadata/base
+    # EOL
+    # hasura metadata apply --project /tmp/hasura_project --skip-update-check
+    # rm -rf /tmp/hasura_project
     
     # Run console if specified
     if [[ -v HASURA_RUN_CONSOLE ]]; then
         echo "Starting console..."
-        hasura console --log-level DEBUG --address "127.0.0.1" --no-browser || exit 1
+        hasura console \
+            --log-level DEBUG \
+            --address "127.0.0.1" \
+            --no-browser \
+            --endpoint "$HASURA_GRAPHQL_ENDPOINT" \
+            --admin-secret "$HASURA_GRAPHQL_ADMIN_SECRET" \
+            --console-hge-endpoint "http://127.0.0.1:8080" \
+            --api-host "http://127.0.0.1" \
+            || exit 1
     else
         echo "Started without console"
         tail -f /dev/null

@@ -29,7 +29,7 @@ TENANT="safetrust"
 HASURA_ENDPOINT="http://localhost:8080"
 ADMIN_SECRET="myadminsecretkey"
 SKIP_SEEDS=false
-MAX_WAIT=120          # seconds to wait for Hasura to become healthy
+MAX_WAIT=180          # seconds to wait for Hasura to become healthy
 POLL_INTERVAL=5       # seconds between health-check polls
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
@@ -132,9 +132,11 @@ if [[ ! -f "${METADATA_DIR}/setup-tenant.sh" ]]; then
   exit 1
 fi
 
-bash "${METADATA_DIR}/setup-tenant.sh" "${TENANT}" \
+# build-metadata.sh resolves BASE_DIR/TENANTS_DIR/BUILD_DIR via $(pwd),
+# so it must be invoked with metadata/ as the working directory.
+(cd "${METADATA_DIR}" && bash "./setup-tenant.sh" "${TENANT}" \
   --admin-secret "${ADMIN_SECRET}" \
-  --endpoint "${HASURA_ENDPOINT}"
+  --endpoint "${HASURA_ENDPOINT}")
 
 log_success "Tenant metadata deployed for: ${TENANT}"
 

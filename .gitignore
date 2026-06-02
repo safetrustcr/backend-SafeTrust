@@ -18,6 +18,7 @@ venv/
 .env
 .env.local
 .env.*
+!.env.example
 
 # Logs and temp files
 *.log

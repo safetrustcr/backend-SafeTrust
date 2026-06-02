@@ -47,15 +47,10 @@ Ensures funds are automatically released based on the terms of the agreement, wi
 ### **One-command setup**
 
 ```bash
-# 1. Copy and configure environment variables
-cp .env_example .env
-# Edit .env and fill in values marked <...>
-
-# 2. Run the unified setup script (WSL / Linux / macOS)
-bash bin/dc_prep
-
-# 3. Open the Hasura Console (in a separate terminal)
-bash bin/dc_console
+# Prerequisites: Docker, Hasura CLI, curl
+cp .env.example .env
+./bin/dc_prep        # full stack setup
+./bin/dc_console     # open Hasura console (separate terminal)
 ```
 
 `bin/dc_prep` performs the following steps automatically, in order:
