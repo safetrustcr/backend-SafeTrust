@@ -17,6 +17,50 @@ array_relationships:
           name: user_wallets
           schema: public
 select_permissions:
+  - role: admin
+    permission:
+      columns:
+        - id
+        - firebase_uid
+        - email
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
+        - last_seen
+      filter: {}
+      allow_aggregations: true
+  - role: host
+    permission:
+      columns:
+        - id
+        - firebase_uid
+        - email
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
+        - last_seen
+      filter:
+        id:
+          _eq: X-Hasura-User-Id
+  - role: guest
+    permission:
+      columns:
+        - id
+        - firebase_uid
+        - email
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
+        - last_seen
+      filter:
+        id:
+          _eq: X-Hasura-User-Id
   - role: tenant
     permission:
       columns:
