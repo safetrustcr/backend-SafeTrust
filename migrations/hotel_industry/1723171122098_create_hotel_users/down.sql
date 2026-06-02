@@ -1,10 +1,4 @@
--- Drop trigger and function
-DROP TRIGGER IF EXISTS update_users_updated_at ON public.users;
-DROP FUNCTION IF EXISTS update_updated_at_column();
+-- Drop table first (CASCADE removes triggers and indexes; avoids DROP TRIGGER on missing table)
+DROP TABLE IF EXISTS public.users CASCADE;
 
--- Drop indexes
-DROP INDEX IF EXISTS users_email_idx;
-DROP INDEX IF EXISTS users_created_at_idx;
-
--- Drop table
-DROP TABLE IF EXISTS public.users; 
+DROP FUNCTION IF EXISTS update_users_updated_at();

@@ -3,6 +3,10 @@ table:
   schema: public
 
 columns:
+  - name: firebase_uid
+    type: text
+    is_nullable: true
+
   - name: id
     type: uuid
     default: "uuid_generate_v4()"
@@ -14,15 +18,24 @@ columns:
     is_nullable: false
 
   - name: first_name
-    type: varchar(20)
+    type: varchar(50)
     is_nullable: true
 
   - name: last_name
-    type: varchar(20)
+    type: varchar(50)
     is_nullable: true
 
   - name: phone_number
     type: varchar(15)
+    is_nullable: true
+
+  - name: role
+    type: varchar(20)
+    default: "'GUEST'::character varying"
+    is_nullable: false
+
+  - name: hotel_id
+    type: uuid
     is_nullable: true
 
   - name: created_at
@@ -36,18 +49,24 @@ columns:
     is_nullable: false
 
 constraints:
-  - name: users_email_key
+  - name: users_email_unique
     type: unique
     columns:
       - email
 
 indexes:
-  - name: users_email_idx
+  - name: idx_users_email
     columns:
       - email
-  - name: users_created_at_idx
+  - name: idx_users_hotel_id
     columns:
-      - created_at
+      - hotel_id
+  - name: idx_users_role
+    columns:
+      - role
+  - name: idx_users_firebase_uid
+    columns:
+      - firebase_uid
 
 select_permissions:
   - role: user
@@ -58,19 +77,27 @@ select_permissions:
         - first_name
         - last_name
         - phone_number
+        - role
+        - hotel_id
         - created_at
         - updated_at
-      filter: {}
+      filter:
+        firebase_uid:
+          _eq: X-Hasura-User-Id
+      comment: "Users can only read their own profile"
 
 insert_permissions:
   - role: admin
     permission:
       check: {}
       columns:
+        - firebase_uid
         - email
         - first_name
         - last_name
         - phone_number
+        - role
+        - hotel_id
         - created_at
         - updated_at
 
@@ -79,10 +106,13 @@ update_permissions:
     permission:
       filter: {}
       columns:
+        - firebase_uid
         - email
         - first_name
         - last_name
         - phone_number
+        - role
+        - hotel_id
         - created_at
         - updated_at
 
