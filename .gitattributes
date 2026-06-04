@@ -1,0 +1,3 @@
+*.sh text eol=lf
+bin/dc_prep text eol=lf
+bin/dc_console text eol=lf

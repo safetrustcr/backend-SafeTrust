@@ -60,4 +60,5 @@ INSERT INTO user_wallets (
     true,
     NOW() - INTERVAL '2 days', 
     NOW() - INTERVAL '1 days'
-);
+)
+ON CONFLICT (wallet_address) DO NOTHING;

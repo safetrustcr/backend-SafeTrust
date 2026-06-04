@@ -38,19 +38,43 @@ Ensures funds are automatically released based on the terms of the agreement, wi
 
 ### **Prerequisites**
 
-1. Install Docker and Docker Compose
-2. Copy the environment file and fill in the required values:
+| Tool | Version | Notes |
+|------|---------|-------|
+| [Docker](https://docs.docker.com/get-docker/) & Docker Compose | ≥ 24 | Required |
+| [Hasura CLI](https://hasura.io/docs/latest/hasura-cli/install-hasura-cli/) | ≥ 2.x | Required for migrations & seeds |
+| [curl](https://curl.se/) | any | Used by health-check loop |
 
-```shell
+### **One-command setup**
+
+```bash
+# Prerequisites: Docker, Hasura CLI, curl
 cp .env.example .env
+./bin/dc_prep        # full stack setup
+./bin/dc_console     # open Hasura console (separate terminal)
 ```
 
-3. Start the containers:
+`bin/dc_prep` performs the following steps automatically, in order:
 
-```shell
-bin/dc_prep
-bin/dc_console
+| Step | Action |
+|------|--------|
+| 1 | Start `postgres`, `data-connector-agent`, and `graphql-engine` via Docker Compose |
+| 2 | Poll `GET /healthz` until Hasura is ready (up to 120 s) |
+| 3 | Build and deploy tenant metadata (`metadata/setup-tenant.sh safetrust`) |
+| 4 | Apply all database migrations (`hasura migrate apply`) |
+| 5 | Reload Hasura metadata and verify consistency |
+| 6 | Apply seed data (`hasura seed apply`) |
+
+**Options:**
+
+```text
+--tenant    TENANT    Tenant name to set up          (default: safetrust)
+--endpoint  URL       Hasura GraphQL endpoint         (default: http://localhost:8080)
+--secret    SECRET    Hasura admin secret             (default: myadminsecretkey)
+--skip-seeds          Skip Step 6 (seed application)
 ```
+
+> **Windows users:** Run `bin/dc_prep` and `bin/dc_console` inside WSL (Ubuntu) or Git Bash,
+> as they are Bash scripts targeting a Linux container environment.
 
 ---
 
@@ -153,27 +177,40 @@ Default values: `--admin-secret myadminsecretkey` · `--endpoint http://localhos
 
 ## 🗃️ Steps to execute the migrations
 
-Go to the `migrations/` folder:
+> **Tip:** `bin/dc_prep` handles migrations automatically. Use the manual steps below only for targeted work.
 
-```shell
-cd migrations/
-hasura migrate apply
+From the **project root**:
+
+```bash
+hasura migrate apply \
+  --database-name safetrust \
+  --endpoint http://localhost:8080 \
+  --admin-secret myadminsecretkey
 ```
 
-Then select the tenant to migrate.
+To apply a single version:
+
+```bash
+hasura migrate apply \
+  --database-name safetrust \
+  --version <timestamp> \
+  --type up
+```
 
 ---
 
 ## 🌱 Steps to execute the seeds
 
-Go to the `seeds/` folder:
+> **Tip:** `bin/dc_prep` applies seeds automatically. Use the manual step below when you need to re-seed.
 
-```shell
-cd seeds/
-hasura seed apply
+From the **project root**:
+
+```bash
+hasura seed apply \
+  --database-name safetrust \
+  --endpoint http://localhost:8080 \
+  --admin-secret myadminsecretkey
 ```
-
-Then select the tenant to seed.
 
 ---
 
