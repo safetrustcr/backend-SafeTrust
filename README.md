@@ -47,30 +47,38 @@ Ensures funds are automatically released based on the terms of the agreement, wi
 ### **One-command setup**
 
 ```bash
-# Prerequisites: Docker, Hasura CLI, curl
-cp .env.example .env
-./bin/dc_prep        # full stack setup
-./bin/dc_console     # open Hasura console (separate terminal)
+cp .env.example .env   # fill in your values, then:
+bin/dc_prep            # starts all containers, runs migrations, seeds, and metadata
+```
+
+Once `bin/dc_prep` completes, open the Hasura console in a separate terminal:
+
+```bash
+bin/dc_console
 ```
 
 `bin/dc_prep` performs the following steps automatically, in order:
 
 | Step | Action |
 |------|--------|
-| 1 | Start `postgres`, `data-connector-agent`, and `graphql-engine` via Docker Compose |
-| 2 | Poll `GET /healthz` until Hasura is ready (up to 120 s) |
-| 3 | Build and deploy tenant metadata (`metadata/setup-tenant.sh safetrust`) |
+| 1 | Start `postgres`, `graphql-engine`, and `webhook` via Docker Compose (waits for healthy) |
+| 2 | Poll `GET /healthz` until Hasura is ready (up to 3 min) |
+| 3 | Build and deploy tenant metadata for all tenants (`metadata/setup-tenant.sh`) |
 | 4 | Apply all database migrations (`hasura migrate apply`) |
-| 5 | Reload Hasura metadata and verify consistency |
+| 5 | Reload Hasura metadata |
 | 6 | Apply seed data (`hasura seed apply`) |
 
-**Options:**
+### **Environment variables**
 
-```text
---tenant    TENANT    Tenant name to set up          (default: safetrust)
---endpoint  URL       Hasura GraphQL endpoint         (default: http://localhost:8080)
---secret    SECRET    Hasura admin secret             (default: myadminsecretkey)
---skip-seeds          Skip Step 6 (seed application)
+Copy `.env.example` to `.env` and fill in the required values before running `bin/dc_prep`:
+
+```bash
+POSTGRES_PASSWORD=your_postgres_password
+
+# Must be valid JSON with a minimum 32-character key for HS256
+HASURA_GRAPHQL_JWT_SECRET={"type":"HS256","key":"replace-with-min-32-char-secret-here"}
+
+HASURA_EVENT_SECRET=your_event_secret
 ```
 
 > **Windows users:** Run `bin/dc_prep` and `bin/dc_console` inside WSL (Ubuntu) or Git Bash,
@@ -80,12 +88,12 @@ cp .env.example .env
 
 ## 🗂️ Metadata Architecture
 
-The metadata folder contains the Hasura GraphQL Engine configuration per tenant.
+The `metadata/` folder contains the Hasura GraphQL Engine configuration per tenant.
 
 ```
 backend/
 └── metadata/
-    └── base/
+    ├── base/
     │   ├── actions.graphql
     │   ├── actions.yaml
     │   ├── allow_list.yaml
@@ -101,22 +109,21 @@ backend/
     │   ├── remote_schemas.yaml
     │   ├── rest_endpoints.yaml
     │   └── version.yaml
-    └── build/
+    ├── build/
     │   └── tenant_a/
     │   └── tenant_b/
     │   └── ...
-    └── tenants/
-    │   └── tenant_a/
+    ├── tenants/
+    │   ├── safetrust/
     │   │   ├── databases/
     │   │   ├── tables/
     │   │   ├── functions/
     │   │   └── databases.yaml
-    │   └── tenant_b/
-    │   │   ├── databases/
-    │   │   ├── tables/
-    │   │   ├── functions/
-    │   │   └── databases.yaml
-    │   └── ...
+    │   └── hotel_industry/
+    │       ├── databases/
+    │       ├── tables/
+    │       ├── functions/
+    │       └── databases.yaml
     ├── build-metadata.sh
     ├── deploy-tenant.sh
     └── setup-tenant.sh
@@ -132,13 +139,14 @@ backend/
 
 ---
 
-## 🚀 Steps to execute the metadata
+## 🚀 Steps to execute the metadata manually
+
+> **Tip:** `bin/dc_prep` handles metadata setup automatically. Use the steps below only for targeted tenant work.
 
 ### Option A — Single command (recommended)
 
-Go to the `metadata/` directory and run:
-
 ```shell
+cd metadata
 ./setup-tenant.sh <tenant_name> [--admin-secret SECRET] [--endpoint URL]
 ```
 
@@ -148,15 +156,11 @@ Go to the `metadata/` directory and run:
 ./setup-tenant.sh safetrust --endpoint http://localhost:8080
 ```
 
-This runs `build-metadata.sh` followed by `deploy-tenant.sh` automatically in the correct order.
-
 Default values: `--admin-secret myadminsecretkey` · `--endpoint http://localhost:8080`
-
----
 
 ### Option B — Step by step (manual)
 
-1. Go to the `metadata/` directory and build the tenant:
+1. Build the tenant:
 
 ```shell
 ./build-metadata.sh <tenant_name> --admin-secret myadminsecretkey --endpoint <endpoint>
@@ -170,12 +174,9 @@ Default values: `--admin-secret myadminsecretkey` · `--endpoint http://localhos
 ./deploy-tenant.sh <tenant_name> --admin-secret myadminsecretkey --endpoint <endpoint>
 ```
 
-- **`tenant_name`** — the name of the tenant you will work on (e.g. `safetrust`)
-- **`endpoint`** — the Hasura endpoint, commonly `http://localhost:8080`
-
 ---
 
-## 🗃️ Steps to execute the migrations
+## 🗃️ Steps to execute the migrations manually
 
 > **Tip:** `bin/dc_prep` handles migrations automatically. Use the manual steps below only for targeted work.
 
@@ -199,7 +200,7 @@ hasura migrate apply \
 
 ---
 
-## 🌱 Steps to execute the seeds
+## 🌱 Steps to execute the seeds manually
 
 > **Tip:** `bin/dc_prep` applies seeds automatically. Use the manual step below when you need to re-seed.
 
