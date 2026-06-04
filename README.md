@@ -53,9 +53,6 @@ bin/dc_prep            # starts all containers, runs migrations, seeds, and meta
 
 Once `bin/dc_prep` completes, open the Hasura console in a separate terminal:
 
-```bash
-bin/dc_console
-```
 
 `bin/dc_prep` performs the following steps automatically, in order:
 
