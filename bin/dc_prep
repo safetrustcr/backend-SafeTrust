@@ -1,55 +1,107 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Starting SafeTrust backend..."
+# ─────────────────────────────────────────────────────────────────────────────
+# bin/dc_prep
+# Starts the SafeTrust backend and deploys one or more Hasura tenants.
+#
+# Usage:
+#   bin/dc_prep <tenant1> [tenant2 ...]
+#
+# Examples:
+#   bin/dc_prep safetrust
+#   bin/dc_prep safetrust hotel_industry
+# ─────────────────────────────────────────────────────────────────────────────
 
+HASURA_ADMIN_SECRET="myadminsecretkey"
+
+# ── Require at least one tenant argument ──────────────────────────────────────
+if [[ $# -eq 0 ]]; then
+  echo "❌ Error: At least one tenant name is required."
+  echo ""
+  echo "Usage:   bin/dc_prep <tenant1> [tenant2 ...]"
+  echo "Example: bin/dc_prep safetrust hotel_industry"
+  exit 1
+fi
+
+# Capture all positional arguments as the tenant list
+TENANTS=("$@")
+
+echo ""
+echo "🚀 Starting SafeTrust backend..."
+echo "   Tenants to deploy: ${TENANTS[*]}"
+echo ""
+
+# ── 1. Start containers ───────────────────────────────────────────────────────
 echo "📦 Starting containers..."
 docker compose up -d
 
+# ── 2. Wait for Hasura to be healthy ─────────────────────────────────────────
 echo "⏳ Waiting for Hasura to be healthy..."
-
-HASURA_ADMIN_SECRET="myadminsecretkey"
 
 max_attempts=90
 attempt=1
 until curl -sf http://localhost:8080/healthz > /dev/null; do
-  if [ "$attempt" -ge "$max_attempts" ]; then
-    echo "❌ Hasura health check timed out"
+  if [[ "$attempt" -ge "$max_attempts" ]]; then
+    echo "❌ Hasura health check timed out after $((max_attempts * 2)) seconds"
     exit 1
   fi
   attempt=$((attempt + 1))
   sleep 2
 done
 
-echo "🏗️ Deploying safetrust tenant metadata..."
+echo "✅ Hasura is healthy"
+echo ""
+
+# ── 3. Deploy all tenants sequentially ───────────────────────────────────────
+echo "🏗️  Deploying tenant metadata: ${TENANTS[*]}"
 cd metadata
-./setup-tenant.sh safetrust \
+./setup-tenant.sh "${TENANTS[@]}" \
   --endpoint http://localhost:8080 \
   --admin-secret "$HASURA_ADMIN_SECRET"
 cd ..
 
-echo "📂 Applying migrations..."
-hasura migrate apply \
-  --endpoint http://localhost:8080 \
-  --admin-secret "$HASURA_ADMIN_SECRET" \
-  --database-name safetrust
+echo ""
 
-echo "📋 Reloading metadata after migrations..."
+# ── 4. Apply migrations for each tenant ──────────────────────────────────────
+echo "📂 Applying migrations..."
+for TENANT in "${TENANTS[@]}"; do
+  echo "   ▶ Migrating tenant: $TENANT"
+  hasura migrate apply \
+    --endpoint http://localhost:8080 \
+    --admin-secret "$HASURA_ADMIN_SECRET" \
+    --database-name "$TENANT"
+  echo "   ✅ Migrations applied for $TENANT"
+done
+
+echo ""
+
+# ── 5. Reload metadata after migrations ──────────────────────────────────────
+echo "📋 Reloading metadata..."
 hasura metadata reload \
   --endpoint http://localhost:8080 \
   --admin-secret "$HASURA_ADMIN_SECRET"
 
-echo "🌱 Applying seeds..."
-hasura seed apply \
-  --endpoint http://localhost:8080 \
-  --admin-secret "$HASURA_ADMIN_SECRET" \
-  --database-name safetrust
+echo ""
 
+# ── 6. Apply seeds for each tenant ───────────────────────────────────────────
+echo "🌱 Applying seeds..."
+for TENANT in "${TENANTS[@]}"; do
+  echo "   ▶ Seeding tenant: $TENANT"
+  hasura seed apply \
+    --endpoint http://localhost:8080 \
+    --admin-secret "$HASURA_ADMIN_SECRET" \
+    --database-name "$TENANT"
+  echo "   ✅ Seeds applied for $TENANT"
+done
+
+# ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "✅ SafeTrust backend ready"
-echo "   GraphQL:    http://localhost:8080/v1/graphql"
-echo "   PostgreSQL: localhost:5433"
-echo "   Webhook:    http://localhost:3000"
+echo "   Tenants deployed: ${TENANTS[*]}"
+echo "   GraphQL:          http://localhost:8080/v1/graphql"
+echo "   PostgreSQL:       localhost:5433"
+echo "   Webhook:          http://localhost:3000"
 echo ""
 echo "👉 To open Hasura console:"
 echo "   hasura console --endpoint http://localhost:8080 --admin-secret $HASURA_ADMIN_SECRET"

@@ -2,3 +2,4 @@
 DROP TABLE IF EXISTS public.users CASCADE;
 
 DROP FUNCTION IF EXISTS update_users_updated_at();
+
