@@ -230,6 +230,8 @@ hasura seed apply \
 
 This project uses the Karate framework for API testing. Tests run in a Docker environment.
 
+- Docs: https://karatelabs.io/
+
 ### Running Tests
 
 ```bash
