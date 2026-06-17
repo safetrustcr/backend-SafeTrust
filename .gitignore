@@ -20,6 +20,12 @@ venv/
 .env.*
 !.env.example
 
+# Karate test artifacts
+tests/results/**
+!tests/results/.gitkeep
+tests/karate.jar
+tests/postgresql-jdbc.jar
+
 # Logs and temp files
 *.log
 *.tmp
