@@ -226,9 +226,12 @@ hasura seed apply \
 
 ---
 
-## 🧪 Backend Tests
+## 🧪 Backend Karate Tests
 
 This project uses the Karate framework for API testing. Tests run in a Docker environment.
+
+ [⛩️ Karate Docs](https://docs.karatelabs.io/)
+
 
 ### Running Tests
 
