@@ -19,14 +19,12 @@ CREATE TABLE IF NOT EXISTS public.users (
     CONSTRAINT valid_user_role CHECK (role IN ('GUEST', 'STAFF', 'MANAGER'))
 );
 
--- Indexes (hotel_id index is in the separate add_hotel_id_to_users migration)
 CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
 CREATE INDEX IF NOT EXISTS idx_users_firebase_uid
     ON public.users(firebase_uid)
     WHERE firebase_uid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_role ON public.users(role);
 
--- updated_at trigger
 CREATE OR REPLACE FUNCTION update_users_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
