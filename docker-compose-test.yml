@@ -121,6 +121,7 @@ services:
       tests/karate/features
     volumes:
       - ./tests/results:/app/target/karate-reports
+      - ./tests/results:/app/tests/results
     depends_on:
       postgres_test:
         condition: service_healthy
