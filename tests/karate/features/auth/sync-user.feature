@@ -50,4 +50,5 @@ Feature: POST /api/auth/sync-user
     Given path '/api/auth/sync-user'
     When method POST
     Then status 401
-    And match response.error == 'Unauthorized: No token provided'
+    And match response.error == 'Unauthorized'
+    And match response.message == 'Missing or malformed Authorization header'
