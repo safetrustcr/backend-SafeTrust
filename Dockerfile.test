@@ -1,6 +1,7 @@
 FROM eclipse-temurin:17-jdk-jammy
 
 WORKDIR /app
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 # Copy test files
 COPY tests /app/tests
@@ -10,9 +11,11 @@ RUN mkdir -p /app/tests/karate/src/test/resources
 # Create directory for test results
 RUN mkdir -p /app/target/karate-reports
 
+# Download Karate jar
+ADD https://github.com/karatelabs/karate/releases/download/v1.4.1/karate-1.4.1.jar /app/tests/karate.jar
+
 # Download Postgres JDBC driver
 ADD https://jdbc.postgresql.org/download/postgresql-42.7.2.jar /app/tests/postgresql-jdbc.jar
 
 # Set default command
 CMD ["java", "-cp", "/app/tests/karate.jar:/app/tests/postgresql-jdbc.jar:/app/tests/karate/src/test/resources", "com.intuit.karate.Main", "--configdir", "/app/tests/karate/src/test/resources", "/app/tests/karate/features"]
- 
