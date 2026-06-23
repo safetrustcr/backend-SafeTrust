@@ -14,13 +14,19 @@ const authenticateFirebase = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized: No token provided' });
+    return res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Missing or malformed Authorization header',
+    });
   }
 
   const idToken = authHeader.slice(7).trim();
 
   if (!idToken) {
-    return res.status(401).json({ error: 'Unauthorized: No token provided' });
+    return res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Missing or malformed Authorization header',
+    });
   }
 
   // Bypass for testing
@@ -55,7 +61,10 @@ const authenticateFirebase = async (req, res, next) => {
     return next();
   } catch (error) {
     console.error('Error verifying Firebase ID token:', error.message);
-    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+    return res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Invalid or expired token',
+    });
   }
 };
 
