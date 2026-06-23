@@ -27,6 +27,12 @@ fi
 # Capture all positional arguments as the tenant list
 TENANTS=("$@")
 
+TRACK_SAFETRUST_TIMINGS=false
+if [[ "${#TENANTS[@]}" -eq 1 && "${TENANTS[0]}" == "safetrust" ]]; then
+  TRACK_SAFETRUST_TIMINGS=true
+  TIMER_START=$SECONDS
+fi
+
 echo ""
 echo "🚀 Starting SafeTrust backend..."
 echo "   Tenants to deploy: ${TENANTS[*]}"
@@ -35,6 +41,10 @@ echo ""
 # ── 1. Start containers ───────────────────────────────────────────────────────
 echo "📦 Starting containers..."
 docker compose up -d
+
+if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+  TIMING_DOCKER_UP=$((SECONDS - TIMER_START))
+fi
 
 # ── 2. Wait for Hasura to be healthy ─────────────────────────────────────────
 echo "⏳ Waiting for Hasura to be healthy..."
@@ -51,6 +61,11 @@ until curl -sf http://localhost:8080/healthz > /dev/null; do
 done
 
 echo "✅ Hasura is healthy"
+
+if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+  TIMING_HASURA_HEALTH=$((SECONDS - TIMER_START))
+fi
+
 echo ""
 
 # ── 3. Deploy all tenants sequentially ───────────────────────────────────────
@@ -60,6 +75,10 @@ cd metadata
   --endpoint http://localhost:8080 \
   --admin-secret "$HASURA_ADMIN_SECRET"
 cd ..
+
+if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+  TIMING_METADATA_DEPLOY_SAFETRUST=$((SECONDS - TIMER_START))
+fi
 
 echo ""
 
@@ -74,6 +93,10 @@ for TENANT in "${TENANTS[@]}"; do
   echo "   ✅ Migrations applied for $TENANT"
 done
 
+if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+  TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
+fi
+
 echo ""
 
 # ── 5. Reload metadata after migrations ──────────────────────────────────────
@@ -81,6 +104,10 @@ echo "📋 Reloading metadata..."
 hasura metadata reload \
   --endpoint http://localhost:8080 \
   --admin-secret "$HASURA_ADMIN_SECRET"
+
+if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+  TIMING_METADATA_RELOAD=$((SECONDS - TIMER_START))
+fi
 
 echo ""
 
@@ -94,6 +121,25 @@ for TENANT in "${TENANTS[@]}"; do
     --database-name "$TENANT"
   echo "   ✅ Seeds applied for $TENANT"
 done
+
+if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+  TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
+  TIMING_TOTAL=$((SECONDS - TIMER_START))
+
+  mkdir -p tests/results
+  node -e "
+const t = {
+  docker_up: ${TIMING_DOCKER_UP},
+  hasura_health: ${TIMING_HASURA_HEALTH},
+  metadata_deploy_safetrust: ${TIMING_METADATA_DEPLOY_SAFETRUST},
+  migrations_safetrust: ${TIMING_MIGRATIONS_SAFETRUST},
+  metadata_reload: ${TIMING_METADATA_RELOAD},
+  seeds_safetrust: ${TIMING_SEEDS_SAFETRUST},
+  total: ${TIMING_TOTAL}
+};
+console.log(JSON.stringify(t, null, 2));
+" > tests/results/dc-prep-timings.json
+fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
