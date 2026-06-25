@@ -29,12 +29,12 @@ Feature: GET /api/auth/me — role-based redirect behavior
     And header x-test-uid = hostUid
     When method GET
     Then status 200
-    And match response.user.roles contains 'host'
+    And match response.user.roles == ['host']
     And match response.redirect == '/dashboard/escrow-dashboard'
 
   Scenario: Host role is stored correctly in user_roles table
-    * def rows = db.query("SELECT r.name FROM public.roles r JOIN public.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'host-user-001'")
-    Then match rows[0].name == 'host'
+    * def rows = db.query("SELECT r.name FROM public.roles r JOIN public.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'host-user-001' ORDER BY r.name")
+    Then match rows == [{ name: 'host' }]
 
   # ── Guest ─
 
@@ -44,12 +44,12 @@ Feature: GET /api/auth/me — role-based redirect behavior
     And header x-test-uid = guestUid
     When method GET
     Then status 200
-    And match response.user.roles contains 'guest'
+    And match response.user.roles == ['guest']
     And match response.redirect == '/dashboard/guest'
 
   Scenario: Guest role is stored correctly in user_roles table
-    * def rows = db.query("SELECT r.name FROM public.roles r JOIN public.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'guest-user-001'")
-    Then match rows[0].name == 'guest'
+    * def rows = db.query("SELECT r.name FROM public.roles r JOIN public.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'guest-user-001' ORDER BY r.name")
+    Then match rows == [{ name: 'guest' }]
 
   # ── Admin ─
 
@@ -59,12 +59,12 @@ Feature: GET /api/auth/me — role-based redirect behavior
     And header x-test-uid = adminUid
     When method GET
     Then status 200
-    And match response.user.roles contains 'admin'
+    And match response.user.roles == ['admin']
     And match response.redirect == '/dashboard/escrow-dashboard'
 
   Scenario: Admin role is stored correctly in user_roles table
-    * def rows = db.query("SELECT r.name FROM public.roles r JOIN public.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'admin-user-001'")
-    Then match rows[0].name == 'admin'
+    * def rows = db.query("SELECT r.name FROM public.roles r JOIN public.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'admin-user-001' ORDER BY r.name")
+    Then match rows == [{ name: 'admin' }]
 
   # ── No role ─
 
