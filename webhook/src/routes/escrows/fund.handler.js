@@ -1,0 +1,1 @@
+// issue to solve it: https://github.com/safetrustcr/backend-SafeTrust/issues/412
