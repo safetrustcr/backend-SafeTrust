@@ -1,4 +1,5 @@
 -- Seed test escrows for Trustless Work
+DELETE FROM public.escrow_milestones WHERE milestone_id = 'check_in';
 DELETE FROM public.trustless_work_escrows WHERE contract_id IN ('escrow-funded-001', 'escrow-pending-002');
 
 INSERT INTO public.trustless_work_escrows (
@@ -70,3 +71,34 @@ INSERT INTO public.trustless_work_escrows (
   '{"test": "booking"}'::jsonb,
   'safetrust'
 );
+
+-- Insert milestone for escrow-funded-001
+INSERT INTO public.escrow_milestones (
+  escrow_id,
+  milestone_id,
+  description,
+  amount,
+  due_date,
+  status,
+  approved_at,
+  approved_by,
+  released_at,
+  released_by,
+  metadata,
+  tenant_id
+)
+SELECT 
+  id,
+  'check_in',
+  'Guest check-in milestone',
+  50.0000000,
+  NOW() + INTERVAL '1 day',
+  'pending',
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  '{"type": "check_in"}'::jsonb,
+  'safetrust'
+FROM public.trustless_work_escrows 
+WHERE contract_id = 'escrow-funded-001';
