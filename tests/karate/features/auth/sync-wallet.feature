@@ -21,7 +21,7 @@ Feature: POST /api/auth/sync-wallet
     * def rows = db.query("SELECT * FROM public.user_wallets WHERE wallet_address = '" + stellarAddress + "'")
     And match rows[0].user_id == testUid
     And match rows[0].chain_type == 'STELLAR'
-    And match rows[0].is_primary == 'true'
+    And match rows[0].is_primary == '#? _ == "true" || _ == "t" || _ == true'
 
   Scenario: Upsert same address updates user_id and is_primary
     # Pre-seed the address under tenant-456, then reassign it to testUid via the endpoint

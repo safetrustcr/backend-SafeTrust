@@ -1,6 +1,6 @@
--- Seed test escrows for POST /api/escrows/initialize tests
--- Inserts a pre-existing row into trustless_work_escrows so the
--- duplicate contract_id scenario has something to conflict with.
+-- Seed test escrows for escrows callback feature files
+-- Provides canonical escrow records used across deploy, dispute and other tests.
+-- DELETE + re-INSERT makes duplicate contract_id scenarios idempotent.
 DELETE FROM public.trustless_work_escrows
 WHERE contract_id IN ('escrow-created-001');
 

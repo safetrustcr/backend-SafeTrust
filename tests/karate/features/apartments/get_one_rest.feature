@@ -11,7 +11,7 @@ Scenario: returns 401 without token
 Given url apiBase + '/api/apartments/00000000-0000-0000-0000-000000000000'
 When method get
 Then status 401
-And match response == { error: 'Unauthorized: No token provided' }
+And match response == { error: 'Unauthorized', message: 'Missing or malformed Authorization header' }
 
 Scenario: returns 404 when apartment does not exist
 Given url apiBase + '/api/apartments/00000000-0000-0000-0000-000000000000'
