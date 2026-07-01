@@ -2,6 +2,7 @@ Feature: POST /api/escrows/initialize — TrustlessWork initialize callback
 
   Background:
     * url webhookUrl
+    * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
     * db.execute("DELETE FROM public.trustless_work_escrows WHERE contract_id = 'STELLAR_CONTRACT_TEST_001'")
 
   Scenario: Valid initialize callback inserts new escrow with status created
@@ -61,3 +62,22 @@ Feature: POST /api/escrows/initialize — TrustlessWork initialize callback
     When method POST
     Then status 400
     And match response.error == 'escrow_type must be one of: single_release, multi_release'
+
+  Scenario: Duplicate contract_id returns 500 — UNIQUE constraint enforced
+    Given path '/api/escrows/initialize'
+    And header Content-Type = 'application/json'
+    And request
+    """
+    {
+      "contract_id": "escrow-created-001",
+      "marker": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z",
+      "approver": "GAPPROVER111WALLETADDRESS111111111111111111111111111111111",
+      "releaser": "GRELEASER111WALLETADDRESS111111111111111111111111111111111",
+      "amount": 2500.00,
+      "escrow_type": "single_release"
+    }
+    """
+    When method POST
+    Then status 500
+    And match response.error == 'Failed to persist escrow record'
+    And match response.details[0].message contains 'duplicate key value violates unique constraint'
