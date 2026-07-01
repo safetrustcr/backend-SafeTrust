@@ -1,0 +1,104 @@
+-- Seed test escrows for Trustless Work
+DELETE FROM public.escrow_milestones WHERE milestone_id = 'check_in';
+DELETE FROM public.trustless_work_escrows WHERE contract_id IN ('escrow-funded-001', 'escrow-pending-002');
+
+INSERT INTO public.trustless_work_escrows (
+  contract_id,
+  marker,
+  approver,
+  releaser,
+  resolver,
+  escrow_type,
+  status,
+  asset_code,
+  asset_issuer,
+  amount,
+  balance,
+  booking_id,
+  room_id,
+  hotel_id,
+  guest_id,
+  check_in_date,
+  check_out_date,
+  booking_created_at,
+  escrow_metadata,
+  booking_metadata,
+  tenant_id
+) VALUES
+(
+  'escrow-funded-001',
+  'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z',
+  'GABCD1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z',
+  'GXYZ9876543210ZYXWVUTSRQPONMLKJIHGFEDCBA',
+  'single_release',
+  'funded',
+  'USDC',
+  'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z',
+  100.0000000,
+  100.0000000,
+  'booking-001',
+  'room-101',
+  'hotel-001',
+  'guest-001',
+  NOW() + INTERVAL '1 day',
+  NOW() + INTERVAL '3 days',
+  NOW(),
+  '{"test": "data"}'::jsonb,
+  '{"test": "booking"}'::jsonb,
+  'safetrust'
+),
+(
+  'escrow-pending-002',
+  'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z',
+  'GABCD1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z',
+  'GXYZ9876543210ZYXWVUTSRQPONMLKJIHGFEDCBA',
+  'single_release',
+  'pending_funding',
+  'USDC',
+  'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z',
+  50.0000000,
+  0.0000000,
+  'booking-002',
+  'room-102',
+  'hotel-001',
+  'guest-002',
+  NOW() + INTERVAL '5 days',
+  NOW() + INTERVAL '7 days',
+  NOW(),
+  '{"test": "data"}'::jsonb,
+  '{"test": "booking"}'::jsonb,
+  'safetrust'
+);
+
+-- Insert milestone for escrow-funded-001
+INSERT INTO public.escrow_milestones (
+  escrow_id,
+  milestone_id,
+  description,
+  amount,
+  due_date,
+  status,
+  approved_at,
+  approved_by,
+  released_at,
+  released_by,
+  metadata,
+  tenant_id
+)
+SELECT 
+  id,
+  'check_in',
+  'Guest check-in milestone',
+  50.0000000,
+  NOW() + INTERVAL '1 day',
+  'pending',
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  '{"type": "check_in"}'::jsonb,
+  'safetrust'
+FROM public.trustless_work_escrows 
+WHERE contract_id = 'escrow-funded-001';
