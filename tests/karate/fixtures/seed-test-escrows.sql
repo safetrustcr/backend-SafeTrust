@@ -50,10 +50,6 @@ INSERT INTO public.trustless_work_escrows (
 
 -- status: pending_funding
 -- Used by: fund handler pre-condition tests
--- Seed test escrows for Trustless Work
-DELETE FROM public.escrow_milestones WHERE milestone_id = 'check_in';
-DELETE FROM public.trustless_work_escrows WHERE contract_id IN ('escrow-funded-001', 'escrow-pending-002');
-
 INSERT INTO public.trustless_work_escrows (
   contract_id,
   marker,
