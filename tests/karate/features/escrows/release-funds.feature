@@ -1,53 +1,38 @@
-Feature: POST /api/escrows/release-funds — TrustlessWork fund release callback
+Feature: POST /api/escrows/release-funds
 
   Background:
-    * url baseUrl
-    * db.execute(karate.read('file:tests/karate/fixtures/seed-test-users.sql'))
+    * url webhookUrl
+    * def contractId = 'escrow-funded-001'
+    * def releaseSigner = 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z'
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
 
-  Scenario: Valid release callback updates status to completed and zeroes balance
+  Scenario: Successfully release funds -> update status and balance to 0 -> 200 OK
     Given path '/api/escrows/release-funds'
-    And header Content-Type = 'application/json'
-    And request
-    """
-    {
-      "contractId": "escrow-funded-001",
-      "releaseSigner": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z"
-    }
-    """
+    And request { contractId: '#(contractId)', releaseSigner: '#(releaseSigner)' }
     When method POST
     Then status 200
-    And match response.received == true
-    * def rows = db.query("SELECT status, balance FROM public.trustless_work_escrows WHERE contract_id = 'escrow-funded-001'")
+    And match response == { received: true }
+    * def rows = db.query("SELECT status, balance FROM public.trustless_work_escrows WHERE contract_id = '" + contractId + "'")
     And match rows[0].status == 'completed'
-    And match rows[0].balance == '0E-7'
+    And assert rows[0].balance == '0' || rows[0].balance == '0.0000000'
 
-  Scenario: Missing contractId returns 400
+  Scenario: Missing contractId -> 400 Bad Request
     Given path '/api/escrows/release-funds'
-    And header Content-Type = 'application/json'
-    And request { "releaseSigner": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z" }
+    And request { releaseSigner: '#(releaseSigner)' }
     When method POST
     Then status 400
     And match response.error == 'Missing required fields: contractId, releaseSigner'
 
-  Scenario: Missing releaseSigner returns 400
+  Scenario: Missing releaseSigner -> 400 Bad Request
     Given path '/api/escrows/release-funds'
-    And header Content-Type = 'application/json'
-    And request { "contractId": "escrow-funded-001" }
+    And request { contractId: '#(contractId)' }
     When method POST
     Then status 400
     And match response.error == 'Missing required fields: contractId, releaseSigner'
 
-  Scenario: Unknown contractId returns 404
+  Scenario: Escrow not found -> 404 Not Found
     Given path '/api/escrows/release-funds'
-    And header Content-Type = 'application/json'
-    And request
-    """
-    {
-      "contractId": "non-existent-contract-xyz",
-      "releaseSigner": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z"
-    }
-    """
+    And request { contractId: 'non-existent-contract', releaseSigner: '#(releaseSigner)' }
     When method POST
     Then status 404
-    And match response.error contains 'Escrow not found'
+    And match response.error == 'Escrow not found for contractId: non-existent-contract'
