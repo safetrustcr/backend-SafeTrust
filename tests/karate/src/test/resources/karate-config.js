@@ -19,7 +19,7 @@ function fn() {
       if (typeof sql !== 'string') sql = new java.lang.String(sql).toString();
       var DriverManager = Java.type('java.sql.DriverManager');
       var conn = DriverManager.getConnection(
-        'jdbc:postgresql://postgres-test:5432/postgres',
+        'jdbc:postgresql://postgres_test:5432/postgres',
         'postgres',
         'postgrespassword'
       );
@@ -45,7 +45,7 @@ function fn() {
       if (typeof sql !== 'string') sql = new java.lang.String(sql).toString();
       var DriverManager = Java.type('java.sql.DriverManager');
       var conn = DriverManager.getConnection(
-        'jdbc:postgresql://postgres-test:5432/postgres',
+        'jdbc:postgresql://postgres_test:5432/postgres',
         'postgres',
         'postgrespassword'
       );

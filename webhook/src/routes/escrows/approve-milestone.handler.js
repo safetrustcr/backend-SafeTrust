@@ -3,54 +3,62 @@
 const DEFAULT_HASURA_ENDPOINT = 'http://graphql-engine:8080/v1/graphql';
 
 const APPROVE_MILESTONE_MUTATION = `
+  update_escrow_milestones(
+    where: {
+      escrow: { contract_id: { _eq: $contractId } }
+      milestone_id: { _eq: $milestoneId }
+    }
+    _set: {
+      status: "approved"
+      approved_by: $approver
+      approved_at: $approvedAt
+      updated_at: $approvedAt
+    }
+  ) {
+    affected_rows
+    returning {
+      id
+      milestone_id
+      status
+      approved_by
+    }
+  }
+`;
+
+const UPDATE_ESCROW_STATUS_MUTATION = `
+  update_trustless_work_escrows(
+    where: {
+      contract_id: { _eq: $contractId }
+      milestones: {
+        milestone_id: { _eq: $milestoneId }
+        status: { _eq: "approved" }
+        approved_by: { _eq: $approver }
+        approved_at: { _eq: $approvedAt }
+      }
+    }
+    _set: {
+      status: "milestone_approved"
+      updated_at: $approvedAt
+    }
+  ) {
+    affected_rows
+    returning {
+      id
+      contract_id
+      status
+    }
+  }
+`;
+
+const APPROVE_MILESTONE_TRANSACTION_MUTATION = `
   mutation ApproveMilestone(
     $contractId: String!
     $milestoneId: String!
     $approver: String!
     $approvedAt: timestamptz!
   ) {
-    update_escrow_milestones(
-      where: {
-        escrow: { contract_id: { _eq: $contractId } }
-        milestone_id: { _eq: $milestoneId }
-      }
-      _set: {
-        status: "approved"
-        approved_by: $approver
-        approved_at: $approvedAt
-        updated_at: $approvedAt
-      }
-    ) {
-      affected_rows
-      returning {
-        id
-        milestone_id
-        status
-        approved_by
-      }
-    }
-  }
-`;
-
-const UPDATE_ESCROW_STATUS_MUTATION = `
-  mutation UpdateEscrowMilestoneApproved(
-    $contractId: String!
-    $updatedAt: timestamptz!
-  ) {
-    update_trustless_work_escrows(
-      where: { contract_id: { _eq: $contractId } }
-      _set: {
-        status: "milestone_approved"
-        updated_at: $updatedAt
-      }
-    ) {
-      affected_rows
-      returning {
-        id
-        contract_id
-        status
-      }
-    }
+    ${APPROVE_MILESTONE_MUTATION}
+    ${UPDATE_ESCROW_STATUS_MUTATION}
   }
 `;
 
@@ -108,21 +116,15 @@ async function approveMilestoneHandler(req, res) {
   const approvedAt = new Date().toISOString();
 
   try {
-    const [milestoneData, escrowData] = await Promise.all([
-      postHasura(APPROVE_MILESTONE_MUTATION, {
-        contractId,
-        milestoneId,
-        approver,
-        approvedAt,
-      }),
-      postHasura(UPDATE_ESCROW_STATUS_MUTATION, {
-        contractId,
-        updatedAt: approvedAt,
-      }),
-    ]);
+    const data = await postHasura(APPROVE_MILESTONE_TRANSACTION_MUTATION, {
+      contractId,
+      milestoneId,
+      approver,
+      approvedAt,
+    });
 
-    const milestoneRows = milestoneData.update_escrow_milestones?.affected_rows || 0;
-    const escrowRows = escrowData.update_trustless_work_escrows?.affected_rows || 0;
+    const milestoneRows = data.update_escrow_milestones?.affected_rows || 0;
+    const escrowRows = data.update_trustless_work_escrows?.affected_rows || 0;
 
     if (milestoneRows === 0 || escrowRows === 0) {
       console.warn(
@@ -141,7 +143,6 @@ async function approveMilestoneHandler(req, res) {
     console.error('[escrow/approve-milestone] failed:', error.details || error.message);
     return res.status(500).json({
       error: 'Failed to update milestone approval',
-      details: error.details || error.message,
     });
   }
 }
@@ -149,6 +150,7 @@ async function approveMilestoneHandler(req, res) {
 module.exports = {
   approveMilestoneHandler,
   APPROVE_MILESTONE_MUTATION,
+  APPROVE_MILESTONE_TRANSACTION_MUTATION,
   UPDATE_ESCROW_STATUS_MUTATION,
   getHasuraEndpoint,
   postHasura,

@@ -10,7 +10,7 @@ const apartmentsRoutes = require('./apartments/list.route');
 const escrowRoutes = require('./escrows/approve-milestone.route');
 
 router.get('/health', (req, res) => res.status(200).send('OK'))
-router.use('/api/escrows', escrowRoutes)
+router.use('/api/escrows', authMiddleware, escrowRoutes)
 router.use('/api', authMiddleware)
 const meRoute = require('./auth/me.route');
 const disputeRoute = require('./escrows/dispute.route');

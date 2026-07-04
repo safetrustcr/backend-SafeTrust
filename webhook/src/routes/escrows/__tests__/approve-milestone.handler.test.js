@@ -57,30 +57,22 @@ describe('approveMilestoneHandler', () => {
     });
   });
 
-  it('updates Hasura and returns 200 when both mutations succeed', async () => {
-    global.fetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          data: {
-            update_escrow_milestones: {
-              affected_rows: 1,
-              returning: [{ id: '1', milestone_id: 'check_in', status: 'approved' }],
-            },
+  it('updates Hasura and returns 200 when both updates succeed in one mutation', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          update_escrow_milestones: {
+            affected_rows: 1,
+            returning: [{ id: '1', milestone_id: 'check_in', status: 'approved' }],
           },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          data: {
-            update_trustless_work_escrows: {
-              affected_rows: 1,
-              returning: [{ id: 'escrow-1', contract_id: 'contract-1', status: 'milestone_approved' }],
-            },
+          update_trustless_work_escrows: {
+            affected_rows: 1,
+            returning: [{ id: 'escrow-1', contract_id: 'contract-1', status: 'milestone_approved' }],
           },
-        }),
-      });
+        },
+      }),
+    });
 
     const req = {
       body: {
@@ -94,9 +86,8 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res);
 
-    expect(global.fetch).toHaveBeenCalledTimes(2);
-    expect(global.fetch).toHaveBeenNthCalledWith(
-      1,
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(
       'http://graphql-engine-test:8080/v1/graphql',
       expect.objectContaining({
         method: 'POST',
@@ -110,30 +101,22 @@ describe('approveMilestoneHandler', () => {
     expect(res.json).toHaveBeenCalledWith({ received: true });
   });
 
-  it('returns 404 when the mutations match no rows', async () => {
-    global.fetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          data: {
-            update_escrow_milestones: {
-              affected_rows: 0,
-              returning: [],
-            },
+  it('returns 404 when the transactional mutation matches no rows', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          update_escrow_milestones: {
+            affected_rows: 0,
+            returning: [],
           },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          data: {
-            update_trustless_work_escrows: {
-              affected_rows: 1,
-              returning: [{ id: 'escrow-1' }],
-            },
+          update_trustless_work_escrows: {
+            affected_rows: 0,
+            returning: [],
           },
-        }),
-      });
+        },
+      }),
+    });
 
     const req = {
       body: {
@@ -176,7 +159,6 @@ describe('approveMilestoneHandler', () => {
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({
       error: 'Failed to update milestone approval',
-      details: [{ message: 'permission denied' }],
     });
   });
 });
