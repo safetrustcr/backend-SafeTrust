@@ -1,12 +1,17 @@
 const express = require('express')
 const router = express.Router()
 
-const { authenticateFirebase } = require('../middleware/auth.middleware')
+const { authMiddleware, authenticateFirebase } = require('../middleware/auth.middleware')
 
-const authRoutes = require('./auth')
+const authRoutes = require('./auth/sync-wallet.route')
 const bidRequestRoutes = require('./bid-requests')
-const reconciliationRoutes = require('./reconciliation')
+const reconciliationRoutes = require('./reconciliation/sync-escrows.route')
 const apartmentsRoutes = require('./apartments/list.route');
+const escrowRoutes = require('./escrows/approve-milestone.route');
+
+router.get('/health', (req, res) => res.status(200).send('OK'))
+router.use('/api/escrows', authMiddleware, escrowRoutes)
+router.use('/api', authMiddleware)
 const meRoute = require('./auth/me.route');
 const disputeRoute = require('./escrows/dispute.route');
 const initializeEscrowRoute = require('./escrows/initialize.route');
