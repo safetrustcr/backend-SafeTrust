@@ -8,7 +8,7 @@ const authRoutes = require('./routes/auth');
 const apartmentRoutes = require('./routes/apartments');
 const reconciliationRoutes = require('./routes/reconciliation/sync-escrows.route');
 
-const { authenticateFirebase } = require('./middleware/auth');
+const { authenticateFirebase } = require('./middleware/auth.middleware');
 
 const app = express();
 const port = process.env.WEBHOOK_PORT || 3001;

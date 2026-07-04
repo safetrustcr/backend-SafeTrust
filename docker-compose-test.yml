@@ -149,6 +149,12 @@ services:
         curl -s -X POST http://graphql-engine-test:8080/v1/metadata -H 'X-Hasura-Admin-Secret: myadminsecretkey' -H 'Content-Type: application/json' -d '{\"type\": \"pg_add_source\", \"args\": {\"name\": \"safetrust\", \"configuration\": {\"connection_info\": { \"database_url\": \"postgres://postgres:postgrespassword@postgres_test:5432/postgres\", \"isolation_level\": \"read-committed\" } } } }';
         sleep 2;
         for i in 1 2 3 4 5; do hasura migrate apply --database-name safetrust --endpoint http://graphql-engine-test:8080 --admin-secret myadminsecretkey && break || sleep 5; done;
+        case \$(uname -m) in
+          aarch64|arm64) ARCH=arm64 ;;
+          *) ARCH=amd64 ;;
+        esac;
+        curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_\$ARCH -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq;
+        cd metadata && ./setup-tenant.sh safetrust --endpoint http://graphql-engine-test:8080 --admin-secret myadminsecretkey
       "
     depends_on:
       graphql-engine-test:

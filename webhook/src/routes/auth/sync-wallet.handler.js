@@ -11,7 +11,11 @@ const UPSERT_WALLET = `
   INSERT INTO public.user_wallets (user_id, wallet_address, chain_type, is_primary)
   VALUES ($1, $2, $3, $4)
   ON CONFLICT (wallet_address)
-  DO UPDATE SET user_id = $1, is_primary = $4, updated_at = NOW()
+  DO UPDATE SET
+    user_id = EXCLUDED.user_id,
+    chain_type = EXCLUDED.chain_type,
+    is_primary = EXCLUDED.is_primary,
+    updated_at = NOW()
   RETURNING id, wallet_address, chain_type, is_primary
 `;
 

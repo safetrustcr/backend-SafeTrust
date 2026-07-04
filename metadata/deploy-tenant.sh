@@ -121,15 +121,21 @@ process_metadata_tables() {
     for table_file in "$temp_dir/metadata/databases/default/tables"/*.yaml; do
         if [ -f "$table_file" ]; then
             local table_name
-            table_name=$(basename "$table_file" .yaml)
-            
+            table_name=$(grep -A 2 "^table:" "$table_file" | grep "name:" | sed 's/.*name:[[:space:]]*\([^ ]*\).*/\1/' | tr -d '\r' | tr -d '"' | tr -d "'")
+            local table_schema
+            table_schema=$(grep -A 2 "^table:" "$table_file" | grep "schema:" | sed 's/.*schema:[[:space:]]*\([^ ]*\).*/\1/' | tr -d '\r' | tr -d '"' | tr -d "'")
+
+            if [ -z "$table_schema" ]; then
+                table_schema="public"
+            fi
+
             if [ -z "$table_name" ]; then
                 echo "Warning: Could not determine table name from $table_file, skipping"
                 continue
             fi
-            
-            echo "Adding table: $table_name to tenant $tenant_name"
-            
+
+            echo "Adding table: $table_name (schema: $table_schema) to tenant $tenant_name"
+
             # Create table tracking request
             cat > "$temp_dir/track_table.json" << EOL
 {
@@ -138,7 +144,7 @@ process_metadata_tables() {
     "source": "${tenant_name}",
     "table": {
       "name": "${table_name}",
-      "schema": "public"
+      "schema": "${table_schema}"
     }
   }
 }
