@@ -1,5 +1,5 @@
 const app = require('./app');
-const port = Number(process.env.WEBHOOK_PORT || 3001);
+const port = Number(process.env.WEBHOOK_PORT || process.env.PORT || 3001);
 
 /**
  * HTTP server entrypoint for the webhook service.
