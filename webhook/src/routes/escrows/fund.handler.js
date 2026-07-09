@@ -66,8 +66,7 @@ const fundEscrowHandler = async (req, res) => {
     if (hasuraData.errors) {
       console.error('[escrow/fund] Hasura error:', hasuraData.errors);
       return res.status(500).json({
-        error: 'Failed to update escrow status',
-        details: hasuraData.errors
+        error: 'Failed to update escrow status'
       });
     }
 
@@ -85,7 +84,7 @@ const fundEscrowHandler = async (req, res) => {
     return res.status(200).json({ received: true });
   } catch (error) {
     console.error('[escrow/fund] Exception:', error.message);
-    return res.status(500).json({ error: 'Internal server error', details: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 };
 
