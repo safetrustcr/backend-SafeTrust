@@ -44,6 +44,9 @@ const fundEscrowHandler = async (req, res) => {
       return res.status(500).json({ error: 'Server configuration error' });
     }
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
     const hasuraRes = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -54,7 +57,9 @@ const fundEscrowHandler = async (req, res) => {
         query: mutation,
         variables: { contractId, amount }
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     const hasuraData = await hasuraRes.json();
 
