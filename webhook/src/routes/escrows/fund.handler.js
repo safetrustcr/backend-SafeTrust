@@ -2,7 +2,7 @@ const fundEscrowHandler = async (req, res) => {
   const { contractId, signer, amount } = req.body;
 
   // 1 — Validate required fields
-  if (!contractId || !signer || !amount) {
+  if (!contractId || !signer || amount === undefined || amount === null) {
     return res.status(400).json({
       error: 'Missing required fields: contractId, signer, amount'
     });
