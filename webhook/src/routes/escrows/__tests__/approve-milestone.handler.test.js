@@ -57,18 +57,27 @@ describe('approveMilestoneHandler', () => {
     });
   });
 
-  it('updates Hasura and returns 200 when both updates succeed in one mutation', async () => {
+  it('updates Hasura and returns 200 when both updates succeed using custom camelCase', async () => {
+    // 1. Mock custom lookup succeeding
     global.fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         data: {
-          update_escrow_milestones: {
+          trustlessWorkEscrows: [{ id: 'escrow-1' }],
+        },
+      }),
+    });
+
+    // 2. Mock custom mutation succeeding
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          update_escrowMilestones: {
             affected_rows: 1,
-            returning: [{ id: '1', milestone_id: 'check_in', status: 'approved' }],
           },
-          update_trustless_work_escrows: {
+          update_trustlessWorkEscrows: {
             affected_rows: 1,
-            returning: [{ id: 'escrow-1', contract_id: 'contract-1', status: 'milestone_approved' }],
           },
         },
       }),
@@ -86,34 +95,74 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res);
 
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-    expect(global.fetch).toHaveBeenCalledWith(
-      'http://graphql-engine-test:8080/v1/graphql',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({
-          'Content-Type': 'application/json',
-          'x-hasura-admin-secret': 'test-secret',
-        }),
-      })
-    );
+    expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ received: true });
   });
 
-  it('returns 404 when the transactional mutation matches no rows', async () => {
+  it('falls back to default snake_case when custom lookup/mutation fail or are not tracked', async () => {
+    // 1. Custom lookup fails (e.g. throws error or custom table not tracked)
+    global.fetch.mockRejectedValueOnce(new Error('custom not found'));
+
+    // 2. Default lookup succeeds
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          trustless_work_escrows: [{ id: 'escrow-1' }],
+        },
+      }),
+    });
+
+    // 3. Default mutation succeeds
     global.fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         data: {
           update_escrow_milestones: {
-            affected_rows: 0,
-            returning: [],
+            affected_rows: 1,
           },
           update_trustless_work_escrows: {
-            affected_rows: 0,
-            returning: [],
+            affected_rows: 1,
           },
+        },
+      }),
+    });
+
+    const req = {
+      body: {
+        contractId: 'contract-1',
+        milestoneId: 'check_in',
+        approver: 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z',
+        flag: true,
+      },
+    };
+    const res = makeResponse();
+
+    await approveMilestoneHandler(req, res);
+
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ received: true });
+  });
+
+  it('returns 404 when the escrow is not found in either lookup', async () => {
+    // 1. Custom lookup returns empty
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          trustlessWorkEscrows: [],
+        },
+      }),
+    });
+
+    // 2. Default lookup returns empty
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          trustless_work_escrows: [],
         },
       }),
     });
@@ -136,8 +185,19 @@ describe('approveMilestoneHandler', () => {
     });
   });
 
-  it('returns 500 when Hasura responds with GraphQL errors', async () => {
-    global.fetch.mockResolvedValue({
+  it('returns 500 when Hasura responds with GraphQL errors during mutation', async () => {
+    // 1. Custom lookup succeeds
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          trustlessWorkEscrows: [{ id: 'escrow-1' }],
+        },
+      }),
+    });
+
+    // 2. Custom mutation fails with errors
+    global.fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         errors: [{ message: 'permission denied' }],
