@@ -68,7 +68,7 @@ describe('approveMilestoneHandler', () => {
       }),
     });
 
-    // 2. Mock custom mutation succeeding
+    // 2. Mock custom milestone mutation succeeding
     global.fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -76,6 +76,15 @@ describe('approveMilestoneHandler', () => {
           update_escrowMilestones: {
             affected_rows: 1,
           },
+        },
+      }),
+    });
+
+    // 3. Mock custom escrow mutation succeeding
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
           update_trustlessWorkEscrows: {
             affected_rows: 1,
           },
@@ -95,7 +104,7 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res);
 
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ received: true });
   });
@@ -114,7 +123,7 @@ describe('approveMilestoneHandler', () => {
       }),
     });
 
-    // 3. Default mutation succeeds
+    // 3. Default milestone mutation succeeds
     global.fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -122,6 +131,15 @@ describe('approveMilestoneHandler', () => {
           update_escrow_milestones: {
             affected_rows: 1,
           },
+        },
+      }),
+    });
+
+    // 4. Default escrow mutation succeeds
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
           update_trustless_work_escrows: {
             affected_rows: 1,
           },
@@ -141,7 +159,7 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res);
 
-    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect(global.fetch).toHaveBeenCalledTimes(4);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ received: true });
   });
