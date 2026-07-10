@@ -82,3 +82,4 @@ Feature: POST /api/escrows/fund — TrustlessWork fund confirmation callback
     When method POST
     Then status 404
     And match response.error contains 'Escrow not found'
+

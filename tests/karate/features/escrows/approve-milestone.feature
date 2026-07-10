@@ -1,7 +1,7 @@
 Feature: POST /api/escrows/approve-milestone — TrustlessWork milestone approval callback
 
   Background:
-    * url baseUrl
+    * url webhookUrl
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-users.sql'))
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
     # Reset milestone state before each scenario
