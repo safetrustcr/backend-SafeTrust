@@ -16,7 +16,7 @@
     "dotenv": "^16.0.3",
     "express": "^4.22.2",
     "firebase-admin": "^12.0.0",
-    "morgan": "^1.10.0",
+    "morgan": "^1.11.0",
     "pg": "^8.10.0"
   },
   "devDependencies": {
