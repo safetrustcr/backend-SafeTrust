@@ -6,34 +6,6 @@
 
 ---
 
-### **Why Choose SafeTrust?**
-
-🔐 **Trustless Technology**: Secure and block deposits without intermediaries.  
-💾 **Blockchain-Powered Transparency**: Immutable, auditable, and verifiable transactions.  
-💱 **Crypto-Payment Support**: Manage cryptocurrency payments safely and efficiently.  
-✅ **Automated Refunds**: Streamlined processes ensure refunds and payment releases happen automatically.
-
----
-
-## **Key Features**
-
-🛠️ **Trustless Escrow**:  
-Funds are securely held in blockchain-based escrow accounts until all terms are met.
-
-🔎 **Blockchain Transparency**:  
-Every transaction is logged on the blockchain for full visibility and accountability. 📜
-
-💰 **Crypto Payments**:  
-Supports irreversible and secure cryptocurrency payments while reducing risks of fraud or disputes.
-
-🔗 **Trustline Process**:  
-Verified trustlines between parties add an extra layer of transaction security. 🔒
-
-📤 **Automated Refund System**:  
-Ensures funds are automatically released based on the terms of the agreement, with no manual intervention required.
-
----
-
 ## 📋 **Getting Started**
 
 ### **Prerequisites**
