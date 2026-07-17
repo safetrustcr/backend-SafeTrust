@@ -32,7 +32,8 @@ create_metadata_source() {
     fi
     
     mkdir -p "$temp_dir/metadata/databases/default/tables"
-    
+    mkdir -p "$temp_dir/metadata/databases/default/functions"
+
     echo "Creating Hasura project structure for $tenant..." >&2
     cat > "$temp_dir/config.yaml" << EOL
 version: 3
@@ -47,6 +48,13 @@ EOL
     else
         echo "Warning: No tables directory found at $BUILD_DIR/$tenant/databases/tables/" >&2
         return 1
+    fi
+
+    if [ -d "$BUILD_DIR/$tenant/databases/functions" ]; then
+        echo "Copying function definitions for $tenant..." >&2
+        cp -r "$BUILD_DIR/$tenant/databases/functions"/* "$temp_dir/metadata/databases/default/functions/" 2>/dev/null || true
+    else
+        echo "No functions directory found at $BUILD_DIR/$tenant/databases/functions/ (skipping)" >&2
     fi
     
     local tenant_name
@@ -170,6 +178,76 @@ EOL
     return 0
 }
 
+# Function to process (track) SQL functions for a tenant
+process_metadata_functions() {
+    local tenant="$1"
+    local tenant_name="$2"
+    local temp_dir="$3"
+    local hasura_endpoint="$4"
+    local admin_secret="$5"
+
+    local functions_dir="$temp_dir/metadata/databases/default/functions"
+
+    if [ ! -d "$functions_dir" ] || [ -z "$(ls -A "$functions_dir" 2>/dev/null)" ]; then
+        echo "No functions to track for $tenant"
+        return 0
+    fi
+
+    echo "Processing functions for $tenant..."
+
+    # Find all function definition files
+    for function_file in "$functions_dir"/*.yaml; do
+        if [ -f "$function_file" ]; then
+            local function_name
+            function_name=$(grep -A 2 "^function:" "$function_file" | grep "name:" | sed 's/.*name:[[:space:]]*\([^ ]*\).*/\1/' | tr -d '\r' | tr -d '"' | tr -d "'")
+            local function_schema
+            function_schema=$(grep -A 2 "^function:" "$function_file" | grep "schema:" | sed 's/.*schema:[[:space:]]*\([^ ]*\).*/\1/' | tr -d '\r' | tr -d '"' | tr -d "'")
+
+            if [ -z "$function_schema" ]; then
+                function_schema="public"
+            fi
+
+            if [ -z "$function_name" ]; then
+                echo "Warning: Could not determine function name from $function_file, skipping"
+                continue
+            fi
+
+            echo "Adding function: $function_name (schema: $function_schema) to tenant $tenant_name"
+
+            # Create function tracking request
+            cat > "$temp_dir/track_function.json" << EOL
+{
+  "type": "pg_track_function",
+  "args": {
+    "source": "${tenant_name}",
+    "function": {
+      "name": "${function_name}",
+      "schema": "${function_schema}"
+    }
+  }
+}
+EOL
+            echo "Tracking function $function_name..."
+            local track_response
+            track_response=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
+                -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+                -H "Content-Type: application/json" \
+                -d @"$temp_dir/track_function.json")
+
+            if [[ "$track_response" == *"already tracked"* ]]; then
+                echo "Function $function_name is already tracked"
+            elif [[ "$track_response" == *"error"* ]]; then
+                echo "Warning: Issue tracking function $function_name: $track_response"
+            else
+                echo "Successfully tracked function $function_name"
+            fi
+        fi
+    done
+
+    echo "✅ Function deployment for $tenant tenant completed"
+    return 0
+}
+
 # Function to orchestrate the deployment process for a single tenant
 deploy_tenant() {
     local tenant="$1"
@@ -195,7 +273,13 @@ deploy_tenant() {
         rm -rf "$temp_dir"
         return 1
     fi
-    
+
+    # Process functions for the tenant (tables must be tracked first)
+    if ! process_metadata_functions "$tenant" "$tenant_name" "$temp_dir" "$hasura_endpoint" "$admin_secret"; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
     # Clean up
     rm -rf "$temp_dir"
     return 0
