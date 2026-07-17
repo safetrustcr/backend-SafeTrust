@@ -1,3 +1,46 @@
 function:
   schema: public
   name: find_nearby_apartments
+definition: |
+  CREATE OR REPLACE FUNCTION public.find_nearby_apartments(
+    lat FLOAT,
+    lng FLOAT,
+    radius_meters FLOAT DEFAULT 5000
+  )
+  RETURNS SETOF public.apartments
+  LANGUAGE sql
+  STABLE
+  AS $$
+    SELECT a.*
+    FROM public.apartments a
+    WHERE
+      a.deleted_at IS NULL
+      AND a.is_available = true
+      AND a.location_area IS NOT NULL
+      AND ST_DWithin(
+        a.location_area::geography,
+        ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography,
+        radius_meters
+      )
+    ORDER BY
+      ST_Distance(
+        a.location_area::geography,
+        ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography
+      ) ASC;
+  $$;
+dependencies:
+  - extension: postgis
+description: |
+  This function finds available apartments within a specified radius from a given location point.
+  It returns apartments ordered by distance from the search location, using PostGIS ST_DWithin
+  for efficient spatial filtering on the location_area GEOMETRY column.
+comment: |
+  The function uses PostGIS spatial functions to calculate distances and find nearby apartments.
+  The STABLE attribute indicates that the function does not modify the database and
+  returns the same result for same arguments within a single query.
+permissions:
+  - role: anonymous
+    privilege: EXECUTE
+  - role: user
+    privilege: EXECUTE
+exposed_as: query
