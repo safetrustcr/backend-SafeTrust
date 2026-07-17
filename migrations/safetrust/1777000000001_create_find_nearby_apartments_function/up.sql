@@ -16,11 +16,8 @@ AS $$
     AND ST_DWithin(
       a.location_area::geography,
       ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography,
-      radius_meters
+      LEAST(radius_meters, 50000)
     )
   ORDER BY
-    ST_Distance(
-      a.location_area::geography,
-      ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography
-    ) ASC;
+    a.location_area::geography <-> ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography ASC;
 $$;
