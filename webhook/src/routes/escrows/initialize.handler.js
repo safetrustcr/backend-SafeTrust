@@ -36,9 +36,9 @@ const initializeEscrowHandler = async (req, res) => {
     mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
       insert_trustless_work_escrows_one(object: $object) {
         id
-        contract_id
+        contractId
         status
-        created_at
+        createdAt
       }
     }
   `;
@@ -62,24 +62,24 @@ const initializeEscrowHandler = async (req, res) => {
         query: mutation,
         variables: {
           object: {
-            contract_id,
+            contractId: contract_id,
             marker,
             approver,
             releaser,
             resolver: resolver || null,
-            escrow_type,
+            escrowType: escrow_type,
             status: 'created',             // initial status per valid_escrow_status CHECK
-            asset_code: asset_code || 'USDC',
-            asset_issuer: asset_issuer || null,
+            assetCode: asset_code || 'USDC',
+            assetIssuer: asset_issuer || null,
             amount,
             balance: 0,
-            booking_id: booking_id || null,
-            room_id: room_id || null,
-            hotel_id: hotel_id || null,
-            guest_id: guest_id || null,
-            tenant_id: 'safetrust',
-            escrow_metadata: req.body,     // full payload stored as JSONB
-            booking_metadata: booking_metadata || null,
+            bookingId: booking_id || null,
+            roomId: room_id || null,
+            hotelId: hotel_id || null,
+            guestId: guest_id || null,
+            tenantId: 'safetrust',
+            escrowMetadata: req.body,     // full payload stored as JSONB
+            bookingMetadata: booking_metadata || null,
           }
         }
       }),

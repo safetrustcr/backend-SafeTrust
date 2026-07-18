@@ -16,13 +16,13 @@ const disputeEscrowHandler = async (req, res) => {
   const mutation = `
     mutation DisputeEscrow($contractId: String!) {
       update_trustless_work_escrows(
-        where: { contract_id: { _eq: $contractId } }
+        where: { contractId: { _eq: $contractId } }
         _set: {
           status: "disputed",
-          updated_at: "now()"
+          updatedAt: "now()"
         }
       ) {
-        returning { id contract_id status }
+        returning { id contractId status }
       }
     }
   `;
