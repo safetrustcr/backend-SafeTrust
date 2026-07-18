@@ -14,8 +14,7 @@ const releaseFundsHandler = async (req, res) => {
         where: { contractId: { _eq: $contractId } }
         _set: {
           status: "completed",
-          balance: 0,
-          updatedAt: "now()"
+          balance: 0
         }
       ) {
         returning { id contractId status balance }
@@ -30,8 +29,7 @@ const releaseFundsHandler = async (req, res) => {
         where: { contract_id: { _eq: $contractId } }
         _set: {
           status: "completed",
-          balance: 0,
-          updated_at: "now()"
+          balance: 0
         }
       ) {
         returning { id contract_id status balance }

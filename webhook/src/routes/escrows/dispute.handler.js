@@ -18,8 +18,7 @@ const disputeEscrowHandler = async (req, res) => {
       update_trustless_work_escrows(
         where: { contract_id: { _eq: $contractId } }
         _set: {
-          status: "disputed",
-          updated_at: "now()"
+          status: "disputed"
         }
       ) {
         returning { id contract_id status }
