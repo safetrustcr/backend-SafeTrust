@@ -19,18 +19,18 @@ const fundEscrowHandler = async (req, res) => {
     mutation FundEscrow($contractId: String!, $amount: numeric!) {
       update_trustless_work_escrows(
         where: {
-          contract_id: { _eq: $contractId },
+          contractId: { _eq: $contractId },
           status: { _in: ["created", "pending_funding"] }
         }
         _set: {
           status: "funded",
           balance: $amount,
-          updated_at: "now()"
+          updatedAt: "now()"
         }
       ) {
         returning {
           id
-          contract_id
+          contractId
           status
           balance
         }
