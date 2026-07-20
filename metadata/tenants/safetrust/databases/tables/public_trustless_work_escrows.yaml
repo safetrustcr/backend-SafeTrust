@@ -21,6 +21,8 @@ configuration:
       custom_name: hotelId
     guest_id:
       custom_name: guestId
+    apartment_id:
+      custom_name: apartmentId
     check_in_date:
       custom_name: checkInDate
     check_out_date:
@@ -46,6 +48,7 @@ configuration:
     room_id: roomId
     hotel_id: hotelId
     guest_id: guestId
+    apartment_id: apartmentId
     check_in_date: checkInDate
     check_out_date: checkOutDate
     booking_created_at: bookingCreatedAt
@@ -78,7 +81,10 @@ array_relationships:
         table:
           name: escrow_pending_approvals
           schema: public
-object_relationships: []
+object_relationships:
+  - name: apartment
+    using:
+      foreign_key_constraint_on: apartment_id
 select_permissions:
   - role: anonymous
     permission:
@@ -100,6 +106,7 @@ select_permissions:
         - room_id
         - hotel_id
         - guest_id
+        - apartment_id
         - check_in_date
         - check_out_date
         - booking_created_at
@@ -142,6 +149,7 @@ insert_permissions:
         - booking_id
         - room_id
         - hotel_id
+        - apartment_id
         - check_in_date
         - check_out_date
         - escrow_metadata
@@ -171,6 +179,7 @@ insert_permissions:
         - room_id
         - hotel_id
         - guest_id
+        - apartment_id
         - check_in_date
         - check_out_date
         - booking_created_at
