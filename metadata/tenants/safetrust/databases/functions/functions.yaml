@@ -1,3 +1,4 @@
 - "!include track_nearby_apartments_function.yaml"
 - "!include find_apartments_by_owner_function.yaml"
 - "!include search_apartments_function.yaml"
+- "!include get_apartments_in_bounds_function.yaml"

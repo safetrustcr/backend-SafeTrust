@@ -1,0 +1,39 @@
+function:
+  schema: public
+  name: get_apartments_in_bounds
+definition: |
+  CREATE OR REPLACE FUNCTION public.get_apartments_in_bounds(
+    min_lat FLOAT,
+    max_lat FLOAT,
+    min_lng FLOAT,
+    max_lng FLOAT
+  )
+  RETURNS SETOF public.apartments
+  LANGUAGE sql
+  STABLE
+  AS $$
+    SELECT a.*
+    FROM public.apartments a
+    WHERE
+      a.deleted_at IS NULL
+      AND a.is_available = true
+      AND a.coordinates <@ BOX(
+        POINT(LEAST(min_lng, max_lng), LEAST(min_lat, max_lat)),
+        POINT(GREATEST(min_lng, max_lng), GREATEST(min_lat, max_lat))
+      )
+    ORDER BY a.updated_at DESC;
+  $$;
+dependencies:
+  - extension: postgis
+description: |
+  Returns available apartments whose stored coordinates fall inside a map viewport
+  bounding box using Postgres point/box spatial filtering.
+comment: |
+  Exposes a map viewport filter for apartment listings. The function is stable and
+  uses a partial GIST-backed index on coordinates for efficient bounding box scans.
+permissions:
+  - role: anonymous
+    privilege: EXECUTE
+  - role: user
+    privilege: EXECUTE
+exposed_as: query
