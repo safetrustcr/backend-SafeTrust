@@ -8,16 +8,12 @@ Feature: POST /api/escrows/fund — TrustlessWork fund confirmation callback
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
 
   Scenario: Valid fund callback updates status to funded and sets balance
+    * def body = { "contractId": "escrow-created-001", "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "amount": 2500.00 }
+    * def bodyStr = JSON.stringify(body)
     Given path '/api/escrows/fund'
     And header Content-Type = 'application/json'
-    And request
-    """
-    {
-      "contractId": "escrow-created-001",
-      "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z",
-      "amount": 2500.00
-    }
-    """
+    And header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
+    And request bodyStr
     When method POST
     Then status 200
     And match response.received == true
@@ -26,60 +22,64 @@ Feature: POST /api/escrows/fund — TrustlessWork fund confirmation callback
     And match rows[0].balance == '2500.0000000'
 
   Scenario: Missing contractId returns 400
+    * def body = { "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "amount": 2500.00 }
+    * def bodyStr = JSON.stringify(body)
     Given path '/api/escrows/fund'
     And header Content-Type = 'application/json'
-    And request
-    """
-    {
-      "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z",
-      "amount": 2500.00
-    }
-    """
+    And header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
+    And request bodyStr
     When method POST
     Then status 400
     And match response.error == 'Missing required fields: contractId, signer, amount'
 
   Scenario: Missing signer returns 400
+    * def body = { "contractId": "escrow-created-001", "amount": 2500.00 }
+    * def bodyStr = JSON.stringify(body)
     Given path '/api/escrows/fund'
     And header Content-Type = 'application/json'
-    And request
-    """
-    {
-      "contractId": "escrow-created-001",
-      "amount": 2500.00
-    }
-    """
+    And header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
+    And request bodyStr
     When method POST
     Then status 400
     And match response.error == 'Missing required fields: contractId, signer, amount'
 
   Scenario: Amount zero returns 400
+    * def body = { "contractId": "escrow-created-001", "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "amount": 0 }
+    * def bodyStr = JSON.stringify(body)
     Given path '/api/escrows/fund'
     And header Content-Type = 'application/json'
-    And request
-    """
-    {
-      "contractId": "escrow-created-001",
-      "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z",
-      "amount": 0
-    }
-    """
+    And header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
+    And request bodyStr
     When method POST
     Then status 400
     And match response.error == 'Amount cannot be zero or negative'
 
   Scenario: Unknown contractId returns 404
+    * def body = { "contractId": "non-existent-contract-xyz", "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "amount": 1000.00 }
+    * def bodyStr = JSON.stringify(body)
     Given path '/api/escrows/fund'
     And header Content-Type = 'application/json'
-    And request
-    """
-    {
-      "contractId": "non-existent-contract-xyz",
-      "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z",
-      "amount": 1000.00
-    }
-    """
+    And header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
+    And request bodyStr
     When method POST
     Then status 404
     And match response.error contains 'Escrow not found'
 
+  Scenario: Missing signature header returns 401
+    * def body = { "contractId": "escrow-created-001", "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "amount": 2500.00 }
+    Given path '/api/escrows/fund'
+    And header Content-Type = 'application/json'
+    And request body
+    When method POST
+    Then status 401
+    And match response.error == 'Missing x-trustlesswork-signature header'
+
+  Scenario: Incorrect signature returns 401
+    * def body = { "contractId": "escrow-created-001", "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "amount": 2500.00 }
+    Given path '/api/escrows/fund'
+    And header Content-Type = 'application/json'
+    And header x-trustlesswork-signature = 'sha256=0000000000000000000000000000000000000000000000000000000000000000'
+    And request body
+    When method POST
+    Then status 401
+    And match response.error == 'Invalid webhook signature'
