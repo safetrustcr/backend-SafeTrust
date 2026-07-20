@@ -56,41 +56,19 @@ async function approveMilestoneHandler(req, res) {
   const approvedAt = new Date().toISOString();
 
   try {
-    // Step 1: Look up the escrow ID. Try camelCase first.
+    // Step 1: Look up the escrow ID using camelCase fields
     let escrowId;
-    let isCustom = true;
 
-    try {
-      const lookupCustom = `
-        query GetEscrowId($contractId: String!) {
-          trustlessWorkEscrows(where: { contractId: { _eq: $contractId } }) {
-            id
-          }
+    const lookupQuery = `
+      query GetEscrowId($contractId: String!) {
+        trustless_work_escrows(where: { contractId: { _eq: $contractId } }) {
+          id
         }
-      `;
-      const data = await postHasura(lookupCustom, { contractId });
-      if (data.trustlessWorkEscrows && data.trustlessWorkEscrows.length > 0) {
-        escrowId = data.trustlessWorkEscrows[0].id;
       }
-    } catch (e) {
-      console.warn('[escrow/approve-milestone] custom lookup failed, trying default fallback...');
-      isCustom = false;
-    }
-
-    if (!escrowId) {
-      // Fallback to snake_case lookup
-      const lookupDefault = `
-        query GetEscrowId($contractId: String!) {
-          trustless_work_escrows(where: { contract_id: { _eq: $contractId } }) {
-            id
-          }
-        }
-      `;
-      const data = await postHasura(lookupDefault, { contractId });
-      if (data.trustless_work_escrows && data.trustless_work_escrows.length > 0) {
-        escrowId = data.trustless_work_escrows[0].id;
-        isCustom = false;
-      }
+    `;
+    const data = await postHasura(lookupQuery, { contractId });
+    if (data.trustless_work_escrows && data.trustless_work_escrows.length > 0) {
+      escrowId = data.trustless_work_escrows[0].id;
     }
 
     if (!escrowId) {
@@ -100,140 +78,71 @@ async function approveMilestoneHandler(req, res) {
     }
 
     // Step 2: Perform the updates using the found escrowId UUID
-    if (isCustom) {
-      const mutationCustomMilestone = `
-        mutation ApproveMilestone(
-          $escrowId: uuid!
-          $milestoneId: String!
-          $approver: String!
-          $approvedAt: timestamptz!
-        ) {
-          update_escrowMilestones(
-            where: {
-              escrowId: { _eq: $escrowId }
-              milestoneId: { _eq: $milestoneId }
-            }
-            _set: {
-              status: "approved"
-              approvedBy: $approver
-              approvedAt: $approvedAt
-              updatedAt: $approvedAt
-            }
-          ) {
-            affected_rows
+    const mutationMilestone = `
+      mutation ApproveMilestone(
+        $escrowId: uuid!
+        $milestoneId: String!
+        $approver: String!
+        $approvedAt: timestamptz!
+      ) {
+        update_escrow_milestones(
+          where: {
+            escrowId: { _eq: $escrowId }
+            milestoneId: { _eq: $milestoneId }
           }
-        }
-      `;
-      const resultMilestone = await postHasura(mutationCustomMilestone, {
-        escrowId,
-        milestoneId,
-        approver,
-        approvedAt
-      });
-      const milestoneRows = resultMilestone.update_escrowMilestones?.affected_rows || 0;
-
-      if (milestoneRows === 0) {
-        return res.status(404).json({
-          error: 'Escrow or milestone not found',
-        });
-      }
-
-      const mutationCustomEscrow = `
-        mutation ApproveEscrow(
-          $escrowId: uuid!
-          $approvedAt: timestamptz!
-        ) {
-          update_trustlessWorkEscrows(
-            where: {
-              id: { _eq: $escrowId }
-            }
-            _set: {
-              status: "milestone_approved"
-              updatedAt: $approvedAt
-            }
-          ) {
-            affected_rows
+          _set: {
+            status: "approved"
+            approvedBy: $approver
+            approvedAt: $approvedAt
+            updatedAt: $approvedAt
           }
-        }
-      `;
-      const resultEscrow = await postHasura(mutationCustomEscrow, {
-        escrowId,
-        approvedAt
-      });
-      const escrowRows = resultEscrow.update_trustlessWorkEscrows?.affected_rows || 0;
-
-      if (escrowRows === 0) {
-        return res.status(404).json({
-          error: 'Escrow or milestone not found',
-        });
-      }
-    } else {
-      const mutationDefaultMilestone = `
-        mutation ApproveMilestone(
-          $escrowId: uuid!
-          $milestoneId: String!
-          $approver: String!
-          $approvedAt: timestamptz!
         ) {
-          update_escrow_milestones(
-            where: {
-              escrow_id: { _eq: $escrowId }
-              milestone_id: { _eq: $milestoneId }
-            }
-            _set: {
-              status: "approved"
-              approved_by: $approver
-              approved_at: $approvedAt
-              updated_at: $approvedAt
-            }
-          ) {
-            affected_rows
-          }
+          affected_rows
         }
-      `;
-      const resultMilestone = await postHasura(mutationDefaultMilestone, {
-        escrowId,
-        milestoneId,
-        approver,
-        approvedAt
-      });
-      const milestoneRows = resultMilestone.update_escrow_milestones?.affected_rows || 0;
-
-      if (milestoneRows === 0) {
-        return res.status(404).json({
-          error: 'Escrow or milestone not found',
-        });
       }
+    `;
+    const resultMilestone = await postHasura(mutationMilestone, {
+      escrowId,
+      milestoneId,
+      approver,
+      approvedAt
+    });
+    const milestoneRows = resultMilestone.update_escrow_milestones?.affected_rows || 0;
 
-      const mutationDefaultEscrow = `
-        mutation ApproveEscrow(
-          $escrowId: uuid!
-          $approvedAt: timestamptz!
+    if (milestoneRows === 0) {
+      return res.status(404).json({
+        error: 'Escrow or milestone not found',
+      });
+    }
+
+    const mutationEscrow = `
+      mutation ApproveEscrow(
+        $escrowId: uuid!
+        $approvedAt: timestamptz!
+      ) {
+        update_trustless_work_escrows(
+          where: {
+            id: { _eq: $escrowId }
+          }
+          _set: {
+            status: "milestone_approved"
+            updatedAt: $approvedAt
+          }
         ) {
-          update_trustless_work_escrows(
-            where: {
-              id: { _eq: $escrowId }
-            }
-            _set: {
-              status: "milestone_approved"
-              updated_at: $approvedAt
-            }
-          ) {
-            affected_rows
-          }
+          affected_rows
         }
-      `;
-      const resultEscrow = await postHasura(mutationDefaultEscrow, {
-        escrowId,
-        approvedAt
-      });
-      const escrowRows = resultEscrow.update_trustless_work_escrows?.affected_rows || 0;
-
-      if (escrowRows === 0) {
-        return res.status(404).json({
-          error: 'Escrow or milestone not found',
-        });
       }
+    `;
+    const resultEscrow = await postHasura(mutationEscrow, {
+      escrowId,
+      approvedAt
+    });
+    const escrowRows = resultEscrow.update_trustless_work_escrows?.affected_rows || 0;
+
+    if (escrowRows === 0) {
+      return res.status(404).json({
+        error: 'Escrow or milestone not found',
+      });
     }
 
     console.log(

@@ -13,7 +13,7 @@ const resolveDisputeHandler = async (req, res) => {
     mutation ResolveDispute($contractId: String!) {
       update_trustless_work_escrows(
         where: {
-          contract_id: { _eq: $contractId },
+          contractId: { _eq: $contractId },
           status: { _eq: "disputed" }
         }
         _set: {
@@ -23,7 +23,7 @@ const resolveDisputeHandler = async (req, res) => {
       ) {
         returning {
           id
-          contract_id
+          contractId
           status
           balance
         }

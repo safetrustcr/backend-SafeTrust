@@ -32,6 +32,7 @@ create_metadata_source() {
     fi
     
     mkdir -p "$temp_dir/metadata/databases/default/tables"
+    mkdir -p "$temp_dir/metadata/databases/default/functions"
     
     echo "Creating Hasura project structure for $tenant..." >&2
     cat > "$temp_dir/config.yaml" << EOL
@@ -47,6 +48,11 @@ EOL
     else
         echo "Warning: No tables directory found at $BUILD_DIR/$tenant/databases/tables/" >&2
         return 1
+    fi
+
+    if [ -d "$BUILD_DIR/$tenant/databases/functions" ]; then
+        echo "Copying function definitions for $tenant..." >&2
+        cp -r "$BUILD_DIR/$tenant/databases/functions"/* "$temp_dir/metadata/databases/default/functions/"
     fi
     
     local tenant_name
@@ -170,6 +176,76 @@ EOL
     return 0
 }
 
+# Function to process functions for a tenant
+process_metadata_functions() {
+    local tenant="$1"
+    local tenant_name="$2"
+    local temp_dir="$3"
+    local hasura_endpoint="$4"
+    local admin_secret="$5"
+    
+    echo "Processing functions for $tenant..."
+    
+    if [ -d "$temp_dir/metadata/databases/default/functions" ]; then
+        for func_file in "$temp_dir/metadata/databases/default/functions"/*.yaml; do
+            if [ -f "$func_file" ]; then
+                # Exclude functions.yaml if it exists
+                if [[ "$(basename "$func_file")" == "functions.yaml" ]]; then
+                    continue
+                fi
+                
+                local func_name
+                func_name=$(grep -A 2 "^function:" "$func_file" | grep "name:" | sed 's/.*name:[[:space:]]*\([^ ]*\).*/\1/' | tr -d '\r' | tr -d '"' | tr -d "'")
+                local func_schema
+                func_schema=$(grep -A 2 "^function:" "$func_file" | grep "schema:" | sed 's/.*schema:[[:space:]]*\([^ ]*\).*/\1/' | tr -d '\r' | tr -d '"' | tr -d "'")
+
+                if [ -z "$func_schema" ]; then
+                    func_schema="public"
+                fi
+
+                if [ -z "$func_name" ]; then
+                    echo "Warning: Could not determine function name from $func_file, skipping"
+                    continue
+                fi
+
+                echo "Adding function: $func_name (schema: $func_schema) to tenant $tenant_name"
+
+                # Create function tracking request
+                cat > "$temp_dir/track_function.json" << EOL
+{
+  "type": "pg_track_function",
+  "args": {
+    "source": "${tenant_name}",
+    "function": {
+      "name": "${func_name}",
+      "schema": "${func_schema}"
+    }
+  }
+}
+EOL
+                echo "Tracking function $func_name..."
+                local track_response
+                track_response=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
+                    -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+                    -H "Content-Type: application/json" \
+                    -d @"$temp_dir/track_function.json")
+                
+                if [[ "$track_response" == *"error"* && "$track_response" != *"already tracked"* ]]; then
+                    echo "Warning: Issue tracking function $func_name: $track_response"
+                elif [[ "$track_response" == *"already tracked"* ]]; then
+                    echo "Function $func_name is already tracked"
+                else
+                    echo "Successfully tracked function $func_name"
+                fi
+            fi
+        done
+    else
+        echo "No functions directory found, skipping functions tracking"
+    fi
+    
+    return 0
+}
+
 # Function to orchestrate the deployment process for a single tenant
 deploy_tenant() {
     local tenant="$1"
@@ -192,6 +268,12 @@ deploy_tenant() {
     
     # Process tables for the tenant
     if ! process_metadata_tables "$tenant" "$tenant_name" "$temp_dir" "$hasura_endpoint" "$admin_secret"; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    # Process functions for the tenant
+    if ! process_metadata_functions "$tenant" "$tenant_name" "$temp_dir" "$hasura_endpoint" "$admin_secret"; then
         rm -rf "$temp_dir"
         return 1
     fi
