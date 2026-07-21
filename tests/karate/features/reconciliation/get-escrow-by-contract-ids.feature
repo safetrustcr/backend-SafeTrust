@@ -44,8 +44,6 @@ Feature: GET /helper/get-escrow-by-contract-ids — TrustlessWork indexer query 
 
   # ── CHUNK_SIZE constraint: 50 IDs per TW API call ─────────────────────────
   Scenario: sync with 50 escrows produces exactly 1 TW API call (1 chunk of 50)
-    # Clean table so chunk count reflects ONLY the 50 seeded escrows
-    * db.execute("DELETE FROM public.trustless_work_escrows")
     * db.execute(karate.read('file:tests/karate/fixtures/seed-50-escrows.sql'))
     Given path '/reconciliation/sync-escrows'
     When method POST
@@ -53,14 +51,9 @@ Feature: GET /helper/get-escrow-by-contract-ids — TrustlessWork indexer query 
     And assert response.totalEscrows >= 50
     # chunks = ⌈50/50⌉ = 1 — exactly one batch TW call made
     And match response.chunks == 1
-    # Restore fixtures for subsequent scenarios
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE contract_id LIKE 'CTEST_CHUNK_%'")
-    * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
 
   # ── CHUNK_SIZE boundary: 51 IDs → 2 TW API calls ─────────────────────────
   Scenario: sync with 51 escrows produces exactly 2 TW API calls (2 chunks)
-    # Clean table so chunk count reflects ONLY the 51 seeded escrows
-    * db.execute("DELETE FROM public.trustless_work_escrows")
     * db.execute(karate.read('file:tests/karate/fixtures/seed-51-escrows.sql'))
     Given path '/reconciliation/sync-escrows'
     When method POST
@@ -68,9 +61,6 @@ Feature: GET /helper/get-escrow-by-contract-ids — TrustlessWork indexer query 
     And assert response.totalEscrows >= 51
     # chunks = ⌈51/50⌉ = 2 — two batch TW calls made
     And match response.chunks == 2
-    # Restore fixtures for subsequent scenarios
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE contract_id LIKE 'CTEST_CHUNK_%'")
-    * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
 
   # ── isActive=false mapping → status reflects inactive state ───────────────
   Scenario: TrustlessWork isActive false does not overwrite SafeTrust status
@@ -87,9 +77,6 @@ Feature: GET /helper/get-escrow-by-contract-ids — TrustlessWork indexer query 
 
   # ── updatedAt timestamp: TW updatedAt does NOT overwrite our updated_at ───
   Scenario: reconciliation sets updated_at to NOW() not to TrustlessWork updatedAt
-    * def beforeSync = db.query("SELECT updated_at FROM public.trustless_work_escrows WHERE contract_id = 'CAATN5DTEST00001'")
-    # Wait 1 second to ensure NOW() differs
-    * karate.pause(1000)
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
