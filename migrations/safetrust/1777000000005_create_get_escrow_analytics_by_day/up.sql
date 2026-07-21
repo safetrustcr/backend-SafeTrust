@@ -34,7 +34,8 @@ AS $$
     FROM public.trustless_work_webhook_events
     WHERE
       tenant_id = tenant_id_input
-      AND created_at BETWEEN start_date AND end_date
+      AND created_at >= start_date::date
+      AND created_at < (end_date::date + INTERVAL '1 day')
     GROUP BY created_at::date
   ),
   users_by_day AS (
@@ -42,7 +43,9 @@ AS $$
       DATE(last_seen) AS day,
       COUNT(*) AS new_users
     FROM public.users
-    WHERE DATE(last_seen) BETWEEN start_date::date AND end_date::date
+    WHERE
+      last_seen >= start_date::date
+      AND last_seen < (end_date::date + INTERVAL '1 day')
     GROUP BY DATE(last_seen)
   ),
   escrows_by_day AS (
@@ -57,7 +60,8 @@ AS $$
     FROM public.trustless_work_escrows
     WHERE
       tenant_id = tenant_id_input
-      AND created_at BETWEEN start_date AND end_date
+      AND created_at >= start_date::date
+      AND created_at < (end_date::date + INTERVAL '1 day')
     GROUP BY created_at::date
   )
   SELECT
