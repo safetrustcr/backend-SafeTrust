@@ -42,6 +42,11 @@ select_permissions:
         - available_until
         - created_at
         - updated_at
+        - bathrooms
+        - capacity
+        - max_guests
+        - floor_area
+        - furnished
       filter:
         _or:
           - owner_id:

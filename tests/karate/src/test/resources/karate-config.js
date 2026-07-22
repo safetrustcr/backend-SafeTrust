@@ -79,6 +79,30 @@ function fn() {
     return "Bearer " + signingInput + "." + sig;
   };
 
+  // TrustlessWork webhook signature helper
+  // Signs the exact raw JSON string sent as the request body — pass the
+  // same string literal used for `request` so the signed bytes match what
+  // Express receives on req.rawBody.
+  // Usage: header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
+  config.trustlessWorkSignature = function(rawBody) {
+    var Mac = Java.type("javax.crypto.Mac");
+    var SecretKeySpec = Java.type("javax.crypto.spec.SecretKeySpec");
+
+    var secret = java.lang.System.getenv("TRUSTLESSWORK_WEBHOOK_SECRET") || "dev-secret";
+
+    var mac = Mac.getInstance("HmacSHA256");
+    mac.init(new SecretKeySpec(secret.getBytes("UTF-8"), "HmacSHA256"));
+    var digest = mac.doFinal(rawBody.getBytes("UTF-8"));
+
+    var hex = "";
+    for (var i = 0; i < digest.length; i++) {
+      var b = digest[i] & 0xff;
+      hex += (b < 16 ? "0" : "") + b.toString(16);
+    }
+
+    return "sha256=" + hex;
+  };
+
   // Set default headers
   karate.configure('headers', {
     'Content-Type': 'application/json',
