@@ -1,3 +1,10 @@
+const {
+  logAndCheckWebhookEvent,
+  markWebhookEventProcessed,
+} = require('../../services/hasura');
+
+const EVENT_TYPE = 'escrow.funded';
+
 const fundEscrowHandler = async (req, res) => {
   const { contractId, signer, amount } = req.body;
 
@@ -38,6 +45,17 @@ const fundEscrowHandler = async (req, res) => {
   `;
 
   try {
+    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+      contractId,
+      EVENT_TYPE,
+      req.body
+    );
+
+    if (isDuplicate) {
+      await markWebhookEventProcessed(eventId);
+      return res.status(200).json({ received: true });
+    }
+
     const endpoint = process.env.HASURA_GRAPHQL_ENDPOINT;
     const adminSecret = process.env.HASURA_GRAPHQL_ADMIN_SECRET;
 
@@ -82,7 +100,7 @@ const fundEscrowHandler = async (req, res) => {
 
     console.log(`[escrow/fund] Escrow funded — contractId: ${contractId}, amount: ${amount}`);
 
-    // 3 — Acknowledge TrustlessWork webhook
+    await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
   } catch (error) {
     console.error('[escrow/fund] Exception:', error.message);

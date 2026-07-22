@@ -1,9 +1,21 @@
 'use strict';
 
+jest.mock('../../../services/hasura', () => ({
+  getHasuraEndpoint: jest.requireActual('../../../services/hasura').getHasuraEndpoint,
+  hasuraRequest: jest.fn(),
+  logAndCheckWebhookEvent: jest.fn(),
+  markWebhookEventProcessed: jest.fn(),
+}));
+
 const {
   approveMilestoneHandler,
   getHasuraEndpoint,
 } = require('../approve-milestone.handler');
+const {
+  hasuraRequest,
+  logAndCheckWebhookEvent,
+  markWebhookEventProcessed,
+} = require('../../../services/hasura');
 
 function makeResponse() {
   return {
@@ -19,7 +31,8 @@ describe('approveMilestoneHandler', () => {
     jest.clearAllMocks();
     process.env.HASURA_GRAPHQL_ADMIN_SECRET = 'test-secret';
     process.env.HASURA_GRAPHQL_ENDPOINT = 'http://graphql-engine-test:8080';
-    global.fetch = jest.fn();
+    logAndCheckWebhookEvent.mockResolvedValue({ isDuplicate: false, eventId: 'event-1' });
+    markWebhookEventProcessed.mockResolvedValue(undefined);
   });
 
   afterAll(() => {
@@ -57,39 +70,15 @@ describe('approveMilestoneHandler', () => {
     });
   });
 
-  it('updates Hasura and returns 200 when both updates succeed using custom camelCase', async () => {
-    // 1. Mock custom lookup succeeding
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: {
-          trustlessWorkEscrows: [{ id: 'escrow-1' }],
-        },
-      }),
+  it('uses milestone-specific idempotency keys', async () => {
+    hasuraRequest.mockResolvedValueOnce({
+      trustless_work_escrows: [{ id: 'escrow-1' }],
     });
-
-    // 2. Mock custom milestone mutation succeeding
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: {
-          update_escrowMilestones: {
-            affected_rows: 1,
-          },
-        },
-      }),
+    hasuraRequest.mockResolvedValueOnce({
+      update_escrow_milestones: { affected_rows: 1 },
     });
-
-    // 3. Mock custom escrow mutation succeeding
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: {
-          update_trustlessWorkEscrows: {
-            affected_rows: 1,
-          },
-        },
-      }),
+    hasuraRequest.mockResolvedValueOnce({
+      update_trustless_work_escrows: { affected_rows: 1 },
     });
 
     const req = {
@@ -104,47 +93,23 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res);
 
-    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect(logAndCheckWebhookEvent).toHaveBeenCalledWith(
+      'contract-1',
+      'milestone.approved:check_in',
+      req.body
+    );
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith({ received: true });
   });
 
-  it('falls back to default snake_case when custom lookup/mutation fail or are not tracked', async () => {
-    // 1. Custom lookup fails (e.g. throws error or custom table not tracked)
-    global.fetch.mockRejectedValueOnce(new Error('custom not found'));
-
-    // 2. Default lookup succeeds
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: {
-          trustless_work_escrows: [{ id: 'escrow-1' }],
-        },
-      }),
+  it('updates Hasura and returns 200 when both updates succeed', async () => {
+    hasuraRequest.mockResolvedValueOnce({
+      trustless_work_escrows: [{ id: 'escrow-1' }],
     });
-
-    // 3. Default milestone mutation succeeds
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: {
-          update_escrow_milestones: {
-            affected_rows: 1,
-          },
-        },
-      }),
+    hasuraRequest.mockResolvedValueOnce({
+      update_escrow_milestones: { affected_rows: 1 },
     });
-
-    // 4. Default escrow mutation succeeds
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: {
-          update_trustless_work_escrows: {
-            affected_rows: 1,
-          },
-        },
-      }),
+    hasuraRequest.mockResolvedValueOnce({
+      update_trustless_work_escrows: { affected_rows: 1 },
     });
 
     const req = {
@@ -159,30 +124,38 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res);
 
-    expect(global.fetch).toHaveBeenCalledTimes(4);
+    expect(hasuraRequest).toHaveBeenCalledTimes(3);
+    expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-1');
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ received: true });
   });
 
-  it('returns 404 when the escrow is not found in either lookup', async () => {
-    // 1. Custom lookup returns empty
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: {
-          trustlessWorkEscrows: [],
-        },
-      }),
+  it('returns 200 without re-processing duplicate milestone approvals', async () => {
+    logAndCheckWebhookEvent.mockResolvedValueOnce({
+      isDuplicate: true,
+      eventId: 'event-duplicate',
     });
 
-    // 2. Default lookup returns empty
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: {
-          trustless_work_escrows: [],
-        },
-      }),
+    const req = {
+      body: {
+        contractId: 'contract-1',
+        milestoneId: 'check_in',
+        approver: 'GABC',
+        flag: true,
+      },
+    };
+    const res = makeResponse();
+
+    await approveMilestoneHandler(req, res);
+
+    expect(hasuraRequest).not.toHaveBeenCalled();
+    expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-duplicate');
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('returns 404 when the escrow is not found', async () => {
+    hasuraRequest.mockResolvedValueOnce({
+      trustless_work_escrows: [],
     });
 
     const req = {
@@ -201,26 +174,17 @@ describe('approveMilestoneHandler', () => {
     expect(res.json).toHaveBeenCalledWith({
       error: 'Escrow or milestone not found',
     });
+    expect(markWebhookEventProcessed).not.toHaveBeenCalled();
   });
 
   it('returns 500 when Hasura responds with GraphQL errors during mutation', async () => {
-    // 1. Custom lookup succeeds
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: {
-          trustlessWorkEscrows: [{ id: 'escrow-1' }],
-        },
-      }),
+    hasuraRequest.mockResolvedValueOnce({
+      trustless_work_escrows: [{ id: 'escrow-1' }],
     });
 
-    // 2. Custom mutation fails with errors
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        errors: [{ message: 'permission denied' }],
-      }),
-    });
+    const error = new Error('Hasura request failed');
+    error.details = [{ message: 'permission denied' }];
+    hasuraRequest.mockRejectedValueOnce(error);
 
     const req = {
       body: {
@@ -238,6 +202,7 @@ describe('approveMilestoneHandler', () => {
     expect(res.json).toHaveBeenCalledWith({
       error: 'Failed to update milestone approval',
     });
+    expect(markWebhookEventProcessed).not.toHaveBeenCalled();
   });
 });
 

@@ -1,0 +1,3 @@
+table:
+  name: trustless_work_webhook_events
+  schema: public

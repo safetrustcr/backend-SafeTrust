@@ -1,42 +1,13 @@
 'use strict';
 
-const DEFAULT_HASURA_ENDPOINT = 'http://graphql-engine:8080/v1/graphql';
+const {
+  hasuraRequest,
+  logAndCheckWebhookEvent,
+  markWebhookEventProcessed,
+  getHasuraEndpoint,
+} = require('../../services/hasura');
 
-function getHasuraEndpoint() {
-  const configured = process.env.HASURA_GRAPHQL_ENDPOINT || DEFAULT_HASURA_ENDPOINT;
-  return configured.endsWith('/v1/graphql') ? configured : `${configured.replace(/\/$/, '')}/v1/graphql`;
-}
-
-async function postHasura(query, variables) {
-  const adminSecret = process.env.HASURA_GRAPHQL_ADMIN_SECRET;
-
-  if (!adminSecret) {
-    throw new Error('Missing HASURA_GRAPHQL_ADMIN_SECRET');
-  }
-
-  const response = await fetch(getHasuraEndpoint(), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-hasura-admin-secret': adminSecret,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(`Hasura request failed with status ${response.status}`);
-  }
-
-  if (data.errors) {
-    const error = new Error('Hasura mutation failed');
-    error.details = data.errors;
-    throw error;
-  }
-
-  return data.data;
-}
+const EVENT_TYPE = 'milestone.approved';
 
 async function approveMilestoneHandler(req, res) {
   const { contractId, milestoneId, approver, flag } = req.body || {};
@@ -56,6 +27,17 @@ async function approveMilestoneHandler(req, res) {
   const approvedAt = new Date().toISOString();
 
   try {
+    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+      contractId,
+      `${EVENT_TYPE}:${milestoneId}`,
+      req.body
+    );
+
+    if (isDuplicate) {
+      await markWebhookEventProcessed(eventId);
+      return res.status(200).json({ received: true });
+    }
+
     // Step 1: Look up the escrow ID using camelCase fields
     let escrowId;
 
@@ -66,7 +48,7 @@ async function approveMilestoneHandler(req, res) {
         }
       }
     `;
-    const data = await postHasura(lookupQuery, { contractId });
+    const data = await hasuraRequest(lookupQuery, { contractId });
     if (data.trustless_work_escrows && data.trustless_work_escrows.length > 0) {
       escrowId = data.trustless_work_escrows[0].id;
     }
@@ -101,7 +83,7 @@ async function approveMilestoneHandler(req, res) {
         }
       }
     `;
-    const resultMilestone = await postHasura(mutationMilestone, {
+    const resultMilestone = await hasuraRequest(mutationMilestone, {
       escrowId,
       milestoneId,
       approver,
@@ -133,7 +115,7 @@ async function approveMilestoneHandler(req, res) {
         }
       }
     `;
-    const resultEscrow = await postHasura(mutationEscrow, {
+    const resultEscrow = await hasuraRequest(mutationEscrow, {
       escrowId,
       approvedAt
     });
@@ -148,6 +130,7 @@ async function approveMilestoneHandler(req, res) {
     console.log(
       `[escrow/approve-milestone] milestone approved — contractId=${contractId} milestoneId=${milestoneId}`
     );
+    await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
   } catch (error) {
     console.error('[escrow/approve-milestone] failed:', error.details || error.message);
@@ -160,5 +143,5 @@ async function approveMilestoneHandler(req, res) {
 module.exports = {
   approveMilestoneHandler,
   getHasuraEndpoint,
-  postHasura,
+  hasuraRequest,
 };

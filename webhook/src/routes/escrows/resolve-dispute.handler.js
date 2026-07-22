@@ -1,3 +1,10 @@
+const {
+  logAndCheckWebhookEvent,
+  markWebhookEventProcessed,
+} = require('../../services/hasura');
+
+const EVENT_TYPE = 'escrow.resolved';
+
 const resolveDisputeHandler = async (req, res) => {
   const { contractId, resolver, resolutionNote } = req.body;
 
@@ -32,6 +39,17 @@ const resolveDisputeHandler = async (req, res) => {
   `;
 
   try {
+    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+      contractId,
+      EVENT_TYPE,
+      req.body
+    );
+
+    if (isDuplicate) {
+      await markWebhookEventProcessed(eventId);
+      return res.status(200).json({ received: true });
+    }
+
     const endpoint = process.env.HASURA_GRAPHQL_ENDPOINT;
     const adminSecret = process.env.HASURA_GRAPHQL_ADMIN_SECRET;
 
@@ -72,7 +90,7 @@ const resolveDisputeHandler = async (req, res) => {
 
     console.log(`[escrow/resolve-dispute] Dispute resolved — contractId: ${contractId}, resolver: ${resolver}`);
 
-    // 3 — Acknowledge TrustlessWork webhook
+    await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
   } catch (error) {
     console.error('[escrow/resolve-dispute] Exception:', error.message);
