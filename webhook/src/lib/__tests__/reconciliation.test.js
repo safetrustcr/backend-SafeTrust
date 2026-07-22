@@ -73,43 +73,121 @@ function mockHttpResponse(body, statusCode = 200) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // chunkArray
 // ═══════════════════════════════════════════════════════════════════════════════
-describe('chunkArray', () => {
-  it('splits an array into correct chunk sizes', () => {
-    const result = chunkArray([1, 2, 3, 4, 5], 2);
-    expect(result).toEqual([[1, 2], [3, 4], [5]]);
+describe('chunkArray — O(n) array partitioning', () => {
+  // Big O: chunkArray is O(n) time and O(n) space.
+  // For n elements and chunk size k: produces ⌈n/k⌉ chunks.
+
+  describe('core functionality', () => {
+    it('splits an array into correct chunk sizes', () => {
+      const result = chunkArray([1, 2, 3, 4, 5], 2);
+      expect(result).toEqual([[1, 2], [3, 4], [5]]);
+    });
+
+    it('returns a single chunk when array is smaller than size', () => {
+      const result = chunkArray(['a', 'b'], 50);
+      expect(result).toEqual([['a', 'b']]);
+    });
+
+    it('handles chunk size equal to array length', () => {
+      expect(chunkArray([1, 2, 3], 3)).toEqual([[1, 2, 3]]);
+    });
+
+    it('CHUNK_SIZE constant equals 50', () => {
+      expect(CHUNK_SIZE).toBe(50);
+    });
   });
 
-  it('returns a single chunk when array is smaller than size', () => {
-    const result = chunkArray(['a', 'b'], 50);
-    expect(result).toEqual([['a', 'b']]);
+  describe('boundary conditions and Big O correctness', () => {
+    it('empty array → empty result (n=0)', () => {
+      expect(chunkArray([], 50)).toEqual([]);
+    });
+
+    it('single element → one chunk of one (n=1)', () => {
+      expect(chunkArray(['A'], 50)).toEqual([['A']]);
+    });
+
+    it('exactly 49 elements → 1 chunk (n < CHUNK_SIZE)', () => {
+      const arr = Array.from({ length: 49 }, (_, i) => `C${i}`);
+      const result = chunkArray(arr, 50);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toHaveLength(49);
+    });
+
+    it('exactly 50 elements → 1 chunk (n = CHUNK_SIZE boundary)', () => {
+      const arr = Array.from({ length: 50 }, (_, i) => `C${i}`);
+      const result = chunkArray(arr, 50);
+      expect(result).toHaveLength(1); // ⌈50/50⌉ = 1
+      expect(result[0]).toHaveLength(50);
+    });
+
+    it('exactly 51 elements → 2 chunks (n = CHUNK_SIZE + 1)', () => {
+      const arr = Array.from({ length: 51 }, (_, i) => `C${i}`);
+      const result = chunkArray(arr, 50);
+      expect(result).toHaveLength(2); // ⌈51/50⌉ = 2
+      expect(result[0]).toHaveLength(50); // first chunk full
+      expect(result[1]).toHaveLength(1); // remainder
+    });
+
+    it('100 elements → 2 chunks of 50 (n = 2 * CHUNK_SIZE)', () => {
+      const arr = Array.from({ length: 100 }, (_, i) => `C${i}`);
+      const result = chunkArray(arr, 50);
+      expect(result).toHaveLength(2);
+      expect(result[0]).toHaveLength(50);
+      expect(result[1]).toHaveLength(50);
+    });
+
+    it('101 elements → 3 chunks (n = 2 * CHUNK_SIZE + 1)', () => {
+      const arr = Array.from({ length: 101 }, (_, i) => `C${i}`);
+      expect(chunkArray(arr, 50)).toHaveLength(3); // ⌈101/50⌉ = 3
+    });
+
+    it('127 elements → correct chunk count (n = 127)', () => {
+      const arr = Array.from({ length: 127 }, (_, i) => `C${i}`);
+      const result = chunkArray(arr, 50);
+      expect(result).toHaveLength(3); // ⌈127/50⌉ = 3
+      expect(result[0]).toHaveLength(50);
+      expect(result[1]).toHaveLength(50);
+      expect(result[2]).toHaveLength(27); // remainder
+    });
+
+    it('no elements are lost across all chunks (data integrity)', () => {
+      const arr = Array.from({ length: 127 }, (_, i) => `C${i}`);
+      const chunks = chunkArray(arr, 50);
+      const flattened = chunks.flat();
+      expect(flattened).toHaveLength(127);
+      expect(flattened).toEqual(arr);
+    });
+
+    it('chunk size 1 → n chunks (degenerate case)', () => {
+      const arr = ['A', 'B', 'C'];
+      expect(chunkArray(arr, 1)).toEqual([['A'], ['B'], ['C']]);
+    });
   });
 
-  it('returns empty array when input is empty', () => {
-    expect(chunkArray([], 10)).toEqual([]);
-  });
+  describe('error handling', () => {
+    it('returns empty array when input is empty', () => {
+      expect(chunkArray([], 10)).toEqual([]);
+    });
 
-  it('handles chunk size equal to array length', () => {
-    expect(chunkArray([1, 2, 3], 3)).toEqual([[1, 2, 3]]);
-  });
+    it('handles chunk size of 1', () => {
+      expect(chunkArray([1, 2, 3], 1)).toEqual([[1], [2], [3]]);
+    });
 
-  it('handles chunk size of 1', () => {
-    expect(chunkArray([1, 2, 3], 1)).toEqual([[1], [2], [3]]);
-  });
+    it('throws TypeError when arr is not an array', () => {
+      expect(() => chunkArray('not-an-array', 10)).toThrow(TypeError);
+    });
 
-  it('throws TypeError when arr is not an array', () => {
-    expect(() => chunkArray('not-an-array', 10)).toThrow(TypeError);
-  });
+    it('throws RangeError when size is 0', () => {
+      expect(() => chunkArray([], 0)).toThrow(RangeError);
+    });
 
-  it('throws RangeError when size is 0', () => {
-    expect(() => chunkArray([], 0)).toThrow(RangeError);
-  });
+    it('throws RangeError when size is negative', () => {
+      expect(() => chunkArray([], -5)).toThrow(RangeError);
+    });
 
-  it('throws RangeError when size is negative', () => {
-    expect(() => chunkArray([], -5)).toThrow(RangeError);
-  });
-
-  it('CHUNK_SIZE constant equals 50', () => {
-    expect(CHUNK_SIZE).toBe(50);
+    it('throws RangeError when size is not an integer', () => {
+      expect(() => chunkArray([1, 2, 3], 1.5)).toThrow(RangeError);
+    });
   });
 });
 
