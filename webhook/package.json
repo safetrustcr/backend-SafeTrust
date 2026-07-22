@@ -4,7 +4,7 @@
   "description": "SafeTrust Backend Webhook Service",
   "main": "src/server.js",
   "engines": {
-    "node": ">=18.0.0"
+    "node": "^18.14.0 || ^20 || ^22 || >=24"
   },
   "scripts": {
     "start": "node src/server.js",

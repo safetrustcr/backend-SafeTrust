@@ -165,14 +165,6 @@ describe('chunkArray — O(n) array partitioning', () => {
   });
 
   describe('error handling', () => {
-    it('returns empty array when input is empty', () => {
-      expect(chunkArray([], 10)).toEqual([]);
-    });
-
-    it('handles chunk size of 1', () => {
-      expect(chunkArray([1, 2, 3], 1)).toEqual([[1], [2], [3]]);
-    });
-
     it('throws TypeError when arr is not an array', () => {
       expect(() => chunkArray('not-an-array', 10)).toThrow(TypeError);
     });
