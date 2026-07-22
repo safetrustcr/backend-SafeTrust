@@ -1,3 +1,10 @@
+const {
+  logAndCheckWebhookEvent,
+  markWebhookEventProcessed,
+} = require('../../services/hasura');
+
+const EVENT_TYPE = 'escrow.completed';
+
 const releaseFundsHandler = async (req, res) => {
   const { contractId, releaseSigner } = req.body;
 
@@ -22,6 +29,17 @@ const releaseFundsHandler = async (req, res) => {
   `;
 
   try {
+    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+      contractId,
+      EVENT_TYPE,
+      req.body
+    );
+
+    if (isDuplicate) {
+      await markWebhookEventProcessed(eventId);
+      return res.status(200).json({ received: true });
+    }
+
     const endpoint = process.env.HASURA_GRAPHQL_ENDPOINT;
     const adminSecret = process.env.HASURA_GRAPHQL_ADMIN_SECRET;
 
@@ -53,6 +71,7 @@ const releaseFundsHandler = async (req, res) => {
     }
 
     console.log(`[escrow/release-funds] Funds released — contractId: ${contractId}`);
+    await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
   } catch (error) {
     console.error('[escrow/release-funds] Exception:', error.message);
