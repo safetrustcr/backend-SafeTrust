@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 
 const { authMiddleware, authenticateFirebase } = require('../middleware/auth.middleware')
+const verifyTrustlessWorkSignature = require('../middleware/trustlesswork-signature.middleware')
 
 // Route handlers / routers
 const authRoutes = require('./auth')
@@ -20,6 +21,8 @@ const resolveDisputeRoute = require('./escrows/resolve-dispute.route');
 router.get('/health', (req, res) => res.status(200).send('OK'))
 
 // 2. Public Webhooks (Must be registered before the auth middlewares)
+// TrustlessWork HMAC signature verified — see Issue 4
+router.use('/api/escrows', verifyTrustlessWorkSignature)
 router.use(disputeRoute)
 router.use(initializeEscrowRoute)
 router.use(fundEscrowRoute)

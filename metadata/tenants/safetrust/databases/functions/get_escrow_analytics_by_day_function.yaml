@@ -1,0 +1,9 @@
+function:
+  schema: public
+  name: get_escrow_analytics_by_day
+configuration:
+  exposed_as: query
+  custom_root_fields: {}
+comment: |
+  Daily escrow analytics time series (webhook events, users, active escrows).
+  Consumed by the frontend useAnalyticsData hook via Hasura query root.

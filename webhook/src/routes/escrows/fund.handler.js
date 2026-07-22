@@ -24,8 +24,7 @@ const fundEscrowHandler = async (req, res) => {
         }
         _set: {
           status: "funded",
-          balance: $amount,
-          updatedAt: "now()"
+          balance: $amount
         }
       ) {
         returning {

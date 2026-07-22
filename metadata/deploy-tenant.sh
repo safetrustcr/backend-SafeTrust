@@ -183,9 +183,10 @@ process_metadata_functions() {
     local temp_dir="$3"
     local hasura_endpoint="$4"
     local admin_secret="$5"
-    
+    local has_errors=0
+
     echo "Processing functions for $tenant..."
-    
+
     if [ -d "$temp_dir/metadata/databases/default/functions" ]; then
         for func_file in "$temp_dir/metadata/databases/default/functions"/*.yaml; do
             if [ -f "$func_file" ]; then
@@ -230,10 +231,11 @@ EOL
                     -H "Content-Type: application/json" \
                     -d @"$temp_dir/track_function.json")
                 
-                if [[ "$track_response" == *"error"* && "$track_response" != *"already tracked"* ]]; then
-                    echo "Warning: Issue tracking function $func_name: $track_response"
-                elif [[ "$track_response" == *"already tracked"* ]]; then
+                if [[ "$track_response" == *"already tracked"* ]]; then
                     echo "Function $func_name is already tracked"
+                elif [[ "$track_response" == *"error"* ]]; then
+                    echo "Error: Issue tracking function $func_name: $track_response" >&2
+                    has_errors=1
                 else
                     echo "Successfully tracked function $func_name"
                 fi
@@ -242,7 +244,13 @@ EOL
     else
         echo "No functions directory found, skipping functions tracking"
     fi
-    
+
+    if [ "${has_errors:-0}" -eq 1 ]; then
+        echo "❌ Function deployment for $tenant tenant failed" >&2
+        return 1
+    fi
+
+    echo "✅ Function deployment for $tenant tenant completed"
     return 0
 }
 

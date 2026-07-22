@@ -18,8 +18,7 @@ const resolveDisputeHandler = async (req, res) => {
         }
         _set: {
           status: "resolved",
-          balance: 0,
-          updatedAt: "now()"
+          balance: 0
         }
       ) {
         returning {
