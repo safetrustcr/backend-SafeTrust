@@ -6,7 +6,7 @@ Feature: POST /api/escrows/fund — TrustlessWork fund confirmation callback
     # so escrow-created-001 is always reset to status: created, balance: 0
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-users.sql'))
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
-    * db.execute("DELETE FROM public.trustless_work_webhook_events WHERE contract_id = 'escrow-created-001' AND event_type = 'escrow.funded'")
+    * db.execute("DELETE FROM public.trustless_work_webhook_events WHERE contract_id = 'escrow-created-001' AND event_type = 'escrow.funded' AND tenant_id = 'safetrust'")
 
   Scenario: Valid fund callback updates status to funded and sets balance
     * def body = { "contractId": "escrow-created-001", "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "amount": 2500.00 }

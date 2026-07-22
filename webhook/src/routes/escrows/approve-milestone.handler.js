@@ -29,7 +29,7 @@ async function approveMilestoneHandler(req, res) {
   try {
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contractId,
-      EVENT_TYPE,
+      `${EVENT_TYPE}:${milestoneId}`,
       req.body
     );
 
