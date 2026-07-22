@@ -91,6 +91,7 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgrespassword
       - USE_MOCK_DATA=true
+      - TRUSTLESSWORK_WEBHOOK_SECRET=dev-secret
     depends_on:
       postgres_test:
         condition: service_healthy
@@ -113,6 +114,7 @@ services:
       webhookUrl: http://webhook:3001
       HASURA_GRAPHQL_ADMIN_SECRET: myadminsecretkey
       JWT_SECRET: testsecret
+      TRUSTLESSWORK_WEBHOOK_SECRET: dev-secret
     command: >
       java -cp /app/tests/karate.jar:/app/tests/postgresql-jdbc.jar:/app/tests/karate/src/test/resources
       com.intuit.karate.Main
