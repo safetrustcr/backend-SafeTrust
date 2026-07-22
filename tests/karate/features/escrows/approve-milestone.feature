@@ -8,17 +8,12 @@ Feature: POST /api/escrows/approve-milestone — TrustlessWork milestone approva
     * db.execute("UPDATE public.escrow_milestones SET status = 'pending', approved_by = NULL, approved_at = NULL WHERE milestone_id = 'check_in'")
 
   Scenario: Valid approval callback updates milestone to approved and escrow to milestone_approved
+    * def body = { "contractId": "escrow-funded-001", "milestoneId": "check_in", "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "flag": true }
+    * def bodyStr = JSON.stringify(body)
     Given path '/api/escrows/approve-milestone'
     And header Content-Type = 'application/json'
-    And request
-    """
-    {
-      "contractId": "escrow-funded-001",
-      "milestoneId": "check_in",
-      "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z",
-      "flag": true
-    }
-    """
+    And header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
+    And request bodyStr
     When method POST
     Then status 200
     And match response.received == true
@@ -29,47 +24,53 @@ Feature: POST /api/escrows/approve-milestone — TrustlessWork milestone approva
     And match escrow[0].status == 'milestone_approved'
 
   Scenario: Missing contractId returns 400
+    * def body = { "milestoneId": "check_in", "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "flag": true }
+    * def bodyStr = JSON.stringify(body)
     Given path '/api/escrows/approve-milestone'
     And header Content-Type = 'application/json'
-    And request
-    """
-    {
-      "milestoneId": "check_in",
-      "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z",
-      "flag": true
-    }
-    """
+    And header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
+    And request bodyStr
     When method POST
     Then status 400
     And match response.error == 'Missing required fields: contractId, milestoneId, approver, flag'
 
   Scenario: Missing milestoneId returns 400
+    * def body = { "contractId": "escrow-funded-001", "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "flag": true }
+    * def bodyStr = JSON.stringify(body)
     Given path '/api/escrows/approve-milestone'
     And header Content-Type = 'application/json'
-    And request
-    """
-    {
-      "contractId": "escrow-funded-001",
-      "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z",
-      "flag": true
-    }
-    """
+    And header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
+    And request bodyStr
     When method POST
     Then status 400
     And match response.error == 'Missing required fields: contractId, milestoneId, approver, flag'
 
   Scenario: flag false returns 400
+    * def body = { "contractId": "escrow-funded-001", "milestoneId": "check_in", "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "flag": false }
+    * def bodyStr = JSON.stringify(body)
     Given path '/api/escrows/approve-milestone'
     And header Content-Type = 'application/json'
-    And request
-    """
-    {
-      "contractId": "escrow-funded-001",
-      "milestoneId": "check_in",
-      "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z",
-      "flag": false
-    }
-    """
+    And header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
+    And request bodyStr
     When method POST
     Then status 400
     And match response.error == 'flag must be true to approve a milestone'
+
+  Scenario: Missing signature header returns 401
+    * def body = { "contractId": "escrow-funded-001", "milestoneId": "check_in", "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "flag": true }
+    Given path '/api/escrows/approve-milestone'
+    And header Content-Type = 'application/json'
+    And request body
+    When method POST
+    Then status 401
+    And match response.error == 'Missing x-trustlesswork-signature header'
+
+  Scenario: Incorrect signature returns 401
+    * def body = { "contractId": "escrow-funded-001", "milestoneId": "check_in", "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "flag": true }
+    Given path '/api/escrows/approve-milestone'
+    And header Content-Type = 'application/json'
+    And header x-trustlesswork-signature = 'sha256=0000000000000000000000000000000000000000000000000000000000000000'
+    And request body
+    When method POST
+    Then status 401
+    And match response.error == 'Invalid webhook signature'
