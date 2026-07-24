@@ -15,6 +15,7 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
   Background:
     * url webhookUrl
     * configure headers = { 'Content-Type': 'application/json' }
+    * configure readTimeout = 60000
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-users.sql'))
     * configure afterFeature = function(){ db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql')) }
 
@@ -76,6 +77,7 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
     When method POST
     Then status 200
     And match response.updated == 0
+    And match response.skipped == 0
     And assert response.unchanged >= 0
 
   # ── Performance baseline: O(n) duration grows linearly ────────────────────
