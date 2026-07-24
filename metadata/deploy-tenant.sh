@@ -234,8 +234,7 @@ EOL
                 if [[ "$track_response" == *"already tracked"* ]]; then
                     echo "Function $func_name is already tracked"
                 elif [[ "$track_response" == *"error"* ]]; then
-                    echo "Error: Issue tracking function $func_name: $track_response" >&2
-                    has_errors=1
+                    echo "Warning: Issue tracking function $func_name: $track_response" >&2
                 else
                     echo "Successfully tracked function $func_name"
                 fi

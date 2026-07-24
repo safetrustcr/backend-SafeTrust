@@ -44,23 +44,26 @@ Feature: GET /helper/get-escrow-by-contract-ids — TrustlessWork indexer query 
 
   # ── CHUNK_SIZE constraint: 50 IDs per TW API call ─────────────────────────
   Scenario: sync with 50 escrows produces exactly 1 TW API call (1 chunk of 50)
+    * db.execute("DELETE FROM public.trustless_work_escrows WHERE tenant_id = 'safetrust'")
     * db.execute(karate.read('file:tests/karate/fixtures/seed-50-escrows.sql'))
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
-    And assert response.totalEscrows >= 50
+    And match response.totalEscrows == 50
     # chunks = ⌈50/50⌉ = 1 — exactly one batch TW call made
     And match response.chunks == 1
 
   # ── CHUNK_SIZE boundary: 51 IDs → 2 TW API calls ─────────────────────────
   Scenario: sync with 51 escrows produces exactly 2 TW API calls (2 chunks)
+    * db.execute("DELETE FROM public.trustless_work_escrows WHERE tenant_id = 'safetrust'")
     * db.execute(karate.read('file:tests/karate/fixtures/seed-51-escrows.sql'))
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
-    And assert response.totalEscrows >= 51
+    And match response.totalEscrows == 51
     # chunks = ⌈51/50⌉ = 2 — two batch TW calls made
     And match response.chunks == 2
+    * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
 
   # ── isActive=false mapping → status reflects inactive state ───────────────
   Scenario: TrustlessWork isActive false does not overwrite SafeTrust status
