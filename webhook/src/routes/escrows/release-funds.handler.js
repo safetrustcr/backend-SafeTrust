@@ -52,7 +52,10 @@ const releaseFundsHandler = async (req, res) => {
     await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
   } catch (error) {
-    console.error('[escrow/release-funds] Exception:', error.message);
+    console.error('[escrow/release-funds] Hasura error:', error.details || error.message);
+    if (error.details) {
+      return res.status(500).json({ error: 'Failed to update escrow status', details: error.details });
+    }
     return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 };

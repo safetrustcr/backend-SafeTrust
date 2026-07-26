@@ -39,19 +39,6 @@ const initializeEscrowHandler = async (req, res) => {
     });
   }
 
-  // 3 — Idempotency check
-  const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
-    contract_id,
-    EVENT_TYPE,
-    req.body
-  );
-
-  if (isDuplicate) {
-    await markWebhookEventProcessed(eventId);
-    return res.status(200).json({ received: true });
-  }
-
-  // 4 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
   const mutation = `
     mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
       insert_trustless_work_escrows_one(object: $object) {
@@ -64,6 +51,19 @@ const initializeEscrowHandler = async (req, res) => {
   `;
 
   try {
+    // 3 — Idempotency check
+    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+      contract_id,
+      EVENT_TYPE,
+      req.body
+    );
+
+    if (isDuplicate) {
+      await markWebhookEventProcessed(eventId);
+      return res.status(200).json({ received: true });
+    }
+
+    // 4 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
     const data = await hasuraRequest(mutation, {
       object: {
         contractId: contract_id,
@@ -96,7 +96,10 @@ const initializeEscrowHandler = async (req, res) => {
     await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
   } catch (error) {
-    console.error('[escrow/initialize] Exception:', error.message);
+    console.error('[escrow/initialize] Hasura error:', error.details || error.message);
+    if (error.details) {
+      return res.status(500).json({ error: 'Failed to persist escrow record', details: error.details });
+    }
     return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 };
