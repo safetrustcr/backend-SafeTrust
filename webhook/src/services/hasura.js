@@ -27,36 +27,29 @@ async function hasuraRequest(query, variables = {}, timeoutMs = DEFAULT_HASURA_T
     throw new Error('Missing HASURA_GRAPHQL_ADMIN_SECRET');
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const response = await fetch(getHasuraEndpoint(), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-hasura-admin-secret': adminSecret,
+    },
+    body: JSON.stringify({ query, variables }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
 
-  try {
-    const response = await fetch(getHasuraEndpoint(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-hasura-admin-secret': adminSecret,
-      },
-      body: JSON.stringify({ query, variables }),
-      signal: controller.signal,
-    });
+  const data = await response.json();
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(`Hasura request failed with status ${response.status}`);
-    }
-
-    if (data.errors) {
-      const error = new Error('Hasura request failed');
-      error.details = data.errors;
-      throw error;
-    }
-
-    return data.data;
-  } finally {
-    clearTimeout(timeout);
+  if (!response.ok) {
+    throw new Error(`Hasura request failed with status ${response.status}`);
   }
+
+  if (data.errors) {
+    const error = new Error('Hasura request failed');
+    error.details = data.errors;
+    throw error;
+  }
+
+  return data.data;
 }
 
 /**

@@ -1,3 +1,11 @@
+const {
+  hasuraRequest,
+  logAndCheckWebhookEvent,
+  markWebhookEventProcessed,
+} = require('../../services/hasura');
+
+const EVENT_TYPE = 'escrow.initialized';
+
 const initializeEscrowHandler = async (req, res) => {
   const {
     contract_id,
@@ -31,7 +39,19 @@ const initializeEscrowHandler = async (req, res) => {
     });
   }
 
-  // 3 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
+  // 3 — Idempotency check
+  const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    contract_id,
+    EVENT_TYPE,
+    req.body
+  );
+
+  if (isDuplicate) {
+    await markWebhookEventProcessed(eventId);
+    return res.status(200).json({ received: true });
+  }
+
+  // 4 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
   const mutation = `
     mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
       insert_trustless_work_escrows_one(object: $object) {
@@ -44,65 +64,36 @@ const initializeEscrowHandler = async (req, res) => {
   `;
 
   try {
-    const endpoint = process.env.HASURA_GRAPHQL_ENDPOINT;
-    const adminSecret = process.env.HASURA_GRAPHQL_ADMIN_SECRET;
-
-    if (!endpoint) {
-      console.error('[escrow/initialize] HASURA_GRAPHQL_ENDPOINT is not configured');
-      return res.status(500).json({ error: 'Server configuration error' });
-    }
-
-    const hasuraRes = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(adminSecret ? { 'x-hasura-admin-secret': adminSecret } : {}),
-      },
-      body: JSON.stringify({
-        query: mutation,
-        variables: {
-          object: {
-            contractId: contract_id,
-            marker,
-            approver,
-            releaser,
-            resolver: resolver || null,
-            escrowType: escrow_type,
-            status: 'created',             // initial status per valid_escrow_status CHECK
-            assetCode: asset_code || 'USDC',
-            assetIssuer: asset_issuer || null,
-            amount,
-            balance: 0,
-            bookingId: booking_id || null,
-            roomId: room_id || null,
-            hotelId: hotel_id || null,
-            guestId: guest_id || null,
-            tenantId: 'safetrust',
-            escrowMetadata: req.body,     // full payload stored as JSONB
-            bookingMetadata: booking_metadata || null,
-          }
-        }
-      }),
+    const data = await hasuraRequest(mutation, {
+      object: {
+        contractId: contract_id,
+        marker,
+        approver,
+        releaser,
+        resolver: resolver || null,
+        escrowType: escrow_type,
+        status: 'created',
+        assetCode: asset_code || 'USDC',
+        assetIssuer: asset_issuer || null,
+        amount,
+        balance: 0,
+        bookingId: booking_id || null,
+        roomId: room_id || null,
+        hotelId: hotel_id || null,
+        guestId: guest_id || null,
+        tenantId: 'safetrust',
+        escrowMetadata: req.body,
+        bookingMetadata: booking_metadata || null,
+      }
     });
 
-    const hasuraData = await hasuraRes.json();
-
-    if (hasuraData.errors) {
-      console.error('[escrow/initialize] Hasura error:', hasuraData.errors);
-      return res.status(500).json({
-        error: 'Failed to persist escrow record',
-        details: hasuraData.errors
-      });
-    }
-
-    const escrow = hasuraData.data?.insert_trustless_work_escrows_one;
+    const escrow = data.insert_trustless_work_escrows_one;
     if (!escrow) {
       return res.status(500).json({ error: 'Failed to insert escrow record' });
     }
 
     console.log(`[escrow/initialize] Escrow persisted — contract_id: ${contract_id}, id: ${escrow.id}`);
-
-    // 4 — Acknowledge TrustlessWork webhook
+    await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
   } catch (error) {
     console.error('[escrow/initialize] Exception:', error.message);

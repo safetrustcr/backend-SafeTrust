@@ -1,4 +1,5 @@
 const {
+  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } = require('../../services/hasura');
@@ -56,41 +57,8 @@ const fundEscrowHandler = async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
-    const endpoint = process.env.HASURA_GRAPHQL_ENDPOINT;
-    const adminSecret = process.env.HASURA_GRAPHQL_ADMIN_SECRET;
-
-    if (!endpoint) {
-      console.error('[escrow/fund] HASURA_GRAPHQL_ENDPOINT is not configured');
-      return res.status(500).json({ error: 'Server configuration error' });
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    const hasuraRes = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(adminSecret ? { 'x-hasura-admin-secret': adminSecret } : {}),
-      },
-      body: JSON.stringify({
-        query: mutation,
-        variables: { contractId, amount }
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    const hasuraData = await hasuraRes.json();
-
-    if (hasuraData.errors) {
-      console.error('[escrow/fund] Hasura error:', hasuraData.errors);
-      return res.status(500).json({
-        error: 'Failed to update escrow status'
-      });
-    }
-
-    const updated = hasuraData.data?.update_trustless_work_escrows?.returning;
+    const data = await hasuraRequest(mutation, { contractId, amount });
+    const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {
       return res.status(404).json({
