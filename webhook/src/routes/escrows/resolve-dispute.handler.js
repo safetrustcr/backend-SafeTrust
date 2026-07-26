@@ -1,4 +1,5 @@
 const {
+  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } = require('../../services/hasura');
@@ -50,37 +51,8 @@ const resolveDisputeHandler = async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
-    const endpoint = process.env.HASURA_GRAPHQL_ENDPOINT;
-    const adminSecret = process.env.HASURA_GRAPHQL_ADMIN_SECRET;
-
-    if (!endpoint) {
-      console.error('[escrow/resolve-dispute] HASURA_GRAPHQL_ENDPOINT is not configured');
-      return res.status(500).json({ error: 'Server configuration error' });
-    }
-
-    const hasuraRes = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(adminSecret ? { 'x-hasura-admin-secret': adminSecret } : {}),
-      },
-      body: JSON.stringify({
-        query: mutation,
-        variables: { contractId }
-      }),
-    });
-
-    const hasuraData = await hasuraRes.json();
-
-    if (hasuraData.errors) {
-      console.error('[escrow/resolve-dispute] Hasura error:', hasuraData.errors);
-      return res.status(500).json({
-        error: 'Failed to update escrow status',
-        details: hasuraData.errors
-      });
-    }
-
-    const updated = hasuraData.data?.update_trustless_work_escrows?.returning;
+    const data = await hasuraRequest(mutation, { contractId });
+    const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {
       return res.status(404).json({
@@ -93,7 +65,10 @@ const resolveDisputeHandler = async (req, res) => {
     await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
   } catch (error) {
-    console.error('[escrow/resolve-dispute] Exception:', error.message);
+    console.error('[escrow/resolve-dispute] Hasura error:', error.details || error.message);
+    if (error.details) {
+      return res.status(500).json({ error: 'Failed to update escrow status', details: error.details });
+    }
     return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 };
