@@ -96,7 +96,7 @@ const initializeEscrowHandler = async (req, res) => {
     await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
   } catch (error) {
-    console.error('[escrow/initialize] Hasura error:', error.details || error.message);
+    console.error('[escrow/initialize] Error:', error.details || error.message);
     if (error.details) {
       return res.status(500).json({ error: 'Failed to persist escrow record', details: error.details });
     }
