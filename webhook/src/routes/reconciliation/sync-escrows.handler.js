@@ -10,11 +10,20 @@
  *  2. Split into chunks of CHUNK_SIZE (50)
  *  3. For each chunk: call TrustlessWork indexer → upsert changed rows only
  *  4. Chunk-level errors are isolated — one failed chunk never aborts others
- *  5. Return 200 with full summary JSON regardless of partial chunk failures
+ *  5. Detect stale escrows (updated_at older than N days) via indexed lookup
+ *  6. Return 200 with full summary JSON regardless of partial chunk failures
  */
 
 const db = require('../../services/db');
-const { chunkArray, syncChunk, CHUNK_SIZE } = require('../../lib/reconciliation');
+const {
+  chunkArray,
+  syncChunk,
+  findStaleEscrows,
+  CHUNK_SIZE,
+} = require('../../lib/reconciliation');
+
+/** Escrows not updated within this many days are reported as stale. */
+const STALE_ESCROW_DAYS = 7;
 
 /**
  * Handle POST /reconciliation/sync-escrows.
@@ -44,6 +53,8 @@ async function syncEscrowsHandler(req, res) {
         updated: 0,
         unchanged: 0,
         skipped: 0,
+        staleCount: 0,
+        staleContractIds: [],
         errors: 0,
         durationMs: Date.now() - startTime,
       });
@@ -79,20 +90,32 @@ async function syncEscrowsHandler(req, res) {
       }
     }
 
+    // ── Step 3: Detect stale escrows (O(log n + k) indexed lookup) ──────────
+    const staleContractIds = await findStaleEscrows(STALE_ESCROW_DAYS);
+    const staleCount = staleContractIds.length;
+
+    if (staleCount > 0) {
+      console.warn(
+        `[reconciliation] ⚠️  ${staleCount} escrows not updated in ${STALE_ESCROW_DAYS}+ days:`,
+        staleContractIds.slice(0, 5)
+      );
+    }
+
     const durationMs = Date.now() - startTime;
 
-    // ── Step 3: Log summary ─────────────────────────────────────────────────
+    // ── Step 4: Log summary ─────────────────────────────────────────────────
     console.log(`[reconciliation] ✅ Sync complete in ${durationMs}ms`);
     console.log(`   Total escrows : ${contractIds.length}`);
     console.log(`   Chunks        : ${chunks.length}`);
     console.log(`   Updated rows  : ${totalUpdated}`);
     console.log(`   Unchanged rows: ${totalUnchanged}`);
     console.log(`   Skipped rows  : ${totalSkipped}`);
+    console.log(`   Stale rows    : ${staleCount}`);
     if (chunkErrors.length > 0) {
       console.log(`   Chunk errors  : ${chunkErrors.length}`);
     }
 
-    // ── Step 4: Respond 200 ─────────────────────────────────────────────────
+    // ── Step 5: Respond 200 ─────────────────────────────────────────────────
     return res.status(200).json({
       success: true,
       totalEscrows: contractIds.length,
@@ -100,6 +123,8 @@ async function syncEscrowsHandler(req, res) {
       updated: totalUpdated,
       unchanged: totalUnchanged,
       skipped: totalSkipped,
+      staleCount,
+      staleContractIds: staleContractIds.slice(0, 10),
       errors: chunkErrors.length,
       durationMs,
     });

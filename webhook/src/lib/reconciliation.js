@@ -9,6 +9,7 @@
  *  • chunkArray  — split a flat array into sub-arrays of `size`
  *  • fetchEscrowsByContractIds — call TrustlessWork indexer API
  *  • syncChunk   — upsert one batch of escrows into the DB
+ *  • findStaleEscrows — O(log n + k) stale escrow detection via updated_at index
  *
  * All functions are exported individually so they can be unit-tested
  * without requiring a live database or external API.
@@ -234,10 +235,44 @@ async function syncChunk(contractIds) {
   return { updated, unchanged, skipped };
 }
 
+/**
+ * Find escrows not updated by TrustlessWork in the last N days.
+ * Uses the partial index idx_trustless_escrows_updated_at for O(log n + k) lookup.
+ *
+ * Big O:
+ *   Index scan on updated_at: O(log n) to find range start
+ *   Row retrieval: O(k) where k = number of stale rows
+ *   Total: O(log n + k), far better than O(n) full table scan
+ *
+ * Terminal statuses (completed, resolved, cancelled) are excluded — they never
+ * need stale detection and are omitted from the partial index.
+ *
+ * @param {number} [staleDays=7] - escrows not updated in this many days are stale
+ * @returns {Promise<string[]>} contract_ids of stale escrows
+ */
+async function findStaleEscrows(staleDays = 7) {
+  if (!Number.isFinite(staleDays) || staleDays < 1) {
+    throw new RangeError('findStaleEscrows: staleDays must be a positive number');
+  }
+
+  const { rows } = await db.query(
+    `SELECT contract_id
+       FROM public.trustless_work_escrows
+      WHERE tenant_id = 'safetrust'
+        AND status NOT IN ('completed', 'resolved', 'cancelled')
+        AND updated_at < NOW() - ($1 * INTERVAL '1 day')
+      ORDER BY updated_at ASC`,
+    [staleDays]
+  );
+
+  return rows.map((r) => r.contract_id);
+}
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 module.exports = {
   CHUNK_SIZE,
   chunkArray,
   fetchEscrowsByContractIds,
   syncChunk,
+  findStaleEscrows,
 };

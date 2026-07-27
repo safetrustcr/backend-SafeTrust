@@ -11,6 +11,7 @@
  *  • chunkArray  → pure function, tested exhaustively.
  *  • syncChunk   → DB + HTTP mocked; verifies counts and per-row error isolation.
  *  • fetchEscrowsByContractIds → HTTP mocked; verifies both API response shapes.
+ *  • findStaleEscrows → DB mocked; verifies query params and contract_id mapping.
  */
 
 // ─── Mock the DB service before requiring the module under test ───────────────
@@ -23,8 +24,13 @@ const https = require('https');
 jest.mock('https');
 
 const db = require('../../services/db');
-const { chunkArray, syncChunk, fetchEscrowsByContractIds, CHUNK_SIZE } =
-  require('../reconciliation');
+const {
+  chunkArray,
+  syncChunk,
+  fetchEscrowsByContractIds,
+  findStaleEscrows,
+  CHUNK_SIZE,
+} = require('../reconciliation');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -312,5 +318,51 @@ describe('syncChunk', () => {
     https.request.mockImplementation(() => fakeReq);
 
     await expect(syncChunk(['X'])).rejects.toThrow('ECONNREFUSED');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// findStaleEscrows — O(log n + k) indexed stale detection
+// ═══════════════════════════════════════════════════════════════════════════════
+describe('findStaleEscrows', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  it('defaults staleDays to 7 and returns mapped contract_ids', async () => {
+    db.query.mockResolvedValue({
+      rows: [{ contract_id: 'STALE_001' }, { contract_id: 'STALE_002' }],
+    });
+
+    const result = await findStaleEscrows();
+
+    expect(result).toEqual(['STALE_001', 'STALE_002']);
+    expect(db.query).toHaveBeenCalledTimes(1);
+
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toMatch(/updated_at\s*<\s*NOW\(\)\s*-\s*\(\$1 \* INTERVAL '1 day'\)/i);
+    expect(sql).toMatch(/status NOT IN \('completed', 'resolved', 'cancelled'\)/i);
+    expect(sql).toMatch(/tenant_id = 'safetrust'/i);
+    expect(params).toEqual([7]);
+  });
+
+  it('forwards a custom staleDays parameter', async () => {
+    db.query.mockResolvedValue({ rows: [] });
+
+    const result = await findStaleEscrows(14);
+
+    expect(result).toEqual([]);
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), [14]);
+  });
+
+  it('returns an empty array when no stale escrows exist', async () => {
+    db.query.mockResolvedValue({ rows: [] });
+
+    await expect(findStaleEscrows(7)).resolves.toEqual([]);
+  });
+
+  it('rejects non-positive staleDays values', async () => {
+    await expect(findStaleEscrows(0)).rejects.toThrow(/positive number/i);
+    await expect(findStaleEscrows(-3)).rejects.toThrow(/positive number/i);
+    await expect(findStaleEscrows(NaN)).rejects.toThrow(/positive number/i);
+    expect(db.query).not.toHaveBeenCalled();
   });
 });
