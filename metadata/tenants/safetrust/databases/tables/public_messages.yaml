@@ -1,0 +1,47 @@
+table:
+  name: messages
+  schema: public
+object_relationships:
+  - name: conversation
+    using:
+      foreign_key_constraint_on: conversation_id
+  - name: sender
+    using:
+      foreign_key_constraint_on: sender_id
+select_permissions:
+  - role: safetrust
+    permission:
+      columns:
+        - id
+        - conversation_id
+        - sender_id
+        - body
+        - is_automated
+        - event_type
+        - read_at
+        - created_at
+        - tenant_id
+      filter:
+        tenant_id:
+          _eq: safetrust
+insert_permissions:
+  - role: safetrust
+    permission:
+      columns:
+        - conversation_id
+        - sender_id
+        - body
+        - is_automated
+        - event_type
+        - tenant_id
+      check:
+        tenant_id:
+          _eq: safetrust
+update_permissions:
+  - role: safetrust
+    permission:
+      columns:
+        - read_at
+      filter:
+        tenant_id:
+          _eq: safetrust
