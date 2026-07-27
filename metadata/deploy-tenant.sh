@@ -169,6 +169,47 @@ EOL
             else
                 echo "Successfully tracked table $table_name"
             fi
+
+            # Apply column/root customization from YAML when present.
+            # Keep GraphQL root field names as the SQL table name (omit custom_name)
+            # so webhook mutations like insert_trustless_work_escrows_one keep working,
+            # while camelCase column aliases (contractId, etc.) are applied.
+            if command -v yq >/dev/null 2>&1; then
+                local config_type
+                config_type=$(yq e '.configuration | type' "$table_file" 2>/dev/null || true)
+                if [ "$config_type" = "!!map" ]; then
+                    local config_json
+                    config_json=$(yq e -o=json '
+                      .configuration
+                      | del(.custom_name)
+                      | .
+                    ' "$table_file")
+                    cat > "$temp_dir/customize_table.json" << EOL
+{
+  "type": "pg_set_table_customization",
+  "args": {
+    "source": "${tenant_name}",
+    "table": {
+      "name": "${table_name}",
+      "schema": "${table_schema}"
+    },
+    "configuration": ${config_json}
+  }
+}
+EOL
+                    echo "Applying table customization for $table_name..."
+                    local customize_response
+                    customize_response=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
+                        -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+                        -H "Content-Type: application/json" \
+                        -d @"$temp_dir/customize_table.json")
+                    if [[ "$customize_response" == *"error"* ]]; then
+                        echo "Warning: Issue customizing table $table_name: $customize_response"
+                    else
+                        echo "Successfully customized table $table_name"
+                    fi
+                fi
+            fi
         fi
     done
     
