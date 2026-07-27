@@ -30,6 +30,8 @@ Feature: Reconciliation — POST /reconciliation/sync-escrows
     And match response.updated == '#number'
     And match response.unchanged == '#number'
     And match response.skipped == '#number'
+    And match response.staleCount == '#number'
+    And match response.staleContractIds == '#[]'
     And match response.errors == '#number'
     And match response.durationMs == '#number'
 
@@ -80,3 +82,5 @@ Feature: Reconciliation — POST /reconciliation/sync-escrows
     And match response.success == true
     And match response.totalEscrows == 0
     And match response.updated == 0
+    And match response.staleCount == 0
+    And match response.staleContractIds == []
