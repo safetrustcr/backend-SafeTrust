@@ -120,8 +120,14 @@ process_metadata_tables() {
     local temp_dir="$3"
     local hasura_endpoint="$4"
     local admin_secret="$5"
+    local has_errors=0
     
     echo "Processing tables for $tenant..."
+
+    if ! command -v yq >/dev/null 2>&1; then
+        echo "❌ yq is required to apply table customization (camelCase column mappings)" >&2
+        return 1
+    fi
     
     # Find all table definition files
     for table_file in "$temp_dir/metadata/databases/default/tables"/*.yaml; do
@@ -174,17 +180,24 @@ EOL
             # Keep GraphQL root field names as the SQL table name (omit custom_name)
             # so webhook mutations like insert_trustless_work_escrows_one keep working,
             # while camelCase column aliases (contractId, etc.) are applied.
-            if command -v yq >/dev/null 2>&1; then
-                local config_type
-                config_type=$(yq e '.configuration | type' "$table_file" 2>/dev/null || true)
-                if [ "$config_type" = "!!map" ]; then
-                    local config_json
-                    config_json=$(yq e -o=json '
-                      .configuration
-                      | del(.custom_name)
-                      | .
-                    ' "$table_file")
-                    cat > "$temp_dir/customize_table.json" << EOL
+            local config_type
+            if ! config_type=$(yq e '.configuration | type' "$table_file"); then
+                echo "❌ Failed reading configuration type from $table_file with yq" >&2
+                has_errors=1
+                continue
+            fi
+            if [ "$config_type" = "!!map" ]; then
+                local config_json
+                if ! config_json=$(yq e -o=json '
+                  .configuration
+                  | del(.custom_name)
+                  | .
+                ' "$table_file"); then
+                    echo "❌ Failed parsing configuration JSON from $table_file with yq" >&2
+                    has_errors=1
+                    continue
+                fi
+                cat > "$temp_dir/customize_table.json" << EOL
 {
   "type": "pg_set_table_customization",
   "args": {
@@ -197,22 +210,32 @@ EOL
   }
 }
 EOL
-                    echo "Applying table customization for $table_name..."
-                    local customize_response
-                    customize_response=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
-                        -H "X-Hasura-Admin-Secret: ${admin_secret}" \
-                        -H "Content-Type: application/json" \
-                        -d @"$temp_dir/customize_table.json")
-                    if [[ "$customize_response" == *"error"* ]]; then
-                        echo "Warning: Issue customizing table $table_name: $customize_response"
-                    else
-                        echo "Successfully customized table $table_name"
-                    fi
+                echo "Applying table customization for $table_name..."
+                local customize_response
+                local curl_exit=0
+                customize_response=$(curl -sS --fail --connect-timeout 5 --max-time 30 \
+                    -X POST "${hasura_endpoint}/v1/metadata" \
+                    -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+                    -H "Content-Type: application/json" \
+                    -d @"$temp_dir/customize_table.json") || curl_exit=$?
+                if [ "$curl_exit" -ne 0 ]; then
+                    echo "❌ Failed customizing table $table_name (curl exit ${curl_exit})" >&2
+                    has_errors=1
+                elif [[ "$customize_response" == *"error"* ]]; then
+                    echo "❌ Issue customizing table $table_name: $customize_response" >&2
+                    has_errors=1
+                else
+                    echo "Successfully customized table $table_name"
                 fi
             fi
         fi
     done
     
+    if [ "$has_errors" -ne 0 ]; then
+        echo "❌ Metadata deployment for $tenant tenant failed (table customization errors)" >&2
+        return 1
+    fi
+
     echo "✅ Metadata deployment for $tenant tenant completed"
     return 0
 }

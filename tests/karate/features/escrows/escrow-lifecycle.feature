@@ -78,7 +78,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     When method POST
     Then status 200
     And match response.received == true
-    * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN 1 ELSE 0 END) AS balance_is_zero, amount FROM public.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
+    * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero, amount FROM public.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match rows[0].status == 'created'
     And match rows[0].balance_is_zero == '1'
     And match rows[0].amount == '1200.0000000'
@@ -160,7 +160,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     When method POST
     Then status 200
     And match response.received == true
-    * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN 1 ELSE 0 END) AS balance_is_zero FROM public.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
+    * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero FROM public.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match rows[0].status == 'completed'
     And match rows[0].balance_is_zero == '1'
     # Post-completion: re-fund must still be rejected (status guard holds).
@@ -247,7 +247,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     * def elapsed = Java.type('java.lang.System').currentTimeMillis() - start
     # O(4) Hasura-backed transitions: should complete < 10s under normal load
     And assert elapsed < 10000
-    * def finalRows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN 1 ELSE 0 END) AS balance_is_zero FROM public.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")
+    * def finalRows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero FROM public.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")
     And match finalRows[0].status == 'completed'
     And match finalRows[0].balance_is_zero == '1'
     * db.execute("DELETE FROM public.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")
@@ -313,7 +313,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     And request resolveStr
     When method POST
     Then status 200
-    * def resolved = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN 1 ELSE 0 END) AS balance_is_zero FROM public.trustless_work_escrows WHERE contract_id = '" + disputeContractId + "'")
+    * def resolved = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero FROM public.trustless_work_escrows WHERE contract_id = '" + disputeContractId + "'")
     And match resolved[0].status == 'resolved'
     And match resolved[0].balance_is_zero == '1'
 
