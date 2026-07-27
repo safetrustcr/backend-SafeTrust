@@ -1,0 +1,64 @@
+table:
+  name: conversations
+  schema: public
+object_relationships:
+  - name: apartment
+    using:
+      foreign_key_constraint_on: apartment_id
+  - name: host
+    using:
+      foreign_key_constraint_on: host_id
+  - name: guest
+    using:
+      foreign_key_constraint_on: guest_id
+  - name: escrow
+    using:
+      foreign_key_constraint_on: escrow_id
+array_relationships:
+  - name: messages
+    using:
+      foreign_key_constraint_on:
+        column: conversation_id
+        table:
+          name: messages
+          schema: public
+select_permissions:
+  - role: safetrust
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - host_id
+        - guest_id
+        - escrow_id
+        - status
+        - last_message_at
+        - created_at
+        - updated_at
+        - tenant_id
+      filter:
+        tenant_id:
+          _eq: safetrust
+insert_permissions:
+  - role: safetrust
+    permission:
+      columns:
+        - apartment_id
+        - host_id
+        - guest_id
+        - escrow_id
+        - status
+        - tenant_id
+      check:
+        tenant_id:
+          _eq: safetrust
+update_permissions:
+  - role: safetrust
+    permission:
+      columns:
+        - status
+        - escrow_id
+        - updated_at
+      filter:
+        tenant_id:
+          _eq: safetrust
