@@ -56,6 +56,14 @@ const syncUserHandler = async (req, res) => {
     const result = await db.query(query, values);
     const user = result.rows[0];
 
+    // Assign default guest role (idempotent — skips if already assigned)
+    await db.query(
+      `INSERT INTO public.user_roles (user_id, role_id)
+       SELECT $1, id FROM public.roles WHERE name = 'guest'
+       ON CONFLICT (user_id, role_id) DO NOTHING`,
+      [user.id]
+    );
+
     console.log(`[sync-user] ✅ user synced — uid: ${user.firebase_uid}`);
 
     res.status(200).json({
