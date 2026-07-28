@@ -1,6 +1,11 @@
 /**
- * Role-based authorization factory. Expects `req.user.role` and/or `req.user.admin`
- * (set by `authenticateFirebase` or `authMiddleware` from Firebase token / custom claims).
+ * Role-based authorization factory. Expects `req.user.roles` (array, set by
+ * `authenticateFirebase` / `authMiddleware` from the `user_roles` lookup) and/or
+ * the scalar `req.user.role` / `req.user.admin` fallbacks.
+ *
+ * Authorization succeeds when *any* of the user's assigned roles is allowed — a
+ * multi-role user (e.g. `['guest', 'host']`) must not be denied a `host`-only
+ * route just because the scalar `role` resolved to `guest`.
  *
  * @param {string[]} allowedRoles Roles permitted for the route (e.g. `['admin']`).
  * @returns {import('express').RequestHandler}
@@ -14,11 +19,16 @@ function requireRole(allowedRoles) {
       });
     }
 
-    const userRole = req.user.role || (req.user.admin ? 'admin' : 'guest');
-    // Extract role from custom claims (assuming 'role' or 'admin' claim)
-    const userRole = req.user.role || (req.user.admin ? 'admin' : null);
+    // Prefer the full roles array; fall back to the scalar role / admin claim,
+    // defaulting to 'guest' when nothing is assigned.
+    const userRoles =
+      Array.isArray(req.user.roles) && req.user.roles.length > 0
+        ? req.user.roles
+        : [req.user.role || (req.user.admin ? 'admin' : 'guest')];
 
-    if (!userRole || !allowedRoles.includes(userRole)) {
+    const isAllowed = userRoles.some((role) => allowedRoles.includes(role));
+
+    if (!isAllowed) {
       return res.status(403).json({
         error: 'Forbidden',
         message: 'Insufficient permissions or role not assigned',
