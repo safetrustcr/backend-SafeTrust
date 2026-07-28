@@ -1,7 +1,34 @@
 const { getAuth } = require('firebase-admin/auth');
+const db = require('../services/db');
 
 /**
- * Verifies a Firebase Bearer token and attaches `uid`, `email`, `name`, `role`, and `admin` to `req.user`.
+ * Resolves the roles assigned to a user from the `public.user_roles` join table.
+ *
+ * Mirrors the query convention in `routes/auth/me.handler.js`: a user may hold
+ * multiple roles, so `roles` is always an array. `role` is a convenience scalar
+ * (the first assigned role, or `'guest'` when none are assigned) used by
+ * `requireRole` and single-role response shapes.
+ *
+ * @param {string} uid Firebase UID / users.id.
+ * @returns {Promise<{ roles: string[], role: string }>}
+ */
+async function resolveUserRole(uid) {
+  const result = await db.query(
+    `SELECT r.name
+     FROM public.user_roles ur
+     JOIN public.roles r ON r.id = ur.role_id
+     WHERE ur.user_id = $1`,
+    [uid]
+  );
+
+  const roles = result.rows.map((row) => row.name);
+  return { roles, role: roles[0] ?? 'guest' };
+}
+
+/**
+ * Verifies a Firebase Bearer token and attaches `uid`, `email`, `name`, `role`,
+ * `roles`, and `admin` to `req.user`. Roles are sourced from `public.user_roles`
+ * (not Firebase custom claims) in both the test-bypass and verified-token paths.
  *
  * @param {import('express').Request} req
  * @param {import('express').Response} res
@@ -24,28 +51,33 @@ async function authMiddleware(req, res, next) {
   if (token === 'mock-token') {
     if (process.env.NODE_ENV !== 'test') {
       console.error('FATAL: mock-token used outside of test environment');
-      return res.status(500).json({ 
+      return res.status(500).json({
         error: 'Server configuration error',
-        message: 'mock-token not allowed in this environment' 
+        message: 'mock-token not allowed in this environment'
       });
     }
+    const uid = req.headers['x-test-uid'] || 'test-user-id';
+    const { roles, role } = await resolveUserRole(uid);
     req.user = {
-      uid: req.headers['x-test-uid'] || 'test-user-id',
-      email: req.headers['x-test-email'] || 'test@example.com'
+      uid,
+      email: req.headers['x-test-email'] || 'test@example.com',
+      roles,
+      role,
     };
     return next();
   }
 
   try {
     const decoded = await getAuth().verifyIdToken(token);
+    const { roles, role } = await resolveUserRole(decoded.uid);
     req.user = {
       uid: decoded.uid,
       email: decoded.email,
       name: decoded.name,
-      role: decoded.role,
       admin: decoded.admin === true,
-      name:  decoded.name,
       ...decoded, // Include all custom claims
+      roles, // role/roles from user_roles win over any custom claims
+      role,
     };
     next();
   } catch (error) {
@@ -57,4 +89,4 @@ async function authMiddleware(req, res, next) {
   }
 }
 
-module.exports = { authMiddleware, authenticateFirebase: authMiddleware };
+module.exports = { authMiddleware, authenticateFirebase: authMiddleware, resolveUserRole };

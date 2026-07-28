@@ -62,6 +62,7 @@ const syncUserHandler = async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
+        role: req.user.role,
         last_seen: user.last_seen ?? user.updated_at,
       },
     });
