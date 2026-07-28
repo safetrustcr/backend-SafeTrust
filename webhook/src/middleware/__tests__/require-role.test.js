@@ -45,6 +45,22 @@ describe('requireRole', () => {
     expect(res.status).not.toHaveBeenCalled();
   });
 
+  it('should permit a host-only route for a multi-role user (guest + host)', () => {
+    // Regression: a user assigned both roles must not be denied a host-only
+    // route just because the scalar `role` happened to resolve to 'guest'.
+    req.user = { role: 'guest', roles: ['guest', 'host'] };
+    requireRole(['host'])(req, res, next);
+    expect(next).toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('should return 403 for a multi-role user when none of their roles is allowed', () => {
+    req.user = { role: 'guest', roles: ['guest', 'host'] };
+    requireRole(['admin'])(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('should treat an admin claim as the admin role', () => {
     req.user = { admin: true };
     requireRole(['admin'])(req, res, next);

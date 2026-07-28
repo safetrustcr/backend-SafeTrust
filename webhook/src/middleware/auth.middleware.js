@@ -6,8 +6,14 @@ const db = require('../services/db');
  *
  * Mirrors the query convention in `routes/auth/me.handler.js`: a user may hold
  * multiple roles, so `roles` is always an array. `role` is a convenience scalar
- * (the first assigned role, or `'guest'` when none are assigned) used by
- * `requireRole` and single-role response shapes.
+ * holding the highest-privilege assigned role (or `'guest'` when none are
+ * assigned), used for single-role response shapes.
+ *
+ * The query orders by an explicit privilege precedence so `roles[0]` — and any
+ * response derived from it — is deterministic. Without `ORDER BY`, PostgreSQL
+ * does not guarantee row order, which would make the scalar `role` (and the
+ * sync-user response) flap for multi-role users. Authorization decisions must
+ * still consider the full `roles` array, not just this scalar.
  *
  * @param {string} uid Firebase UID / users.id.
  * @returns {Promise<{ roles: string[], role: string }>}
@@ -17,7 +23,15 @@ async function resolveUserRole(uid) {
     `SELECT r.name
      FROM public.user_roles ur
      JOIN public.roles r ON r.id = ur.role_id
-     WHERE ur.user_id = $1`,
+     WHERE ur.user_id = $1
+     ORDER BY
+       CASE r.name
+         WHEN 'admin' THEN 0
+         WHEN 'host'  THEN 1
+         WHEN 'guest' THEN 2
+         ELSE 3
+       END,
+       r.name`,
     [uid]
   );
 
