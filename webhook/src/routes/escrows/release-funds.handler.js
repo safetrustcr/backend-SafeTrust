@@ -3,6 +3,9 @@ const {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } = require('../../services/hasura');
+const {
+  notifyHotelEscrowConversation,
+} = require('../../services/hotel-conversation-notify');
 
 const EVENT_TYPE = 'escrow.completed';
 
@@ -48,7 +51,16 @@ const releaseFundsHandler = async (req, res) => {
       return res.status(404).json({ error: `Escrow not found for contractId: ${contractId}` });
     }
 
-    console.log(`[escrow/release-funds] Funds released — contractId: ${contractId}`);
+    console.log(`[escrow/release-funds] ✅ funds released — contractId: ${contractId}`);
+
+    // Best-effort hotel lifecycle message — never fail the release response
+    await notifyHotelEscrowConversation({
+      contractId,
+      eventType: 'escrow_completed',
+      body:
+        'SafeTrust: Funds have been released. Thank you for booking with us.',
+    });
+
     await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
   } catch (error) {

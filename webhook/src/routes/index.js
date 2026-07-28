@@ -16,6 +16,7 @@ const initializeEscrowRoute = require('./escrows/initialize.route');
 const fundEscrowRoute = require('./escrows/fund.route');
 const releaseFundsRoute = require('./escrows/release-funds.route');
 const resolveDisputeRoute = require('./escrows/resolve-dispute.route');
+const hotelConversationsSendRoute = require('./hotel/conversations/send.route');
 
 // 1. Health Check
 router.get('/health', (req, res) => res.status(200).send('OK'))
@@ -29,6 +30,8 @@ router.use(fundEscrowRoute)
 router.use(releaseFundsRoute)
 router.use(resolveDisputeRoute)
 router.use(escrowRoutes)
+// Hotel messaging — internal + client send (no TW signature)
+router.use(hotelConversationsSendRoute)
 
 // 3. Authenticated Routes & Auth Middlewares
 router.use('/api', authMiddleware)

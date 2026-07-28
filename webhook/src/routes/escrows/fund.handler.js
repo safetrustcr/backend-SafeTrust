@@ -3,6 +3,9 @@ const {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } = require('../../services/hasura');
+const {
+  notifyHotelEscrowConversation,
+} = require('../../services/hotel-conversation-notify');
 
 const EVENT_TYPE = 'escrow.funded';
 
@@ -66,7 +69,15 @@ const fundEscrowHandler = async (req, res) => {
       });
     }
 
-    console.log(`[escrow/fund] Escrow funded — contractId: ${contractId}, amount: ${amount}`);
+    console.log(`[escrow/fund] ✅ escrow funded — contractId: ${contractId}`);
+
+    // Best-effort hotel lifecycle message — never fail the fund response
+    await notifyHotelEscrowConversation({
+      contractId,
+      eventType: 'escrow_funded',
+      body:
+        'SafeTrust: Your deposit has been confirmed on the Stellar network. Your booking is secured.',
+    });
 
     await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
