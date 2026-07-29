@@ -23,9 +23,9 @@ CREATE TABLE public.conversations (
 );
 
 CREATE INDEX idx_conversations_host
-  ON public.conversations(host_id, last_message_at DESC);
+  ON public.conversations(host_id, last_message_at DESC NULLS LAST);
 CREATE INDEX idx_conversations_guest
-  ON public.conversations(guest_id, last_message_at DESC);
+  ON public.conversations(guest_id, last_message_at DESC NULLS LAST);
 CREATE INDEX idx_conversations_apartment
   ON public.conversations(apartment_id);
 CREATE INDEX idx_conversations_escrow
@@ -34,7 +34,15 @@ CREATE INDEX idx_conversations_escrow
 
 -- Auto-update last_message_at when a new message is inserted
 CREATE OR REPLACE FUNCTION public.update_conversation_last_message()
-RETURNS TRIGGER AS $$ BEGIN   UPDATE public.conversations   SET last_message_at = NEW.created_at,       updated_at = NOW()   WHERE id = NEW.conversation_id;   RETURN NEW; END; $$ LANGUAGE plpgsql;
+RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE public.conversations
+  SET last_message_at = GREATEST(COALESCE(last_message_at, NEW.created_at), NEW.created_at),
+      updated_at = NOW()
+  WHERE id = NEW.conversation_id;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
 COMMENT ON TABLE public.conversations IS
   'One thread per apartment per host-guest pair. Links to escrow for lifecycle messaging.';

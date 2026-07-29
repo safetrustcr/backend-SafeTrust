@@ -19,17 +19,30 @@ CREATE TABLE public.messages (
   conversation_id   UUID NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
   sender_id         TEXT NOT NULL REFERENCES public.users(id),
   body              TEXT NOT NULL
-                      CHECK (char_length(body) > 0 AND char_length(body) <= 4000),
+                      CHECK (char_length(trim(body)) > 0 AND char_length(body) <= 4000),
   -- Automated message metadata
   is_automated      BOOLEAN NOT NULL DEFAULT false,
   event_type        VARCHAR(100),
   -- Read tracking: NULL = unread, timestamp = when it was read
   read_at           TIMESTAMP WITH TIME ZONE,
-  created_at        TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   tenant_id         VARCHAR(255) NOT NULL DEFAULT 'safetrust',
-  -- event_type only valid on automated messages
+  -- event_type only valid on automated messages and restricted to valid lifecycle events
   CONSTRAINT event_type_requires_automated
-    CHECK (event_type IS NULL OR is_automated = true)
+    CHECK (
+      (is_automated = false AND event_type IS NULL) OR
+      (is_automated = true AND event_type IS NOT NULL AND event_type IN (
+        'booking_inquiry',
+        'booking_confirmed',
+        'escrow_funded',
+        'milestone_approved',
+        'funds_released',
+        'dispute_opened',
+        'dispute_resolved',
+        'check_in_reminder',
+        'checkout_reminder'
+      ))
+    )
 );
 
 -- Primary access pattern: all messages in a conversation, chronological
