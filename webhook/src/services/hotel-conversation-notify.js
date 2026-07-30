@@ -34,11 +34,13 @@ async function resolveHotelEscrowParties(contractId) {
     return null;
   }
 
+  // Map hotel reservation/escrow rows onto the safetrust conversations contract
+  // (apartment_id + escrow_id on public.conversations).
   return {
-    reservationId: row.reservation_id,
+    apartmentId: row.reservation_id,
     hostId: row.host_id,
     guestId: row.guest_id,
-    escrowTransactionId: row.escrow_transaction_id,
+    escrowId: row.escrow_transaction_id,
   };
 }
 
@@ -69,14 +71,14 @@ async function notifyHotelEscrowConversation({
     }
 
     const payload = {
-      reservationId: parties.reservationId,
+      apartmentId: parties.apartmentId,
       hostId: parties.hostId,
       guestId: parties.guestId,
       senderId: parties.guestId,
       body,
       isAutomated: true,
       eventType,
-      escrowTransactionId: parties.escrowTransactionId,
+      escrowId: parties.escrowId,
     };
 
     const res = await fetch(
