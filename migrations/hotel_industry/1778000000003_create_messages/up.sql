@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS public.messages (
   is_automated     BOOLEAN NOT NULL DEFAULT false,
   event_type       VARCHAR(100),
   read_at          TIMESTAMP WITH TIME ZONE,
-  created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   CONSTRAINT hotel_event_type_requires_automated
     CHECK (event_type IS NULL OR is_automated = true)
 );

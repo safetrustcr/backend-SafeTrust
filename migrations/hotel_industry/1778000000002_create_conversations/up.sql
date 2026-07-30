@@ -36,7 +36,12 @@ CREATE OR REPLACE FUNCTION public.update_hotel_conversation_last_message()
 RETURNS TRIGGER AS $$
 BEGIN
   UPDATE public.conversations
-  SET last_message_at = NEW.created_at, updated_at = NOW()
+  SET last_message_at = CASE
+        WHEN last_message_at IS NULL OR NEW.created_at > last_message_at
+          THEN NEW.created_at
+        ELSE last_message_at
+      END,
+      updated_at = NOW()
   WHERE id = NEW.conversation_id;
   RETURN NEW;
 END;

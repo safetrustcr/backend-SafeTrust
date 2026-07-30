@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS public.conversations CASCADE;
+DROP TABLE IF EXISTS public.conversations;
