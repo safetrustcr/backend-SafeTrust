@@ -81,12 +81,20 @@ async function sendHotelConversationHandler(req, res) {
     let conversationId;
 
     const existing = await db.query(
-      `SELECT id FROM public.conversations
+      `SELECT id, escrow_id FROM public.conversations
        WHERE apartment_id = $1 AND host_id = $2 AND guest_id = $3`,
       [apartmentId, hostId, guestId],
     );
 
     conversationId = existing.rows[0]?.id;
+
+    // Fix: Persist the provided escrowId if the existing conversation has a NULL escrow_id
+    if (conversationId && escrowId && existingRow.escrow_id == null) {
+      await db.query(
+        `UPDATE public.conversations SET escrow_id = $1 WHERE id = $2`,
+        [escrowId, conversationId],
+      );
+    }
 
     if (!conversationId) {
       try {
@@ -112,6 +120,14 @@ async function sendHotelConversationHandler(req, res) {
             [apartmentId, hostId, guestId],
           );
           conversationId = again.rows[0]?.id;
+
+          // Secondary check in case the race condition hit an unlinked conversation
+          if (conversationId && escrowId && again.rows[0].escrow_id == null) {
+             await db.query(
+              `UPDATE public.conversations SET escrow_id = $1 WHERE id = $2`,
+              [escrowId, conversationId],
+            );
+          }
         } else {
           throw err;
         }
