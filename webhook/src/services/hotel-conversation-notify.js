@@ -10,10 +10,14 @@ async function resolveHotelEscrowParties(contractId) {
   const result = await db.query(
     `SELECT
        et.id AS escrow_transaction_id,
-       et.reservation_id,
+       r.apartment_id,
        host_u.id AS host_id,
        guest_u.id AS guest_id
      FROM public.escrow_transactions et
+     JOIN hotel.reservations res
+       ON et.reservation_id = res.id
+     JOIN hotel.rooms r 
+      ON res.room_id = r.id
      LEFT JOIN public.escrow_transaction_users host_etu
        ON host_etu.escrow_transaction_id = et.id
       AND UPPER(host_etu.role) IN ('OWNER', 'HOST')
@@ -30,15 +34,17 @@ async function resolveHotelEscrowParties(contractId) {
   );
 
   const row = result.rows[0];
-  if (!row?.reservation_id || !row?.host_id || !row?.guest_id) {
+  if (!row?.apartment_id || !row?.host_id || !row?.guest_id) {
     return null;
   }
 
+  // Map hotel reservation/escrow rows onto the safetrust conversations contract
+  // (apartment_id + escrow_id on public.conversations).
   return {
-    reservationId: row.reservation_id,
+    apartmentId: row.apartment_id,
     hostId: row.host_id,
     guestId: row.guest_id,
-    escrowTransactionId: row.escrow_transaction_id,
+    escrowId: row.escrow_transaction_id,
   };
 }
 
@@ -69,14 +75,14 @@ async function notifyHotelEscrowConversation({
     }
 
     const payload = {
-      reservationId: parties.reservationId,
+      apartmentId: parties.apartmentId,
       hostId: parties.hostId,
       guestId: parties.guestId,
       senderId: parties.guestId,
       body,
       isAutomated: true,
       eventType,
-      escrowTransactionId: parties.escrowTransactionId,
+      escrowId: parties.escrowId,
     };
 
     const res = await fetch(

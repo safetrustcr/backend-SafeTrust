@@ -15,7 +15,7 @@ function makeResponse() {
 }
 
 const ids = {
-  reservationId: '11111111-1111-4111-8111-111111111111',
+  apartmentId: '11111111-1111-4111-8111-111111111111',
   hostId: '22222222-2222-4222-8222-222222222222',
   guestId: '33333333-3333-4333-8333-333333333333',
   senderId: '33333333-3333-4333-8333-333333333333',
@@ -29,7 +29,7 @@ describe('sendHotelConversationHandler', () => {
   });
 
   it('returns 400 when required fields are missing', async () => {
-    const req = { body: { reservationId: ids.reservationId } };
+    const req = { body: { apartmentId: ids.apartmentId } };
     const res = makeResponse();
 
     await sendHotelConversationHandler(req, res);
@@ -61,6 +61,11 @@ describe('sendHotelConversationHandler', () => {
     await sendHotelConversationHandler(req, res);
 
     expect(db.query).toHaveBeenCalledTimes(2);
+    expect(db.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('apartment_id'),
+      [ids.apartmentId, ids.hostId, ids.guestId],
+    );
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
       conversationId: ids.conversationId,
@@ -71,6 +76,7 @@ describe('sendHotelConversationHandler', () => {
 
   it('creates a conversation when none exists', async () => {
     const createdAt = new Date('2026-07-27T00:00:00.000Z');
+    const escrowId = '66666666-6666-4666-8666-666666666666';
     db.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: ids.conversationId }] })
@@ -82,7 +88,7 @@ describe('sendHotelConversationHandler', () => {
       body: {
         ...ids,
         body: 'First message',
-        escrowTransactionId: '66666666-6666-4666-8666-666666666666',
+        escrowId,
       },
     };
     const res = makeResponse();
@@ -90,6 +96,11 @@ describe('sendHotelConversationHandler', () => {
     await sendHotelConversationHandler(req, res);
 
     expect(db.query).toHaveBeenCalledTimes(3);
+    expect(db.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(/INSERT INTO public\.conversations[\s\S]*apartment_id[\s\S]*escrow_id/),
+      [ids.apartmentId, ids.hostId, ids.guestId, escrowId],
+    );
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
       conversationId: ids.conversationId,

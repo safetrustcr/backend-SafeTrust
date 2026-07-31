@@ -5,22 +5,22 @@ const db = require('../../../services/db');
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const REQUIRED = ['reservationId', 'hostId', 'guestId', 'senderId', 'body'];
+const REQUIRED = ['apartmentId', 'hostId', 'guestId', 'senderId', 'body'];
 
 /**
- * Find-or-create a hotel conversation for a reservation/host/guest triple,
+ * Find-or-create a conversation for an apartment/host/guest triple,
  * then append a message. DB trigger updates conversations.last_message_at.
  */
 async function sendHotelConversationHandler(req, res) {
   const {
-    reservationId,
+    apartmentId,
     hostId,
     guestId,
     senderId,
     body,
     isAutomated = false,
     eventType = null,
-    escrowTransactionId = null,
+    escrowId = null,
   } = req.body || {};
 
   const missing = REQUIRED.filter((key) => {
@@ -38,7 +38,7 @@ async function sendHotelConversationHandler(req, res) {
   }
 
   for (const [label, value] of [
-    ['reservationId', reservationId],
+    ['apartmentId', apartmentId],
     ['hostId', hostId],
     ['guestId', guestId],
     ['senderId', senderId],
@@ -49,13 +49,13 @@ async function sendHotelConversationHandler(req, res) {
   }
 
   if (
-    escrowTransactionId != null &&
-    escrowTransactionId !== '' &&
-    !UUID_RE.test(String(escrowTransactionId))
+    escrowId != null &&
+    escrowId !== '' &&
+    !UUID_RE.test(String(escrowId))
   ) {
     return res
       .status(400)
-      .json({ error: 'escrowTransactionId must be a valid UUID or null' });
+      .json({ error: 'escrowId must be a valid UUID or null' });
   }
 
   const text = String(body).trim();
@@ -81,37 +81,53 @@ async function sendHotelConversationHandler(req, res) {
     let conversationId;
 
     const existing = await db.query(
-      `SELECT id FROM public.conversations
-       WHERE reservation_id = $1 AND host_id = $2 AND guest_id = $3`,
-      [reservationId, hostId, guestId],
+      `SELECT id, escrow_id FROM public.conversations
+       WHERE apartment_id = $1 AND host_id = $2 AND guest_id = $3`,
+      [apartmentId, hostId, guestId],
     );
 
     conversationId = existing.rows[0]?.id;
+
+    // Fix: Persist the provided escrowId if the existing conversation has a NULL escrow_id
+    if (conversationId && escrowId && existingRow.escrow_id == null) {
+      await db.query(
+        `UPDATE public.conversations SET escrow_id = $1 WHERE id = $2`,
+        [escrowId, conversationId],
+      );
+    }
 
     if (!conversationId) {
       try {
         const created = await db.query(
           `INSERT INTO public.conversations
-             (reservation_id, host_id, guest_id, escrow_transaction_id)
+             (apartment_id, host_id, guest_id, escrow_id)
            VALUES ($1, $2, $3, $4)
            RETURNING id`,
           [
-            reservationId,
+            apartmentId,
             hostId,
             guestId,
-            escrowTransactionId || null,
+            escrowId || null,
           ],
         );
         conversationId = created.rows[0].id;
       } catch (err) {
-        // Concurrent find-or-create race — unique_hotel_conversation
+        // Concurrent find-or-create race — unique_conversation
         if (err.code === '23505') {
           const again = await db.query(
             `SELECT id FROM public.conversations
-             WHERE reservation_id = $1 AND host_id = $2 AND guest_id = $3`,
-            [reservationId, hostId, guestId],
+             WHERE apartment_id = $1 AND host_id = $2 AND guest_id = $3`,
+            [apartmentId, hostId, guestId],
           );
           conversationId = again.rows[0]?.id;
+
+          // Secondary check in case the race condition hit an unlinked conversation
+          if (conversationId && escrowId && again.rows[0].escrow_id == null) {
+             await db.query(
+              `UPDATE public.conversations SET escrow_id = $1 WHERE id = $2`,
+              [escrowId, conversationId],
+            );
+          }
         } else {
           throw err;
         }
