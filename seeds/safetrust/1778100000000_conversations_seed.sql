@@ -13,6 +13,10 @@ WHERE conversation_id IN (
       '550e8400-e29b-41d4-a716-446655440001'::uuid,
       '550e8400-e29b-41d4-a716-446655440002'::uuid
     )
+    AND id IN (
+      '00000000-0000-4000-8000-000000000001'::uuid,
+      '00000000-0000-4000-8000-000000000002'::uuid
+    )
 );
 
 DELETE FROM public.conversations
@@ -20,6 +24,10 @@ WHERE tenant_id = 'safetrust'
   AND apartment_id IN (
     '550e8400-e29b-41d4-a716-446655440001'::uuid,
     '550e8400-e29b-41d4-a716-446655440002'::uuid
+  )
+  AND id IN (
+    '00000000-0000-4000-8000-000000000001'::uuid,
+    '00000000-0000-4000-8000-000000000002'::uuid
   );
 
 -- Conversation 1: pre-booking inquiry (no escrow yet).
