@@ -152,7 +152,7 @@ hasura seed apply \
 
 ---
 
-## Karate Tests
+## 🔬 Karate Tests
 
 API tests using the [Karate framework](https://docs.karatelabs.io/), running in Docker.
 
