@@ -1,171 +1,127 @@
-### SafeTrust Description:
+<div align="center">
+<img src="https://raw.githubusercontent.com/safetrustcr/frontend-SafeTrust/develop/public/img/logo.png" alt="SafeTrust Logo" width="80" />
 
-**SafeTrust** is a decentralized platform designed to revolutionize P2P transactions, providing secure deposits and payments powered by blockchain and trustless technologies. 🌐✨ Experience transparency and reliability in every cryptocurrency transaction. 💸🔒
+# backend-SafeTrust
+**Hasura GraphQL · PostgreSQL · Webhook Service · Multi-tenant**
 
----
-
-## 📋 **Getting Started**
-
-### **Prerequisites**
-
-| Tool | Version | Notes |
-|------|---------|-------|
-| [Docker](https://docs.docker.com/get-docker/) & Docker Compose | ≥ 24 | Required |
-| [Hasura CLI](https://hasura.io/docs/latest/hasura-cli/install-hasura-cli/) | ≥ 2.x | Required for migrations & seeds |
-| [curl](https://curl.se/) | any | Used by health-check loop |
-
-> **Windows users:** Run `bin/dc_prep` and `bin/dc_console` inside WSL (Ubuntu) or Git Bash,
-> as they are Bash scripts targeting a Linux container environment.
+[![License: MIT](https://img.shields.io/badge/License-MIT-orange.svg)](https://opensource.org/licenses/MIT)
+[![Hasura](https://img.shields.io/badge/Hasura-GraphQL-1EB4D4?logo=hasura)](https://hasura.io)
+[![Stellar](https://img.shields.io/badge/Stellar-Blockchain-7B2BF9?logo=stellar)](https://stellar.org)
+[![🔐 TrustlessWork](https://img.shields.io/badge/🔐_TrustlessWork-EaaS-00C2A8)](https://docs.trustlesswork.com/trustless-work)
+[![💧 Drips Wave](https://img.shields.io/badge/💧_Drips-Wave-7B2BF9)](https://www.drips.network/wave)
+[![🦊 GrantFox](https://img.shields.io/badge/🦊_GrantFox-GrantFox-FF6B00)](https://grantfox.xyz/)
+</div>
 
 ---
 
-## 🚀 `bin/dc_prep` — One-Command Setup
+## What is this repo?
 
-`bin/dc_prep` is the **single entry point** to bootstrap the entire backend. It starts all containers, deploys Hasura metadata for every tenant, applies database migrations, and seeds initial data — in the correct order.
+The backend infrastructure for SafeTrust — a decentralized P2P escrow platform for rental transactions on the Stellar blockchain. This repo contains:
 
-### **Quick start**
+- **Hasura GraphQL Engine** — auto-generated API with JWT auth and row-level permissions
+- **PostgreSQL** — multi-tenant schema (`safetrust` + `hotel_industry`)
+- **Webhook service** — Node/Express, handles Firebase auth sync and escrow lifecycle events
+- **Migrations + seeds** — versioned schema and dev data for both tenants
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+| Tool | Version |
+|---|---|
+| Docker + Docker Compose | ≥ 24 |
+| Hasura CLI | ≥ 2.x |
+| curl | any |
+
+> **Windows:** run `bin/dc_prep` inside WSL (Ubuntu) or Git Bash.
+
+### 1. Set up environment variables
 
 ```bash
-cp .env.example .env   # fill in your values first
-bin/dc_prep            # boots everything
+cp .env.example .env
 ```
 
-Once it completes, open the Hasura console in a separate terminal:
+Fill in `.env` before running anything:
 
-```bash
-bin/dc_console
-```
-
-### **What `bin/dc_prep` does (in order)**
-
-| Step | Action |
-|------|--------|
-| 1 | Start `postgres`, `graphql-engine`, and `webhook` containers via Docker Compose |
-| 2 | Poll `GET /healthz` until Hasura is ready (up to 3 min) |
-| 3 | Build and deploy tenant metadata for all tenants (`metadata/setup-tenant.sh`) |
-| 4 | Apply all database migrations (`hasura migrate apply`) per tenant |
-| 5 | Reload Hasura metadata |
-| 6 | Apply seed data (`hasura seed apply`) per tenant |
-
-### **Targeting specific tenants**
-
-By default, `bin/dc_prep` deploys **all tenants** (`safetrust` and `hotel_industry`). You can pass tenant names as arguments to limit the scope:
-
-```bash
-# Deploy all tenants (default)
-bin/dc_prep
-
-# Deploy a single tenant
-bin/dc_prep safetrust
-
-# Deploy multiple specific tenants
-bin/dc_prep safetrust hotel_industry
-```
-
-### **Environment variables**
-
-Copy `.env.example` to `.env` and fill in the required values before running `bin/dc_prep`:
-
-```bash
+```dotenv
 POSTGRES_PASSWORD=your_postgres_password
 
-# Must be valid JSON with a minimum 32-character key for HS256
+# Must be valid JSON, key ≥ 32 characters for HS256
 HASURA_GRAPHQL_JWT_SECRET={"type":"HS256","key":"replace-with-min-32-char-secret-here"}
 
 HASURA_EVENT_SECRET=your_event_secret
 ```
 
-> ⚠️ `HASURA_GRAPHQL_JWT_SECRET` must be valid JSON and the key must be **at least 32 characters** for HS256. The script will fail at startup if this is malformed.
+> ⚠️ `HASURA_GRAPHQL_JWT_SECRET` must be valid JSON with a key of at least 32 characters. `dc_prep` will fail if this is malformed.
+
+### 2. Start everything
+
+```bash
+bin/dc_prep
+```
+
+`dc_prep` runs in order:
+
+| Step | Action |
+|---|---|
+| 1 | Start `postgres`, `graphql-engine`, `webhook` containers |
+| 2 | Poll `GET /healthz` until Hasura is ready (up to 3 min) |
+| 3 | Build and deploy tenant metadata for all tenants |
+| 4 | Apply all migrations per tenant |
+| 5 | Reload Hasura metadata |
+| 6 | Apply seed data per tenant |
+
+**Target a specific tenant:**
+```bash
+bin/dc_prep safetrust          # one tenant
+bin/dc_prep safetrust hotel_industry  # both explicitly
+```
+
+### 3. Open Hasura console
+
+```bash
+bin/dc_console
+```
+
+### Reset the database
+
+```bash
+docker compose down -v
+bin/dc_prep
+```
 
 ---
 
-## 🗂️ Metadata Architecture
+## Metadata Architecture
 
-The `metadata/` folder contains the Hasura GraphQL Engine configuration per tenant.
-
+```bash
+metadata/
+├── base/ ← shared Hasura config across all tenants
+├── tenants/
+│ ├── safetrust/ ← apartments, escrows, users, wallets
+│ └── hotel_industry/ ← hotels, rooms, reservations, escrow_transactions
+├── build/ ← generated output (tenants merged with base), ready to deploy
+├── build-metadata.sh
+├── deploy-tenant.sh
+└── setup-tenant.sh ← runs build + deploy in one command ✅
 ```
-backend/
-└── metadata/
-    ├── base/
-    │   ├── actions.graphql
-    │   ├── actions.yaml
-    │   ├── allow_list.yaml
-    │   ├── api_limits.yaml
-    │   ├── backend_configs.yaml
-    │   ├── cron_triggers.yaml
-    │   ├── graphql_schema_introspection.yaml
-    │   ├── inherited_roles.yaml
-    │   ├── metrics_config.yaml
-    │   ├── network.yaml
-    │   ├── opentelemetry.yaml
-    │   ├── query_collections.yaml
-    │   ├── remote_schemas.yaml
-    │   ├── rest_endpoints.yaml
-    │   └── version.yaml
-    ├── build/
-    │   └── tenant_a/
-    │   └── tenant_b/
-    │   └── ...
-    ├── tenants/
-    │   ├── safetrust/
-    │   │   ├── databases/
-    │   │   ├── tables/
-    │   │   ├── functions/
-    │   │   └── databases.yaml
-    │   └── hotel_industry/
-    │       ├── databases/
-    │       ├── tables/
-    │       ├── functions/
-    │       └── databases.yaml
-    ├── build-metadata.sh
-    ├── deploy-tenant.sh
-    └── setup-tenant.sh
-```
-
-**Folder guide:**
-- `base/` — Hasura base configuration and GraphQL dependencies shared across all tenants
-- `build/` — Generated output: tenants merged with base dependencies, ready to deploy
-- `tenants/` — Tenant-specific database files, tables, functions, relations, and triggers
-- `build-metadata.sh` — Prepares a tenant by merging it with base configurations
-- `deploy-tenant.sh` — Deploys a built tenant to Hasura (tracks tables and relationships)
-- `setup-tenant.sh` — **Runs both steps above in one command** ✅
 
 ---
 
-## 🔧 Manual Commands (advanced)
+## Manual Commands
 
-> **Tip:** `bin/dc_prep` handles all of the following automatically. Use these only when targeting a specific step or tenant in isolation.
+> `bin/dc_prep` handles all of these automatically. Use these only when targeting a specific step in isolation.
 
 ### Metadata — single tenant
 
 ```bash
 cd metadata
-./setup-tenant.sh <tenant_name> [--admin-secret SECRET] [--endpoint URL]
-```
-
-**Example:**
-
-```bash
-./setup-tenant.sh safetrust --endpoint http://localhost:8080
-```
-
-Default values: `--admin-secret myadminsecretkey` · `--endpoint http://localhost:8080`
-
-Or step by step:
-
-```bash
-# Step 1 — Build
-./build-metadata.sh <tenant_name> --admin-secret myadminsecretkey --endpoint http://localhost:8080
-
-# Step 2 — Verify build/ folder contains the correct tenant data
-
-# Step 3 — Deploy
-./deploy-tenant.sh <tenant_name> --admin-secret myadminsecretkey --endpoint http://localhost:8080
+./setup-tenant.sh safetrust --endpoint http://localhost:8080 --admin-secret myadminsecretkey
 ```
 
 ### Migrations — single tenant
-
-From the **project root**:
 
 ```bash
 hasura migrate apply \
@@ -174,7 +130,7 @@ hasura migrate apply \
   --admin-secret myadminsecretkey
 ```
 
-To apply a single migration version:
+Apply a single version:
 
 ```bash
 hasura migrate apply \
@@ -196,47 +152,39 @@ hasura seed apply \
 
 ---
 
-## 🧪 Backend Karate Tests
+## Karate Tests
 
-This project uses the Karate framework for API testing. Tests run in a Docker environment.
-
- [⛩️ Karate Docs](https://docs.karatelabs.io/)
-
-
-### Running Tests
+API tests using the [Karate framework](https://docs.karatelabs.io/), running in Docker.
 
 ```bash
 docker compose -f docker-compose-test.yml run --rm --build karate
 ```
 
-This command will:
+Reports generated at `tests/results/karate-summary.html` and `tests/results/karate-tags.html`.
 
-1. Build the test container
-2. Start PostgreSQL and Hasura containers
-3. Run all Karate tests
-4. Show test results in the console
-5. Generate HTML reports in `target/karate-reports/`
+**Add new tests:** create `.feature` files in `tests/karate/features/` — picked up automatically.
 
-### Test Reports
+**Config files:**
+- `tests/karate/src/test/resources/karate-config.js`
+- `docker-compose-test.yml`
+- `Dockerfile.test`
 
-After running the tests, find the HTML reports at:
+---
 
-- Summary: `tests/results/karate-summary.html`
-- Detailed: `tests/results/karate-tags.html`
+## Contributing
 
-### Adding New Tests
+1. `bin/dc_prep` must complete without errors.
+2. No raw SQL outside of `migrations/` — all schema changes go through versioned migration files.
+3. Never edit a migration that has already been applied — add a new one instead.
+4. Link the issue your PR closes.
 
-1. Create new `.feature` files in `tests/karate/features/`
-2. Follow the Karate DSL syntax
-3. Tests are automatically picked up when running the test command
+**Branch naming:** `feat/<issue-number>-short-description` · `fix/<issue-number>-short-description`
 
-### Configuration
+- [Contributing Guide](https://github.com/safetrustcr/Frontend/issues/34)
+- [Git Guidelines](https://github.com/safetrustcr/Frontend/issues/35)
 
-- Main config: `tests/karate/src/test/resources/karate-config.js`
-- Database config: `docker-compose-test.yml`
-- Test environment: `Dockerfile.test`
+---
 
-
-## 📜 License
+## License
 
 © 2026 SafeTrust. Released under the [MIT License](https://opensource.org/license/MIT).
