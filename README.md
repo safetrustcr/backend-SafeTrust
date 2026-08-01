@@ -110,7 +110,7 @@ metadata/
 
 ---
 
-## Manual Commands
+## 🔧 Manual Commands
 
 > `bin/dc_prep` handles all of these automatically. Use these only when targeting a specific step in isolation.
 
