@@ -38,7 +38,9 @@ insert_permissions:
   - role: user
     permission:
       check:
-        tenant_id: { _eq: X-Hasura-Tenant-Id }
+        _and:
+          - tenant_id: { _eq: X-Hasura-Tenant-Id }
+          - status: { _eq: pending }
       columns:
         - apartment_id
         - guest_id
@@ -46,7 +48,6 @@ insert_permissions:
         - check_out_date
         - total_amount
         - asset_code
-        - status
         - tenant_id
 select_permissions:
   - role: user
