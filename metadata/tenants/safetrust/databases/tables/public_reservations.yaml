@@ -73,10 +73,14 @@ update_permissions:
   - role: user
     permission:
       columns:
-        - status
-        - escrow_id
         - updated_at
       filter:
-        tenant_id: { _eq: X-Hasura-Tenant-Id }
+        _and:
+          - tenant_id: { _eq: X-Hasura-Tenant-Id }
+          - guest_id: { _eq: X-Hasura-User-Id }
+      check:
+        _and:
+          - tenant_id: { _eq: X-Hasura-Tenant-Id }
+          - guest_id: { _eq: X-Hasura-User-Id }
       check:
         tenant_id: { _eq: X-Hasura-Tenant-Id }
