@@ -67,6 +67,38 @@ Feature: POST /api/bid-requests
     Then status 400
     And match response.error == 'Missing required fields'
 
+  Scenario: Non-UUID apartmentId → 400
+    Given path '/api/bid-requests'
+    And header Authorization = 'Bearer ' + validToken
+    And header x-test-uid = 'tenant-456'
+    And request
+    """
+    {
+      "apartmentId": "not-a-uuid",
+      "proposedPrice": 1000,
+      "desiredMoveIn": "2026-06-01T00:00:00Z"
+    }
+    """
+    When method POST
+    Then status 400
+    And match response.error == 'apartmentId must be a valid UUID'
+
+  Scenario: Boolean proposedPrice → 400
+    Given path '/api/bid-requests'
+    And header Authorization = 'Bearer ' + validToken
+    And header x-test-uid = 'tenant-456'
+    And request
+    """
+    {
+      "apartmentId": "00000000-0000-0000-0000-000000000001",
+      "proposedPrice": true,
+      "desiredMoveIn": "2026-06-01T00:00:00Z"
+    }
+    """
+    When method POST
+    Then status 400
+    And match response.error == 'proposedPrice must be a positive number'
+
   Scenario: No token → 401
     Given path '/api/bid-requests'
     And request { "apartment_id": "..." }
