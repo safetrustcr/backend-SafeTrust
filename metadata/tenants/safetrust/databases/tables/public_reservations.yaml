@@ -66,7 +66,9 @@ select_permissions:
         - updated_at
         - tenant_id
       filter:
-        tenant_id: { _eq: X-Hasura-Tenant-Id }
+        _and:
+          - tenant_id: { _eq: X-Hasura-Tenant-Id }
+          - guest_id: { _eq: X-Hasura-User-Id }
 update_permissions:
   - role: user
     permission:
