@@ -50,6 +50,33 @@ const initializeEscrowHandler = async (req, res) => {
     }
   `;
 
+  // Link escrow to reservation using booking_metadata.reservation_id
+const reservationId = booking_metadata?.reservation_id;
+
+if (reservationId) {
+  const linkMutation = `
+    mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!) {
+      update_reservations_by_pk(
+        pk_columns: { id: $reservationId }
+        _set: {
+          escrow_id: $escrowId,
+          status: "escrow_created",
+          updated_at: "now()"
+        }
+      ) {
+        id status escrow_id
+      }
+    }
+  `;
+
+  await hasura(linkMutation, {
+    reservationId,
+    escrowId: escrow.id
+  });
+
+  console.log(`[escrow/initialize] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrow.id}`);
+}
+
   try {
     // 3 — Idempotency check
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(

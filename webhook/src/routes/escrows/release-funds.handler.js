@@ -1,3 +1,5 @@
+'use strict';
+
 const {
   hasuraRequest,
   logAndCheckWebhookEvent,
@@ -18,21 +20,8 @@ const releaseFundsHandler = async (req, res) => {
     });
   }
 
-  const mutation = `
-    mutation ReleaseFunds($contractId: String!) {
-      update_trustless_work_escrows(
-        where: { contractId: { _eq: $contractId } }
-        _set: {
-          status: "completed",
-          balance: 0
-        }
-      ) {
-        returning { id contractId status balance }
-      }
-    }
-  `;
-
   try {
+    // 1 — Idempotency check
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contractId,
       EVENT_TYPE,
@@ -44,27 +33,61 @@ const releaseFundsHandler = async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
+    // 2 — Update trustless_work_escrows
+    const mutation = `
+      mutation ReleaseFunds($contractId: String!) {
+        update_trustless_work_escrows(
+          where: { contractId: { _eq: $contractId } }
+          _set: {
+            status: "completed"
+            balance: 0
+          }
+        ) {
+          returning { id contractId status balance }
+        }
+      }
+    `;
+
     const data = await hasuraRequest(mutation, { contractId });
     const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {
-      return res.status(404).json({ error: `Escrow not found for contractId: ${contractId}` });
+      return res.status(404).json({
+        error: `Escrow not found for contractId: ${contractId}`
+      });
     }
 
-    console.log(`[escrow/release-funds] ✅ funds released — contractId: ${contractId}`);
+    // 3 — Mirror status to public.reservations
+    const mirrorMutation = `
+      mutation MirrorCompletedToReservation($contractId: String!) {
+        update_reservations(
+          where: { escrow: { contractId: { _eq: $contractId } } }
+          _set: {
+            status: "completed"
+            updated_at: "now()"
+          }
+        ) {
+          returning { id status }
+        }
+      }
+    `;
 
-    // Best-effort hotel lifecycle message — never fail the release response
+    await hasuraRequest(mirrorMutation, { contractId });
+
+    // 4 — Notify hotel conversation (best-effort, never fail the response)
     await notifyHotelEscrowConversation({
       contractId,
       eventType: 'escrow_completed',
-      body:
-        'SafeTrust: Funds have been released. Thank you for booking with us.',
+      body: 'SafeTrust: Funds have been released. Thank you for booking with us.',
     });
 
     await markWebhookEventProcessed(eventId);
+
+    console.log(`[escrow/release-funds] ✅ Funds released — contractId: ${contractId}`);
     return res.status(200).json({ received: true });
+
   } catch (error) {
-    console.error('[escrow/release-funds] Hasura error:', error.details || error.message);
+    console.error('[escrow/release-funds] ❌ error:', error.details || error.message);
     if (error.details) {
       return res.status(500).json({ error: 'Failed to update escrow status', details: error.details });
     }

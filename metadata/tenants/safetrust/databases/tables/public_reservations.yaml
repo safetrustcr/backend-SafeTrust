@@ -1,0 +1,79 @@
+table:
+  name: reservations
+  schema: public
+configuration:
+  column_config:
+    apartment_id:
+      custom_name: apartmentId
+    guest_id:
+      custom_name: guestId
+    escrow_id:
+      custom_name: escrowId
+    check_in_date:
+      custom_name: checkInDate
+    check_out_date:
+      custom_name: checkOutDate
+    total_amount:
+      custom_name: totalAmount
+    asset_code:
+      custom_name: assetCode
+    created_at:
+      custom_name: createdAt
+    updated_at:
+      custom_name: updatedAt
+    tenant_id:
+      custom_name: tenantId
+  custom_name: reservations
+object_relationships:
+  - name: apartment
+    using:
+      foreign_key_constraint_on: apartment_id
+  - name: guest
+    using:
+      foreign_key_constraint_on: guest_id
+  - name: escrow
+    using:
+      foreign_key_constraint_on: escrow_id
+insert_permissions:
+  - role: user
+    permission:
+      check:
+        tenant_id: { _eq: X-Hasura-Tenant-Id }
+      columns:
+        - apartment_id
+        - guest_id
+        - check_in_date
+        - check_out_date
+        - total_amount
+        - asset_code
+        - status
+        - tenant_id
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - guest_id
+        - escrow_id
+        - check_in_date
+        - check_out_date
+        - total_amount
+        - asset_code
+        - status
+        - created_at
+        - updated_at
+        - tenant_id
+      filter:
+        tenant_id: { _eq: X-Hasura-Tenant-Id }
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - status
+        - escrow_id
+        - updated_at
+      filter:
+        tenant_id: { _eq: X-Hasura-Tenant-Id }
+      check:
+        tenant_id: { _eq: X-Hasura-Tenant-Id }
