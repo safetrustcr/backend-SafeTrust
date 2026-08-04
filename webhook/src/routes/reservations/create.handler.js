@@ -3,7 +3,6 @@
 const {
   hasuraRequest,
 } = require('../../services/hasura');
-const { authMiddleware } = require('../../middleware/auth.middleware');
 
 const createReservationHandler = async (req, res) => {
   const guestId = req.user?.uid;
