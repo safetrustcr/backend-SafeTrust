@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS public.reservations (
   guest_id     TEXT NOT NULL REFERENCES public.users(id)      ON DELETE RESTRICT,
 
   -- Escrow link — NULL until initialize.handler.js fires
-  escrow_id UUID REFERENCES public.trustless_work_escrows(id) ON DELETE SET NULL,
+  escrow_id UUID UNIQUE REFERENCES public.trustless_work_escrows(id) ON DELETE SET NULL,
 
   -- Booking timeline
   check_in_date  TIMESTAMP WITH TIME ZONE NOT NULL,
