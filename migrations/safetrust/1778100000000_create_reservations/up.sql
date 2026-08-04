@@ -17,9 +17,11 @@ CREATE TABLE IF NOT EXISTS public.reservations (
   -- Booking timeline
   check_in_date  TIMESTAMP WITH TIME ZONE NOT NULL,
   check_out_date TIMESTAMP WITH TIME ZONE NOT NULL,
+  CONSTRAINT valid_reservation_dates CHECK (check_out_date > check_in_date),
 
   -- Pricing snapshot at booking time
   total_amount DECIMAL(20, 7) NOT NULL,
+  CONSTRAINT valid_total_amount CHECK (total_amount > 0),
   asset_code   VARCHAR(10) NOT NULL DEFAULT 'USDC',
 
   -- Booking status — mirrors escrow lifecycle
