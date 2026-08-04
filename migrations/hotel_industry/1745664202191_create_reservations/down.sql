@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS reservations CASCADE;
+DROP TABLE IF EXISTS hotel_industry.reservations CASCADE;

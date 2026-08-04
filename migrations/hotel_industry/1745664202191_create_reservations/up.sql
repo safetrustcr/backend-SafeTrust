@@ -1,11 +1,10 @@
--- Create extension for UUID generation if not already present
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-CREATE TABLE reservations (
+CREATE TABLE IF NOT EXISTS hotel_industry.reservations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     reservation_id UUID,
     wallet_address VARCHAR(255),
-    room_id UUID REFERENCES rooms(room_id),
+    room_id UUID REFERENCES hotel_industry.rooms(room_id),
     check_in TIMESTAMPTZ,
     check_out TIMESTAMPTZ,
     capacity INTEGER,
@@ -15,7 +14,11 @@ CREATE TABLE reservations (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_user_id ON reservations(wallet_address);
-CREATE INDEX idx_room_reservation_id ON reservations(room_id);
-CREATE INDEX idx_reservation_status ON reservations(reservation_status);
-CREATE INDEX idx_reservation_dates ON reservations(check_in, check_out);
+CREATE INDEX IF NOT EXISTS idx_hotel_reservation_wallet
+    ON hotel_industry.reservations(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_hotel_reservation_room_id
+    ON hotel_industry.reservations(room_id);
+CREATE INDEX IF NOT EXISTS idx_hotel_reservation_status
+    ON hotel_industry.reservations(reservation_status);
+CREATE INDEX IF NOT EXISTS idx_hotel_reservation_dates
+    ON hotel_industry.reservations(check_in, check_out);

@@ -4,7 +4,9 @@ const router = express.Router()
 const { authMiddleware, authenticateFirebase } = require('../middleware/auth.middleware')
 const verifyTrustlessWorkSignature = require('../middleware/trustlesswork-signature.middleware')
 
+
 // Route handlers / routers
+const reservationsRoute = require('./reservations');
 const authRoutes = require('./auth')
 const bidRequestRoutes = require('./bid-requests')
 const reconciliationRoutes = require('./reconciliation/sync-escrows.route')
@@ -41,6 +43,10 @@ router.use(meRoute);
 router.use('/api/apartments', apartmentsRoutes);
 router.use('/api/bid-requests', bidRequestRoutes)
 router.use('/api/reconciliation', reconciliationRoutes)
+
+// 4. Reservations Route
+app.use(reservationsRoute);
+
 
 module.exports = router
 

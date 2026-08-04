@@ -60,6 +60,21 @@ CREATE INDEX IF NOT EXISTS idx_reservations_dates
 CREATE INDEX IF NOT EXISTS idx_reservations_tenant
   ON public.reservations(tenant_id);
 
+
+ -- btree_gist extension and exclusion constraint
+
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+-- Prevent double-booking: no two active reservations for the same apartment
+-- can overlap in time. Cancelled reservations are excluded from the check.
+ALTER TABLE public.reservations
+  ADD CONSTRAINT no_overlapping_reservations
+  EXCLUDE USING gist (
+    apartment_id WITH =,
+    tstzrange(check_in_date, check_out_date, '[)') WITH &&
+  )
+  WHERE (status NOT IN ('cancelled', 'resolved'));
+
 -- ============================================================================
 -- DOCUMENTATION
 -- ============================================================================

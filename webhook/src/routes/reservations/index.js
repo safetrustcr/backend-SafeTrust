@@ -1,2 +1,5 @@
-const reservationsRoute = require('./reservations/create.route');
-app.use(reservationsRoute);
+'use strict';
+
+const createReservationRoute = require('./create.route');
+
+module.exports = createReservationRoute;

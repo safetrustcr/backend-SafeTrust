@@ -1,5 +1,9 @@
+'use strict';
 
-const { hasura } = require('../../services/hasura');
+const {
+  hasuraRequest,
+} = require('../../services/hasura');
+const { authMiddleware } = require('../../middleware/auth.middleware');
 
 const createReservationHandler = async (req, res) => {
   const guestId = req.user?.uid;
@@ -16,13 +20,17 @@ const createReservationHandler = async (req, res) => {
     });
   }
 
-  if (new Date(check_out_date) <= new Date(check_in_date)) {
+  // Validate dates — reject invalid date strings before comparing
+  const checkIn  = new Date(check_in_date);
+  const checkOut = new Date(check_out_date);
+  if (isNaN(checkIn.getTime()) || isNaN(checkOut.getTime()) || checkOut <= checkIn) {
     return res.status(400).json({
-      error: 'check_out_date must be after check_in_date'
+      error: 'check_out_date must be a valid date after check_in_date'
     });
   }
 
-  if (total_amount <= 0) {
+  // Validate amount — reject non-numeric and non-finite values
+  if (typeof total_amount !== 'number' || !Number.isFinite(total_amount) || total_amount <= 0) {
     return res.status(400).json({
       error: 'total_amount must be greater than zero'
     });
@@ -46,26 +54,35 @@ const createReservationHandler = async (req, res) => {
     }
   `;
 
-  const data = await hasura(mutation, {
-    object: {
-      apartment_id,
-      guest_id: guestId,
-      check_in_date,
-      check_out_date,
-      total_amount,
-      asset_code: asset_code || 'USDC',
-      status: 'pending',
-      tenant_id: 'safetrust',
+  try {
+    const data = await hasuraRequest(mutation, {
+      object: {
+        apartment_id,
+        guest_id: guestId,
+        check_in_date,
+        check_out_date,
+        total_amount,
+        asset_code: asset_code || 'USDC',
+        status: 'pending',
+        tenant_id: 'safetrust',
+      }
+    });
+
+    const reservation = data.insert_reservations_one;
+    if (!reservation) {
+      return res.status(500).json({ error: 'Failed to create reservation' });
     }
-  });
 
-  if (data.errors) {
-    console.error('[reservations/create] Hasura error:', data.errors);
-    return res.status(500).json({ error: 'Failed to create reservation', details: data.errors });
+    console.log(`[reservations/create] ✅ Reservation created — id: ${reservation.id}`);
+    return res.status(201).json({ reservation });
+
+  } catch (error) {
+    console.error('[reservations/create] ❌ error:', error.details || error.message);
+    if (error.details) {
+      return res.status(500).json({ error: 'Failed to create reservation', details: error.details });
+    }
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
-
-  console.log(`[reservations/create] Reservation created — id: ${data.data.insert_reservations_one.id}`);
-  return res.status(201).json({ reservation: data.data.insert_reservations_one });
 };
 
 module.exports = { createReservationHandler };
