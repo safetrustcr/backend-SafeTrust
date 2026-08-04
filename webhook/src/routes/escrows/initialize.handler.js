@@ -1,3 +1,5 @@
+'use strict';
+
 const {
   hasuraRequest,
   logAndCheckWebhookEvent,
@@ -92,11 +94,39 @@ const initializeEscrowHandler = async (req, res) => {
       return res.status(500).json({ error: 'Failed to insert escrow record' });
     }
 
-    console.log(`[escrow/initialize] Escrow persisted — contract_id: ${contract_id}, id: ${escrow.id}`);
+    // 5 — Link escrow to reservation AFTER escrow is confirmed to exist
+    // booking_metadata.reservation_id is set by the frontend when BOOK was clicked
+    const reservationId = booking_metadata?.reservation_id;
+    if (reservationId) {
+      const linkMutation = `
+        mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!) {
+          update_reservations_by_pk(
+            pk_columns: { id: $reservationId }
+            _set: {
+              escrow_id: $escrowId,
+              status: "escrow_created",
+              updated_at: "now()"
+            }
+          ) {
+            id status escrow_id
+          }
+        }
+      `;
+
+      await hasuraRequest(linkMutation, {
+        reservationId,
+        escrowId: escrow.id
+      });
+
+      console.log(`[escrow/initialize] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrow.id}`);
+    }
+
+    console.log(`[escrow/initialize] ✅ Escrow persisted — contract_id: ${contract_id}, id: ${escrow.id}`);
     await markWebhookEventProcessed(eventId);
     return res.status(200).json({ received: true });
+
   } catch (error) {
-    console.error('[escrow/initialize] Error:', error.details || error.message);
+    console.error('[escrow/initialize] ❌ Error:', error.details || error.message);
     if (error.details) {
       return res.status(500).json({ error: 'Failed to persist escrow record', details: error.details });
     }

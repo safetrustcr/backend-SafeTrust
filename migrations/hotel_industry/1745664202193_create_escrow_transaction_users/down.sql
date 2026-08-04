@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS public.escrow_transaction_users; 
+DROP TABLE IF EXISTS hotel_industry.escrow_transaction_users CASCADE;

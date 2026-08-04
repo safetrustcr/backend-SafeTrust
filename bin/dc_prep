@@ -1,21 +1,8 @@
 #!/bin/bash
 set -e
 
-# ─────────────────────────────────────────────────────────────────────────────
-# bin/dc_prep
-# Starts the SafeTrust backend and deploys one or more Hasura tenants.
-#
-# Usage:
-#   bin/dc_prep <tenant1> [tenant2 ...]
-#
-# Examples:
-#   bin/dc_prep safetrust
-#   bin/dc_prep safetrust hotel_industry
-# ─────────────────────────────────────────────────────────────────────────────
-
 HASURA_ADMIN_SECRET="myadminsecretkey"
 
-# ── Require at least one tenant argument ──────────────────────────────────────
 if [[ $# -eq 0 ]]; then
   echo "❌ Error: At least one tenant name is required."
   echo ""
@@ -24,7 +11,6 @@ if [[ $# -eq 0 ]]; then
   exit 1
 fi
 
-# Capture all positional arguments as the tenant list
 TENANTS=("$@")
 
 TRACK_SAFETRUST_TIMINGS=false
@@ -68,21 +54,37 @@ fi
 
 echo ""
 
-# ── 3. Deploy all tenants sequentially ───────────────────────────────────────
-echo "🏗️  Deploying tenant metadata: ${TENANTS[*]}"
-cd metadata
-./setup-tenant.sh "${TENANTS[@]}" \
-  --endpoint http://localhost:8080 \
-  --admin-secret "$HASURA_ADMIN_SECRET"
-cd ..
-
-if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_METADATA_DEPLOY_SAFETRUST=$((SECONDS - TIMER_START))
-fi
+# ── 3. Register database sources for each tenant ─────────────────────────────
+# Must happen before migrations so Hasura knows about the database.
+# pg_add_source is idempotent — safe to run on every dc_prep call.
+echo "🔌 Registering database sources..."
+for TENANT in "${TENANTS[@]}"; do
+  echo "   ▶ Registering source: $TENANT"
+  curl -sf -X POST http://localhost:8080/v1/metadata \
+    -H "X-Hasura-Admin-Secret: $HASURA_ADMIN_SECRET" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"type\": \"pg_add_source\",
+      \"args\": {
+        \"name\": \"${TENANT}\",
+        \"configuration\": {
+          \"connection_info\": {
+            \"database_url\": {
+              \"from_env\": \"PG_DATABASE_URL\"
+            },
+            \"isolation_level\": \"read-committed\",
+            \"use_prepared_statements\": false
+          }
+        }
+      }
+    }" > /dev/null && echo "   ✅ Source registered: $TENANT" \
+      || echo "   ℹ️  Source already exists: $TENANT (skipping)"
+done
 
 echo ""
 
 # ── 4. Apply migrations for each tenant ──────────────────────────────────────
+# Tables are created here — must run before metadata deploy.
 echo "📂 Applying migrations..."
 for TENANT in "${TENANTS[@]}"; do
   echo "   ▶ Migrating tenant: $TENANT"
@@ -99,7 +101,22 @@ fi
 
 echo ""
 
-# ── 5. Reload metadata after migrations ──────────────────────────────────────
+# ── 5. Deploy tenant metadata AFTER migrations ────────────────────────────────
+# Tables now exist in the DB so Hasura can track them successfully.
+echo "🏗️  Deploying tenant metadata: ${TENANTS[*]}"
+cd metadata
+./setup-tenant.sh "${TENANTS[@]}" \
+  --endpoint http://localhost:8080 \
+  --admin-secret "$HASURA_ADMIN_SECRET"
+cd ..
+
+if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+  TIMING_METADATA_DEPLOY_SAFETRUST=$((SECONDS - TIMER_START))
+fi
+
+echo ""
+
+# ── 6. Reload metadata after deploy ──────────────────────────────────────────
 echo "📋 Reloading metadata..."
 hasura metadata reload \
   --endpoint http://localhost:8080 \
@@ -111,7 +128,7 @@ fi
 
 echo ""
 
-# ── 6. Apply seeds for each tenant ───────────────────────────────────────────
+# ── 7. Apply seeds for each tenant ───────────────────────────────────────────
 echo "🌱 Applying seeds..."
 for TENANT in "${TENANTS[@]}"; do
   echo "   ▶ Seeding tenant: $TENANT"
@@ -131,8 +148,8 @@ if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
 const t = {
   docker_up: ${TIMING_DOCKER_UP},
   hasura_health: ${TIMING_HASURA_HEALTH},
-  metadata_deploy_safetrust: ${TIMING_METADATA_DEPLOY_SAFETRUST},
   migrations_safetrust: ${TIMING_MIGRATIONS_SAFETRUST},
+  metadata_deploy_safetrust: ${TIMING_METADATA_DEPLOY_SAFETRUST},
   metadata_reload: ${TIMING_METADATA_RELOAD},
   seeds_safetrust: ${TIMING_SEEDS_SAFETRUST},
   total: ${TIMING_TOTAL}

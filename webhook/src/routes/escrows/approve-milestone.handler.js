@@ -4,7 +4,6 @@ const {
   hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-  getHasuraEndpoint,
 } = require('../../services/hasura');
 
 const EVENT_TYPE = 'milestone.approved';
@@ -38,9 +37,7 @@ async function approveMilestoneHandler(req, res) {
       return res.status(200).json({ received: true });
     }
 
-    // Step 1: Look up the escrow ID using camelCase fields
-    let escrowId;
-
+    // 1 — Look up escrow UUID by contractId
     const lookupQuery = `
       query GetEscrowId($contractId: String!) {
         trustless_work_escrows(where: { contractId: { _eq: $contractId } }) {
@@ -48,18 +45,15 @@ async function approveMilestoneHandler(req, res) {
         }
       }
     `;
-    const data = await hasuraRequest(lookupQuery, { contractId });
-    if (data.trustless_work_escrows && data.trustless_work_escrows.length > 0) {
-      escrowId = data.trustless_work_escrows[0].id;
-    }
+
+    const lookupData = await hasuraRequest(lookupQuery, { contractId });
+    const escrowId = lookupData.trustless_work_escrows?.[0]?.id;
 
     if (!escrowId) {
-      return res.status(404).json({
-        error: 'Escrow or milestone not found',
-      });
+      return res.status(404).json({ error: 'Escrow not found' });
     }
 
-    // Step 2: Perform the updates using the found escrowId UUID
+    // 2 — Update escrow_milestones
     const mutationMilestone = `
       mutation ApproveMilestone(
         $escrowId: uuid!
@@ -83,29 +77,23 @@ async function approveMilestoneHandler(req, res) {
         }
       }
     `;
-    const resultMilestone = await hasuraRequest(mutationMilestone, {
+
+    const milestoneResult = await hasuraRequest(mutationMilestone, {
       escrowId,
       milestoneId,
       approver,
-      approvedAt
+      approvedAt,
     });
-    const milestoneRows = resultMilestone.update_escrow_milestones?.affected_rows || 0;
 
-    if (milestoneRows === 0) {
-      return res.status(404).json({
-        error: 'Escrow or milestone not found',
-      });
+    if (!milestoneResult.update_escrow_milestones?.affected_rows) {
+      return res.status(404).json({ error: 'Milestone not found' });
     }
 
+    // 3 — Update trustless_work_escrows
     const mutationEscrow = `
-      mutation ApproveEscrow(
-        $escrowId: uuid!
-        $approvedAt: timestamptz!
-      ) {
+      mutation ApproveEscrow($escrowId: uuid!, $approvedAt: timestamptz!) {
         update_trustless_work_escrows(
-          where: {
-            id: { _eq: $escrowId }
-          }
+          where: { id: { _eq: $escrowId } }
           _set: {
             status: "milestone_approved"
             updatedAt: $approvedAt
@@ -115,33 +103,46 @@ async function approveMilestoneHandler(req, res) {
         }
       }
     `;
-    const resultEscrow = await hasuraRequest(mutationEscrow, {
-      escrowId,
-      approvedAt
-    });
-    const escrowRows = resultEscrow.update_trustless_work_escrows?.affected_rows || 0;
 
-    if (escrowRows === 0) {
-      return res.status(404).json({
-        error: 'Escrow or milestone not found',
-      });
+    const escrowResult = await hasuraRequest(mutationEscrow, {
+      escrowId,
+      approvedAt,
+    });
+
+    if (!escrowResult.update_trustless_work_escrows?.affected_rows) {
+      return res.status(404).json({ error: 'Escrow not found' });
     }
 
-    console.log(
-      `[escrow/approve-milestone] milestone approved — contractId=${contractId} milestoneId=${milestoneId}`
-    );
+    // 4 — Mirror status to public.reservations
+    const reservationStatus = milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
+
+    const mirrorMutation = `
+      mutation MirrorMilestoneToReservation($contractId: String!, $status: String!) {
+        update_reservations(
+          where: { escrow: { contractId: { _eq: $contractId } } }
+          _set: {
+            status: $status
+            updated_at: "now()"
+          }
+        ) {
+          returning { id status }
+        }
+      }
+    `;
+
+    await hasuraRequest(mirrorMutation, { contractId, status: reservationStatus });
+
     await markWebhookEventProcessed(eventId);
+
+    console.log(
+      `[escrow/approve-milestone] ✅ Milestone approved — contractId: ${contractId}, milestoneId: ${milestoneId}`
+    );
     return res.status(200).json({ received: true });
+
   } catch (error) {
-    console.error('[escrow/approve-milestone] failed:', error.details || error.message);
-    return res.status(500).json({
-      error: 'Failed to update milestone approval',
-    });
+    console.error('[escrow/approve-milestone] ❌ failed:', error.details || error.message);
+    return res.status(500).json({ error: 'Failed to update milestone approval' });
   }
 }
 
-module.exports = {
-  approveMilestoneHandler,
-  getHasuraEndpoint,
-  hasuraRequest,
-};
+module.exports = { approveMilestoneHandler };

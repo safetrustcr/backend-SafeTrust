@@ -1,3 +1,5 @@
+'use strict';
+
 const {
   hasuraRequest,
   logAndCheckWebhookEvent,
@@ -9,37 +11,14 @@ const EVENT_TYPE = 'escrow.resolved';
 const resolveDisputeHandler = async (req, res) => {
   const { contractId, resolver, resolutionNote } = req.body;
 
-  // 1 — Validate required fields
   if (!contractId || !resolver) {
     return res.status(400).json({
       error: 'Missing required fields: contractId, resolver'
     });
   }
 
-  // 2 — Update public.trustless_work_escrows via Hasura GraphQL mutation
-  const mutation = `
-    mutation ResolveDispute($contractId: String!) {
-      update_trustless_work_escrows(
-        where: {
-          contractId: { _eq: $contractId },
-          status: { _eq: "disputed" }
-        }
-        _set: {
-          status: "resolved",
-          balance: 0
-        }
-      ) {
-        returning {
-          id
-          contractId
-          status
-          balance
-        }
-      }
-    }
-  `;
-
   try {
+    // 1 — Idempotency check
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contractId,
       EVENT_TYPE,
@@ -51,6 +30,24 @@ const resolveDisputeHandler = async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
+    // 2 — Update trustless_work_escrows
+    const mutation = `
+      mutation ResolveDispute($contractId: String!) {
+        update_trustless_work_escrows(
+          where: {
+            contractId: { _eq: $contractId }
+            status: { _eq: "disputed" }
+          }
+          _set: {
+            status: "resolved"
+            balance: 0
+          }
+        ) {
+          returning { id contractId status balance }
+        }
+      }
+    `;
+
     const data = await hasuraRequest(mutation, { contractId });
     const updated = data.update_trustless_work_escrows?.returning;
 
@@ -60,12 +57,53 @@ const resolveDisputeHandler = async (req, res) => {
       });
     }
 
-    console.log(`[escrow/resolve-dispute] Dispute resolved — contractId: ${contractId}, resolver: ${resolver}`);
+    // 3 — Mirror status to public.reservations
+    const mirrorMutation = `
+      mutation MirrorResolvedToReservation($contractId: String!) {
+        update_reservations(
+          where: { escrow: { contractId: { _eq: $contractId } } }
+          _set: {
+            status: "resolved"
+            updated_at: "now()"
+          }
+        ) {
+          returning { id status }
+        }
+      }
+    `;
+
+    await hasuraRequest(mirrorMutation, { contractId });
+
+    // 4 — Store resolution note in escrow_metadata if provided
+    if (resolutionNote) {
+      const metadataMutation = `
+        mutation AppendResolutionNote($contractId: String!, $note: jsonb!) {
+          update_trustless_work_escrows(
+            where: { contractId: { _eq: $contractId } }
+            _append: { escrowMetadata: $note }
+          ) {
+            affected_rows
+          }
+        }
+      `;
+
+      await hasuraRequest(metadataMutation, {
+        contractId,
+        note: {
+          resolver,
+          resolutionNote,
+          resolvedAt: new Date().toISOString(),
+        },
+      });
+    }
 
     await markWebhookEventProcessed(eventId);
+
+    console.log(`[escrow/resolve-dispute] ✅ Dispute resolved — contractId: ${contractId}, resolver: ${resolver}`);
     return res.status(200).json({ received: true });
+
   } catch (error) {
-    console.error('[escrow/resolve-dispute] Hasura error:', error.details || error.message);
+    console.error('[escrow/resolve-dispute] ❌ error:', error.details || error.message);
     if (error.details) {
       return res.status(500).json({ error: 'Failed to update escrow status', details: error.details });
     }

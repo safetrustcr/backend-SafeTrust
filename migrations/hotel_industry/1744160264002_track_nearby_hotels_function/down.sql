@@ -1,1 +1,1 @@
-DROP FUNCTION IF EXISTS find_nearby_hotels;
+DROP FUNCTION IF EXISTS hotel_industry.find_nearby_hotels(POINT, FLOAT, VARCHAR);

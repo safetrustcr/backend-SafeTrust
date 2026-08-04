@@ -1,75 +1,12 @@
--- Escrow transaction 1 - Alice's reservation
-INSERT INTO escrow_transactions (
-    reservation_id,
-    contract_id,
-    escrow_status,
-    signer_address,
-    transaction_type,
-    escrow_transaction_type,
-    http_status_code
-) VALUES (
-    uuid_generate_v4(), 
-    'contract-1',
-    'PENDING',
-    '0xAliceSignerAddress1234',
-    'RENTAL',
-    'ESCROW_INIT',
-    200
-);
+-- seeds/hotel_industry/02_escrow_transactions.sql
 
--- Escrow transaction 2 - Diana's reservation, already confirmed
-INSERT INTO escrow_transactions (
-    reservation_id,
-    contract_id,
-    escrow_status,
-    signer_address,
-    transaction_type,
-    escrow_transaction_type,
-    http_status_code
-) VALUES (
-    uuid_generate_v4(),
-    'contract-2',
-    'CONFIRMED',
-    '0xDianaSigner9876',
-    'RENTAL',
-    'ESCROW_CONFIRM',
-    200
-);
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Escrow transaction 3 - Bob's reservation, with failed escrow
-INSERT INTO escrow_transactions (
-    reservation_id,
-    contract_id,
-    escrow_status,
-    signer_address,
-    transaction_type,
-    escrow_transaction_type,
-    http_status_code
-) VALUES (
-    uuid_generate_v4(),
-    'contract-3',
-    'FAILED',
-    '0xBobSignerFail',
-    'RENTAL',
-    'ESCROW_FAIL',
-    500
-);
-
--- Escrow transaction 4 - Witness case, pending action
-INSERT INTO escrow_transactions (
-    reservation_id,
-    contract_id,
-    escrow_status,
-    signer_address,
-    transaction_type,
-    escrow_transaction_type,
-    http_status_code
-) VALUES (
-    uuid_generate_v4(),
-    'contract-4',
-    'PENDING',
-    '0xWitnessSignerPending',
-    'RENTAL',
-    'ESCROW_INIT',
-    102
-);
+INSERT INTO hotel_industry.escrow_transactions (
+    reservation_id, contract_id, escrow_status,
+    signer_address, transaction_type, escrow_transaction_type, http_status_code
+) VALUES
+  (NULL, 'contract-1', 'PENDING',   '0xAliceSignerAddress1234', 'RENTAL', 'ESCROW_INIT',    200),
+  (NULL, 'contract-2', 'CONFIRMED', '0xDianaSigner9876',        'RENTAL', 'ESCROW_CONFIRM', 200),
+  (NULL, 'contract-3', 'FAILED',    '0xBobSignerFail',          'RENTAL', 'ESCROW_FAIL',    500),
+  (NULL, 'contract-4', 'PENDING',   '0xWitnessSignerPending',   'RENTAL', 'ESCROW_INIT',    102);

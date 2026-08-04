@@ -1,2 +1,1 @@
-DROP INDEX IF EXISTS idx_room_id;
-DROP TABLE IF EXISTS room_images;
+DROP TABLE IF EXISTS hotel_industry.room_images CASCADE;

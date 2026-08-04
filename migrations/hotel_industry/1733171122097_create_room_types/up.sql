@@ -1,9 +1,6 @@
--- Extensions — declared once at the top
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS postgis;
 
--- Create room_types table
-CREATE TABLE room_types (
+CREATE TABLE IF NOT EXISTS hotel_industry.room_types (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(25) NOT NULL,
     description TEXT,
@@ -12,22 +9,4 @@ CREATE TABLE room_types (
     UNIQUE(name)
 );
 
--- Index for performance (especially if you'll search by name)
-CREATE INDEX idx_room_types_name ON room_types(name);
-
--- Grant permissions
-DO $$ BEGIN
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
-        CREATE ROLE authenticated;
-    END IF;
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
-        CREATE ROLE service_role;
-    END IF;
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin') THEN
-        CREATE ROLE admin;
-    END IF;
-END $$;
-
-GRANT SELECT ON public.room_types TO authenticated;
-GRANT SELECT ON public.room_types TO service_role;
-GRANT ALL ON public.room_types TO admin;
+CREATE INDEX IF NOT EXISTS idx_room_types_name ON hotel_industry.room_types(name);

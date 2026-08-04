@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION find_nearby_hotels(
+CREATE OR REPLACE FUNCTION hotel_industry.find_nearby_hotels(
     search_location POINT,
     radius_meters FLOAT,
     location_area VARCHAR DEFAULT NULL
@@ -9,24 +9,24 @@ RETURNS TABLE (
     name VARCHAR(20),
     description VARCHAR(50),
     address VARCHAR(50),
-    hotel_area VARCHAR(20), 
+    hotel_area VARCHAR(20),
     coordinates POINT
 ) AS $$
 BEGIN
     RETURN QUERY
-    SELECT 
+    SELECT
         h.id,
         ST_Distance(
-            h.coordinates::geometry, 
+            h.coordinates::geometry,
             search_location::geometry
         ) as distance,
         h.name,
         h.description,
         h.address,
-        h.location_area,  
+        h.location_area,
         h.coordinates
-    FROM hotels h
-    WHERE 
+    FROM hotel_industry.hotels h
+    WHERE
         h.coordinates IS NOT NULL
         AND ST_DWithin(
             h.coordinates::geometry,

@@ -1,10 +1,6 @@
--- Enable UUID extension if not already enabled
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Users table for hotel_industry tenant
--- Note: hotel_id is intentionally excluded here.
--- It is added via a later ALTER TABLE migration after hotels table exists.
-CREATE TABLE IF NOT EXISTS public.users (
+CREATE TABLE IF NOT EXISTS hotel_industry.users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     firebase_uid TEXT,
     email VARCHAR(150) NOT NULL,
@@ -15,17 +11,19 @@ CREATE TABLE IF NOT EXISTS public.users (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 
-    CONSTRAINT users_email_unique UNIQUE (email),
-    CONSTRAINT valid_user_role CHECK (role IN ('GUEST', 'STAFF', 'MANAGER'))
+    CONSTRAINT hotel_users_email_unique UNIQUE (email),
+    CONSTRAINT hotel_valid_user_role CHECK (role IN ('GUEST', 'STAFF', 'MANAGER'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
-CREATE INDEX IF NOT EXISTS idx_users_firebase_uid
-    ON public.users(firebase_uid)
+CREATE INDEX IF NOT EXISTS idx_hotel_users_email
+    ON hotel_industry.users(email);
+CREATE INDEX IF NOT EXISTS idx_hotel_users_firebase_uid
+    ON hotel_industry.users(firebase_uid)
     WHERE firebase_uid IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_users_role ON public.users(role);
+CREATE INDEX IF NOT EXISTS idx_hotel_users_role
+    ON hotel_industry.users(role);
 
-CREATE OR REPLACE FUNCTION update_users_updated_at()
+CREATE OR REPLACE FUNCTION hotel_industry.update_users_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = NOW();
@@ -33,8 +31,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS update_users_updated_at ON public.users;
-CREATE TRIGGER update_users_updated_at
-    BEFORE UPDATE ON public.users
+CREATE TRIGGER update_hotel_users_updated_at
+    BEFORE UPDATE ON hotel_industry.users
     FOR EACH ROW
-    EXECUTE FUNCTION update_users_updated_at();
+    EXECUTE FUNCTION hotel_industry.update_users_updated_at();

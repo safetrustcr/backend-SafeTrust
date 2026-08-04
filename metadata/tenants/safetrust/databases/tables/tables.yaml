@@ -19,3 +19,4 @@
 - "!include public_users.yaml"
 - "!include public_trustless_work_escrows.yaml"
 - "!include public_trustless_work_webhook_events.yaml"
+- "!include public_reservations.yaml"
