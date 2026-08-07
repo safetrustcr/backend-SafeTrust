@@ -2,6 +2,7 @@ table:
   name: reservations
   schema: public
 configuration:
+  custom_name: safetrust_reservations
   column_config:
     apartment_id:
       custom_name: apartmentId
@@ -23,7 +24,6 @@ configuration:
       custom_name: updatedAt
     tenant_id:
       custom_name: tenantId
-  custom_name: reservations
 object_relationships:
   - name: apartment
     using:
@@ -34,53 +34,3 @@ object_relationships:
   - name: escrow
     using:
       foreign_key_constraint_on: escrow_id
-insert_permissions:
-  - role: user
-    permission:
-      check:
-        _and:
-          - tenant_id: { _eq: X-Hasura-Tenant-Id }
-          - status: { _eq: pending }
-      columns:
-        - apartment_id
-        - guest_id
-        - check_in_date
-        - check_out_date
-        - total_amount
-        - asset_code
-        - tenant_id
-select_permissions:
-  - role: user
-    permission:
-      columns:
-        - id
-        - apartment_id
-        - guest_id
-        - escrow_id
-        - check_in_date
-        - check_out_date
-        - total_amount
-        - asset_code
-        - status
-        - created_at
-        - updated_at
-        - tenant_id
-      filter:
-        _and:
-          - tenant_id: { _eq: X-Hasura-Tenant-Id }
-          - guest_id: { _eq: X-Hasura-User-Id }
-update_permissions:
-  - role: user
-    permission:
-      columns:
-        - updated_at
-      filter:
-        _and:
-          - tenant_id: { _eq: X-Hasura-Tenant-Id }
-          - guest_id: { _eq: X-Hasura-User-Id }
-      check:
-        _and:
-          - tenant_id: { _eq: X-Hasura-Tenant-Id }
-          - guest_id: { _eq: X-Hasura-User-Id }
-      check:
-        tenant_id: { _eq: X-Hasura-Tenant-Id }

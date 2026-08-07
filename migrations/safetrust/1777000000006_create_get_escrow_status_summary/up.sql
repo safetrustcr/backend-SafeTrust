@@ -1,3 +1,5 @@
+DROP FUNCTION IF EXISTS public.get_escrow_status_summary(VARCHAR);
+
 -- ============================================================================
 -- Escrow status summary aggregation for dashboard metric cards
 -- Returns a single row with lifecycle counts and total value by status so the

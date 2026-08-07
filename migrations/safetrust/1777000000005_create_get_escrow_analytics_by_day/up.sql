@@ -1,3 +1,5 @@
+DROP FUNCTION IF EXISTS public.get_escrow_analytics_by_day(TIMESTAMP WITH TIME ZONE, TIMESTAMP WITH TIME ZONE, VARCHAR);
+
 -- Migration: get_escrow_analytics_by_day
 -- Daily event aggregation for the Analytics Dashboard (Hasura query root).
 -- Joins webhook events, users (last_seen), and trustless_work_escrows into a

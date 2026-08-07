@@ -1,3 +1,8 @@
 function:
   schema: public
   name: get_escrow_status_summary
+configuration:
+  exposed_as: query
+comment: |
+  Aggregated escrow lifecycle counts and total value by status.
+  Returns a single row for dashboard metric cards.

@@ -8,15 +8,15 @@ YAML_MERGE_TOOL="yq" # Make sure yq is installed: https://github.com/mikefarah/y
 
 
 if ! command -v "$YAML_MERGE_TOOL" &> /dev/null; then
-    echo "Error: $YAML_MERGE_TOOL is required but not installed."
-    echo "Please install it with: pip install yq or brew install yq"
+    echo "❌ Error: $YAML_MERGE_TOOL is required but not installed."
+    echo "ℹ️ Please install it with: pip install yq or brew install yq"
     exit 1
 fi
 
 
 if [ ! -d "$BASE_DIR" ]; then
-    echo "Error: Base directory $BASE_DIR not found!"
-    echo "Please make sure your project structure is correct."
+    echo "❌ Error: Base directory $BASE_DIR not found!"
+    echo "ℹ️ Please make sure your project structure is correct."
     exit 1
 fi
 
@@ -76,11 +76,11 @@ copy_with_merge() {
 
 build_tenant() {
     local tenant="$1"
-    echo "Building metadata for tenant: $tenant"
+    echo "⚙️ Building metadata for tenant: $tenant"
     
     
     if [ ! -d "$TENANTS_DIR/$tenant" ]; then
-        echo "Error: Tenant directory $TENANTS_DIR/$tenant not found!"
+        echo "❌ Error: Tenant directory $TENANTS_DIR/$tenant not found!"
         return 1
     fi
     
@@ -88,16 +88,16 @@ build_tenant() {
     rm -rf "$BUILD_DIR/$tenant"
     mkdir -p "$BUILD_DIR/$tenant"
 
-    echo "Copying base metadata..."
+    echo "⚙️ Copying base metadata..."
     cp -r "$BASE_DIR"/* "$BUILD_DIR/$tenant/"
     
 
-    echo "Applying tenant-specific metadata..."
+    echo "⚙️ Applying tenant-specific metadata..."
     copy_with_merge "$TENANTS_DIR/$tenant" "$BUILD_DIR/$tenant"
     
 
     if [ -f "$TENANTS_DIR/$tenant/tenant_overrides.yaml" ]; then
-        echo "Applying tenant overrides..."
+        echo "⚙️ Applying tenant overrides..."
       
         find "$BUILD_DIR/$tenant" -name "*.yaml" -type f | while read -r yaml_file; do
             relative_path="${yaml_file#$BUILD_DIR/$tenant/}"
@@ -113,7 +113,7 @@ build_tenant() {
         done
     fi
     
-    echo "Build complete for $tenant"
+    echo "✅ Build complete for $tenant"
     return 0
 }
 
@@ -129,11 +129,11 @@ if [ ! -z "$TENANT" ]; then
     fi
 else
    
-    echo "Building metadata for all tenants..."
+    echo "⚙️ Building metadata for all tenants..."
     
    
     if [ ! -d "$TENANTS_DIR" ]; then
-        echo "Error: Tenants directory $TENANTS_DIR not found!"
+        echo "❌ Error: Tenants directory $TENANTS_DIR not found!"
         exit 1
     fi
     
@@ -142,7 +142,7 @@ else
     
    
     if [ -z "$tenant_dirs" ]; then
-        echo "No tenant directories found in $TENANTS_DIR"
+        echo "❌ Error: No tenant directories found in $TENANTS_DIR"
         exit 1
     fi
    
@@ -151,10 +151,10 @@ else
         build_tenant "$tenant"
         exit_code=$?
         if [ $exit_code -ne 0 ]; then
-            echo "Failed to build tenant: $tenant"
+            echo "❌ Error: Failed to build tenant: $tenant"
             continue
         fi
     done
 fi
 
-echo "Metadata build process completed successfully!"
+echo "✅ Metadata build process completed successfully!"
