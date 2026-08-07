@@ -91,6 +91,15 @@ bin/dc_console
 docker compose down -v
 bin/dc_prep
 ```
+### Rollback migrations
+
+```bash
+hasura migrate apply \
+  --endpoint http://localhost:8080 \
+  --admin-secret myadminsecretkey \
+  --database-name tenant \
+  --down all
+```
 
 ---
 
