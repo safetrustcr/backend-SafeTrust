@@ -77,13 +77,28 @@ copy_with_merge() {
 build_tenant() {
     local tenant="$1"
     echo "⚙️ Building metadata for tenant: $tenant"
-    
-    
+
+    # Validate tenant argument - only allow safe directory names
+    if [[ ! "$tenant" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "❌ Error: Invalid tenant name '$tenant'. Only alphanumeric, underscore, and hyphen characters allowed."
+        return 1
+    fi
+
     if [ ! -d "$TENANTS_DIR/$tenant" ]; then
         echo "❌ Error: Tenant directory $TENANTS_DIR/$tenant not found!"
         return 1
     fi
-    
+
+    # Guard against path traversal - ensure resolved path stays within BUILD_DIR
+    local target_path
+    target_path=$(cd "$BUILD_DIR" && pwd)/"$tenant"
+    local build_dir_canonical
+    build_dir_canonical=$(cd "$BUILD_DIR" && pwd)
+
+    if [[ "$target_path" != "$build_dir_canonical"/* ]]; then
+        echo "❌ Error: Tenant path escapes BUILD_DIR boundary"
+        return 1
+    fi
 
     rm -rf "$BUILD_DIR/$tenant"
     mkdir -p "$BUILD_DIR/$tenant"
