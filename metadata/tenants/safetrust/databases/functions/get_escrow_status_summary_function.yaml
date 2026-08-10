@@ -4,5 +4,4 @@ function:
 configuration:
   exposed_as: query
 comment: |
-  Aggregated escrow lifecycle counts and total value by status.
-  Returns a single row for dashboard metric cards.
+  Aggregated escrow lifecycle counts. Returns SETOF public.escrow_status_summary.

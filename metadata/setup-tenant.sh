@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # setup-tenant.sh
-# Runs build-metadata.sh then deploy-tenant.sh
-# for one or more tenants sequentially.
+# Runs build-metadata.sh then deploy-tenant.sh for one or more tenants.
+# Function tracking is handled entirely by deploy-tenant.sh — no duplicate
+# tracking logic here.
 #
 # Usage:
 #   ./setup-tenant.sh <tenant1> [tenant2 ...] [--admin-secret SECRET] [--endpoint URL]
@@ -13,7 +14,7 @@ set -eo pipefail
 #   ./setup-tenant.sh safetrust
 #   ./setup-tenant.sh safetrust hotel_industry
 #   ./setup-tenant.sh safetrust hotel_industry --admin-secret myadminsecretkey --endpoint http://localhost:8080
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -73,54 +74,59 @@ echo ""
 # ── Per-tenant tracking ───────────────────────────────────────────────────────
 SUCCESSFUL_TENANTS=()
 FAILED_TENANTS=()
+SETUP_START=$SECONDS
 
 # ── Process each tenant sequentially ─────────────────────────────────────────
 for TENANT in "${TENANTS[@]}"; do
   echo "────────────────────────────────────────────────────"
   echo "  Processing tenant: $TENANT"
   echo "────────────────────────────────────────────────────"
-  echo ""
 
-  # Step 1 — Build metadata
-  echo "▶ [${TENANT}] Step 1/2 — Building metadata..."
-  if ! bash "$SCRIPT_DIR/build-metadata.sh" "$TENANT"; then
-    echo "❌ [${TENANT}] Build failed. Skipping deploy."
+  TENANT_START=$SECONDS
+
+  # Step 1 — Build metadata (base + tenant-specific merge)
+  echo "🔨 Building metadata for $TENANT..."
+  if ! "$SCRIPT_DIR/build-metadata.sh" "$TENANT"; then
+    echo "❌ [$TENANT] Build failed."
     FAILED_TENANTS+=("$TENANT")
-    echo ""
     continue
   fi
-  echo "✅ [${TENANT}] Build complete"
+  echo "✅ Metadata built for $TENANT"
   echo ""
 
-  # Step 2 — Deploy tenant
-  echo "▶ [${TENANT}] Step 2/2 — Deploying tenant..."
-  if ! bash "$SCRIPT_DIR/deploy-tenant.sh" "$TENANT" \
-      --admin-secret "$ADMIN_SECRET" \
-      --endpoint "$ENDPOINT"; then
-    echo "❌ [${TENANT}] Deploy failed."
+  # Step 2 — Deploy metadata
+  # deploy-tenant.sh handles: source registration, table tracking, function tracking
+  # Do NOT add any duplicate tracking logic here.
+  echo "🚀 Deploying metadata for $TENANT..."
+  if ! "$SCRIPT_DIR/deploy-tenant.sh" "$TENANT" \
+      --endpoint "$ENDPOINT" \
+      --admin-secret "$ADMIN_SECRET"; then
+    echo "❌ [$TENANT] Deploy failed."
     FAILED_TENANTS+=("$TENANT")
-    echo ""
     continue
   fi
-  echo "✅ [${TENANT}] Deploy complete"
-  echo ""
 
+  TENANT_ELAPSED=$(( SECONDS - TENANT_START ))
+  echo ""
+  echo "✅ [$TENANT] Successfully deployed in ${TENANT_ELAPSED}s"
   SUCCESSFUL_TENANTS+=("$TENANT")
+  echo ""
 done
 
-# ── Final summary ─────────────────────────────────────────────────────────────
+SETUP_ELAPSED=$(( SECONDS - SETUP_START ))
+
+# ── Summary ───────────────────────────────────────────────────────────────────
 echo "════════════════════════════════════════════════════"
 echo "  SETUP SUMMARY"
 echo "  Total tenants:    ${#TENANTS[@]}"
 echo "  ✅ Successful:    ${#SUCCESSFUL_TENANTS[@]}  — ${SUCCESSFUL_TENANTS[*]:-none}"
-echo "  ❌ Failed:        ${#FAILED_TENANTS[@]}  — ${FAILED_TENANTS[*]:-none}"
+echo "  ⛔ Failed:        ${#FAILED_TENANTS[@]}  — ${FAILED_TENANTS[*]:-none}"
+echo "  ⏱️  Total time:    ${SETUP_ELAPSED}s"
 echo "════════════════════════════════════════════════════"
 
 if [[ ${#FAILED_TENANTS[@]} -gt 0 ]]; then
-  echo ""
-  echo "❌ Some tenants failed. Check the output above for details."
+  echo "⛔ Some tenants failed. Check the output above for details."
   exit 1
 fi
 
-echo ""
 echo "🎉 All tenants are ready!"

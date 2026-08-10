@@ -20,3 +20,5 @@
 - "!include public_trustless_work_escrows.yaml"
 - "!include public_trustless_work_webhook_events.yaml"
 - "!include public_reservations.yaml"
+- "!include public_escrow_analytics_by_day.yaml"
+- "!include public_escrow_status_summary.yaml"

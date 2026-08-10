@@ -4,5 +4,4 @@ function:
 configuration:
   exposed_as: query
 comment: |
-  Daily escrow analytics time series (webhook events, users, active escrows).
-  Consumed by the frontend useAnalyticsData hook via Hasura query root.
+  Daily escrow analytics time series. Returns SETOF public.escrow_analytics_by_day.

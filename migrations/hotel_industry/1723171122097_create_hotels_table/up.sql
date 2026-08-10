@@ -1,5 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;
 
 CREATE TABLE IF NOT EXISTS hotel_industry.hotels (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -12,9 +12,12 @@ CREATE TABLE IF NOT EXISTS hotel_industry.hotels (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_hotels_name ON hotel_industry.hotels(name);
-CREATE INDEX IF NOT EXISTS idx_hotels_location_area ON hotel_industry.hotels(location_area);
-CREATE INDEX IF NOT EXISTS idx_hotels_coordinates ON hotel_industry.hotels USING GIST (coordinates);
+CREATE INDEX IF NOT EXISTS idx_hotels_name
+    ON hotel_industry.hotels(name);
+CREATE INDEX IF NOT EXISTS idx_hotels_location_area
+    ON hotel_industry.hotels(location_area);
+CREATE INDEX IF NOT EXISTS idx_hotels_coordinates
+    ON hotel_industry.hotels USING GIST (coordinates);
 
 CREATE OR REPLACE FUNCTION hotel_industry.update_updated_at_column()
 RETURNS TRIGGER AS $$

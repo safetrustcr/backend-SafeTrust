@@ -17,6 +17,7 @@ trap cleanup EXIT
 # ─────────────────────────────────────────────────────────────────────────────
 # create_metadata_source
 # Registers the tenant as a Hasura source and copies metadata into temp_dir
+# All log output goes to stderr — only tenant_name goes to stdout
 # ─────────────────────────────────────────────────────────────────────────────
 create_metadata_source() {
     local tenant="$1"
@@ -43,18 +44,23 @@ admin_secret: ${admin_secret}
 metadata_directory: metadata
 EOL
 
+    # Copy table definitions
     if [ -d "$BUILD_DIR/$tenant/databases/tables" ]; then
         echo "Copying table definitions for $tenant..." >&2
-        cp -r "$BUILD_DIR/$tenant/databases/tables"/* "$temp_dir/metadata/databases/default/tables/"
+        cp -r "$BUILD_DIR/$tenant/databases/tables"/* \
+            "$temp_dir/metadata/databases/default/tables/"
     else
         echo "⚠️  Warning: No tables directory found at $BUILD_DIR/$tenant/databases/tables/" >&2
     fi
 
+    # Copy function definitions
     if [ -d "$BUILD_DIR/$tenant/databases/functions" ]; then
         echo "Copying function definitions for $tenant..." >&2
-        cp -r "$BUILD_DIR/$tenant/databases/functions"/* "$temp_dir/metadata/databases/default/functions/"
+        cp -r "$BUILD_DIR/$tenant/databases/functions"/* \
+            "$temp_dir/metadata/databases/default/functions/"
     fi
 
+    # Determine tenant name
     local tenant_name
     if [ -f "$BUILD_DIR/$tenant/databases/databases.yaml" ]; then
         tenant_name=$(grep -m 1 "name:" "$BUILD_DIR/$tenant/databases/databases.yaml" \
@@ -65,6 +71,7 @@ EOL
         echo "No databases.yaml found, using tenant name: $tenant_name" >&2
     fi
 
+    # Register source in Hasura
     echo "Checking if source ${tenant_name} already exists..." >&2
     local check_source
     check_source=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
@@ -103,7 +110,7 @@ EOL
 
     echo "✅ Tenant source created/verified: $tenant_name" >&2
 
-    # Only this line goes to stdout — captured by $() in deploy_tenant
+    # Only tenant_name goes to stdout — captured by $() in deploy_tenant
     echo "$tenant_name"
 }
 
@@ -118,7 +125,7 @@ process_metadata_tables() {
     local hasura_endpoint="$4"
     local admin_secret="$5"
 
-    echo "⚙️  Processing tables for $tenant..."
+    echo "⚙️  Processing tables for $tenant_name..."
 
     local tables_dir="$temp_dir/metadata/databases/default/tables"
     if [ ! -d "$tables_dir" ]; then
@@ -138,7 +145,7 @@ process_metadata_tables() {
             continue
         fi
 
-        # Parse table name and schema using yq
+        # Parse table name, schema and custom_name using yq
         local table_name table_schema custom_name
         table_name=$(yq e '.table.name' "$table_file" 2>/dev/null | tr -d '\r')
         table_schema=$(yq e '.table.schema' "$table_file" 2>/dev/null | tr -d '\r')
@@ -288,12 +295,14 @@ process_metadata_functions() {
 
 # ─────────────────────────────────────────────────────────────────────────────
 # deploy_tenant
-# Orchestrates source registration, table tracking, and function tracking
+# Orchestrates source registration, table tracking, function tracking
+# and reports per-tenant deploy time
 # ─────────────────────────────────────────────────────────────────────────────
 deploy_tenant() {
     local tenant="$1"
     local hasura_endpoint="$2"
     local admin_secret="$3"
+    local tenant_start=$SECONDS
 
     local temp_dir
     temp_dir=$(mktemp -d)
@@ -317,6 +326,9 @@ deploy_tenant() {
         return 1
     fi
 
+    local tenant_elapsed=$(( SECONDS - tenant_start ))
+    echo "⏱️  Deploy time for $tenant_name: ${tenant_elapsed}s"
+
     rm -rf "$temp_dir"
     return 0
 }
@@ -326,25 +338,14 @@ deploy_tenant() {
 # ─────────────────────────────────────────────────────────────────────────────
 main() {
     local tenants=()
+    local main_start=$SECONDS
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --admin-secret)
-                HASURA_ADMIN_SECRET="$2"
-                shift 2
-                ;;
-            --endpoint)
-                HASURA_ENDPOINT="$2"
-                shift 2
-                ;;
-            -*)
-                echo "Unknown option: $1"
-                exit 1
-                ;;
-            *)
-                tenants+=("$1")
-                shift
-                ;;
+            --admin-secret) HASURA_ADMIN_SECRET="$2"; shift 2 ;;
+            --endpoint)     HASURA_ENDPOINT="$2";     shift 2 ;;
+            -*) echo "Unknown option: $1"; exit 1 ;;
+            *)  tenants+=("$1"); shift ;;
         esac
     done
 
@@ -366,11 +367,14 @@ main() {
         fi
     done
 
+    local total_elapsed=$(( SECONDS - main_start ))
+
     echo ""
-    echo "====== DEPLOYMENT SUMMARY ======"
-    echo "Total tenants processed: ${#tenants[@]}"
-    echo "Successful deployments: ${#successful_tenants[@]}"
-    echo "Failed deployments: ${#failed_tenants[@]}"
+    echo "====== ❖ DEPLOYMENT SUMMARY ❖ ======"
+    echo "Total tenants processed:  ${#tenants[@]}"
+    echo "Successful deployments:   ${#successful_tenants[@]}"
+    echo "Failed deployments:       ${#failed_tenants[@]}"
+    echo "Total deploy time:        ${total_elapsed}s"
 
     if [ ${#successful_tenants[@]} -gt 0 ]; then
         echo "Successfully deployed tenants: ${successful_tenants[*]}"
