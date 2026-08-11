@@ -56,7 +56,7 @@ HASURA_EVENT_SECRET=your_event_secret
 
 > ⚠️ `HASURA_GRAPHQL_JWT_SECRET` must be valid JSON with a key of at least 32 characters. `start` will fail if this is malformed.
 
-### 2. Start everything
+### 2. 🔮 Start everything
 
 ```bash
 bin/start
