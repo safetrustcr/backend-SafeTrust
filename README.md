@@ -128,7 +128,7 @@ metadata/
 
 > `bin/start` handles all of these automatically. Use these only when targeting a specific step in isolation.
 
-### Metadata — single tenant
+### Deploy metadata — single tenant
 
 ```bash
 cd metadata
