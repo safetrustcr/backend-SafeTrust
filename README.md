@@ -79,11 +79,6 @@ bin/start safetrust          # one tenant
 bin/start safetrust hotel_industry  # both explicitly
 ```
 
-### 3. Open Hasura console
-
-```bash
-bin/dc_console
-```
 
 ### Reset the database
 
@@ -94,37 +89,8 @@ bin/start
 
 ### Rollback migrations
 
-
-```bash
-# Roll back safetrust tenant
-hasura migrate apply \
-  --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
-  --database-name safetrust \
-  --down all
-
-# Roll back hotel_industry tenant
-hasura migrate apply \
-  --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
-  --database-name hotel_industry \
-  --down all
-```
-
 ```bash
 # Rollback all migrations for a specific tenant source:
-# Replace <tenant_source> with the actual tenant name (e.g., safetrust or hotel_industry)
-hasura migrate apply \
-  --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
-<<<<<<< HEAD
-  --database-name safetrust \
-  --down 1
-=======
-  --database-name <tenant_source> \
-  --down all
-
-# Examples for specific tenants:
 
 # Rollback safetrust migrations:
 hasura migrate apply \
@@ -134,12 +100,12 @@ hasura migrate apply \
   --down all
 
 # Rollback hotel_industry migrations:
+
 hasura migrate apply \
   --endpoint http://localhost:8080 \
   --admin-secret myadminsecretkey \
   --database-name hotel_industry \
   --down all
->>>>>>> 9cadd98b2b63f9371035fde5f572afb9b83523c5
 ```
 
 ## Metadata Architecture
@@ -155,16 +121,6 @@ metadata/
 ├── deploy-tenant.sh
 └── setup-tenant.sh ← runs build + deploy in one command ✅
 ```
-
-### GraphQL Root Field Renaming
-
-Some tables use `custom_name` in their metadata configuration to rename GraphQL root fields:
-
-- **safetrust.reservations** → `safetrust_reservations` (queries, mutations)
-  - Query: `safetrust_reservations`, `safetrust_reservations_aggregate`, `safetrust_reservations_by_pk`
-  - Mutation: `insert_safetrust_reservations`, `update_safetrust_reservations`, `delete_safetrust_reservations`
-
-Client code must use the custom field names when querying these tables.
 
 ---
 
