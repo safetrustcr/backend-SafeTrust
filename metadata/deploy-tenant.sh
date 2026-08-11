@@ -117,6 +117,7 @@ EOL
 # ─────────────────────────────────────────────────────────────────────────────
 # process_metadata_tables
 # Tracks all tables for a tenant via Hasura API
+# Returns non-zero if any table fails to track
 # ─────────────────────────────────────────────────────────────────────────────
 process_metadata_tables() {
     local tenant="$1"
@@ -132,6 +133,8 @@ process_metadata_tables() {
         echo "⚠️  No tables directory found, skipping table tracking"
         return 0
     fi
+
+    local track_failures=0
 
     for table_file in "$tables_dir"/*.yaml; do
         [ -f "$table_file" ] || continue
@@ -203,11 +206,17 @@ process_metadata_tables() {
            [[ -z "$track_response" ]]; then
             echo "✅ Successfully tracked table $table_name"
         elif [[ "$track_response" == *'"error"'* ]]; then
-            echo "ℹ️  Warning: Issue tracking table $table_name: $track_response"
+            echo "❌ Error tracking table $table_name: $track_response"
+            track_failures=$(( track_failures + 1 ))
         else
             echo "✅ Successfully tracked table $table_name"
         fi
     done
+
+    if [ "$track_failures" -gt 0 ]; then
+        echo "❌ ${track_failures} table(s) failed to track for $tenant_name"
+        return 1
+    fi
 
     echo "✅ Metadata deployment for $tenant_name tenant completed"
     return 0
@@ -216,6 +225,7 @@ process_metadata_tables() {
 # ─────────────────────────────────────────────────────────────────────────────
 # process_metadata_functions
 # Tracks all functions for a tenant via Hasura API using yq for YAML parsing
+# Returns non-zero if any function fails to track
 # ─────────────────────────────────────────────────────────────────────────────
 process_metadata_functions() {
     local tenant="$1"
@@ -230,6 +240,8 @@ process_metadata_functions() {
     fi
 
     echo "⚙️  Processing functions for $tenant_name..."
+
+    local track_failures=0
 
     for func_file in "$functions_dir"/*.yaml; do
         [ -f "$func_file" ] || continue
@@ -285,10 +297,16 @@ process_metadata_functions() {
             echo "✅ Successfully tracked function $func_name"
         elif [[ "$track_response" == *'"error"'* ]]; then
             echo "❌ Error: Issue tracking function $func_name: $track_response"
+            track_failures=$(( track_failures + 1 ))
         else
             echo "✅ Successfully tracked function $func_name"
         fi
     done
+
+    if [ "$track_failures" -gt 0 ]; then
+        echo "❌ ${track_failures} function(s) failed to track for $tenant_name"
+        return 1
+    fi
 
     return 0
 }
@@ -308,10 +326,9 @@ deploy_tenant() {
     temp_dir=$(mktemp -d)
     TEMP_DIR="$temp_dir"
 
+    # Use if ! pattern — set -e makes $? check unreachable after command substitution
     local tenant_name
-    tenant_name=$(create_metadata_source "$tenant" "$temp_dir" "$hasura_endpoint" "$admin_secret")
-
-    if [ $? -ne 0 ]; then
+    if ! tenant_name=$(create_metadata_source "$tenant" "$temp_dir" "$hasura_endpoint" "$admin_secret"); then
         rm -rf "$temp_dir"
         return 1
     fi
@@ -370,7 +387,7 @@ main() {
     local total_elapsed=$(( SECONDS - main_start ))
 
     echo ""
-    echo "====== ❖ DEPLOYMENT SUMMARY ❖ ======"
+    echo "====== DEPLOYMENT SUMMARY ======"
     echo "Total tenants processed:  ${#tenants[@]}"
     echo "Successful deployments:   ${#successful_tenants[@]}"
     echo "Failed deployments:       ${#failed_tenants[@]}"

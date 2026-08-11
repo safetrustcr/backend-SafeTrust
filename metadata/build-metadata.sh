@@ -78,14 +78,18 @@ build_tenant() {
     local tenant="$1"
     echo "⚙️ Building metadata for tenant: $tenant"
     
-    
+    if [[ ! "$tenant" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+        echo "❌ Error: Invalid tenant name: $tenant"
+        return 1
+    fi
+
     if [ ! -d "$TENANTS_DIR/$tenant" ]; then
         echo "❌ Error: Tenant directory $TENANTS_DIR/$tenant not found!"
         return 1
     fi
     
 
-    rm -rf "$BUILD_DIR/$tenant"
+    rm -rf -- "${BUILD_DIR:?}/$tenant"
     mkdir -p "$BUILD_DIR/$tenant"
 
     echo "⚙️ Copying base metadata..."

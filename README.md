@@ -94,15 +94,30 @@ bin/dc_prep
 
 ### Rollback migrations
 
+
+```bash
+# Roll back safetrust tenant
+hasura migrate apply \
+  --endpoint http://localhost:8080 \
+  --admin-secret myadminsecretkey \
+  --database-name safetrust \
+  --down all
+
+# Roll back hotel_industry tenant
+hasura migrate apply \
+  --endpoint http://localhost:8080 \
+  --admin-secret myadminsecretkey \
+  --database-name hotel_industry \
+  --down all
+```
+
 ```bash
 hasura migrate apply \
   --endpoint http://localhost:8080 \
   --admin-secret myadminsecretkey \
-  --database-name tenant \
-  --down all
+  --database-name safetrust \
+  --down 1
 ```
-
----
 
 ## Metadata Architecture
 
