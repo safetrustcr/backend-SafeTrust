@@ -1,0 +1,9 @@
+table:
+  name: reservations
+  schema: hotel_industry
+configuration:
+  custom_name: hotel_reservations
+object_relationships:
+  - name: room
+    using:
+      foreign_key_constraint_on: room_id

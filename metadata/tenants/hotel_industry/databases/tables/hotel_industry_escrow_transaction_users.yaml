@@ -1,0 +1,7 @@
+table:
+  name: escrow_transaction_users
+  schema: hotel_industry
+object_relationships:
+  - name: escrow_transaction
+    using:
+      foreign_key_constraint_on: escrow_transaction_id

@@ -1,0 +1,7 @@
+table:
+  name: room_images
+  schema: hotel_industry
+object_relationships:
+  - name: room
+    using:
+      foreign_key_constraint_on: room_id

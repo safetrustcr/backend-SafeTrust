@@ -1,0 +1,13 @@
+table:
+  name: conversations
+  schema: hotel_industry
+object_relationships:
+  - name: reservation
+    using:
+      foreign_key_constraint_on: reservation_id
+  - name: host
+    using:
+      foreign_key_constraint_on: host_id
+  - name: guest
+    using:
+      foreign_key_constraint_on: guest_id
