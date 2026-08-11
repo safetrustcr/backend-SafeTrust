@@ -35,7 +35,7 @@ The backend infrastructure for SafeTrust — a decentralized P2P escrow platform
 | Hasura CLI | ≥ 2.x |
 | curl | any |
 
-> **Windows:** run `bin/dc_prep` inside WSL (Ubuntu) or Git Bash.
+> **Windows:** run `bin/start` inside WSL (Ubuntu) or Git Bash.
 
 ### 1. Set up environment variables
 
@@ -54,15 +54,15 @@ HASURA_GRAPHQL_JWT_SECRET={"type":"HS256","key":"replace-with-min-32-char-secret
 HASURA_EVENT_SECRET=your_event_secret
 ```
 
-> ⚠️ `HASURA_GRAPHQL_JWT_SECRET` must be valid JSON with a key of at least 32 characters. `dc_prep` will fail if this is malformed.
+> ⚠️ `HASURA_GRAPHQL_JWT_SECRET` must be valid JSON with a key of at least 32 characters. `start` will fail if this is malformed.
 
 ### 2. Start everything
 
 ```bash
-bin/dc_prep
+bin/start
 ```
 
-`dc_prep` runs in order:
+`start` runs in order:
 
 | Step | Action |
 |---|---|
@@ -75,8 +75,8 @@ bin/dc_prep
 
 **Target a specific tenant:**
 ```bash
-bin/dc_prep safetrust          # one tenant
-bin/dc_prep safetrust hotel_industry  # both explicitly
+bin/start safetrust          # one tenant
+bin/start safetrust hotel_industry  # both explicitly
 ```
 
 ### 3. Open Hasura console
@@ -89,7 +89,7 @@ bin/dc_console
 
 ```bash
 docker compose down -v
-bin/dc_prep
+bin/start
 ```
 
 ### Rollback migrations
@@ -170,7 +170,7 @@ Client code must use the custom field names when querying these tables.
 
 ## 🔧 Manual Commands
 
-> `bin/dc_prep` handles all of these automatically. Use these only when targeting a specific step in isolation.
+> `bin/start` handles all of these automatically. Use these only when targeting a specific step in isolation.
 
 ### Metadata — single tenant
 
@@ -231,7 +231,7 @@ Reports generated at `tests/results/karate-summary.html` and `tests/results/kara
 
 ## Contributing
 
-1. `bin/dc_prep` must complete without errors.
+1. `bin/start` must complete without errors.
 2. No raw SQL outside of `migrations/` — all schema changes go through versioned migration files.
 3. Never edit a migration that has already been applied — add a new one instead.
 4. Link the issue your PR closes.

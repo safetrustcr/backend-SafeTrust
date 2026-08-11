@@ -6,8 +6,8 @@ HASURA_ADMIN_SECRET="myadminsecretkey"
 if [[ $# -eq 0 ]]; then
   echo "❌ Error: At least one tenant name is required."
   echo ""
-  echo "Usage:   bin/dc_prep <tenant1> [tenant2 ...]"
-  echo "Example: bin/dc_prep safetrust hotel_industry"
+  echo "Usage:   bin/start <tenant1> [tenant2 ...]"
+  echo "Example: bin/start safetrust hotel_industry"
   exit 1
 fi
 
@@ -56,7 +56,7 @@ echo ""
 
 # ── 3. Register database sources for each tenant ─────────────────────────────
 # Must happen before migrations so Hasura knows about the database.
-# pg_add_source is idempotent — safe to run on every dc_prep call.
+# pg_add_source is idempotent — safe to run on every start call.
 echo "🔌 Registering database sources..."
 for TENANT in "${TENANTS[@]}"; do
   echo "   ▶ Registering source: $TENANT"

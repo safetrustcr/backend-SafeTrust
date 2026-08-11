@@ -14,7 +14,7 @@ socat TCP-LISTEN:9693,fork,reuseaddr,bind=console TCP:127.0.0.1:9693 &
     # Skip migrations for safetrust since it will be created during tenant deployment
     echo "Skipping migrations for safetrust database as it will be created during tenant deployment"
     
-    # Apply only metadata changes (disabled: metadata is already fully built and applied via bin/dc_prep)
+    # Apply only metadata changes (disabled: metadata is already fully built and applied via bin/start)
     # echo "Applying metadata from metadata/base..."
     # mkdir -p /tmp/hasura_project
     # cat > /tmp/hasura_project/config.yaml << EOL
