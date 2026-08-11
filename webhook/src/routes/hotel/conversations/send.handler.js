@@ -1,179 +1,107 @@
 'use strict';
 
-const db = require('../../../services/db');
+const { hasuraRequest } = require('../../../services/hasura');
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const sendHotelConversationHandler = async (req, res) => {
+  const { reservation_id, escrow_transaction_id, sender_id, body, is_automated, event_type } = req.body;
 
-const REQUIRED = ['apartmentId', 'hostId', 'guestId', 'senderId', 'body'];
-
-/**
- * Find-or-create a conversation for an apartment/host/guest triple,
- * then append a message. DB trigger updates conversations.last_message_at.
- */
-async function sendHotelConversationHandler(req, res) {
-  const {
-    apartmentId,
-    hostId,
-    guestId,
-    senderId,
-    body,
-    isAutomated = false,
-    eventType = null,
-    escrowId = null,
-  } = req.body || {};
-
-  const missing = REQUIRED.filter((key) => {
-    const value = req.body?.[key];
-    return value === undefined || value === null || String(value).trim() === '';
-  });
-
-  if (missing.length > 0) {
-    console.error(
-      `[conversations/send] ❌ missing required fields: ${missing.join(', ')}`,
-    );
+  if (!reservation_id || !sender_id || !body) {
     return res.status(400).json({
-      error: `Missing required fields: ${missing.join(', ')}`,
-    });
-  }
-
-  for (const [label, value] of [
-    ['apartmentId', apartmentId],
-    ['hostId', hostId],
-    ['guestId', guestId],
-    ['senderId', senderId],
-  ]) {
-    if (!UUID_RE.test(String(value))) {
-      return res.status(400).json({ error: `${label} must be a valid UUID` });
-    }
-  }
-
-  if (
-    escrowId != null &&
-    escrowId !== '' &&
-    !UUID_RE.test(String(escrowId))
-  ) {
-    return res
-      .status(400)
-      .json({ error: 'escrowId must be a valid UUID or null' });
-  }
-
-  const text = String(body).trim();
-  if (!text || text.length > 4000) {
-    return res.status(400).json({
-      error: 'body must be between 1 and 4000 characters',
-    });
-  }
-
-  if (eventType != null && !isAutomated) {
-    return res.status(400).json({
-      error: 'eventType is only allowed when isAutomated is true',
-    });
-  }
-
-  if (String(hostId) === String(guestId)) {
-    return res.status(400).json({
-      error: 'hostId and guestId must be different',
+      error: 'Missing required fields: reservation_id, sender_id, body'
     });
   }
 
   try {
-    let conversationId;
-
-    const existing = await db.query(
-      `SELECT id, escrow_id FROM public.conversations
-       WHERE apartment_id = $1 AND host_id = $2 AND guest_id = $3`,
-      [apartmentId, hostId, guestId],
-    );
-
-    conversationId = existing.rows[0]?.id;
-
-    // Fix: Persist the provided escrowId if the existing conversation has a NULL escrow_id
-    if (conversationId && escrowId && existingRow.escrow_id == null) {
-      await db.query(
-        `UPDATE public.conversations SET escrow_id = $1 WHERE id = $2`,
-        [escrowId, conversationId],
-      );
-    }
-
-    if (!conversationId) {
-      try {
-        const created = await db.query(
-          `INSERT INTO public.conversations
-             (apartment_id, host_id, guest_id, escrow_id)
-           VALUES ($1, $2, $3, $4)
-           RETURNING id`,
-          [
-            apartmentId,
-            hostId,
-            guestId,
-            escrowId || null,
-          ],
-        );
-        conversationId = created.rows[0].id;
-      } catch (err) {
-        // Concurrent find-or-create race — unique_conversation
-        if (err.code === '23505') {
-          const again = await db.query(
-            `SELECT id FROM public.conversations
-             WHERE apartment_id = $1 AND host_id = $2 AND guest_id = $3`,
-            [apartmentId, hostId, guestId],
-          );
-          conversationId = again.rows[0]?.id;
-
-          // Secondary check in case the race condition hit an unlinked conversation
-          if (conversationId && escrowId && again.rows[0].escrow_id == null) {
-             await db.query(
-              `UPDATE public.conversations SET escrow_id = $1 WHERE id = $2`,
-              [escrowId, conversationId],
-            );
-          }
-        } else {
-          throw err;
+    // 1 — Find or create conversation in hotel_industry schema
+    const findConversationQuery = `
+      query FindHotelConversation($reservationId: uuid!) {
+        hotel_industry_conversations(
+          where: { reservation_id: { _eq: $reservationId } }
+          limit: 1
+        ) {
+          id
         }
       }
+    `;
+
+    const convData = await hasuraRequest(findConversationQuery, {
+      reservationId: reservation_id
+    });
+
+    let conversationId = convData.hotel_industry_conversations?.[0]?.id;
+
+    if (!conversationId) {
+      // Create conversation if it doesn't exist
+      const createConversationMutation = `
+        mutation CreateHotelConversation(
+          $reservationId: uuid!
+          $escrowTransactionId: uuid
+        ) {
+          insert_hotel_industry_conversations_one(object: {
+            reservation_id: $reservationId
+            escrow_transaction_id: $escrowTransactionId
+            status: "active"
+          }) {
+            id
+          }
+        }
+      `;
+
+      const newConv = await hasuraRequest(createConversationMutation, {
+        reservationId: reservation_id,
+        escrowTransactionId: escrow_transaction_id || null
+      });
+
+      conversationId = newConv.insert_hotel_industry_conversations_one?.id;
     }
 
     if (!conversationId) {
-      return res.status(500).json({ error: 'Failed to resolve conversation' });
+      return res.status(500).json({ error: 'Failed to find or create conversation' });
     }
 
-    const msg = await db.query(
-      `INSERT INTO public.messages
-         (conversation_id, sender_id, body, is_automated, event_type)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, created_at`,
-      [
-        conversationId,
-        senderId,
-        text,
-        Boolean(isAutomated),
-        eventType ?? null,
-      ],
-    );
+    // 2 — Insert message into hotel_industry schema
+    const insertMessageMutation = `
+      mutation SendHotelMessage(
+        $conversationId: uuid!
+        $senderId: uuid!
+        $body: String!
+        $isAutomated: Boolean!
+        $eventType: String
+      ) {
+        insert_hotel_industry_messages_one(object: {
+          conversation_id: $conversationId
+          sender_id: $senderId
+          body: $body
+          is_automated: $isAutomated
+          event_type: $eventType
+        }) {
+          id
+          conversation_id
+          body
+          is_automated
+          event_type
+          created_at
+        }
+      }
+    `;
 
-    const messageId = msg.rows[0].id;
-    const lastMessageAt = msg.rows[0].created_at;
-
-    if (isAutomated) {
-      console.log(
-        `[conversations/send] ✅ automated message sent — event_type: ${eventType} conversationId: ${conversationId}, messageId: ${messageId}`,
-      );
-    } else {
-      console.log(
-        `[conversations/send] ✅ message sent — conversationId: ${conversationId}, messageId: ${messageId}`,
-      );
-    }
-
-    return res.status(200).json({
+    const msgData = await hasuraRequest(insertMessageMutation, {
       conversationId,
-      messageId,
-      lastMessageAt,
+      senderId: sender_id,
+      body,
+      isAutomated: is_automated || false,
+      eventType: event_type || null
     });
+
+    const message = msgData.insert_hotel_industry_messages_one;
+
+    console.log(`[hotel/conversations/send] ✅ Message sent — conversationId: ${conversationId}`);
+    return res.status(201).json({ message });
+
   } catch (error) {
-    console.error('[conversations/send] ❌ error:', error.message);
-    return res.status(500).json({ error: 'Failed to send message' });
+    console.error('[hotel/conversations/send] ❌ error:', error.details || error.message);
+    return res.status(500).json({ error: 'Failed to send message', details: error.message });
   }
-}
+};
 
 module.exports = { sendHotelConversationHandler };

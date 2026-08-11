@@ -1,0 +1,2 @@
+- "!include public_get_pricing_rules.yaml"
+- "!include public_insert_pricing_rule.yaml"

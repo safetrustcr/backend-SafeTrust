@@ -1,21 +1,11 @@
--- Migration: get_escrow_analytics_by_day
--- Daily event aggregation for the Analytics Dashboard (Hasura query root).
--- Joins webhook events, users (last_seen), and trustless_work_escrows into a
--- contiguous date series so charts have no gaps.
+DROP FUNCTION IF EXISTS public.get_escrow_analytics_by_day(TIMESTAMP WITH TIME ZONE, TIMESTAMP WITH TIME ZONE, VARCHAR);
 
 CREATE OR REPLACE FUNCTION public.get_escrow_analytics_by_day(
-  start_date TIMESTAMP WITH TIME ZONE DEFAULT NOW() - INTERVAL '30 days',
-  end_date   TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  start_date      TIMESTAMP WITH TIME ZONE DEFAULT NOW() - INTERVAL '30 days',
+  end_date        TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   tenant_id_input VARCHAR(255) DEFAULT 'safetrust'
 )
-RETURNS TABLE(
-  day             DATE,
-  event_count     BIGINT,   -- total webhook events (maps to pageViews in chart)
-  processed_count BIGINT,   -- processed events (maps to clicks/interactions)
-  new_users       BIGINT,   -- users seen that day (maps to users series)
-  active_escrows  BIGINT,   -- escrows with status funded/active on that day
-  escrow_value    NUMERIC   -- total amount of active escrows on that day
-)
+RETURNS SETOF public.escrow_analytics_by_day
 LANGUAGE sql
 STABLE
 AS $$
@@ -32,8 +22,7 @@ AS $$
       COUNT(*) AS event_count,
       COUNT(*) FILTER (WHERE processed = true) AS processed_count
     FROM public.trustless_work_webhook_events
-    WHERE
-      tenant_id = tenant_id_input
+    WHERE tenant_id = tenant_id_input
       AND created_at >= start_date::date
       AND created_at < (end_date::date + INTERVAL '1 day')
     GROUP BY created_at::date
@@ -43,8 +32,7 @@ AS $$
       DATE(last_seen) AS day,
       COUNT(*) AS new_users
     FROM public.users
-    WHERE
-      last_seen >= start_date::date
+    WHERE last_seen >= start_date::date
       AND last_seen < (end_date::date + INTERVAL '1 day')
     GROUP BY DATE(last_seen)
   ),
@@ -58,8 +46,7 @@ AS $$
         WHERE status IN ('funded', 'active', 'milestone_approved')
       ), 0) AS escrow_value
     FROM public.trustless_work_escrows
-    WHERE
-      tenant_id = tenant_id_input
+    WHERE tenant_id = tenant_id_input
       AND created_at >= start_date::date
       AND created_at < (end_date::date + INTERVAL '1 day')
     GROUP BY created_at::date

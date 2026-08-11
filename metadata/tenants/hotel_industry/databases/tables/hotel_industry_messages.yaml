@@ -1,0 +1,13 @@
+table:
+  name: messages
+  schema: hotel_industry
+object_relationships:
+  - name: conversation
+    using:
+      foreign_key_constraint_on: conversation_id
+  - name: sender
+    using:
+      foreign_key_constraint_on: sender_id
+  - name: forwarded_from
+    using:
+      foreign_key_constraint_on: forwarded_from_id
