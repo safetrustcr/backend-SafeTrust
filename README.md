@@ -124,7 +124,7 @@ metadata/
 
 ---
 
-## 🔧 Manual Commands
+## 🛠️ Manual Commands (optional)
 
 > `bin/start` handles all of these automatically. Use these only when targeting a specific step in isolation.
 
