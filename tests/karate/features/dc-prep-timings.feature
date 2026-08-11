@@ -1,4 +1,4 @@
-Feature: dc_prep safetrust — phase timing baseline
+Feature: start safetrust — phase timing baseline
 
   Background:
     * def fs = Java.type('java.nio.file.Files')
