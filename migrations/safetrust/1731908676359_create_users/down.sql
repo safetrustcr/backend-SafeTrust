@@ -1,14 +1,13 @@
-<<<<<<< HEAD
--- Remove role additions first before dropping the table
+-- Remove role additions first (added by 1779100000000_add_role_to_users)
 DROP INDEX IF EXISTS idx_users_role;
 ALTER TABLE public.users DROP CONSTRAINT IF EXISTS valid_user_role;
 ALTER TABLE public.users DROP COLUMN IF EXISTS role;
 
--- Then drop the table
-=======
+-- Remove base table indexes and constraints
 DROP INDEX IF EXISTS idx_users_firebase_uid;
 DROP INDEX IF EXISTS idx_users_email;
 ALTER TABLE IF EXISTS public.users
     DROP CONSTRAINT IF EXISTS users_email_unique;
->>>>>>> 9cadd98b2b63f9371035fde5f572afb9b83523c5
+
+-- Drop the table last
 DROP TABLE IF EXISTS public.users CASCADE;
