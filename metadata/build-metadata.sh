@@ -77,16 +77,10 @@ copy_with_merge() {
 build_tenant() {
     local tenant="$1"
     echo "⚙️ Building metadata for tenant: $tenant"
-<<<<<<< HEAD
-    
-    if [[ ! "$tenant" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
-        echo "❌ Error: Invalid tenant name: $tenant"
-=======
 
     # Validate tenant argument - only allow safe directory names
     if [[ ! "$tenant" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         echo "❌ Error: Invalid tenant name '$tenant'. Only alphanumeric, underscore, and hyphen characters allowed."
->>>>>>> 9cadd98b2b63f9371035fde5f572afb9b83523c5
         return 1
     fi
 

@@ -2,10 +2,9 @@
 set -eo pipefail
 
 # Configuration
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="$SCRIPT_DIR/build"
+BUILD_DIR="$(pwd)/build"
 HASURA_ENDPOINT="http://localhost:8080"
-HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-}"
+HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
 
 # Clean up temp directories on exit
 cleanup() {
@@ -17,7 +16,6 @@ trap cleanup EXIT
 
 # ─────────────────────────────────────────────────────────────────────────────
 # create_metadata_source
-# Registers the tenant as a Hasura source and copies metadata into temp_dir
 # All log output goes to stderr — only tenant_name goes to stdout
 # ─────────────────────────────────────────────────────────────────────────────
 create_metadata_source() {
@@ -45,7 +43,6 @@ admin_secret: ${admin_secret}
 metadata_directory: metadata
 EOL
 
-    # Copy table definitions
     if [ -d "$BUILD_DIR/$tenant/databases/tables" ]; then
         echo "Copying table definitions for $tenant..." >&2
         cp -r "$BUILD_DIR/$tenant/databases/tables"/* \
@@ -54,14 +51,12 @@ EOL
         echo "⚠️  Warning: No tables directory found at $BUILD_DIR/$tenant/databases/tables/" >&2
     fi
 
-    # Copy function definitions
     if [ -d "$BUILD_DIR/$tenant/databases/functions" ]; then
         echo "Copying function definitions for $tenant..." >&2
         cp -r "$BUILD_DIR/$tenant/databases/functions"/* \
             "$temp_dir/metadata/databases/default/functions/"
     fi
 
-    # Determine tenant name
     local tenant_name
     if [ -f "$BUILD_DIR/$tenant/databases/databases.yaml" ]; then
         tenant_name=$(grep -m 1 "name:" "$BUILD_DIR/$tenant/databases/databases.yaml" \
@@ -72,7 +67,6 @@ EOL
         echo "No databases.yaml found, using tenant name: $tenant_name" >&2
     fi
 
-    # Register source in Hasura
     echo "Checking if source ${tenant_name} already exists..." >&2
     local check_source
     check_source=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
@@ -110,14 +104,11 @@ EOL
     fi
 
     echo "✅ Tenant source created/verified: $tenant_name" >&2
-
-    # Only tenant_name goes to stdout — captured by $() in deploy_tenant
     echo "$tenant_name"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # process_metadata_tables
-# Tracks all tables for a tenant via Hasura API
 # Returns non-zero if any table fails to track
 # ─────────────────────────────────────────────────────────────────────────────
 process_metadata_tables() {
@@ -135,11 +126,7 @@ process_metadata_tables() {
         return 0
     fi
 
-<<<<<<< HEAD
     local track_failures=0
-=======
-    local failure_count=0
->>>>>>> 9cadd98b2b63f9371035fde5f572afb9b83523c5
 
     for table_file in "$tables_dir"/*.yaml; do
         [ -f "$table_file" ] || continue
@@ -147,17 +134,15 @@ process_metadata_tables() {
         local base_name
         base_name=$(basename "$table_file" .yaml)
 
-        # Skip index files
         if [[ "$base_name" == "tables" ]]; then
             echo "ℹ️  Warning: Could not determine table name from $table_file, skipping"
             continue
         fi
 
-        # Parse table name, schema and configuration using yq
-        local table_name table_schema configuration_json
+        local table_name table_schema custom_name
         table_name=$(yq e '.table.name' "$table_file" 2>/dev/null | tr -d '\r')
         table_schema=$(yq e '.table.schema' "$table_file" 2>/dev/null | tr -d '\r')
-        configuration_json=$(yq e '.configuration' "$table_file" -o json 2>/dev/null | tr -d '\r')
+        custom_name=$(yq e '.configuration.custom_name' "$table_file" 2>/dev/null | tr -d '\r')
 
         if [ -z "$table_schema" ] || [ "$table_schema" = "null" ]; then
             table_schema="public"
@@ -170,25 +155,21 @@ process_metadata_tables() {
 
         echo "⚙️  Adding table: $table_name (schema: $table_schema) to tenant $tenant_name"
 
-        # Build track payload — include full configuration object if present
         local track_payload
-        if [ -n "$configuration_json" ] && [ "$configuration_json" != "null" ] && [ "$configuration_json" != "{}" ]; then
-            track_payload=$(jq -n \
-                --arg source "$tenant_name" \
-                --arg name "$table_name" \
-                --arg schema "$table_schema" \
-                --argjson config "$configuration_json" \
-                '{
-                    "type": "pg_track_table",
-                    "args": {
-                        "source": $source,
-                        "table": {
-                            "name": $name,
-                            "schema": $schema
-                        },
-                        "configuration": $config
+        if [ -n "$custom_name" ] && [ "$custom_name" != "null" ]; then
+            track_payload="{
+                \"type\": \"pg_track_table\",
+                \"args\": {
+                    \"source\": \"${tenant_name}\",
+                    \"table\": {
+                        \"name\": \"${table_name}\",
+                        \"schema\": \"${table_schema}\"
+                    },
+                    \"configuration\": {
+                        \"custom_name\": \"${custom_name}\"
                     }
-                }')
+                }
+            }"
         else
             track_payload="{
                 \"type\": \"pg_track_table\",
@@ -213,76 +194,16 @@ process_metadata_tables() {
            [[ "$track_response" == *'already tracked'* ]] || \
            [[ -z "$track_response" ]]; then
             echo "✅ Successfully tracked table $table_name"
-
-            # Process object relationships if present
-            local relationships_json
-            relationships_json=$(yq e '.object_relationships' "$table_file" -o json 2>/dev/null)
-            if [ -n "$relationships_json" ] && [ "$relationships_json" != "null" ] && [ "$relationships_json" != "[]" ]; then
-                local rel_count
-                rel_count=$(echo "$relationships_json" | jq 'length')
-                echo "⚙️  Processing $rel_count object relationship(s) for $table_name..."
-
-                for i in $(seq 0 $((rel_count - 1))); do
-                    local rel_name rel_using
-                    rel_name=$(echo "$relationships_json" | jq -r ".[$i].name")
-                    rel_using=$(echo "$relationships_json" | jq -c ".[$i].using")
-
-                    echo "⚙️  Adding relationship: $rel_name"
-
-                    local rel_payload
-                    rel_payload=$(jq -n \
-                        --arg source "$tenant_name" \
-                        --arg table_name "$table_name" \
-                        --arg table_schema "$table_schema" \
-                        --arg rel_name "$rel_name" \
-                        --argjson rel_using "$rel_using" \
-                        '{
-                            "type": "pg_create_object_relationship",
-                            "args": {
-                                "source": $source,
-                                "table": {
-                                    "name": $table_name,
-                                    "schema": $table_schema
-                                },
-                                "name": $rel_name,
-                                "using": $rel_using
-                            }
-                        }')
-
-                    local rel_response
-                    rel_response=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
-                        -H "X-Hasura-Admin-Secret: ${admin_secret}" \
-                        -H "Content-Type: application/json" \
-                        -d "$rel_payload")
-
-                    if [[ "$rel_response" == *'"message":"success"'* ]] || \
-                       [[ "$rel_response" == *'already exists'* ]]; then
-                        echo "✅ Relationship $rel_name created"
-                    elif [[ "$rel_response" == *'"error"'* ]]; then
-                        echo "⚠️  Warning: Issue creating relationship $rel_name: $rel_response"
-                    fi
-                done
-            fi
         elif [[ "$track_response" == *'"error"'* ]]; then
-<<<<<<< HEAD
             echo "❌ Error tracking table $table_name: $track_response"
             track_failures=$(( track_failures + 1 ))
-=======
-            echo "ℹ️  Warning: Issue tracking table $table_name: $track_response"
-            ((failure_count++))
->>>>>>> 9cadd98b2b63f9371035fde5f572afb9b83523c5
         else
             echo "✅ Successfully tracked table $table_name"
         fi
     done
 
-<<<<<<< HEAD
     if [ "$track_failures" -gt 0 ]; then
         echo "❌ ${track_failures} table(s) failed to track for $tenant_name"
-=======
-    if [ $failure_count -gt 0 ]; then
-        echo "⚠️  Metadata deployment for $tenant_name completed with $failure_count failure(s)"
->>>>>>> 9cadd98b2b63f9371035fde5f572afb9b83523c5
         return 1
     fi
 
@@ -292,7 +213,6 @@ process_metadata_tables() {
 
 # ─────────────────────────────────────────────────────────────────────────────
 # process_metadata_functions
-# Tracks all functions for a tenant via Hasura API using yq for YAML parsing
 # Returns non-zero if any function fails to track
 # ─────────────────────────────────────────────────────────────────────────────
 process_metadata_functions() {
@@ -309,27 +229,20 @@ process_metadata_functions() {
 
     echo "⚙️  Processing functions for $tenant_name..."
 
-<<<<<<< HEAD
     local track_failures=0
-=======
-    local failure_count=0
->>>>>>> 9cadd98b2b63f9371035fde5f572afb9b83523c5
 
     for func_file in "$functions_dir"/*.yaml; do
         [ -f "$func_file" ] || continue
 
-        # Skip index files
         if [[ "$(basename "$func_file")" == "functions.yaml" ]]; then
             continue
         fi
 
-        # Parse using yq — reliable YAML parsing
         local func_name func_schema exposed_as
         func_name=$(yq e '.function.name' "$func_file" 2>/dev/null | tr -d '\r')
         func_schema=$(yq e '.function.schema' "$func_file" 2>/dev/null | tr -d '\r')
         exposed_as=$(yq e '.configuration.exposed_as' "$func_file" 2>/dev/null | tr -d '\r')
 
-        # Apply defaults for null/empty values
         if [ -z "$func_schema" ] || [ "$func_schema" = "null" ]; then
             func_schema="public"
         fi
@@ -369,23 +282,14 @@ process_metadata_functions() {
             echo "✅ Successfully tracked function $func_name"
         elif [[ "$track_response" == *'"error"'* ]]; then
             echo "❌ Error: Issue tracking function $func_name: $track_response"
-<<<<<<< HEAD
             track_failures=$(( track_failures + 1 ))
-=======
-            ((failure_count++))
->>>>>>> 9cadd98b2b63f9371035fde5f572afb9b83523c5
         else
             echo "✅ Successfully tracked function $func_name"
         fi
     done
 
-<<<<<<< HEAD
     if [ "$track_failures" -gt 0 ]; then
         echo "❌ ${track_failures} function(s) failed to track for $tenant_name"
-=======
-    if [ $failure_count -gt 0 ]; then
-        echo "⚠️  Function tracking for $tenant_name completed with $failure_count failure(s)"
->>>>>>> 9cadd98b2b63f9371035fde5f572afb9b83523c5
         return 1
     fi
 
@@ -394,8 +298,6 @@ process_metadata_functions() {
 
 # ─────────────────────────────────────────────────────────────────────────────
 # deploy_tenant
-# Orchestrates source registration, table tracking, function tracking
-# and reports per-tenant deploy time
 # ─────────────────────────────────────────────────────────────────────────────
 deploy_tenant() {
     local tenant="$1"
@@ -407,7 +309,6 @@ deploy_tenant() {
     temp_dir=$(mktemp -d)
     TEMP_DIR="$temp_dir"
 
-    # Use if ! pattern — set -e makes $? check unreachable after command substitution
     local tenant_name
     if ! tenant_name=$(create_metadata_source "$tenant" "$temp_dir" "$hasura_endpoint" "$admin_secret"); then
         rm -rf "$temp_dir"
@@ -449,12 +350,6 @@ main() {
 
     if [ ${#tenants[@]} -eq 0 ]; then
         echo "Usage: ./deploy-tenant.sh tenant1 tenant2 ... [--admin-secret SECRET] [--endpoint URL]"
-        exit 1
-    fi
-
-    # Validate admin secret is set
-    if [ -z "$HASURA_ADMIN_SECRET" ]; then
-        echo "❌ Error: Hasura admin secret not set. Provide via --admin-secret or HASURA_GRAPHQL_ADMIN_SECRET env var"
         exit 1
     fi
 
