@@ -144,7 +144,7 @@ hasura migrate apply \
   --admin-secret myadminsecretkey
 ```
 
-Apply a single version:
+### Apply a single version:
 
 ```bash
 hasura migrate apply \
