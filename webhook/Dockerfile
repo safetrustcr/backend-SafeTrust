@@ -33,4 +33,11 @@ USER node
 
 EXPOSE 3001
 
-CMD ["npm", "start"]
+# Before
+CMD ["node", "src/server.js"]
+
+# After (development)
+CMD ["npx", "ts-node", "src/index.ts"]
+
+# After (production — after tsc build)
+CMD ["node", "dist/index.js"]

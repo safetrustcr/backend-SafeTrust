@@ -1,52 +1,39 @@
-const express = require('express')
-const router = express.Router()
+// webhook/src/routes/index.js
+const express = require('express');
+const router = express.Router();
 
-const { authMiddleware, authenticateFirebase } = require('../middleware/auth.middleware')
-const verifyTrustlessWorkSignature = require('../middleware/trustlesswork-signature.middleware')
+// Auth routes
+const authRoutes = require('./auth');
+router.use('/api/auth', authRoutes);
 
+// Apartment routes
+const apartmentRoutes = require('./apartments/list.route');
+router.use('/api/apartments', apartmentRoutes);
 
-// Route handlers / routers
-const reservationsRoute = require('./reservations');
-const authRoutes = require('./auth')
-const bidRequestRoutes = require('./bid-requests')
-const reconciliationRoutes = require('./reconciliation/sync-escrows.route')
-const apartmentsRoutes = require('./apartments/list.route');
-const escrowRoutes = require('./escrows/approve-milestone.route');
-const meRoute = require('./auth/me.route');
-const disputeRoute = require('./escrows/dispute.route');
-const initializeEscrowRoute = require('./escrows/initialize.route');
-const fundEscrowRoute = require('./escrows/fund.route');
+// Escrow routes
+const initializeRoute = require('./escrows/initialize.route');
+const fundRoute = require('./escrows/fund.route');
+const approveMilestoneRoute = require('./escrows/approve-milestone.route');
 const releaseFundsRoute = require('./escrows/release-funds.route');
+const disputeRoute = require('./escrows/dispute.route');
 const resolveDisputeRoute = require('./escrows/resolve-dispute.route');
-const hotelConversationsSendRoute = require('./hotel/conversations/send.route');
+router.use(initializeRoute);
+router.use(fundRoute);
+router.use(approveMilestoneRoute);
+router.use(releaseFundsRoute);
+router.use(disputeRoute);
+router.use(resolveDisputeRoute);
 
-// 1. Health Check
-router.get('/health', (req, res) => res.status(200).send('OK'))
+// Bid requests
+const bidRequestsRoute = require('./bid-requests');
+router.use('/api/bid-requests', bidRequestsRoute);
 
-// 2. Public Webhooks (Must be registered before the auth middlewares)
-// TrustlessWork HMAC signature verified — see Issue 4
-router.use('/api/escrows', verifyTrustlessWorkSignature)
-router.use(disputeRoute)
-router.use(initializeEscrowRoute)
-router.use(fundEscrowRoute)
-router.use(releaseFundsRoute)
-router.use(resolveDisputeRoute)
-router.use(escrowRoutes)
-// Hotel messaging — internal + client send (no TW signature)
-router.use(hotelConversationsSendRoute)
+// Reservations
+const reservationsRoute = require('./reservations');
+router.use(reservationsRoute);
 
-// 3. Authenticated Routes & Auth Middlewares
-router.use('/api', authMiddleware)
-router.use('/api', authenticateFirebase)
-router.use('/api/auth', authRoutes)
-router.use(meRoute);
-router.use('/api/apartments', apartmentsRoutes);
-router.use('/api/bid-requests', bidRequestRoutes)
-router.use('/api/reconciliation', reconciliationRoutes)
+// Hotel conversations
+const hotelConversationsRoute = require('./hotel/conversations/send.route');
+router.use(hotelConversationsRoute);
 
-// 4. Reservations Route
-app.use(reservationsRoute);
-
-
-module.exports = router
-
+module.exports = router;
