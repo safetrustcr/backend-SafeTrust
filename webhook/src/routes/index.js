@@ -1,52 +1,49 @@
+'use strict'
+
 const express = require('express')
-const router = express.Router()
+const router  = express.Router()
 
-const { authMiddleware, authenticateFirebase } = require('../middleware/auth.middleware')
-const verifyTrustlessWorkSignature = require('../middleware/trustlesswork-signature.middleware')
+// ── Middleware ────────────────────────────────────────────────────────────────
+const verifyTrustlessWorkSignature      = require('../middleware/trustlesswork-signature.middleware')
+const { authMiddleware }                = require('../middleware/auth.middleware')
 
+// ── Escrow webhook routes ─────────────────────────────────────────────────────
+const initializeRoute       = require('./escrows/initialize.route')
+const fundRoute             = require('./escrows/fund.route')
+const approveMilestoneRoute = require('./escrows/approve-milestone.route')
+const releaseFundsRoute     = require('./escrows/release-funds.route')
+const disputeRoute          = require('./escrows/dispute.route')
+const resolveDisputeRoute   = require('./escrows/resolve-dispute.route')
 
-// Route handlers / routers
-const reservationsRoute = require('./reservations');
-const authRoutes = require('./auth')
-const bidRequestRoutes = require('./bid-requests')
-const reconciliationRoutes = require('./reconciliation/sync-escrows.route')
-const apartmentsRoutes = require('./apartments/list.route');
-const escrowRoutes = require('./escrows/approve-milestone.route');
-const meRoute = require('./auth/me.route');
-const disputeRoute = require('./escrows/dispute.route');
-const initializeEscrowRoute = require('./escrows/initialize.route');
-const fundEscrowRoute = require('./escrows/fund.route');
-const releaseFundsRoute = require('./escrows/release-funds.route');
-const resolveDisputeRoute = require('./escrows/resolve-dispute.route');
-const hotelConversationsSendRoute = require('./hotel/conversations/send.route');
+// ── Other routes ──────────────────────────────────────────────────────────────
+const authRoutes              = require('./auth')
+const apartmentRoutes         = require('./apartments/list.route')
+const bidRequestsRoute        = require('./bid-requests')
+const reservationsRoute       = require('./reservations')
+const hotelConversationsRoute = require('./hotel/conversations/send.route')
 
-// 1. Health Check
-router.get('/health', (req, res) => res.status(200).send('OK'))
+// ── 1. Health check (public) ──────────────────────────────────────────────────
+router.get('/health', (_req, res) => res.status(200).json({ status: 'ok' }))
 
-// 2. Public Webhooks (Must be registered before the auth middlewares)
-// TrustlessWork HMAC signature verified — see Issue 4
+// ── 2. TrustlessWork webhook callbacks (HMAC verified, no Firebase auth) ──────
+// TrustlessWork is the caller — not a Firebase-authenticated user
+// verifyTrustlessWorkSignature is exported directly (not as named property)
 router.use('/api/escrows', verifyTrustlessWorkSignature)
-router.use(disputeRoute)
-router.use(initializeEscrowRoute)
-router.use(fundEscrowRoute)
+router.use(initializeRoute)
+router.use(fundRoute)
+router.use(approveMilestoneRoute)
 router.use(releaseFundsRoute)
+router.use(disputeRoute)
 router.use(resolveDisputeRoute)
-router.use(escrowRoutes)
-// Hotel messaging — internal + client send (no TW signature)
-router.use(hotelConversationsSendRoute)
 
-// 3. Authenticated Routes & Auth Middlewares
+// ── 3. Hotel conversations (internal, no TW signature) ────────────────────────
+router.use(hotelConversationsRoute)
+
+// ── 4. Authenticated routes (Firebase auth required) ──────────────────────────
 router.use('/api', authMiddleware)
-router.use('/api', authenticateFirebase)
-router.use('/api/auth', authRoutes)
-router.use(meRoute);
-router.use('/api/apartments', apartmentsRoutes);
-router.use('/api/bid-requests', bidRequestRoutes)
-router.use('/api/reconciliation', reconciliationRoutes)
-
-// 4. Reservations Route
-app.use(reservationsRoute);
-
+router.use('/api/auth',         authRoutes)
+router.use('/api/apartments',   apartmentRoutes)
+router.use('/api/bid-requests', bidRequestsRoute)
+router.use('/api/reservations', reservationsRoute)
 
 module.exports = router
-
