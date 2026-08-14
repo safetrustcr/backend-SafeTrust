@@ -1,5 +1,5 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM node:18-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ COPY src/ ./src/
 RUN npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
-FROM node:18-alpine AS production
+FROM node:24-alpine AS production
 
 WORKDIR /app
 
@@ -23,7 +23,7 @@ RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
 
-RUN addgroup -S node && adduser -S node -G node
+# node user/group already exists in official node:24-alpine image
 USER node
 
 EXPOSE 3001

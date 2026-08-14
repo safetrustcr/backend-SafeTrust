@@ -8,6 +8,7 @@
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.25",
+    "@types/helmet": "^0.0.48",
     "@types/morgan": "^1.9.10",
     "@types/node": "^18.19.130",
     "nodemon": "^3.1.14",
@@ -20,6 +21,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "firebase-admin": "^14.2.0",
+    "helmet": "^8.3.0",
     "morgan": "^1.11.0",
     "node-fetch": "^3.3.2",
     "pg": "^8.23.0"
