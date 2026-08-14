@@ -1,43 +1,34 @@
-# Use a specific version for reproducibility
-FROM node:18-alpine
+# ── Stage 1: Build ────────────────────────────────────────────────────────────
+FROM node:18-alpine AS builder
 
-# Set production environment
-ENV NODE_ENV=production
-
-# Create app directory and set ownership to non-root user
-# Create app directory
 WORKDIR /app
-RUN chown node:node /app
 
-# Install dependencies as root, but only production ones
-COPY --chown=node:node package*.json ./
+COPY package*.json ./
+RUN npm ci
+
+COPY tsconfig.json ./
+COPY src/ ./src/
+
+RUN npm run build
+
+# ── Stage 2: Production ───────────────────────────────────────────────────────
+FROM node:18-alpine AS production
+
+WORKDIR /app
+
+RUN apk add --no-cache curl
+
+COPY package*.json ./
 RUN npm ci --omit=dev
 
-# Copy app source code with correct ownership
-# Ensure app directory is owned by node user
-RUN apk add --no-cache curl
-RUN chown node:node /app
+COPY --from=builder /app/dist ./dist
 
-# Copy dependency files first for better caching
-COPY --chown=node:node package*.json ./
-
-# Install only production dependencies
-# Using npm install because package-lock.json is not present in the workspace
-RUN npm install --omit=dev
-
-# Copy the rest of the application
-COPY --chown=node:node . .
-
-# Switch to non-root user
+RUN addgroup -S node && adduser -S node -G node
 USER node
 
 EXPOSE 3001
 
-# Before
-CMD ["node", "src/server.js"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:3001/health || exit 1
 
-# After (development)
-CMD ["npx", "ts-node", "src/index.ts"]
-
-# After (production — after tsc build)
 CMD ["node", "dist/index.js"]
