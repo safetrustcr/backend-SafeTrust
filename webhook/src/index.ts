@@ -11,9 +11,14 @@ const app = express()
 
 // Convert and validate port — Express requires a number
 const rawPort = process.env.WEBHOOK_PORT
-const port = rawPort ? parseInt(rawPort, 10) : 3001
+const port = rawPort === undefined ? 3001 : Number(rawPort.trim())
 
-if (isNaN(port) || port < 1 || port > 65535) {
+if (
+  (rawPort !== undefined && !/^\d+$/.test(rawPort.trim())) ||
+  !Number.isInteger(port) ||
+  port < 1 ||
+  port > 65535
+) {
   console.error(`❌ Invalid WEBHOOK_PORT: "${rawPort}" — must be a number between 1 and 65535`)
   process.exit(1)
 }
