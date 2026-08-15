@@ -19,7 +19,7 @@ const authRoutes              = require('./auth')
 const apartmentRoutes         = require('./apartments/list.route')
 const bidRequestsRoute        = require('./bid-requests')
 const reservationsRoute       = require('./reservations')
-const hotelConversationsRoute = require('./hotel/conversations/send.route')
+const hotelConversationsRoute = require('./hotel/conversations/send.route').default
 
 // ── Service-to-service auth for internal callers (hotel conversations) ────────
 function verifyInternalSecret(req, res, next) {
