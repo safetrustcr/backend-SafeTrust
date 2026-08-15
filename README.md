@@ -198,7 +198,7 @@ hasura seed apply \
 API tests using the [Karate framework](https://docs.karatelabs.io/), running in Docker.
 
 ```bash
-bin/test
+bin/test # start karate testing
 ```
 
 Reports are generated at:
@@ -234,4 +234,3 @@ Reports are generated at:
 
 © 2026 SafeTrust. Released under the [MIT License](https://opensource.org/license/MIT).
 
-```
