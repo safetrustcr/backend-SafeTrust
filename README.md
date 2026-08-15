@@ -1,31 +1,48 @@
+
 <div align="center">
-<img src="https://raw.githubusercontent.com/safetrustcr/frontend-SafeTrust/develop/public/img/logo.png" alt="SafeTrust Logo" width="80" />
+  <img src="https://raw.githubusercontent.com/safetrustcr/frontend-SafeTrust/develop/public/img/logo.png" alt="SafeTrust Logo" width="90" />
 
-# backend-SafeTrust
-**Hasura GraphQL · PostgreSQL · Webhook Service · Multi-tenant**
+  # 🛡️ backend-SafeTrust
+  **⚡ Hasura GraphQL · 🐘 PostgreSQL · 🪝 Webhook Service · 🏢 Multi-tenant**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-orange.svg)](https://opensource.org/licenses/MIT)
-[![Hasura](https://img.shields.io/badge/Hasura-GraphQL-1EB4D4?logo=hasura)](https://hasura.io)
-[![Stellar](https://img.shields.io/badge/Stellar-Blockchain-7B2BF9?logo=stellar)](https://stellar.org)
-[![🔐 TrustlessWork](https://img.shields.io/badge/🔐_TrustlessWork-EaaS-00C2A8)](https://docs.trustlesswork.com/trustless-work)
-[![💧 Drips Wave](https://img.shields.io/badge/💧_Drips-Wave-7B2BF9)](https://www.drips.network/wave)
-[![🦊 GrantFox](https://img.shields.io/badge/🦊_GrantFox-GrantFox-FF6B00)](https://grantfox.xyz/)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-orange.svg)](https://opensource.org/licenses/MIT)
+  [![Hasura](https://img.shields.io/badge/Hasura-GraphQL-1EB4D4?logo=hasura)](https://hasura.io)
+  [![Stellar](https://img.shields.io/badge/Stellar-Blockchain-7B2BF9?logo=stellar)](https://stellar.org)
+  [![🔐 TrustlessWork](https://img.shields.io/badge/🔐_TrustlessWork-EaaS-00C2A8)](https://docs.trustlesswork.com/trustless-work)
+  [![💧 Drips Wave](https://img.shields.io/badge/💧_Drips-Wave-7B2BF9)](https://www.drips.network/wave)
+  [![🦊 GrantFox](https://img.shields.io/badge/🦊_GrantFox-GrantFox-FF6B00)](https://grantfox.xyz/)
 </div>
 
 ---
 
-## What is this repo?
-
-The backend infrastructure for SafeTrust — a decentralized P2P escrow platform for rental transactions on the Stellar blockchain. This repo contains:
-
-- **Hasura GraphQL Engine** — auto-generated API with JWT auth and row-level permissions
-- **PostgreSQL** — multi-tenant schema (`safetrust` + `hotel_industry`)
-- **Webhook service** — Node/Express, handles Firebase auth sync and escrow lifecycle events
-- **Migrations + seeds** — versioned schema and dev data for both tenants
+## 📖 Table of Contents
+- [🔍 What is this repo?](#-what-is-this-repo)
+- [🚀 Quick Start](#-quick-start)
+  - [Prerequisites](#prerequisites)
+  - [1. Set up environment variables](#1-set-up-environment-variables)
+  - [2. 🔮 Start everything](#2--start-everything)
+  - [Reset the database](#reset-the-database)
+  - [Rollback migrations](#rollback-migrations)
+- [🏗️ Metadata Architecture](#️-metadata-architecture)
+- [🛠️ Manual Commands (optional)](#️-manual-commands-optional)
+- [🥋🔬 Karate Tests](#-karate-tests)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
 
 ---
 
-## Quick Start
+## 🔍 What is this repo?
+
+The backend infrastructure for **SafeTrust** — a decentralized P2P escrow platform for rental transactions on the Stellar blockchain. This repo contains:
+
+- ⚡ **Hasura GraphQL Engine** — auto-generated API with JWT auth and row-level permissions
+- 🐘 **PostgreSQL** — multi-tenant schema (`safetrust` + `hotel_industry`)
+- 🪝 **Webhook service** — Node/Express, handles Firebase auth sync and escrow lifecycle events
+- 📂 **Migrations + seeds** — versioned schema and dev data for both tenants
+
+---
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
@@ -35,12 +52,13 @@ The backend infrastructure for SafeTrust — a decentralized P2P escrow platform
 | Hasura CLI | ≥ 2.x |
 | curl | any |
 
-> **Windows:** run `bin/start` inside WSL (Ubuntu) or Git Bash.
+> 💡 **Windows Note:** Run `bin/start` inside WSL (Ubuntu) or Git Bash.
 
 ### 1. Set up environment variables
 
 ```bash
 cp .env.example .env
+
 ```
 
 Fill in `.env` before running anything:
@@ -52,6 +70,7 @@ POSTGRES_PASSWORD=your_postgres_password
 HASURA_GRAPHQL_JWT_SECRET={"type":"HS256","key":"replace-with-min-32-char-secret-here"}
 
 HASURA_EVENT_SECRET=your_event_secret
+
 ```
 
 > ⚠️ `HASURA_GRAPHQL_JWT_SECRET` must be valid JSON with a key of at least 32 characters. `start` will fail if this is malformed.
@@ -60,12 +79,13 @@ HASURA_EVENT_SECRET=your_event_secret
 
 ```bash
 bin/start tenant-name tenant-name
+
 ```
 
 `start` runs in order:
 
 | Step | Action |
-|---|---|
+| --- | --- |
 | 1 | Start `postgres`, `graphql-engine`, `webhook` containers |
 | 2 | Poll `GET /healthz` until Hasura is ready (up to 3 min) |
 | 3 | Build and deploy tenant metadata for all tenants |
@@ -74,24 +94,24 @@ bin/start tenant-name tenant-name
 | 6 | Apply seed data per tenant |
 
 **Target a specific tenant:**
-```bash
-bin/start safetrust          # one tenant
-bin/start safetrust hotel_industry  # both explicitly
-```
 
+```bash
+bin/start safetrust                 # one tenant
+bin/start safetrust hotel_industry # both explicitly
+
+```
 
 ### Reset the database
 
 ```bash
 docker compose down -v
 bin/start
+
 ```
 
 ### Rollback migrations
 
 ```bash
-# Rollback all migrations for a specific tenant source:
-
 # Rollback safetrust migrations:
 hasura migrate apply \
   --endpoint http://localhost:8080 \
@@ -100,26 +120,29 @@ hasura migrate apply \
   --down all
 
 # Rollback hotel_industry migrations:
-
 hasura migrate apply \
   --endpoint http://localhost:8080 \
   --admin-secret myadminsecretkey \
   --database-name hotel_industry \
   --down all
+
 ```
 
-## Metadata Architecture
+---
+
+## 🏗️ Metadata Architecture
 
 ```bash
 metadata/
-├── base/ ← shared Hasura config across all tenants
+├── base/                ← shared Hasura config across all tenants
 ├── tenants/
-│ ├── safetrust/ ← apartments, escrows, users, wallets
-│ └── hotel_industry/ ← hotels, rooms, reservations, escrow_transactions
-├── build/ ← generated output (tenants merged with base), ready to deploy
+│   ├── safetrust/       ← apartments, escrows, users, wallets
+│   └── hotel_industry/  ← hotels, rooms, reservations, escrow_transactions
+├── build/               ← generated output (tenants merged with base), ready to deploy
 ├── build-metadata.sh
 ├── deploy-tenant.sh
-└── setup-tenant.sh ← runs build + deploy in one command ✅
+└── setup-tenant.sh      ← runs build + deploy in one command ✅
+
 ```
 
 ---
@@ -133,6 +156,7 @@ metadata/
 ```bash
 cd metadata
 ./setup-tenant.sh safetrust --endpoint http://localhost:8080 --admin-secret myadminsecretkey
+
 ```
 
 ### Migrations — single tenant
@@ -142,9 +166,10 @@ hasura migrate apply \
   --database-name safetrust \
   --endpoint http://localhost:8080 \
   --admin-secret myadminsecretkey
+
 ```
 
-### Apply a single version:
+### Apply a single version
 
 ```bash
 hasura migrate apply \
@@ -153,6 +178,7 @@ hasura migrate apply \
   --type up \
   --endpoint http://localhost:8080 \
   --admin-secret myadminsecretkey
+
 ```
 
 ### Seeds — single tenant
@@ -162,6 +188,7 @@ hasura seed apply \
   --database-name safetrust \
   --endpoint http://localhost:8080 \
   --admin-secret myadminsecretkey
+
 ```
 
 ---
@@ -172,20 +199,25 @@ API tests using the [Karate framework](https://docs.karatelabs.io/), running in 
 
 ```bash
 docker compose -f docker-compose-test.yml run --rm --build karate
+
 ```
 
-Reports generated at `tests/results/karate-summary.html` and `tests/results/karate-tags.html`.
+Reports are generated at:
 
-**Add new tests:** create `.feature` files in `tests/karate/features/` — picked up automatically.
+* `tests/results/karate-summary.html`
+* `tests/results/karate-tags.html`
+
+**Add new tests:** Create `.feature` files in `tests/karate/features/` — picked up automatically.
 
 **Config files:**
-- `tests/karate/src/test/resources/karate-config.js`
-- `docker-compose-test.yml`
-- `Dockerfile.test`
+
+* `tests/karate/src/test/resources/karate-config.js`
+* `docker-compose-test.yml`
+* `Dockerfile.test`
 
 ---
 
-## Contributing
+## 🤝 Contributing
 
 1. `bin/start` must complete without errors.
 2. No raw SQL outside of `migrations/` — all schema changes go through versioned migration files.
@@ -194,11 +226,13 @@ Reports generated at `tests/results/karate-summary.html` and `tests/results/kara
 
 **Branch naming:** `feat/<issue-number>-short-description` · `fix/<issue-number>-short-description`
 
-- [Contributing Guide](https://github.com/safetrustcr/Frontend/issues/34)
-- [Git Guidelines](https://github.com/safetrustcr/Frontend/issues/35)
+* 📋 [Contributing Guide](https://github.com/safetrustcr/Frontend/issues/34)
+* 🌿 [Git Guidelines](https://github.com/safetrustcr/Frontend/issues/35)
 
 ---
 
-## License
+## 📄 License
 
 © 2026 SafeTrust. Released under the [MIT License](https://opensource.org/license/MIT).
+
+```
