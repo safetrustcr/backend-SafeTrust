@@ -59,7 +59,7 @@ HASURA_EVENT_SECRET=your_event_secret
 ### 2. 🔮 Start everything
 
 ```bash
-bin/start tenant_name tenant_name
+bin/start tenant-name tenant-name
 ```
 
 `start` runs in order:
