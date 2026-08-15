@@ -214,7 +214,7 @@ Reports are generated at:
 - `docker-compose-test.yml`
 - `Dockerfile.test`
 
-> `bin/test` runs `docker compose -f docker-compose-test.yml run --rm --build karate` internally.
+> 📍`bin/test` runs `docker compose -f docker-compose-test.yml run --rm --build karate` internally.
 
 ## 🤝 Contributing
 
