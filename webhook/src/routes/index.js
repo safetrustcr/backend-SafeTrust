@@ -19,7 +19,34 @@ const authRoutes              = require('./auth')
 const apartmentRoutes         = require('./apartments/list.route')
 const bidRequestsRoute        = require('./bid-requests')
 const reservationsRoute       = require('./reservations')
-const hotelConversationsRoute = require('./hotel/conversations/send.route')
+const hotelConversationsRoute = require('./hotel/conversations/send.route').default
+
+// ── Service-to-service auth for internal callers (hotel conversations) ────────
+function verifyInternalSecret(req, res, next) {
+  const token  = req.headers['x-internal-secret']
+  const secret = process.env.INTERNAL_SERVICE_SECRET
+
+  if (!secret) {
+    console.error('[internal-auth] INTERNAL_SERVICE_SECRET not set')
+    return res.status(500).json({ error: 'Internal secret not configured' })
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: 'Missing x-internal-secret header' })
+  }
+
+  const expected = Buffer.from(secret)
+  const received = Buffer.from(token)
+
+  if (
+    expected.length !== received.length ||
+    !crypto.timingSafeEqual(expected, received)
+  ) {
+    return res.status(401).json({ error: 'Invalid internal secret' })
+  }
+
+  next()
+}
 
 // ── Service-to-service auth for internal callers (hotel conversations) ────────
 function verifyInternalSecret(req, res, next) {
