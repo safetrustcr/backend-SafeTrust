@@ -1,7 +1,16 @@
 #!/bin/bash
 set -e
 
-HASURA_ADMIN_SECRET="myadminsecretkey"
+# Load .env file if available
+if [ -f .env ]; then
+  export $(grep -v '^#' .env | xargs)
+fi
+
+HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
+HASURA_PORT="${HASURA_PORT:-8080}"
+POSTGRES_PORT="${POSTGRES_PORT:-5433}"
+WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
+HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
 
 if [[ $# -eq 0 ]]; then
   echo "❌ Error: At least one tenant name is required."
@@ -33,11 +42,11 @@ if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
 fi
 
 # ── 2. Wait for Hasura to be healthy ─────────────────────────────────────────
-echo "⏳ Waiting for Hasura to be healthy..."
+echo "⏳ Waiting for Hasura to be healthy on ${HASURA_ENDPOINT}..."
 
 max_attempts=90
 attempt=1
-until curl -sf http://localhost:8080/healthz > /dev/null; do
+until curl -sf "${HASURA_ENDPOINT}/healthz" > /dev/null; do
   if [[ "$attempt" -ge "$max_attempts" ]]; then
     echo "❌ Hasura health check timed out after $((max_attempts * 2)) seconds"
     exit 1
@@ -60,7 +69,7 @@ echo ""
 echo "🔌 Registering database sources..."
 for TENANT in "${TENANTS[@]}"; do
   echo "   ▶ Registering source: $TENANT"
-  curl -sf -X POST http://localhost:8080/v1/metadata \
+  curl -sf -X POST "${HASURA_ENDPOINT}/v1/metadata" \
     -H "X-Hasura-Admin-Secret: $HASURA_ADMIN_SECRET" \
     -H "Content-Type: application/json" \
     -d "{
@@ -89,7 +98,7 @@ echo "📂 Applying migrations..."
 for TENANT in "${TENANTS[@]}"; do
   echo "   ▶ Migrating tenant: $TENANT"
   hasura migrate apply \
-    --endpoint http://localhost:8080 \
+    --endpoint "${HASURA_ENDPOINT}" \
     --admin-secret "$HASURA_ADMIN_SECRET" \
     --database-name "$TENANT"
   echo "   ✅ Migrations applied for $TENANT"
@@ -106,7 +115,7 @@ echo ""
 echo "🏗️  Deploying tenant metadata: ${TENANTS[*]}"
 cd metadata
 ./setup-tenant.sh "${TENANTS[@]}" \
-  --endpoint http://localhost:8080 \
+  --endpoint "${HASURA_ENDPOINT}" \
   --admin-secret "$HASURA_ADMIN_SECRET"
 cd ..
 
@@ -119,7 +128,7 @@ echo ""
 # ── 6. Reload metadata after deploy ──────────────────────────────────────────
 echo "📋 Reloading metadata..."
 hasura metadata reload \
-  --endpoint http://localhost:8080 \
+  --endpoint "${HASURA_ENDPOINT}" \
   --admin-secret "$HASURA_ADMIN_SECRET"
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
@@ -133,7 +142,7 @@ echo "🌱 Applying seeds..."
 for TENANT in "${TENANTS[@]}"; do
   echo "   ▶ Seeding tenant: $TENANT"
   hasura seed apply \
-    --endpoint http://localhost:8080 \
+    --endpoint "${HASURA_ENDPOINT}" \
     --admin-secret "$HASURA_ADMIN_SECRET" \
     --database-name "$TENANT"
   echo "   ✅ Seeds applied for $TENANT"
@@ -162,9 +171,9 @@ fi
 echo ""
 echo "✅ SafeTrust backend ready"
 echo "   Tenants deployed: ${TENANTS[*]}"
-echo "   GraphQL:          http://localhost:8080/v1/graphql"
-echo "   PostgreSQL:       localhost:5433"
-echo "   Webhook:          http://localhost:3000"
+echo "   GraphQL:          ${HASURA_ENDPOINT}/v1/graphql"
+echo "   PostgreSQL:       localhost:${POSTGRES_PORT}"
+echo "   Webhook:          http://localhost:${WEBHOOK_PORT}"
 echo ""
 echo "👉 To open Hasura console:"
-echo "   hasura console --endpoint http://localhost:8080 --admin-secret $HASURA_ADMIN_SECRET"
+echo "   hasura console --endpoint ${HASURA_ENDPOINT} --admin-secret $HASURA_ADMIN_SECRET"

@@ -1,9 +1,12 @@
+#!/usr/bin/env bash
 set -e # Exit immediately if a command exits with a non-zero status
 
-# Configuration
-BASE_DIR="$(pwd)/base"
-TENANTS_DIR="$(pwd)/tenants"
-BUILD_DIR="$(pwd)/build"
+# Configuration — paths relative to the script location, not the calling directory
+# This ensures bin/start and setup-tenant.sh can call this script from any directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$SCRIPT_DIR/base"
+TENANTS_DIR="$SCRIPT_DIR/tenants"
+BUILD_DIR="$SCRIPT_DIR/build"
 YAML_MERGE_TOOL="yq" # Make sure yq is installed: https://github.com/mikefarah/yq
 
 
@@ -25,7 +28,7 @@ merge_yaml() {
     local source_file="$1"
     local target_file="$2"
     local output_file="$3"
-    
+
     if [ -f "$source_file" ] && [ -f "$target_file" ]; then
         # Merge the files with yq
         $YAML_MERGE_TOOL eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' "$target_file" "$source_file" > "$output_file"
@@ -40,10 +43,8 @@ merge_yaml() {
 copy_with_merge() {
     local source_dir="$1"
     local target_dir="$2"
-    
- 
+
     mkdir -p "$target_dir"
-    
 
     for file in "$source_dir"/*; do
         if [ -d "$file" ]; then
@@ -51,22 +52,17 @@ copy_with_merge() {
             dir_name=$(basename "$file")
             copy_with_merge "$file" "$target_dir/$dir_name"
         elif [ -f "$file" ]; then
-           
             file_name=$(basename "$file")
             file_ext="${file_name##*.}"
-            
+
             if [ "$file_ext" = "yaml" ] || [ "$file_ext" = "yml" ]; then
-              
                 if [ -f "$target_dir/$file_name" ]; then
-                  
                     merge_yaml "$file" "$target_dir/$file_name" "$target_dir/$file_name.tmp"
                     mv "$target_dir/$file_name.tmp" "$target_dir/$file_name"
                 else
-                    
                     cp "$file" "$target_dir/$file_name"
                 fi
             else
-               
                 cp "$file" "$target_dir/$file_name"
             fi
         fi
@@ -78,9 +74,9 @@ build_tenant() {
     local tenant="$1"
     echo "⚙️ Building metadata for tenant: $tenant"
 
-    # Validate tenant argument - only allow safe directory names
-    if [[ ! "$tenant" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        echo "❌ Error: Invalid tenant name '$tenant'. Only alphanumeric, underscore, and hyphen characters allowed."
+    # Validate tenant argument — only allow safe directory names
+    if [[ ! "$tenant" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]]; then
+        echo "❌ Error: Invalid tenant name '$tenant'. Must start with a letter and contain only alphanumeric, underscore, or hyphen characters."
         return 1
     fi
 
@@ -89,11 +85,14 @@ build_tenant() {
         return 1
     fi
 
-    # Guard against path traversal - ensure resolved path stays within BUILD_DIR
+    # Ensure BUILD_DIR exists before path traversal check
+    mkdir -p "$BUILD_DIR"
+
+    # Guard against path traversal — ensure resolved path stays within BUILD_DIR
     local target_path
-    target_path=$(cd "$BUILD_DIR" && pwd)/"$tenant"
+    target_path="$(cd "$BUILD_DIR" && pwd)/$tenant"
     local build_dir_canonical
-    build_dir_canonical=$(cd "$BUILD_DIR" && pwd)
+    build_dir_canonical="$(cd "$BUILD_DIR" && pwd)"
 
     if [[ "$target_path" != "$build_dir_canonical"/* ]]; then
         echo "❌ Error: Tenant path escapes BUILD_DIR boundary"
@@ -105,29 +104,25 @@ build_tenant() {
 
     echo "⚙️ Copying base metadata..."
     cp -r "$BASE_DIR"/* "$BUILD_DIR/$tenant/"
-    
 
     echo "⚙️ Applying tenant-specific metadata..."
     copy_with_merge "$TENANTS_DIR/$tenant" "$BUILD_DIR/$tenant"
-    
 
     if [ -f "$TENANTS_DIR/$tenant/tenant_overrides.yaml" ]; then
         echo "⚙️ Applying tenant overrides..."
-      
+
         find "$BUILD_DIR/$tenant" -name "*.yaml" -type f | while read -r yaml_file; do
             relative_path="${yaml_file#$BUILD_DIR/$tenant/}"
             yaml_path=$(dirname "$relative_path")
-            
-           
+
             $YAML_MERGE_TOOL eval ".\"$yaml_path\"" "$TENANTS_DIR/$tenant/tenant_overrides.yaml" > /dev/null 2>&1
             if [ $? -eq 0 ]; then
-               
                 $YAML_MERGE_TOOL eval-all 'select(fileIndex == 0) * select(fileIndex == 1).'"\"$yaml_path\"" "$yaml_file" "$TENANTS_DIR/$tenant/tenant_overrides.yaml" > "$yaml_file.tmp"
                 mv "$yaml_file.tmp" "$yaml_file"
             fi
         done
     fi
-    
+
     echo "✅ Build complete for $tenant"
     return 0
 }
@@ -136,31 +131,27 @@ build_tenant() {
 TENANT="$1"
 
 
-if [ ! -z "$TENANT" ]; then
+if [ -n "$TENANT" ]; then
     build_tenant "$TENANT"
     exit_code=$?
     if [ $exit_code -ne 0 ]; then
         exit $exit_code
     fi
 else
-   
     echo "⚙️ Building metadata for all tenants..."
-    
-   
+
     if [ ! -d "$TENANTS_DIR" ]; then
         echo "❌ Error: Tenants directory $TENANTS_DIR not found!"
         exit 1
     fi
-    
-   
+
     tenant_dirs=$(find "$TENANTS_DIR" -maxdepth 1 -mindepth 1 -type d)
-    
-   
+
     if [ -z "$tenant_dirs" ]; then
         echo "❌ Error: No tenant directories found in $TENANTS_DIR"
         exit 1
     fi
-   
+
     for tenant_dir in $tenant_dirs; do
         tenant=$(basename "$tenant_dir")
         build_tenant "$tenant"
