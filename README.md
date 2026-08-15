@@ -198,24 +198,23 @@ hasura seed apply \
 API tests using the [Karate framework](https://docs.karatelabs.io/), running in Docker.
 
 ```bash
-docker compose -f docker-compose-test.yml run --rm --build karate
-
+bin/test
 ```
 
 Reports are generated at:
 
-* `tests/results/karate-summary.html`
-* `tests/results/karate-tags.html`
+- `tests/results/karate-summary.html`
+- `tests/results/karate-tags.html`
 
 **Add new tests:** Create `.feature` files in `tests/karate/features/` — picked up automatically.
 
 **Config files:**
 
-* `tests/karate/src/test/resources/karate-config.js`
-* `docker-compose-test.yml`
-* `Dockerfile.test`
+- `tests/karate/src/test/resources/karate-config.js`
+- `docker-compose-test.yml`
+- `Dockerfile.test`
 
----
+> `bin/test` runs `docker compose -f docker-compose-test.yml run --rm --build karate` internally.
 
 ## 🤝 Contributing
 
