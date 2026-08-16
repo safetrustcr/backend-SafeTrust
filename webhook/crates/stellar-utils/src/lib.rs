@@ -39,8 +39,13 @@ pub fn verify_ed25519(message: &[u8], signature_hex: &str, public_key: &str) -> 
         _ => return false,
     };
 
-    // 2 — Decode the hex-encoded signature. `Signature::from_slice` also
-    //     enforces the 64-byte Ed25519 signature length.
+    // 2 — Decode the hex-encoded signature. An Ed25519 signature is 64
+    //     bytes, so its hex form must be exactly 128 chars — reject anything
+    //     else up front. `Signature::from_slice` below also enforces the
+    //     64-byte length as a second line of defense.
+    if signature_hex.len() != 128 {
+        return false;
+    }
     let signature_bytes = match hex::decode(signature_hex) {
         Ok(bytes) => bytes,
         Err(_) => return false,
