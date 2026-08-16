@@ -29,7 +29,7 @@ export const requireRole = (allowedRoles: string[]) =>
     const userRoles =
       Array.isArray(req.user.roles) && req.user.roles.length > 0
         ? req.user.roles
-        : [req.user.role || (req.user.admin ? 'admin' : 'guest')]
+        : [req.user.admin ? 'admin' : req.user.role || 'guest']
 
     const isAllowed = userRoles.some((role) => allowedRoles.includes(role))
 

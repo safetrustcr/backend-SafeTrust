@@ -70,6 +70,15 @@ describe('requireRole', () => {
     expect(res.status).not.toHaveBeenCalled()
   })
 
+  it('should prefer the admin claim over a guest scalar role when roles is empty', () => {
+    // Regression: a Firebase admin without a user_roles entry must not be
+    // downgraded to 'guest' just because the scalar role resolved first.
+    req.user = { admin: true, role: 'guest', roles: [] }
+    requireRole(['admin'])(req, res, next)
+    expect(next).toHaveBeenCalled()
+    expect(res.status).not.toHaveBeenCalled()
+  })
+
   it('should fall back to guest when no role or admin claim is present', () => {
     req.user = {}
     requireRole(['guest'])(req, res, next)
