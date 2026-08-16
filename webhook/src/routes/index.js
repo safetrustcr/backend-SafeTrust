@@ -16,9 +16,11 @@ const disputeRoute          = require('./escrows/dispute.route')
 const resolveDisputeRoute   = require('./escrows/resolve-dispute.route')
 
 const authRoutes              = require('./auth')
-const apartmentRoutes         = require('./apartments/list.route')
+const apartmentRoutesRaw      = require('./apartments/list.route')
+const apartmentRoutes         = apartmentRoutesRaw.default || apartmentRoutesRaw
 const bidRequestsRoute        = require('./bid-requests')
-const reservationsRoute       = require('./reservations')
+const reservationsRouteRaw    = require('./reservations')
+const reservationsRoute       = reservationsRouteRaw.default || reservationsRouteRaw
 const hotelConversationsRoute = require('./hotel/conversations/send.route').default
 
 // ── Service-to-service auth for internal callers (hotel conversations) ────────

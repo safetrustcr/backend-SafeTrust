@@ -33,8 +33,11 @@
       "**/__tests__/**/*.test.js"
     ],
     "transform": {
-      "^.+\\.tsx?$": "ts-jest"
-    }
+      "^.+\\.[tj]sx?$": "ts-jest"
+    },
+    "transformIgnorePatterns": [
+      "/node_modules/(?!(jose)/)"
+    ]
   },
   "dependencies": {
     "axios": "^1.19.0",
