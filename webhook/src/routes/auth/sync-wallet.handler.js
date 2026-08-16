@@ -2,9 +2,27 @@ const db = require('../../services/db');
 
 const VALID_CHAIN_TYPES = ['ETH', 'STELLAR', 'BSC'];
 
+// Rust-native Stellar validation — Neon addon compiled from
+// crates/stellar-utils (see webhook/Dockerfile). Falls back to the previous
+// JS strkey-shape regex only when the addon is unavailable (e.g. a dev
+// machine without a built addon), so the service never fails to boot because
+// of it. When the addon is present it additionally verifies the SEP-23 strkey
+// checksum and that the strkey is an Ed25519 public key.
+let nativeStellarUtils = null;
+try {
+  nativeStellarUtils = require('../../../crates/stellar-utils');
+} catch (err) {
+  console.warn(
+    '[auth/sync-wallet] ⚠️ stellar-utils native addon unavailable, falling back to JS validation:',
+    err.message
+  );
+}
+
 // Stellar public key: 'G' + 55 base32 chars (A-Z2-7), total 56 chars
 function isStellarAddress(addr) {
-  return typeof addr === 'string' && /^G[A-Z2-7]{55}$/.test(addr);
+  if (typeof addr !== 'string') return false;
+  if (nativeStellarUtils) return nativeStellarUtils.validateStellarAddress(addr);
+  return /^G[A-Z2-7]{55}$/.test(addr);
 }
 
 const UPSERT_WALLET = `

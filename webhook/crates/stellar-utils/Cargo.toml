@@ -1,0 +1,15 @@
+[package]
+name    = "stellar-utils"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+# cdylib → Node-API addon (native/index.node); rlib → lets `cargo test` build
+# the pure logic as a regular test binary.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neon           = { version = "0.10", default-features = false, features = ["napi-6"] }
+ed25519-dalek  = "1"
+stellar-strkey = "0.0.8"
+hex            = "0.4"
