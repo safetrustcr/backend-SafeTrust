@@ -4,7 +4,7 @@ const express = require('express')
 const router  = express.Router()
 const crypto  = require('crypto')
 
-const verifyTrustlessWorkSignature = require('../middleware/trustlesswork-signature.middleware')
+const verifyTrustlessWorkSignature = require('../middleware/trustlesswork-signature.middleware').default
 const { authMiddleware }           = require('../middleware/auth.middleware')
 
 // ── Routes ────────────────────────────────────────────────────────────────────
