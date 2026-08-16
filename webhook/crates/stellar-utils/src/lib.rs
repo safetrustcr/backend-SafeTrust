@@ -39,20 +39,20 @@ pub fn verify_ed25519(message: &[u8], signature_hex: &str, public_key: &str) -> 
         _ => return false,
     };
 
-    // 2 — Decode the hex-encoded signature. `Signature::from_bytes` also
+    // 2 — Decode the hex-encoded signature. `Signature::from_slice` also
     //     enforces the 64-byte Ed25519 signature length.
     let signature_bytes = match hex::decode(signature_hex) {
         Ok(bytes) => bytes,
         Err(_) => return false,
     };
-    let signature = match ed25519_dalek::Signature::from_bytes(&signature_bytes) {
+    let signature = match ed25519_dalek::Signature::from_slice(&signature_bytes) {
         Ok(sig) => sig,
         Err(_) => return false,
     };
 
     // 3 — Build the dalek public key and verify (verify_strict also enforces
     //     the anti-malleability checks, unlike plain `verify`).
-    let public_key = match ed25519_dalek::PublicKey::from_bytes(&raw_public_key) {
+    let public_key = match ed25519_dalek::VerifyingKey::from_bytes(&raw_public_key) {
         Ok(pk) => pk,
         Err(_) => return false,
     };
@@ -62,15 +62,37 @@ pub fn verify_ed25519(message: &[u8], signature_hex: &str, public_key: &str) -> 
 
 // ─── Neon exports ─────────────────────────────────────────────────────────────
 
+/// Read the `index`-th argument as a string, or `None` when it is missing,
+/// null, undefined, or not a string. The addon never throws — malformed
+/// arguments yield `false`, matching the never-throws contract documented in
+/// the README for both exported functions.
+fn string_argument(cx: &mut FunctionContext, index: i32) -> Option<String> {
+    let value = cx.argument_opt(index)?;
+    let js_string = value.downcast::<JsString, _>(cx).ok()?;
+    Some(js_string.value(cx))
+}
+
 fn validate_stellar_address(mut cx: FunctionContext) -> JsResult<JsBoolean> {
-    let address = cx.argument::<JsString>(0)?.value(&mut cx);
+    let address = match string_argument(&mut cx, 0) {
+        Some(address) => address,
+        None => return Ok(cx.boolean(false)),
+    };
     Ok(cx.boolean(is_valid_stellar_address(&address)))
 }
 
 fn verify_stellar_ed25519(mut cx: FunctionContext) -> JsResult<JsBoolean> {
-    let message    = cx.argument::<JsString>(0)?.value(&mut cx);
-    let signature  = cx.argument::<JsString>(1)?.value(&mut cx);
-    let public_key = cx.argument::<JsString>(2)?.value(&mut cx);
+    let message = match string_argument(&mut cx, 0) {
+        Some(message) => message,
+        None => return Ok(cx.boolean(false)),
+    };
+    let signature = match string_argument(&mut cx, 1) {
+        Some(signature) => signature,
+        None => return Ok(cx.boolean(false)),
+    };
+    let public_key = match string_argument(&mut cx, 2) {
+        Some(public_key) => public_key,
+        None => return Ok(cx.boolean(false)),
+    };
 
     let result = verify_ed25519(message.as_bytes(), &signature, &public_key);
     Ok(cx.boolean(result))
@@ -88,7 +110,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signer};
+    use ed25519_dalek::{Signer, SigningKey};
 
     /// Real, checksum-valid Stellar account used by the Karate
     /// sync-wallet tests (see tests/karate/features/auth/sync-wallet.feature).
@@ -97,17 +119,14 @@ mod tests {
     const KNOWN_GOOD_ADDRESS: &str =
         "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57";
 
-    /// Deterministic keypair (no RNG needed) built from a fixed secret.
-    fn keypair() -> Keypair {
-        let secret = SecretKey::from_bytes(&[7u8; 32])
-            .expect("a 32-byte secret is always a valid Ed25519 secret");
-        let public = PublicKey::from(&secret);
-        Keypair { secret, public }
+    /// Deterministic signing key (no RNG needed) built from a fixed seed.
+    fn signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[7u8; 32])
     }
 
-    fn address_of(kp: &Keypair) -> String {
+    fn address_of(sk: &SigningKey) -> String {
         Strkey::PublicKeyEd25519(stellar_strkey::ed25519::PublicKey(
-            kp.public.to_bytes(),
+            sk.verifying_key().to_bytes(),
         ))
         .to_string()
     }
@@ -117,7 +136,7 @@ mod tests {
         assert!(is_valid_stellar_address(KNOWN_GOOD_ADDRESS));
         // The Karate fixture must equal the strkey of a fixed keypair, so it
         // is verifiably real (canonically encoded by stellar-strkey itself).
-        assert_eq!(KNOWN_GOOD_ADDRESS, address_of(&keypair()));
+        assert_eq!(KNOWN_GOOD_ADDRESS, address_of(&signing_key()));
     }
 
     #[test]
@@ -149,7 +168,7 @@ mod tests {
 
     #[test]
     fn verifies_signature_over_message() {
-        let key = keypair();
+        let key = signing_key();
         let address = address_of(&key);
         assert!(is_valid_stellar_address(&address));
 
@@ -161,7 +180,7 @@ mod tests {
 
     #[test]
     fn rejects_tampered_message() {
-        let key = keypair();
+        let key = signing_key();
         let address = address_of(&key);
 
         let signature_hex = hex::encode(key.sign(b"original message").to_bytes());
@@ -171,13 +190,8 @@ mod tests {
 
     #[test]
     fn rejects_signature_from_another_key() {
-        let key = keypair();
-        let other_secret = SecretKey::from_bytes(&[9u8; 32])
-            .expect("a 32-byte secret is always a valid Ed25519 secret");
-        let other = Keypair {
-            public: PublicKey::from(&other_secret),
-            secret: other_secret,
-        };
+        let key = signing_key();
+        let other = SigningKey::from_bytes(&[9u8; 32]);
         let other_address = address_of(&other);
 
         let message = b"message";
@@ -188,7 +202,7 @@ mod tests {
 
     #[test]
     fn rejects_malformed_signature_inputs() {
-        let key = keypair();
+        let key = signing_key();
         let address = address_of(&key);
         let valid_sig = hex::encode(key.sign(b"x").to_bytes());
 
