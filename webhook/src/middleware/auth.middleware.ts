@@ -1,5 +1,28 @@
-const { getAuth } = require('firebase-admin/auth');
-const db = require('../services/db');
+'use strict'
+
+import { Request, Response, NextFunction } from 'express'
+import { getAuth, DecodedIdToken } from 'firebase-admin/auth'
+import { query } from '../services/db'
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+/**
+ * The user attached to the request by `authMiddleware`. Extends the Firebase
+ * `DecodedIdToken` with the role fields resolved from `public.user_roles`.
+ */
+export interface AuthenticatedUser extends DecodedIdToken {
+  roles: string[]
+  role: string
+  admin?: boolean
+}
+
+export interface AuthenticatedRequest extends Request {
+  user: AuthenticatedUser
+}
+
+interface RoleRow {
+  name: string
+}
 
 /**
  * Resolves the roles assigned to a user from the `public.user_roles` join table.
@@ -14,12 +37,9 @@ const db = require('../services/db');
  * does not guarantee row order, which would make the scalar `role` (and the
  * sync-user response) flap for multi-role users. Authorization decisions must
  * still consider the full `roles` array, not just this scalar.
- *
- * @param {string} uid Firebase UID / users.id.
- * @returns {Promise<{ roles: string[], role: string }>}
  */
-async function resolveUserRole(uid) {
-  const result = await db.query(
+async function resolveUserRole(uid: string): Promise<{ roles: string[]; role: string }> {
+  const result = await query<RoleRow>(
     `SELECT r.name
      FROM public.user_roles ur
      JOIN public.roles r ON r.id = ur.role_id
@@ -33,74 +53,78 @@ async function resolveUserRole(uid) {
        END,
        r.name`,
     [uid]
-  );
+  )
 
-  const roles = result.rows.map((row) => row.name);
-  return { roles, role: roles[0] ?? 'guest' };
+  const roles = result.rows.map((row) => row.name)
+  return { roles, role: roles[0] ?? 'guest' }
 }
 
 /**
  * Verifies a Firebase Bearer token and attaches `uid`, `email`, `name`, `role`,
  * `roles`, and `admin` to `req.user`. Roles are sourced from `public.user_roles`
  * (not Firebase custom claims) in both the test-bypass and verified-token paths.
- *
- * @param {import('express').Request} req
- * @param {import('express').Response} res
- * @param {import('express').NextFunction} next
- * @returns {Promise<void>}
  */
-async function authMiddleware(req, res, next) {
-  const authHeader = req.headers['authorization'];
+export const authMiddleware = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  const authHeader = req.headers['authorization']
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({
+    res.status(401).json({
       error: 'Unauthorized',
       message: 'Missing or malformed Authorization header',
-    });
+    })
+    return
   }
 
-  const token = authHeader.split('Bearer ')[1];
+  const token = authHeader.split('Bearer ')[1]
 
   // Bypass for testing
   if (token === 'mock-token') {
     if (process.env.NODE_ENV !== 'test') {
-      console.error('FATAL: mock-token used outside of test environment');
-      return res.status(500).json({
+      console.error('FATAL: mock-token used outside of test environment')
+      res.status(500).json({
         error: 'Server configuration error',
         message: 'mock-token not allowed in this environment'
-      });
+      })
+      return
     }
-    const uid = req.headers['x-test-uid'] || 'test-user-id';
-    const { roles, role } = await resolveUserRole(uid);
+    const uid = (req.headers['x-test-uid'] as string) || 'test-user-id'
+    const { roles, role } = await resolveUserRole(uid)
     req.user = {
       uid,
       email: req.headers['x-test-email'] || 'test@example.com',
       roles,
       role,
-    };
-    return next();
+    } as unknown as AuthenticatedUser
+    next()
+    return
   }
 
   try {
-    const decoded = await getAuth().verifyIdToken(token);
-    const { roles, role } = await resolveUserRole(decoded.uid);
+    const decoded = await getAuth().verifyIdToken(token)
+    const { roles, role } = await resolveUserRole(decoded.uid)
     req.user = {
+      ...decoded, // Include all custom claims
       uid: decoded.uid,
       email: decoded.email,
       name: decoded.name,
       admin: decoded.admin === true,
-      ...decoded, // Include all custom claims
       roles, // role/roles from user_roles win over any custom claims
       role,
-    };
-    next();
+    }
+    next()
   } catch (error) {
-    console.error('[auth] Token verification failed:', error.message);
-    return res.status(401).json({
+    console.error('[auth] Token verification failed:', (error as Error).message)
+    res.status(401).json({
       error: 'Unauthorized',
       message: 'Invalid or expired token',
-    });
+    })
   }
 }
 
-module.exports = { authMiddleware, authenticateFirebase: authMiddleware, resolveUserRole };
+export const authenticateFirebase = authMiddleware
+
+export { resolveUserRole }
