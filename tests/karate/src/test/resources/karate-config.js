@@ -103,10 +103,12 @@ function fn() {
     return "sha256=" + hex;
   };
 
-  // Set default headers
+  // Set default headers. Timestamp is required by the webhook HMAC
+  // middleware for replay protection (5-minute window).
   karate.configure('headers', {
     'Content-Type': 'application/json',
-    'x-hasura-admin-secret': config.adminSecret
+    'x-hasura-admin-secret': config.adminSecret,
+    'x-trustlesswork-timestamp': String(new Date().getTime())
   });
 
   karate.log("Config initialized:", config);

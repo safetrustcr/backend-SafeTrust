@@ -15,7 +15,12 @@ describe('verifyTrustlessWorkSignature', () => {
   const rawBody = Buffer.from(JSON.stringify({ contractId: 'escrow-1', status: 'funded' }))
 
   beforeEach(() => {
-    req = { headers: {}, rawBody }
+    req = {
+      headers: {
+        'x-trustlesswork-timestamp': String(Date.now()),
+      },
+      rawBody,
+    }
     res = {
       status: jest.fn().mockReturnThis(),
       json: jest.fn().mockReturnThis(),
@@ -39,11 +44,51 @@ describe('verifyTrustlessWorkSignature', () => {
   })
 
   it('returns 401 with the exact error message when the header is missing', () => {
+    delete req.headers['x-trustlesswork-timestamp']
     verifyTrustlessWorkSignature(req, res, next)
 
     expect(res.status).toHaveBeenCalledWith(401)
     expect(res.json).toHaveBeenCalledWith({
       error: 'Missing x-trustlesswork-signature header',
+    })
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('returns 401 when the timestamp header is missing', () => {
+    req.headers['x-trustlesswork-signature'] = sign(SECRET, rawBody)
+    delete req.headers['x-trustlesswork-timestamp']
+
+    verifyTrustlessWorkSignature(req, res, next)
+
+    expect(res.status).toHaveBeenCalledWith(401)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'Missing TrustlessWork signature headers',
+    })
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('returns 401 when the timestamp is older than 5 minutes', () => {
+    req.headers['x-trustlesswork-signature'] = sign(SECRET, rawBody)
+    req.headers['x-trustlesswork-timestamp'] = String(Date.now() - 6 * 60 * 1_000)
+
+    verifyTrustlessWorkSignature(req, res, next)
+
+    expect(res.status).toHaveBeenCalledWith(401)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'Webhook timestamp expired or invalid',
+    })
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('returns 401 when the timestamp is not a number', () => {
+    req.headers['x-trustlesswork-signature'] = sign(SECRET, rawBody)
+    req.headers['x-trustlesswork-timestamp'] = 'not-a-timestamp'
+
+    verifyTrustlessWorkSignature(req, res, next)
+
+    expect(res.status).toHaveBeenCalledWith(401)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'Webhook timestamp expired or invalid',
     })
     expect(next).not.toHaveBeenCalled()
   })
