@@ -1,9 +1,9 @@
 /**
- * Verify a TrustlessWork HMAC-SHA256 webhook signature.
+ * Verify a TrustlessWork HMAC-SHA256 webhook signature over exact bytes.
  * Throws if `secret` is empty.
  */
 export function verifyHmacSignature(
-  payload: string,
+  payload: Buffer | Uint8Array,
   signature: string,
   secret: string
 ): boolean

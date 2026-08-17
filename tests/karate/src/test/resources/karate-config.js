@@ -80,19 +80,21 @@ function fn() {
   };
 
   // TrustlessWork webhook signature helper
-  // Signs the exact raw JSON string sent as the request body — pass the
-  // same string literal used for `request` so the signed bytes match what
-  // Express receives on req.rawBody.
+  // Signs canonical bytes `timestamp + '.' + rawBody`. Generates a timestamp
+  // and stores it so the per-request headers function can send the same value.
   // Usage: header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
+  config._twTimestamp = null;
   config.trustlessWorkSignature = function(rawBody) {
     var Mac = Java.type("javax.crypto.Mac");
     var SecretKeySpec = Java.type("javax.crypto.spec.SecretKeySpec");
 
     var secret = java.lang.System.getenv("TRUSTLESSWORK_WEBHOOK_SECRET") || "dev-secret";
+    var ts = String(new Date().getTime());
+    config._twTimestamp = ts;
 
     var mac = Mac.getInstance("HmacSHA256");
     mac.init(new SecretKeySpec(secret.getBytes("UTF-8"), "HmacSHA256"));
-    var digest = mac.doFinal(rawBody.getBytes("UTF-8"));
+    var digest = mac.doFinal((ts + "." + rawBody).getBytes("UTF-8"));
 
     var hex = "";
     for (var i = 0; i < digest.length; i++) {
@@ -103,12 +105,21 @@ function fn() {
     return "sha256=" + hex;
   };
 
-  // Set default headers. Timestamp is required by the webhook HMAC
-  // middleware for replay protection (5-minute window).
-  karate.configure('headers', {
-    'Content-Type': 'application/json',
-    'x-hasura-admin-secret': config.adminSecret,
-    'x-trustlesswork-timestamp': String(new Date().getTime())
+  // Returns the timestamp that was just signed, or a fresh one for unsigned calls.
+  config.pendingTrustlessWorkTimestamp = function() {
+    if (config._twTimestamp) {
+      return config._twTimestamp;
+    }
+    return String(new Date().getTime());
+  };
+
+  // Evaluated for every HTTP request so the timestamp is not frozen at config load.
+  karate.configure('headers', function() {
+    return {
+      'Content-Type': 'application/json',
+      'x-hasura-admin-secret': config.adminSecret,
+      'x-trustlesswork-timestamp': config.pendingTrustlessWorkTimestamp()
+    };
   });
 
   karate.log("Config initialized:", config);
