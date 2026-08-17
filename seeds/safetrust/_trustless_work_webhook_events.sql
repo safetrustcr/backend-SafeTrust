@@ -2,8 +2,9 @@
 -- Covers main TrustlessWork webhook event types for local dev/testing
 -- contract_id values use CAATN5DTEST... prefix for test data
 
--- Idempotency: clear existing webhook events
-TRUNCATE public.trustless_work_webhook_events CASCADE;
+-- Idempotency: remove only demo webhook events before re-inserting
+DELETE FROM public.trustless_work_webhook_events
+WHERE contract_id IN ('CAATN5DTEST00001', 'CAATN5DTEST00002', 'CAATN5DTEST00003');
 
 INSERT INTO public.trustless_work_webhook_events (
   contract_id, event_type, payload, signature,

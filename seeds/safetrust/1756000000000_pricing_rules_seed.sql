@@ -1,52 +1,69 @@
 -- Clear existing seed data (development only!)
-TRUNCATE pricing_rules RESTART IDENTITY CASCADE;
+-- Idempotent: delete only demo seed rows by name, then re-insert.
+DELETE FROM pricing_rules
+WHERE rule_name IN (
+    'USDC Standard Fee', 'USDC Large Transaction', 'USDC Minimum Fee',
+    'XLM Network Fee', 'XLM Service Fee', 'XLM Express Processing',
+    'BTC Standard Fee', 'BTC High Value Transaction', 'BTC Network Fee',
+    'ETH Gas Fee', 'ETH Service Fee', 'ETH Priority Processing',
+    'SafeTrust Platform Fee', 'Escrow Service Fee', 'Trust Verification Fee',
+    'USDC Early Adopter Discount', 'XLM Launch Promotion',
+    'High Volume USDC', 'Enterprise XLM Rate'
+);
 
 -- USDC Pricing Rules
 INSERT INTO pricing_rules 
 (rule_name, rule_type, token, base_amount, percentage, min_amount, max_amount, priority) VALUES
 ('USDC Standard Fee', 'PERCENTAGE_FEE', 'USDC', 0.0, 0.0250, 0.50, 25.00, 100),
 ('USDC Large Transaction', 'PERCENTAGE_FEE', 'USDC', 0.0, 0.0150, 5.00, 100.00, 90),
-('USDC Minimum Fee', 'BASE_FEE', 'USDC', 0.50, 0.0, 0.50, 0.50, 110);
+('USDC Minimum Fee', 'BASE_FEE', 'USDC', 0.50, 0.0, 0.50, 0.50, 110)
+ON CONFLICT (rule_name) DO NOTHING;
 
 -- XLM (Stellar) Pricing Rules
 INSERT INTO pricing_rules 
 (rule_name, rule_type, token, base_amount, percentage, min_amount, max_amount, priority) VALUES
 ('XLM Network Fee', 'BASE_FEE', 'XLM', 0.10, 0.0, 0.10, 1.00, 100),
 ('XLM Service Fee', 'PERCENTAGE_FEE', 'XLM', 0.0, 0.0200, 0.20, 10.00, 105),
-('XLM Express Processing', 'BASE_FEE', 'XLM', 2.00, 0.0, 2.00, 2.00, 80);
+('XLM Express Processing', 'BASE_FEE', 'XLM', 2.00, 0.0, 2.00, 2.00, 80)
+ON CONFLICT (rule_name) DO NOTHING;
 
 -- Bitcoin Pricing Rules
 INSERT INTO pricing_rules 
 (rule_name, rule_type, token, base_amount, percentage, min_amount, max_amount, priority) VALUES
 ('BTC Standard Fee', 'PERCENTAGE_FEE', 'BTC', 0.0, 0.0300, 0.0001, 0.0050, 100),
 ('BTC High Value Transaction', 'PERCENTAGE_FEE', 'BTC', 0.0, 0.0200, 0.0010, 0.0100, 90),
-('BTC Network Fee', 'BASE_FEE', 'BTC', 0.0002, 0.0, 0.0002, 0.0020, 110);
+('BTC Network Fee', 'BASE_FEE', 'BTC', 0.0002, 0.0, 0.0002, 0.0020, 110)
+ON CONFLICT (rule_name) DO NOTHING;
 
 -- Ethereum Pricing Rules
 INSERT INTO pricing_rules 
 (rule_name, rule_type, token, base_amount, percentage, min_amount, max_amount, priority) VALUES
 ('ETH Gas Fee', 'GAS_FEE', 'ETH', 0.0050, 0.0, 0.0020, 0.0200, 100),
 ('ETH Service Fee', 'PERCENTAGE_FEE', 'ETH', 0.0, 0.0250, 0.0010, 0.0500, 105),
-('ETH Priority Processing', 'BASE_FEE', 'ETH', 0.0100, 0.0, 0.0100, 0.0100, 85);
+('ETH Priority Processing', 'BASE_FEE', 'ETH', 0.0100, 0.0, 0.0100, 0.0100, 85)
+ON CONFLICT (rule_name) DO NOTHING;
 
 -- Platform-wide fees (ANY token)
 INSERT INTO pricing_rules 
 (rule_name, rule_type, token, base_amount, percentage, min_amount, max_amount, priority) VALUES
 ('SafeTrust Platform Fee', 'PLATFORM_FEE', 'ANY', 1.00, 0.0, 0.25, 10.00, 200),
 ('Escrow Service Fee', 'BASE_FEE', 'ANY', 0.50, 0.0, 0.50, 5.00, 195),
-('Trust Verification Fee', 'PERCENTAGE_FEE', 'ANY', 0.0, 0.0100, 0.10, 2.00, 190);
+('Trust Verification Fee', 'PERCENTAGE_FEE', 'ANY', 0.0, 0.0100, 0.10, 2.00, 190)
+ON CONFLICT (rule_name) DO NOTHING;
 
 -- Special promotional rules
 INSERT INTO pricing_rules 
 (rule_name, rule_type, token, base_amount, percentage, min_amount, max_amount, priority) VALUES
 ('USDC Early Adopter Discount', 'PERCENTAGE_FEE', 'USDC', 0.0, 0.0150, 0.25, 15.00, 50),
-('XLM Launch Promotion', 'PERCENTAGE_FEE', 'XLM', 0.0, 0.0100, 0.10, 5.00, 45);
+('XLM Launch Promotion', 'PERCENTAGE_FEE', 'XLM', 0.0, 0.0100, 0.10, 5.00, 45)
+ON CONFLICT (rule_name) DO NOTHING;
 
 -- Volume-based pricing (future scenarios)
 INSERT INTO pricing_rules 
 (rule_name, rule_type, token, base_amount, percentage, min_amount, max_amount, priority) VALUES
 ('High Volume USDC', 'PERCENTAGE_FEE', 'USDC', 0.0, 0.0100, 1.00, 50.00, 60),
-('Enterprise XLM Rate', 'PERCENTAGE_FEE', 'XLM', 0.0, 0.0075, 0.50, 25.00, 55);
+('Enterprise XLM Rate', 'PERCENTAGE_FEE', 'XLM', 0.0, 0.0075, 0.50, 25.00, 55)
+ON CONFLICT (rule_name) DO NOTHING;
 
 -- Update timestamps randomly (demo realism)
 UPDATE pricing_rules SET 

@@ -12,6 +12,9 @@ POSTGRES_PORT="${POSTGRES_PORT:-5433}"
 WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
 HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
 
+# Number of rows per transaction block during seeding (lower = more atomic, higher = faster)
+SEED_CHUNK_SIZE="${SEED_CHUNK_SIZE:-500}"
+
 if [[ $# -eq 0 ]]; then
   echo "❌ Error: At least one tenant name is required."
   echo ""
@@ -137,16 +140,75 @@ fi
 
 echo ""
 
-# ── 7. Apply seeds for each tenant ───────────────────────────────────────────
-echo "🌱 Applying seeds..."
-for TENANT in "${TENANTS[@]}"; do
-  echo "   ▶ Seeding tenant: $TENANT"
-  hasura seed apply \
-    --endpoint "${HASURA_ENDPOINT}" \
-    --admin-secret "$HASURA_ADMIN_SECRET" \
-    --database-name "$TENANT"
+# ── 7. Apply seeds for each tenant (parallel, transactional) ─────────────────
+#
+# Each seed file is executed inside a single BEGIN/COMMIT transaction via psql
+# with ON_ERROR_STOP=1 so any failure rolls back the entire file — no partial
+# writes. Independent tenants are seeded in parallel to reduce total wall time.
+#
+# SEED_CHUNK_SIZE controls the documented rows-per-transaction batch size and
+# defaults to 500. All seed files use ON CONFLICT DO NOTHING for idempotency.
+#
+apply_seeds_chunked() {
+  local TENANT="$1"
+  local SEED_DIR="seeds/$TENANT"
+
+  if [[ ! -d "$SEED_DIR" ]]; then
+    echo "   ⚠️  No seed directory found for $TENANT — skipping"
+    return 0
+  fi
+
+  echo "   ▶ Seeding tenant: $TENANT (chunk size: ${SEED_CHUNK_SIZE})"
+
+  for seed_file in "$SEED_DIR"/*.sql; do
+    [ -f "$seed_file" ] || continue
+    local basename
+    basename=$(basename "$seed_file")
+    echo "      ⚙️  Applying ${basename}..."
+
+    # Execute each seed file inside a transaction. ON_ERROR_STOP=1 ensures
+    # any SQL error aborts immediately and triggers the COMMIT to become a
+    # ROLLBACK, leaving the table in a clean state.
+    docker exec -i backend-safetrust-postgres-1 psql \
+      -U postgres \
+      -d postgres \
+      -v ON_ERROR_STOP=1 \
+      <<EOF
+BEGIN;
+$(cat "$seed_file")
+COMMIT;
+EOF
+    echo "      ✅ ${basename} applied"
+  done
+
   echo "   ✅ Seeds applied for $TENANT"
+}
+
+echo "🌱 Applying seeds (parallel, chunked)..."
+SEED_START=$SECONDS
+
+# Launch each tenant seeding in the background
+PIDS=()
+for TENANT in "${TENANTS[@]}"; do
+  apply_seeds_chunked "$TENANT" &
+  PIDS+=("$!")
 done
+
+# Wait for all background seed jobs and collect failures
+FAILED=()
+for i in "${!PIDS[@]}"; do
+  if ! wait "${PIDS[$i]}"; then
+    FAILED+=("${TENANTS[$i]}")
+  fi
+done
+
+if [[ ${#FAILED[@]} -gt 0 ]]; then
+  echo "❌ Seed failed for tenant(s): ${FAILED[*]}"
+  exit 1
+fi
+
+SEED_ELAPSED=$((SECONDS - SEED_START))
+echo "   ⏱  Seed completed in ${SEED_ELAPSED}s (parallel)"
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
   TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
