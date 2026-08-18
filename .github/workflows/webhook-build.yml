@@ -1,0 +1,53 @@
+# Builds the webhook Docker image and smoke-tests the Rust Neon addons
+# (stellar-utils + webhook-verifier) inside the container.
+#
+# This is the verification that requires Docker (alpine musl toolchain +
+# cargo build), so it runs for free on GitHub runners instead of locally.
+# A failing build or a broken addon will show up directly on the PR.
+name: webhook build
+
+on:
+  push:
+    paths:
+      - 'webhook/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/webhook-build.yml'
+  pull_request:
+    paths:
+      - 'webhook/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/webhook-build.yml'
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build webhook image
+        run: docker build -t safetrust-webhook:verify -f webhook/Dockerfile .
+
+      - name: Smoke-test native addons inside the image
+        run: |
+          docker run --rm safetrust-webhook:verify node -e "
+            const stellar = require('/app/webhook/crates/stellar-utils');
+            const verifier = require('/app/crates/webhook-verifier');
+            const good = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57';
+            const checks = [
+              stellar.validateStellarAddress(good) === true,
+              stellar.validateStellarAddress('not-a-stellar-address') === false,
+              stellar.validateStellarAddress('GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z') === false,
+              Object.keys(stellar).sort().join(',') === 'validateStellarAddress,verifyStellarEd25519',
+              typeof verifier.verifyHmacSignature === 'function',
+              typeof verifier.validateStellarAddress === 'function'
+            ];
+            if (checks.includes(false)) {
+              console.error('addon smoke test FAILED:', checks);
+              process.exit(1);
+            }
+            console.log('addon smoke test OK - exports and validation behave as expected');
+          "

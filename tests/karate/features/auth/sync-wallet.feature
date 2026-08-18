@@ -5,7 +5,10 @@ Feature: POST /api/auth/sync-wallet
     * def validToken = karate.call('classpath:helpers/get-firebase-token.js')
     # owner-123 is seeded by seed-test-users.sql
     * def testUid = 'owner-123'
-    * def stellarAddress = 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z'
+    # Real, checksum-valid Stellar address (generated). The previous fixture
+    # 'GDQEREN...J7Z' was fabricated and now fails the strkey checksum
+    # validation performed by the Rust stellar-utils addon.
+    * def stellarAddress = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-users.sql'))
     * db.execute("DELETE FROM public.user_wallets WHERE wallet_address = '" + stellarAddress + "'")
 
