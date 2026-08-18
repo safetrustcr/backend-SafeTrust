@@ -23,6 +23,7 @@ venv/
 # Karate test artifacts
 tests/results/**
 !tests/results/.gitkeep
+tests/results/deploy_init_timings.json
 tests/karate.jar
 tests/postgresql-jdbc.jar
 

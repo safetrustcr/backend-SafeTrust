@@ -193,6 +193,45 @@ hasura seed apply \
 
 ---
 
+## ⏱️ Benchmarking Protocol
+
+`bin/deploy_init` is an experimental benchmarking tool for evaluating parallel deployment vs the canonical sequential path.
+
+Contributors run both scripts from identical starting conditions and record the JSON output:
+
+### Round 1 — Amdahl baseline (sequential, N=2)
+```bash
+docker compose down -v
+bin/start safetrust hotel_industry # canonical path
+# record: tests/results/deploy_timings_sequential_N2.json
+
+docker compose down -v
+bin/start # infrastructure only
+bin/deploy_init safetrust hotel_industry # PARALLEL_DEPLOY=false
+# record: tests/results/deploy_init_timings_sequential_N2.json
+```
+
+### Round 2 — Gustafson parallel (N=2)
+```bash
+docker compose down -v
+bin/start
+PARALLEL_DEPLOY=true bin/deploy_init safetrust hotel_industry
+# record: tests/results/deploy_init_timings_parallel_N2.json
+```
+
+### Round 3 — Gustafson scaling (N=5, simulated)
+```bash
+# Simulate 5 tenants by deploying same 2 tenants with 3 aliases
+# This validates the parallel execution model without requiring real tenant data
+docker compose down -v
+bin/start
+PARALLEL_DEPLOY=true bin/deploy_init \
+  safetrust hotel_industry safetrust hotel_industry safetrust
+# record: tests/results/deploy_init_timings_parallel_N5.json
+```
+
+---
+
 ## 🥋🔬 Karate Tests
 
 API tests using the [Karate framework](https://docs.karatelabs.io/), running in Docker.
