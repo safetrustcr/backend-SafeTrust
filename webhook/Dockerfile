@@ -15,11 +15,16 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 COPY crates/ ./crates/
 
-# Build the Rust crate → native/index.node (Node-API v6, ABI-stable).
+# Build the Rust crates → native/index.node (Node-API v6, ABI-stable).
 RUN cd crates/stellar-utils \
     && cargo build --release \
     && mkdir -p native \
     && cp target/release/libstellar_utils.so native/index.node
+
+RUN cd crates/soroban-reconciler \
+    && cargo build --release \
+    && mkdir -p native \
+    && cp target/release/libsoroban_reconciler.so native/index.node
 
 RUN npm run build
 
@@ -34,9 +39,11 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
-# Runtime pieces of the native addon (package.json → main: native/index.node)
+# Runtime pieces of the native addons (package.json → main: native/index.node)
 COPY --from=builder /app/crates/stellar-utils/package.json ./crates/stellar-utils/package.json
 COPY --from=builder /app/crates/stellar-utils/native ./crates/stellar-utils/native
+COPY --from=builder /app/crates/soroban-reconciler/package.json ./crates/soroban-reconciler/package.json
+COPY --from=builder /app/crates/soroban-reconciler/native ./crates/soroban-reconciler/native
 
 # node user/group already exists in official node:24-alpine image
 USER node
