@@ -1,9 +1,9 @@
 import app from './app'
 
-const rawPort = process.env.WEBHOOK_PORT
-const port = rawPort ? parseInt(rawPort, 10) : 3001
+const rawPort = process.env.WEBHOOK_PORT ?? process.env.PORT
+const port = rawPort === undefined ? 3001 : Number(rawPort)
 
-if (isNaN(port) || port < 1 || port > 65535) {
+if (!Number.isInteger(port) || port < 1 || port > 65535) {
   console.error(`❌ Invalid WEBHOOK_PORT: "${rawPort}" — must be between 1 and 65535`)
   process.exit(1)
 }
