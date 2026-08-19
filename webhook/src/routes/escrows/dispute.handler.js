@@ -59,14 +59,16 @@ const disputeEscrowHandler = async (req, res) => {
       });
     }
 
+    const escrowId = updated[0].id;
+
     // 3 — Mirror status to public.reservations
     const mirrorMutation = `
-      mutation MirrorDisputedToReservation($contractId: String!) {
-        update_reservations(
-          where: { escrow: { contractId: { _eq: $contractId } } }
+      mutation MirrorDisputedToReservation($escrowId: uuid!) {
+        update_safetrust_reservations(
+          where: { escrowId: { _eq: $escrowId } }
           _set: {
             status: "disputed"
-            updated_at: "now()"
+            updatedAt: "now()"
           }
         ) {
           returning { id status }
@@ -74,7 +76,7 @@ const disputeEscrowHandler = async (req, res) => {
       }
     `;
 
-    await hasuraRequest(mirrorMutation, { contractId });
+    await hasuraRequest(mirrorMutation, { escrowId });
 
     await markWebhookEventProcessed(eventId);
 

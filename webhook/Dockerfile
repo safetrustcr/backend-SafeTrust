@@ -12,7 +12,6 @@ COPY package*.json ./
 RUN npm ci
 
 COPY tsconfig.json ./
-COPY src/ ./src/
 COPY crates/ ./crates/
 
 # Build the Rust crate → native/index.node (Node-API v6, ABI-stable).
@@ -21,6 +20,7 @@ RUN cd crates/stellar-utils \
     && mkdir -p native \
     && cp target/release/libstellar_utils.so native/index.node
 
+COPY src/ ./src/
 RUN npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────

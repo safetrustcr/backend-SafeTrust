@@ -57,14 +57,16 @@ const resolveDisputeHandler = async (req, res) => {
       });
     }
 
+    const escrowId = updated[0].id;
+
     // 3 — Mirror status to public.reservations
     const mirrorMutation = `
-      mutation MirrorResolvedToReservation($contractId: String!) {
-        update_reservations(
-          where: { escrow: { contractId: { _eq: $contractId } } }
+      mutation MirrorResolvedToReservation($escrowId: uuid!) {
+        update_safetrust_reservations(
+          where: { escrowId: { _eq: $escrowId } }
           _set: {
             status: "resolved"
-            updated_at: "now()"
+            updatedAt: "now()"
           }
         ) {
           returning { id status }
@@ -72,7 +74,7 @@ const resolveDisputeHandler = async (req, res) => {
       }
     `;
 
-    await hasuraRequest(mirrorMutation, { contractId });
+    await hasuraRequest(mirrorMutation, { escrowId });
 
     // 4 — Store resolution note in escrow_metadata if provided
     if (resolutionNote) {
