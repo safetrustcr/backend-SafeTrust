@@ -1,0 +1,12 @@
+{
+  "name": "escrow-state-machine",
+  "version": "0.1.0",
+  "main": "index.node",
+  "scripts": {
+    "build": "cargo-cp-artifact -nc index.node -- cargo build --message-format=json-render-diagnostics",
+    "build-release": "cargo-cp-artifact -nc index.node -- cargo build --message-format=json-render-diagnostics --release"
+  },
+  "devDependencies": {
+    "cargo-cp-artifact": "^0.1"
+  }
+}

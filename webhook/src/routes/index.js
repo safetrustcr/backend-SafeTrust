@@ -14,6 +14,7 @@ const approveMilestoneRoute = require('./escrows/approve-milestone.route')
 const releaseFundsRoute     = require('./escrows/release-funds.route')
 const disputeRoute          = require('./escrows/dispute.route')
 const resolveDisputeRoute   = require('./escrows/resolve-dispute.route')
+const transitionsRoute      = require('./escrow-transitions.route')
 
 const authRoutes              = require('./auth')
 const apartmentRoutes         = require('./apartments/list.route')
@@ -86,6 +87,7 @@ router.use(approveMilestoneRoute)
 router.use(releaseFundsRoute)
 router.use(disputeRoute)
 router.use(resolveDisputeRoute)
+router.use(transitionsRoute)
 
 // ── 3. Hotel conversations (service-to-service auth) ─────────────────────────
 router.use('/api/hotel', verifyInternalSecret)

@@ -89,11 +89,18 @@ async function approveMilestoneHandler(req, res) {
       return res.status(404).json({ error: 'Milestone not found' });
     }
 
-    // 3 — Update trustless_work_escrows
+    const { getValidPriorStates } = require('../../../../crates/escrow-state-machine');
+    const validStatesJson = getValidPriorStates('milestone_approved', 'milestone.approved');
+    const validStates = JSON.parse(validStatesJson);
+
+    // 3 - Update trustless_work_escrows
     const mutationEscrow = `
-      mutation ApproveEscrow($escrowId: uuid!, $approvedAt: timestamptz!) {
+      mutation ApproveEscrow($escrowId: uuid!, $approvedAt: timestamptz!, $validStates: [String!]!) {
         update_trustless_work_escrows(
-          where: { id: { _eq: $escrowId } }
+          where: { 
+            id: { _eq: $escrowId },
+            status: { _in: $validStates }
+          }
           _set: {
             status: "milestone_approved"
             updatedAt: $approvedAt
@@ -107,6 +114,7 @@ async function approveMilestoneHandler(req, res) {
     const escrowResult = await hasuraRequest(mutationEscrow, {
       escrowId,
       approvedAt,
+      validStates,
     });
 
     if (!escrowResult.update_trustless_work_escrows?.affected_rows) {
