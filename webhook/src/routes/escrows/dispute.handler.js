@@ -36,11 +36,18 @@ const disputeEscrowHandler = async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
+    const { getValidPriorStates } = require('../../../../crates/escrow-state-machine');
+    const validStatesJson = getValidPriorStates('disputed', 'dispute.raised');
+    const validStates = JSON.parse(validStatesJson);
+
     // 2 — Update trustless_work_escrows
     const mutation = `
-      mutation DisputeEscrow($contractId: String!) {
+      mutation DisputeEscrow($contractId: String!, $validStates: [String!]!) {
         update_trustless_work_escrows(
-          where: { contractId: { _eq: $contractId } }
+          where: { 
+            contractId: { _eq: $contractId },
+            status: { _in: $validStates }
+          }
           _set: {
             status: "disputed"
           }
@@ -50,7 +57,7 @@ const disputeEscrowHandler = async (req, res) => {
       }
     `;
 
-    const data = await hasuraRequest(mutation, { contractId });
+    const data = await hasuraRequest(mutation, { contractId, validStates });
     const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {

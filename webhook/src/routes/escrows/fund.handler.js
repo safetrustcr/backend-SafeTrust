@@ -38,13 +38,17 @@ const fundEscrowHandler = async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
+    const { getValidPriorStates } = require('../../../../crates/escrow-state-machine');
+    const validStatesJson = getValidPriorStates('funded', 'escrow.funded');
+    const validStates = JSON.parse(validStatesJson);
+
     // 3 — Update public.trustless_work_escrows
     const mutation = `
-      mutation FundEscrow($contractId: String!, $amount: numeric!) {
+      mutation FundEscrow($contractId: String!, $amount: numeric!, $validStates: [String!]!) {
         update_trustless_work_escrows(
           where: {
             contractId: { _eq: $contractId }
-            status: { _in: ["created", "pending_funding"] }
+            status: { _in: $validStates }
           }
           _set: {
             status: "funded"
@@ -61,7 +65,7 @@ const fundEscrowHandler = async (req, res) => {
       }
     `;
 
-    const data = await hasuraRequest(mutation, { contractId, amount });
+    const data = await hasuraRequest(mutation, { contractId, amount, validStates });
     const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {
