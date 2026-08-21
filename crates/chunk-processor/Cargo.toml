@@ -1,0 +1,24 @@
+[package]
+name = "chunk-processor"
+version = "0.1.0"
+edition = "2021"
+description = "Neon native addon that fetches escrow chunks from the TrustlessWork indexer concurrently (Tokio + reqwest)"
+
+[lib]
+# cdylib → Node-API addon (index.node); rlib → lets `cargo test` build the pure
+# logic (envelope normalisation, chunk parsing) as a plain test binary without a
+# Node.js runtime — mirrors the stellar-utils / webhook-verifier convention.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neon       = { version = "1", default-features = false, features = ["napi-6"] }
+# rustls-tls (not native-tls) keeps the build free of a system OpenSSL dependency
+# so it compiles cleanly on the Alpine/musl builder image in webhook/Dockerfile.
+reqwest    = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio      = { version = "1", features = ["rt-multi-thread", "time", "macros"] }
+futures    = "0.3"
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "test-util"] }
