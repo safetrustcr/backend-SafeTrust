@@ -1,7 +1,7 @@
 {
   "scripts": {
-    "build": "tsc",
-    "build:soroban-reconciler": "cd crates/soroban-reconciler && cargo build --release && mkdir -p native && cp target/release/libsoroban_reconciler.so native/index.node",
+    "build:rust": "cargo build --release --manifest-path ../crates/webhook-verifier/Cargo.toml && node ../crates/webhook-verifier/copy-native.js",
+    "build": "npm run build:rust && tsc",
     "dev": "nodemon --exec ts-node src/index.ts",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",

@@ -46,8 +46,8 @@ services:
 
   webhook:
     build:
-      context: ./webhook      # ← fixed: local path within backend repo
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: webhook/Dockerfile
     container_name: safetrust-webhook
     ports:
       - "3000:3000"
