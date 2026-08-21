@@ -1,8 +1,13 @@
 -- Seed for escrow_transactions table
 -- Using public.escrow_transactions (canonical escrow table)
+-- Idempotent: delete only demo seed rows, then re-insert with ON CONFLICT DO NOTHING.
 
--- Clear existing seed data (development only)
-TRUNCATE public.escrow_transactions RESTART IDENTITY CASCADE;
+-- Remove existing demo rows by their stable contract IDs
+DELETE FROM public.escrow_transactions
+WHERE contract_id IN (
+    'contract-001', 'contract-002', 'contract-003',
+    'contract-004', 'contract-005', 'contract-006'
+);
 
 INSERT INTO public.escrow_transactions (
     id,
@@ -107,4 +112,5 @@ INSERT INTO public.escrow_transactions (
     'safetrust',
     NOW() - INTERVAL '4 days',
     NOW() - INTERVAL '2 days'
-);
+)
+ON CONFLICT (contract_id) DO NOTHING;
