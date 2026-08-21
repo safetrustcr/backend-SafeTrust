@@ -16,10 +16,8 @@
 
 const db = require('../../services/db');
 const {
-  chunkArray,
-  syncChunk,
+  syncAllChunks,
   findStaleEscrows,
-  CHUNK_SIZE,
 } = require('../../lib/reconciliation');
 
 /** Escrows not updated within this many days are reported as stale. */
@@ -61,34 +59,17 @@ async function syncEscrowsHandler(req, res) {
     }
 
     const contractIds = rows.map((r) => r.contract_id);
-    const chunks = chunkArray(contractIds, CHUNK_SIZE);
 
-    let totalUpdated = 0;
-    let totalUnchanged = 0;
-    let totalSkipped = 0;
-    const chunkErrors = [];
-
-    // ── Step 2: Process each chunk independently ────────────────────────────
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      try {
-        const { updated, unchanged, skipped } = await syncChunk(chunk);
-        totalUpdated += updated;
-        totalUnchanged += unchanged;
-        totalSkipped += skipped;
-        console.log(
-          `[reconciliation]   chunk ${i + 1}/${chunks.length}` +
-          ` (${chunk.length} ids) — updated: ${updated}, unchanged: ${unchanged}, skipped: ${skipped}`
-        );
-      } catch (chunkError) {
-        // Isolate chunk-level errors so other chunks still run.
-        const errMsg = chunkError.message || String(chunkError);
-        console.error(
-          `[reconciliation] ⚠️  Chunk ${i + 1}/${chunks.length} failed: ${errMsg}`
-        );
-        chunkErrors.push(errMsg);
-      }
-    }
+    // ── Step 2: Process all chunks (sequential, or parallel via the Rust addon
+    //            when RUST_CHUNKS_ENABLED=true). Chunk-level errors are isolated
+    //            inside syncAllChunks — one failed chunk never aborts the rest.
+    const {
+      chunks: chunkCount,
+      updated: totalUpdated,
+      unchanged: totalUnchanged,
+      skipped: totalSkipped,
+      errors: chunkErrors,
+    } = await syncAllChunks(contractIds);
 
     // ── Step 3: Detect stale escrows (O(log n + k) indexed lookup) ──────────
     const staleContractIds = await findStaleEscrows(STALE_ESCROW_DAYS);
@@ -106,7 +87,7 @@ async function syncEscrowsHandler(req, res) {
     // ── Step 4: Log summary ─────────────────────────────────────────────────
     console.log(`[reconciliation] ✅ Sync complete in ${durationMs}ms`);
     console.log(`   Total escrows : ${contractIds.length}`);
-    console.log(`   Chunks        : ${chunks.length}`);
+    console.log(`   Chunks        : ${chunkCount}`);
     console.log(`   Updated rows  : ${totalUpdated}`);
     console.log(`   Unchanged rows: ${totalUnchanged}`);
     console.log(`   Skipped rows  : ${totalSkipped}`);
@@ -119,7 +100,7 @@ async function syncEscrowsHandler(req, res) {
     return res.status(200).json({
       success: true,
       totalEscrows: contractIds.length,
-      chunks: chunks.length,
+      chunks: chunkCount,
       updated: totalUpdated,
       unchanged: totalUnchanged,
       skipped: totalSkipped,

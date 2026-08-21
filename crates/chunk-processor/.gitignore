@@ -1,0 +1,5 @@
+# Compiled Neon addon (platform-specific — always built from source in CI/Docker)
+/index.node
+
+# Cargo build output (root .gitignore also covers target/)
+/target/

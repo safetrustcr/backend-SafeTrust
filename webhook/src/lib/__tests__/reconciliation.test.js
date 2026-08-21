@@ -20,8 +20,11 @@ jest.mock('../../services/db', () => ({
 }));
 
 // ─── Mock Node's built-in https so no real network calls fire ─────────────────
+// Explicit factory (not bare automock): Node's automock of the core `https`
+// module does not reliably replace `request` with a jest.fn on Node 18+, so
+// `https.request.mockImplementation` would throw. The factory guarantees it.
+jest.mock('https', () => ({ request: jest.fn() }));
 const https = require('https');
-jest.mock('https');
 
 const db = require('../../services/db');
 const {
