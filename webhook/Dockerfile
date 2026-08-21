@@ -36,9 +36,11 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/webhook/dist ./dist
 COPY --from=builder /app/crates/webhook-verifier/index.node /app/crates/webhook-verifier/index.node
 COPY --from=builder /app/crates/webhook-verifier/package.json /app/crates/webhook-verifier/package.json
-# Runtime pieces of the stellar-utils addon (package.json → main: native/index.node)
-COPY --from=builder /app/webhook/crates/stellar-utils/package.json ./crates/stellar-utils/package.json
-COPY --from=builder /app/webhook/crates/stellar-utils/native ./crates/stellar-utils/native
+# Runtime pieces of the stellar-utils addon (package.json → main: native/index.node).
+# Placed at /app/crates/… so `require('../../../../crates/stellar-utils')` from
+# dist/routes/auth resolves correctly.
+COPY --from=builder /app/crates/stellar-utils/package.json /app/crates/stellar-utils/package.json
+COPY --from=builder /app/crates/stellar-utils/native /app/crates/stellar-utils/native
 
 # node user/group already exists in official node:24-alpine image
 USER node
