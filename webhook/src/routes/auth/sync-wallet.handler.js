@@ -26,7 +26,7 @@ function isStellarAddress(addr) {
 }
 
 const UPSERT_WALLET = `
-  INSERT INTO public.user_wallets (user_id, wallet_address, chain_type, is_primary)
+  INSERT INTO safetrust.user_wallets (user_id, wallet_address, chain_type, is_primary)
   VALUES ($1, $2, $3, $4)
   ON CONFLICT (wallet_address)
   DO UPDATE SET

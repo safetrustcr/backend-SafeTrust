@@ -113,7 +113,7 @@ async function approveMilestoneHandler(req, res) {
       return res.status(404).json({ error: 'Escrow not found' });
     }
 
-    // 4 — Mirror status to public.reservations
+    // 4 — Mirror status to safetrust.reservations
     const reservationStatus = milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
 
     const mirrorMutation = `

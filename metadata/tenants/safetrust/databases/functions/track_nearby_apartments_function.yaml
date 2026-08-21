@@ -7,12 +7,12 @@ definition: |
     lng FLOAT,
     radius_meters FLOAT DEFAULT 5000
   )
-  RETURNS SETOF public.apartments
+  RETURNS SETOF safetrust.apartments
   LANGUAGE sql
   STABLE
   AS $$
     SELECT a.*
-    FROM public.apartments a
+    FROM safetrust.apartments a
     WHERE
       a.deleted_at IS NULL
       AND a.is_available = true

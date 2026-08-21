@@ -8,7 +8,7 @@ import { query } from '../services/db'
 
 /**
  * The user attached to the request by `authMiddleware`. Extends the Firebase
- * `DecodedIdToken` with the role fields resolved from `public.user_roles`.
+ * `DecodedIdToken` with the role fields resolved from `safetrust.user_roles`.
  */
 export interface AuthenticatedUser extends DecodedIdToken {
   roles: string[]
@@ -25,7 +25,7 @@ interface RoleRow {
 }
 
 /**
- * Resolves the roles assigned to a user from the `public.user_roles` join table.
+ * Resolves the roles assigned to a user from the `safetrust.user_roles` join table.
  *
  * Mirrors the query convention in `routes/auth/me.handler.js`: a user may hold
  * multiple roles, so `roles` is always an array. `role` is a convenience scalar
@@ -41,8 +41,8 @@ interface RoleRow {
 async function resolveUserRole(uid: string): Promise<{ roles: string[]; role: string }> {
   const result = await query<RoleRow>(
     `SELECT r.name
-     FROM public.user_roles ur
-     JOIN public.roles r ON r.id = ur.role_id
+     FROM safetrust.user_roles ur
+     JOIN safetrust.roles r ON r.id = ur.role_id
      WHERE ur.user_id = $1
      ORDER BY
        CASE r.name
@@ -61,7 +61,7 @@ async function resolveUserRole(uid: string): Promise<{ roles: string[]; role: st
 
 /**
  * Verifies a Firebase Bearer token and attaches `uid`, `email`, `name`, `role`,
- * `roles`, and `admin` to `req.user`. Roles are sourced from `public.user_roles`
+ * `roles`, and `admin` to `req.user`. Roles are sourced from `safetrust.user_roles`
  * (not Firebase custom claims) in both the test-bypass and verified-token paths.
  */
 export const authMiddleware = async (

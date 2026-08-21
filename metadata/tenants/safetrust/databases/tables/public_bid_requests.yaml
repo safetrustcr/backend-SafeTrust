@@ -1,6 +1,6 @@
 table:
   name: bid_requests
-  schema: public
+  schema: safetrust
 object_relationships:
   - name: apartment
     using:
@@ -15,7 +15,7 @@ array_relationships:
         column: bid_request_id
         table:
           name: bid_status_histories
-          schema: public
+          schema: safetrust
 select_permissions:
   - role: anonymous
     permission:

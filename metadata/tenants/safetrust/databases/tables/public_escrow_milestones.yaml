@@ -1,6 +1,6 @@
 table:
   name: escrow_milestones
-  schema: public
+  schema: safetrust
 configuration:
   column_config:
     escrow_id:
