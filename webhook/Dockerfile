@@ -11,16 +11,16 @@ COPY webhook/package*.json ./webhook/
 WORKDIR /app/webhook
 RUN npm ci
 
-WORKDIR /app
-COPY webhook/tsconfig.json ./webhook/
-COPY webhook/src/ ./webhook/src/
-# Copy the top-level Cargo workspace (both crates + single shared lockfile)
-# and build both Neon addons with one cargo invocation. build:rust also copies
-# each cdylib next to its package.json so Node can require() it.
+COPY tsconfig.json ./
 COPY crates/ ./crates/
-COPY Cargo.toml Cargo.lock ./
 
-WORKDIR /app/webhook
+# Build the Rust crate → native/index.node (Node-API v6, ABI-stable).
+RUN cd crates/stellar-utils \
+    && cargo build --release \
+    && mkdir -p native \
+    && cp target/release/libstellar_utils.so native/index.node
+
+COPY src/ ./src/
 RUN npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────

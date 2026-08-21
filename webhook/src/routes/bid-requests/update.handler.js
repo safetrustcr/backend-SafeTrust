@@ -61,7 +61,7 @@ async function updateBidRequestHandler(req, res) {
     const result = await client.query(GET_BID, [id])
     if (result.rows.length === 0) {
       await client.query('ROLLBACK')
-      return res.status(404).json({ error: 'Bid request not found' })
+      return res.status(404).json({ error: 'Bid not found' })
     }
 
     const bid = result.rows[0]
@@ -69,7 +69,7 @@ async function updateBidRequestHandler(req, res) {
     if (bid.owner_id !== uid) {
       await client.query('ROLLBACK')
       return res.status(403).json({
-        error: 'Forbidden — only the apartment owner can update this bid',
+        error: 'Only owner can approve',
       })
     }
 
@@ -77,7 +77,7 @@ async function updateBidRequestHandler(req, res) {
     if (!allowed.includes(newStatus)) {
       await client.query('ROLLBACK')
       return res.status(400).json({
-        error: `Cannot transition from ${bid.current_status} to ${newStatus}`,
+        error: 'Invalid transition',
         allowedTransitions: allowed,
       })
     }
@@ -88,7 +88,7 @@ async function updateBidRequestHandler(req, res) {
     await client.query('COMMIT')
 
     console.log(`[bid-requests/update] ✅ ${id} → ${newStatus}`)
-    return res.status(200).json({ bidRequest: updated.rows[0] })
+    return res.status(200).json({ bid: updated.rows[0] })
   } catch (error) {
     try {
       await client.query('ROLLBACK')
