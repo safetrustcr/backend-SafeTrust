@@ -11,23 +11,16 @@ COPY webhook/package*.json ./webhook/
 WORKDIR /app/webhook
 RUN npm ci
 
-WORKDIR /app
-COPY webhook/tsconfig.json ./webhook/
-COPY webhook/src/ ./webhook/src/
-# Copy stellar-utils before the repo-root Cargo workspace so this crate
-# stays a standalone package (it is not a workspace member).
-COPY webhook/crates/ ./webhook/crates/
+COPY tsconfig.json ./
+COPY crates/ ./crates/
 
-# Build stellar-utils → native/index.node (Node-API v6, ABI-stable).
-RUN cd /app/webhook/crates/stellar-utils \
+# Build the Rust crate → native/index.node (Node-API v6, ABI-stable).
+RUN cd crates/stellar-utils \
     && cargo build --release \
     && mkdir -p native \
     && cp target/release/libstellar_utils.so native/index.node
 
-COPY crates/ ./crates/
-COPY Cargo.toml Cargo.lock ./
-
-WORKDIR /app/webhook
+COPY src/ ./src/
 RUN npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────

@@ -2,12 +2,15 @@ const express = require('express');
 const router = express.Router();
 const { createBidRequestHandler } = require('./create.handler');
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function validateCreateBidRequest(req, res, next) {
-  const { apartmentId, proposedPrice, desiredMoveIn } = req.body || {};
+  const apartmentId = req.body.apartmentId || req.body.apartment_id;
+  const proposedPrice = req.body.proposedPrice || req.body.proposed_price;
+  const desiredMoveIn = req.body.desiredMoveIn || req.body.desired_move_in;
+
   if (apartmentId == null || proposedPrice == null || desiredMoveIn == null) {
-    return res.status(400).json({ error: 'Missing required fields: apartmentId, proposedPrice, desiredMoveIn' });
+    return res.status(400).json({ error: 'Missing required fields' });
   }
   if (typeof apartmentId !== 'string' || !UUID_RE.test(apartmentId)) {
     return res.status(400).json({ error: 'apartmentId must be a valid UUID' });
