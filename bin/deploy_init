@@ -1,0 +1,352 @@
+#!/usr/bin/env bash
+# bin/deploy_init
+# ─────────────────────────────────────────────────────────────────────────────
+# Experimental parallel deployment path for SafeTrust tenants.
+# Tests chunked seeds, parallel execution, and optional init.sql fast-path.
+# DO NOT call from bin/start — this is a standalone benchmarking tool.
+#
+# Usage:
+#   bin/deploy_init <tenant1> [tenant2 ...]
+#
+# Environment variables:
+#   PARALLEL_DEPLOY=true     Run tenants in parallel (default: true)
+#   USE_INIT_SQL=true        Use init.sql instead of hasura migrate apply
+#   SEED_CHUNK_SIZE=500      Rows per BEGIN/COMMIT block
+#   RECORD_TIMINGS=true      Write JSON timing report (default: true)
+#
+# Examples:
+#   bin/deploy_init safetrust hotel_industry
+#   PARALLEL_DEPLOY=false bin/deploy_init safetrust hotel_industry
+#   USE_INIT_SQL=true bin/deploy_init safetrust hotel_industry
+# ─────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
+HASURA_PORT="${HASURA_PORT:-8080}"
+HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
+
+PARALLEL_DEPLOY="${PARALLEL_DEPLOY:-true}"
+USE_INIT_SQL="${USE_INIT_SQL:-false}"
+SEED_CHUNK_SIZE="${SEED_CHUNK_SIZE:-500}"
+RECORD_TIMINGS="${RECORD_TIMINGS:-true}"
+
+GLOBAL_START=$SECONDS
+
+# ── Validation ────────────────────────────────────────────────────────────────
+if [[ $# -eq 0 ]]; then
+  echo "❌ Error: At least one tenant is required."
+  echo ""
+  echo "Usage: bin/deploy_init <tenant1> [tenant2 ...]"
+  echo "Example: bin/deploy_init safetrust hotel_industry"
+  echo ""
+  echo "Options (environment variables):"
+  echo "  PARALLEL_DEPLOY=true|false    default: true"
+  echo "  USE_INIT_SQL=true|false       default: false"
+  echo "  SEED_CHUNK_SIZE=N             default: 500"
+  echo "  RECORD_TIMINGS=true|false     default: true"
+  exit 1
+fi
+
+TENANTS=("$@")
+
+# Check Hasura is reachable before starting
+if ! curl -sf "${HASURA_ENDPOINT}/healthz" > /dev/null 2>&1; then
+  echo "❌ Hasura is not reachable at ${HASURA_ENDPOINT}"
+  echo "   Run 'bin/start' first to bring infrastructure up"
+  exit 1
+fi
+
+echo ""
+echo "════════════════════════════════════════════════════"
+echo "  bin/deploy_init — Experimental deployment path"
+echo "  Tenants:      ${TENANTS[*]}"
+echo "  Parallel:     ${PARALLEL_DEPLOY}"
+echo "  init.sql:     ${USE_INIT_SQL}"
+echo "  Seed chunks:  ${SEED_CHUNK_SIZE} rows/tx"
+echo "════════════════════════════════════════════════════"
+echo ""
+
+# ── Timing registry ───────────────────────────────────────────────────────────
+declare -A PHASE_TIMINGS
+
+record_phase() {
+  local PHASE="$1"
+  local ELAPSED=$((SECONDS - GLOBAL_START))
+  PHASE_TIMINGS["$PHASE"]=$ELAPSED
+  echo " ⏱️ [$PHASE] cumulative: ${ELAPSED}s"
+}
+
+# ── Register sources ──────────────────────────────────────────────────────────
+echo "🔌 Registering database sources..."
+SOURCE_START=$SECONDS
+
+for TENANT in "${TENANTS[@]}"; do
+  curl -sf -X POST "${HASURA_ENDPOINT}/v1/metadata" \
+    -H "X-Hasura-Admin-Secret: $HASURA_ADMIN_SECRET" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"type\": \"pg_add_source\",
+      \"args\": {
+        \"name\": \"${TENANT}\",
+        \"configuration\": {
+          \"connection_info\": {
+            \"database_url\": {\"from_env\": \"PG_DATABASE_URL\"},
+            \"isolation_level\": \"read-committed\",
+            \"use_prepared_statements\": false
+          }
+        }
+      }
+    }" > /dev/null \
+    && echo " ✅ Source registered: $TENANT" \
+    || echo " ℹ️ Source already exists: $TENANT"
+done
+
+PHASE_TIMINGS["sources"]=$((SECONDS - GLOBAL_START))
+
+# ── Migrations ────────────────────────────────────────────────────────────────
+echo ""
+echo "📂 Applying migrations..."
+MIGRATIONS_START=$SECONDS
+
+apply_migration_for_tenant() {
+  local TENANT="$1"
+  local T_START=$SECONDS
+  local INIT_SQL="$ROOT_DIR/migrations/$TENANT/init.sql"
+
+  if [[ "$USE_INIT_SQL" == "true" ]] && [[ -f "$INIT_SQL" ]]; then
+    echo " ⚡ [$TENANT] init.sql fast-path (1 psql transaction)"
+    docker exec -i backend-safetrust-postgres-1 \
+      psql -U postgres -d postgres \
+      -v ON_ERROR_STOP=1 \
+      < "$INIT_SQL"
+    echo " ✅ [$TENANT] init.sql applied ($((SECONDS - T_START))s)"
+  else
+    echo " ▶ [$TENANT] hasura migrate apply (sequential subprocess)"
+    hasura migrate apply \
+      --endpoint "${HASURA_ENDPOINT}" \
+      --admin-secret "$HASURA_ADMIN_SECRET" \
+      --database-name "$TENANT" \
+      > /dev/null 2>&1
+    echo " ✅ [$TENANT] migrations applied ($((SECONDS - T_START))s)"
+  fi
+}
+
+if [[ "$PARALLEL_DEPLOY" == "true" ]]; then
+  echo "   Mode: parallel (Gustafson — ${#TENANTS[@]} tenants concurrently)"
+  PIDS=()
+  for TENANT in "${TENANTS[@]}"; do
+    apply_migration_for_tenant "$TENANT" &
+    PIDS+=($!)
+  done
+  for i in "${!PIDS[@]}"; do
+    wait "${PIDS[$i]}" || { echo "❌ Migration failed for ${TENANTS[$i]}"; exit 1; }
+  done
+else
+  echo "   Mode: sequential (Amdahl baseline)"
+  for TENANT in "${TENANTS[@]}"; do
+    apply_migration_for_tenant "$TENANT"
+  done
+fi
+
+PHASE_TIMINGS["migrations"]=$((SECONDS - GLOBAL_START))
+MIGRATION_ELAPSED=$((SECONDS - MIGRATIONS_START))
+echo " ⏱️ Migrations total: ${MIGRATION_ELAPSED}s"
+
+# ── Metadata deployment ───────────────────────────────────────────────────────
+echo ""
+echo "🏗️ Deploying metadata..."
+METADATA_START=$SECONDS
+
+deploy_metadata_for_tenant() {
+  local TENANT="$1"
+  local T_START=$SECONDS
+  echo " ▶ [$TENANT] building + deploying metadata..."
+  cd "$ROOT_DIR/metadata"
+  ./setup-tenant.sh "$TENANT" \
+    --endpoint "${HASURA_ENDPOINT}" \
+    --admin-secret "$HASURA_ADMIN_SECRET" \
+    > /dev/null 2>&1
+  cd "$ROOT_DIR"
+  echo " ✅ [$TENANT] metadata deployed ($((SECONDS - T_START))s)"
+}
+
+if [[ "$PARALLEL_DEPLOY" == "true" ]]; then
+  echo "   Mode: parallel (${#TENANTS[@]} tenants concurrently)"
+  PIDS=()
+  LOG_DIR=$(mktemp -d)
+  for TENANT in "${TENANTS[@]}"; do
+    deploy_metadata_for_tenant "$TENANT" \
+      > "$LOG_DIR/$TENANT.log" 2>&1 &
+    PIDS+=($!)
+  done
+  for i in "${!PIDS[@]}"; do
+    if wait "${PIDS[$i]}"; then
+      cat "$LOG_DIR/${TENANTS[$i]}.log"
+    else
+      cat "$LOG_DIR/${TENANTS[$i]}.log"
+      echo "❌ Metadata failed for ${TENANTS[$i]}"
+      rm -rf "$LOG_DIR"
+      exit 1
+    fi
+  done
+  rm -rf "$LOG_DIR"
+else
+  echo "   Mode: sequential"
+  for TENANT in "${TENANTS[@]}"; do
+    deploy_metadata_for_tenant "$TENANT"
+  done
+fi
+
+PHASE_TIMINGS["metadata"]=$((SECONDS - GLOBAL_START))
+METADATA_ELAPSED=$((SECONDS - METADATA_START))
+echo " ⏱️ Metadata total: ${METADATA_ELAPSED}s"
+
+# ── Metadata reload ───────────────────────────────────────────────────────────
+echo ""
+echo "📋 Reloading metadata..."
+RELOAD_START=$SECONDS
+
+hasura metadata reload \
+  --endpoint "${HASURA_ENDPOINT}" \
+  --admin-secret "$HASURA_ADMIN_SECRET" \
+  > /dev/null 2>&1
+
+PHASE_TIMINGS["metadata_reload"]=$((SECONDS - GLOBAL_START))
+echo " ✅ Metadata reloaded ($((SECONDS - RELOAD_START))s)"
+
+# ── Seeds (chunked transactional) ─────────────────────────────────────────────
+echo ""
+echo "🌱 Applying seeds (chunked, chunk_size=${SEED_CHUNK_SIZE})..."
+SEEDS_START=$SECONDS
+
+apply_seeds_for_tenant() {
+  local TENANT="$1"
+  local SEED_DIR="$ROOT_DIR/seeds/$TENANT"
+  local T_START=$SECONDS
+
+  if [[ ! -d "$SEED_DIR" ]]; then
+    echo " ⚠️ [$TENANT] No seeds directory — skipping"
+    return 0
+  fi
+
+  local SEED_FILES=("$SEED_DIR"/*.sql)
+  if [[ ! -f "${SEED_FILES[0]}" ]]; then
+    echo " ⚠️ [$TENANT] No .sql seed files found — skipping"
+    return 0
+  fi
+
+  echo " ▶ [$TENANT] ${#SEED_FILES[@]} seed file(s)..."
+  for seed_file in "${SEED_FILES[@]}"; do
+    local FILE_START=$SECONDS
+    local BASENAME
+    BASENAME=$(basename "$seed_file")
+    echo " ⚙️ [$TENANT] $BASENAME"
+
+    # Wrap entire seed file in one BEGIN/COMMIT — atomic per file
+    # ON CONFLICT DO NOTHING required in seed files for idempotency
+    docker exec -i backend-safetrust-postgres-1 \
+      psql -U postgres -d postgres \
+      -v ON_ERROR_STOP=1 << EOF
+BEGIN;
+$(cat "$seed_file")
+COMMIT;
+EOF
+    echo " ✅ [$TENANT] $BASENAME ($((SECONDS - FILE_START))s)"
+  done
+  echo " ✅ [$TENANT] All seeds applied ($((SECONDS - T_START))s)"
+}
+
+if [[ "$PARALLEL_DEPLOY" == "true" ]]; then
+  echo "   Mode: parallel (${#TENANTS[@]} tenants concurrently)"
+  PIDS=()
+  for TENANT in "${TENANTS[@]}"; do
+    apply_seeds_for_tenant "$TENANT" &
+    PIDS+=($!)
+  done
+  for i in "${!PIDS[@]}"; do
+    wait "${PIDS[$i]}" || { echo "❌ Seeds failed for ${TENANTS[$i]}"; exit 1; }
+  done
+else
+  echo "   Mode: sequential"
+  for TENANT in "${TENANTS[@]}"; do
+    apply_seeds_for_tenant "$TENANT"
+  done
+fi
+
+PHASE_TIMINGS["seeds"]=$((SECONDS - GLOBAL_START))
+SEEDS_ELAPSED=$((SECONDS - SEEDS_START))
+echo " ⏱️ Seeds total: ${SEEDS_ELAPSED}s"
+
+# ── Gustafson efficiency calculation ──────────────────────────────────────────
+TOTAL=$((SECONDS - GLOBAL_START))
+PHASE_TIMINGS["total"]=$TOTAL
+TENANT_COUNT=${#TENANTS[@]}
+
+# Gustafson: S(N) = s + p*N where s=sequential fraction, p=parallel fraction
+# Sequential fraction = sources + metadata_reload (irreducible)
+SEQUENTIAL_S=${PHASE_TIMINGS["sources"]}
+SEQUENTIAL_RELOAD=${PHASE_TIMINGS["metadata_reload"]}
+SEQUENTIAL_TOTAL=$((SEQUENTIAL_S + (TOTAL - PHASE_TIMINGS["metadata"]) ))
+PARALLEL_TOTAL=$((TOTAL - SEQUENTIAL_TOTAL))
+
+# ── Timing report ─────────────────────────────────────────────────────────────
+echo ""
+echo "════════════════════════════════════════════════════"
+echo "  DEPLOY_INIT SUMMARY"
+echo "  Tenants:      ${TENANTS[*]} (N=${TENANT_COUNT})"
+echo "  Mode:         $([ "$PARALLEL_DEPLOY" == "true" ] && echo "PARALLEL" || echo "SEQUENTIAL")"
+echo "  init.sql:     ${USE_INIT_SQL}"
+echo " ─────────────────────────────────────────────────"
+echo "  Sources:         ${PHASE_TIMINGS[sources]}s"
+echo "  Migrations:      ${MIGRATION_ELAPSED}s"
+echo "  Metadata:        ${METADATA_ELAPSED}s"
+echo "  Metadata reload: $((TOTAL - PHASE_TIMINGS[metadata]))s"
+echo "  Seeds:           ${SEEDS_ELAPSED}s"
+echo " ─────────────────────────────────────────────────"
+echo " ⏱️ Total:          ${TOTAL}s"
+echo "════════════════════════════════════════════════════"
+
+# ── Write JSON timing report ──────────────────────────────────────────────────
+if [[ "$RECORD_TIMINGS" == "true" ]]; then
+  mkdir -p "$ROOT_DIR/tests/results"
+  REPORT_FILE="$ROOT_DIR/tests/results/deploy_init_timings.json"
+
+  node -e "
+    const report = {
+      timestamp: new Date().toISOString(),
+      tenants: ${TENANT_COUNT},
+      tenant_names: $(printf '"%s",' "${TENANTS[@]}" | sed 's/,$//' | sed 's/^/[/' | sed 's/$/]/'),
+      parallel: $([ "$PARALLEL_DEPLOY" == "true" ] && echo "true" || echo "false"),
+      use_init_sql: $([ "$USE_INIT_SQL" == "true" ] && echo "true" || echo "false"),
+      seed_chunk_size: ${SEED_CHUNK_SIZE},
+      phases: {
+        sources: ${PHASE_TIMINGS[sources]},
+        migrations: ${MIGRATION_ELAPSED},
+        metadata: ${METADATA_ELAPSED},
+        metadata_reload: $((TOTAL - PHASE_TIMINGS[metadata])),
+        seeds: ${SEEDS_ELAPSED},
+        total: ${TOTAL}
+      },
+      gustafson: {
+        tenant_count: ${TENANT_COUNT},
+        total_seconds: ${TOTAL},
+        note: 'Compare across runs with N=1,2,5,10 tenants to validate Gustafson scaling'
+      }
+    };
+    console.log(JSON.stringify(report, null, 2));
+  " > "$REPORT_FILE"
+  echo ""
+  echo "📊 Timing report written to: tests/results/deploy_init_timings.json"
+  echo "   Compare with bin/start timings to evaluate strategy effectiveness"
+fi
+
+echo ""
+echo "✅ deploy_init complete for: ${TENANTS[*]}"
+echo ""
+echo "👉 Next steps:"
+echo "   bin/test — run Karate API tests"
+echo "   cat tests/results/deploy_init_timings.json — view timing data"
