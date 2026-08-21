@@ -78,8 +78,8 @@ services:
 
   webhook:
     build:
-      context: ./webhook
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: webhook/Dockerfile
     environment:
       - NODE_ENV=test
       - WEBHOOK_PORT=3001
