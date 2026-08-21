@@ -14,16 +14,9 @@ RUN npm ci
 WORKDIR /app
 COPY webhook/tsconfig.json ./webhook/
 COPY webhook/src/ ./webhook/src/
-# Copy stellar-utils before the repo-root Cargo workspace so this crate
-# stays a standalone package (it is not a workspace member).
-COPY webhook/crates/ ./webhook/crates/
-
-# Build stellar-utils → native/index.node (Node-API v6, ABI-stable).
-RUN cd /app/webhook/crates/stellar-utils \
-    && cargo build --release \
-    && mkdir -p native \
-    && cp target/release/libstellar_utils.so native/index.node
-
+# Copy the top-level Cargo workspace (both crates + single shared lockfile)
+# and build both Neon addons with one cargo invocation. build:rust also copies
+# each cdylib next to its package.json so Node can require() it.
 COPY crates/ ./crates/
 COPY Cargo.toml Cargo.lock ./
 
@@ -43,9 +36,11 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/webhook/dist ./dist
 COPY --from=builder /app/crates/webhook-verifier/index.node /app/crates/webhook-verifier/index.node
 COPY --from=builder /app/crates/webhook-verifier/package.json /app/crates/webhook-verifier/package.json
-# Runtime pieces of the stellar-utils addon (package.json → main: native/index.node)
-COPY --from=builder /app/webhook/crates/stellar-utils/package.json ./crates/stellar-utils/package.json
-COPY --from=builder /app/webhook/crates/stellar-utils/native ./crates/stellar-utils/native
+# Runtime pieces of the stellar-utils addon (package.json → main: native/index.node).
+# Placed at /app/crates/… so `require('../../../../crates/stellar-utils')` from
+# dist/routes/auth resolves correctly.
+COPY --from=builder /app/crates/stellar-utils/package.json /app/crates/stellar-utils/package.json
+COPY --from=builder /app/crates/stellar-utils/native /app/crates/stellar-utils/native
 
 # node user/group already exists in official node:24-alpine image
 USER node

@@ -10,7 +10,7 @@ const VALID_CHAIN_TYPES = ['ETH', 'STELLAR', 'BSC'];
 // checksum and that the strkey is an Ed25519 public key.
 let nativeStellarUtils = null;
 try {
-  nativeStellarUtils = require('../../../crates/stellar-utils');
+  nativeStellarUtils = require('../../../../crates/stellar-utils');
 } catch (err) {
   console.warn(
     '[auth/sync-wallet] ⚠️ stellar-utils native addon unavailable, falling back to JS validation:',
