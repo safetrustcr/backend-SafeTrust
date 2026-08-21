@@ -2,7 +2,7 @@ const db = require('../../services/db');
 
 // Mirrors the check_active_bids trigger: one active bid per tenant across all apartments
 const EXISTING_ACTIVE = `
-  SELECT id FROM public.bid_requests
+  SELECT id FROM safetrust.bid_requests
   WHERE tenant_id = $1
     AND current_status IN ('PENDING', 'VIEWED', 'APPROVED')
     AND deleted_at IS NULL
@@ -10,7 +10,7 @@ const EXISTING_ACTIVE = `
 `;
 
 const INSERT_BID = `
-  INSERT INTO public.bid_requests
+  INSERT INTO safetrust.bid_requests
     (apartment_id, tenant_id, proposed_price, desired_move_in, current_status)
   VALUES ($1, $2, $3, $4, 'PENDING')
   RETURNING *

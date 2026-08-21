@@ -110,7 +110,7 @@ export async function logAndCheckWebhookEvent(
 
     const existing = await client.query<{ id: string }>(
       `SELECT id
-       FROM public.trustless_work_webhook_events
+       FROM safetrust.trustless_work_webhook_events
        WHERE contract_id = $1
          AND event_type  = $2
          AND processed   = true
@@ -122,7 +122,7 @@ export async function logAndCheckWebhookEvent(
     const isDuplicate = existing.rows.length > 0
 
     const inserted = await client.query<{ id: string }>(
-      `INSERT INTO public.trustless_work_webhook_events (
+      `INSERT INTO safetrust.trustless_work_webhook_events (
          contract_id,
          event_type,
          payload,
@@ -152,7 +152,7 @@ export async function logAndCheckWebhookEvent(
  */
 export async function markWebhookEventProcessed(eventId: string): Promise<void> {
   await pool.query(
-    `UPDATE public.trustless_work_webhook_events
+    `UPDATE safetrust.trustless_work_webhook_events
      SET processed    = true,
          processed_at = $2
      WHERE id = $1`,

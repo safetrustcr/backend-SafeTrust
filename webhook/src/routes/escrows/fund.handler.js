@@ -38,7 +38,7 @@ const fundEscrowHandler = async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
-    // 3 — Update public.trustless_work_escrows
+    // 3 — Update safetrust.trustless_work_escrows
     const mutation = `
       mutation FundEscrow($contractId: String!, $amount: numeric!) {
         update_trustless_work_escrows(
@@ -70,7 +70,7 @@ const fundEscrowHandler = async (req, res) => {
       });
     }
 
-    // 4 — Mirror status to public.reservations
+    // 4 — Mirror status to safetrust.reservations
     const mirrorMutation = `
       mutation MirrorFundedToReservation($contractId: String!) {
         update_reservations(

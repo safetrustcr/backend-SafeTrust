@@ -102,7 +102,7 @@ const listApartments = async (req, res) => {
 
     const countQuery = `
       SELECT COUNT(*) as total
-      FROM public.apartments a
+      FROM safetrust.apartments a
       ${whereString}
     `;
     const countResult = await db.query(countQuery, queryParams);
@@ -124,8 +124,8 @@ const listApartments = async (req, res) => {
         a.category,
         a.created_at,
         u.email as owner_email
-      FROM public.apartments a
-      LEFT JOIN public.users u ON a.owner_id = u.id
+      FROM safetrust.apartments a
+      LEFT JOIN safetrust.users u ON a.owner_id = u.id
       ${whereString}
       ORDER BY ${orderClause}
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
@@ -196,7 +196,7 @@ const createApartment = async (req, res) => {
   }
 
   const insertSql = `
-    INSERT INTO public.apartments (
+    INSERT INTO safetrust.apartments (
       owner_id,
       name,
       description,
@@ -246,8 +246,8 @@ const getApartmentById = async (req, res) => {
     const { id } = req.params;
     const query = `
       SELECT a.*, u.email as owner_email
-      FROM public.apartments a
-      LEFT JOIN public.users u ON a.owner_id = u.id
+      FROM safetrust.apartments a
+      LEFT JOIN safetrust.users u ON a.owner_id = u.id
       WHERE a.id = $1
     `;
     const result = await db.query(query, [id]);

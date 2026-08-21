@@ -6,7 +6,7 @@
  *
  * Flow
  * ────
- *  1. SELECT all contract_ids from public.trustless_work_escrows (tenant='safetrust')
+ *  1. SELECT all contract_ids from safetrust.trustless_work_escrows (tenant='safetrust')
  *  2. Split into chunks of CHUNK_SIZE (50)
  *  3. For each chunk: call TrustlessWork indexer → upsert changed rows only
  *  4. Chunk-level errors are isolated — one failed chunk never aborts others
@@ -39,7 +39,7 @@ async function syncEscrowsHandler(req, res) {
     // ── Step 1: Fetch all known contract IDs ────────────────────────────────
     const { rows } = await db.query(
       `SELECT contract_id
-         FROM public.trustless_work_escrows
+         FROM safetrust.trustless_work_escrows
         WHERE tenant_id = 'safetrust'`
     );
 

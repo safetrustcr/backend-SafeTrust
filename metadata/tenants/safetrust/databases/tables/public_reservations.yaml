@@ -7,7 +7,7 @@
 #   delete_reservations       → delete_safetrust_reservations
 table:
   name: reservations
-  schema: public
+  schema: safetrust
 configuration:
   # custom_name renames the GraphQL root fields for this table:
   #   Query: reservations -> safetrust_reservations
@@ -17,7 +17,6 @@ configuration:
   #   Mutation (update): update_reservations -> update_safetrust_reservations
   #   Mutation (delete): delete_reservations -> delete_safetrust_reservations
   # Client code querying "reservations" must update queries to use "safetrust_reservations"
-  custom_name: safetrust_reservations
   column_config:
     apartment_id:
       custom_name: apartmentId

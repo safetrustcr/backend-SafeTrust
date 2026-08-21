@@ -59,7 +59,7 @@ const disputeEscrowHandler = async (req, res) => {
       });
     }
 
-    // 3 — Mirror status to public.reservations
+    // 3 — Mirror status to safetrust.reservations
     const mirrorMutation = `
       mutation MirrorDisputedToReservation($contractId: String!) {
         update_reservations(

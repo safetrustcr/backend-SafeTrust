@@ -34,7 +34,7 @@ const syncUserHandler = async (req, res) => {
     if (idColumnType === 'uuid') {
       // hotel_industry: UUID surrogate key; firebase_uid is the auth identifier
       query = `
-        INSERT INTO public.users (firebase_uid, email)
+        INSERT INTO safetrust.users (firebase_uid, email)
         VALUES ($1, $2)
         ON CONFLICT (firebase_uid) WHERE firebase_uid IS NOT NULL
         DO UPDATE SET email = EXCLUDED.email, updated_at = NOW()
@@ -44,7 +44,7 @@ const syncUserHandler = async (req, res) => {
     } else {
       // safetrust: Firebase UID stored as primary key (TEXT)
       query = `
-        INSERT INTO public.users (id, firebase_uid, email, last_seen)
+        INSERT INTO safetrust.users (id, firebase_uid, email, last_seen)
         VALUES ($1, $1, $2, NOW())
         ON CONFLICT (id)
         DO UPDATE SET last_seen = NOW(), email = EXCLUDED.email, firebase_uid = EXCLUDED.firebase_uid

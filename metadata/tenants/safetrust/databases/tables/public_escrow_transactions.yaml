@@ -1,6 +1,6 @@
 table:
   name: escrow_transactions
-  schema: public
+  schema: safetrust
   columns:
     - name: id
       type: uuid

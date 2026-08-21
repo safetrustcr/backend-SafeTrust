@@ -1,6 +1,6 @@
 table:
   name: messages
-  schema: public
+  schema: safetrust
 object_relationships:
   - name: conversation
     using:

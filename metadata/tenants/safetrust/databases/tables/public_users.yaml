@@ -1,6 +1,6 @@
 table:
   name: users
-  schema: public
+  schema: safetrust
 array_relationships:
   - name: user_roles
     using:
@@ -8,14 +8,14 @@ array_relationships:
         column: user_id
         table:
           name: user_roles
-          schema: public
+          schema: safetrust
   - name: user_wallets
     using:
       foreign_key_constraint_on:
         column: user_id
         table:
           name: user_wallets
-          schema: public
+          schema: safetrust
 select_permissions:
   - role: admin
     permission:

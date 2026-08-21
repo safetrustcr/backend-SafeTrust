@@ -65,7 +65,7 @@ const initializeEscrowHandler = async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
-    // 4 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
+    // 4 — Persist to safetrust.trustless_work_escrows via Hasura GraphQL mutation
     const data = await hasuraRequest(mutation, {
       object: {
         contractId: contract_id,
