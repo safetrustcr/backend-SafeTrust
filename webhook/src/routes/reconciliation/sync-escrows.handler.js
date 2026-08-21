@@ -7,21 +7,20 @@
  * Flow
  * ────
  *  1. SELECT all contract_ids, status, balance, marker, approver from public.trustless_work_escrows (tenant='safetrust')
- *  2. Split into chunks of CHUNK_SIZE (50)
- *  3a. For each chunk: call TrustlessWork indexer → upsert changed rows only
- *  3b. Optional Soroban RPC validation pass (Rust crate crates/soroban-reconciler)
- *  4. Chunk-level errors are isolated — one failed chunk never aborts others
- *  5. Detect stale escrows (updated_at older than N days) via indexed lookup
- *  6. Return 200 with full summary JSON (including Soroban metrics) regardless of partial chunk failures
+ *  2. Fetch + upsert every chunk (sequential, or concurrent via the Rust
+ *     chunk-processor addon when RUST_CHUNKS_ENABLED=true) — errors are isolated
+ *  3. Optional Soroban RPC validation pass (Rust crate crates/soroban-reconciler)
+ *  4. Detect stale escrows (updated_at older than N days) via indexed lookup
+ *  5. Return 200 with full summary JSON (including Soroban metrics) regardless of partial chunk failures
  */
 
 const db = require('../../services/db');
 const { hasuraRequest } = require('../../services/hasura');
 const {
+  syncAllChunks,
   chunkArray,
-  syncChunk,
-  findStaleEscrows,
   CHUNK_SIZE,
+  findStaleEscrows,
 } = require('../../lib/reconciliation');
 
 // Rust Soroban reconciler — queries blockchain directly via native addon if available
@@ -85,68 +84,55 @@ async function syncEscrowsHandler(req, res) {
     }
 
     const contractIds = rows.map((r) => r.contract_id);
-    const dbStateMap = Object.fromEntries(
-      rows.map((r) => [r.contract_id, r])
-    );
-    const chunks = chunkArray(contractIds, CHUNK_SIZE);
+    const dbStateMap = Object.fromEntries(rows.map((r) => [r.contract_id, r]));
 
-    let totalUpdated = 0;
-    let totalUnchanged = 0;
-    let totalSkipped = 0;
+    // ── Step 2: TrustlessWork fetch + upsert ──────────────────────────────────
+    // syncAllChunks processes the chunks sequentially, or concurrently via the
+    // Rust chunk-processor addon when RUST_CHUNKS_ENABLED=true, and isolates
+    // per-chunk errors so one failed chunk never aborts the rest.
+    const {
+      chunks: chunkCount,
+      updated: totalUpdated,
+      unchanged: totalUnchanged,
+      skipped: totalSkipped,
+      errors: chunkErrors,
+    } = await syncAllChunks(contractIds);
+
+    // ── Step 3: Optional Soroban RPC validation pass (gated by env var) ───────
+    // Independent of the fetch above: it compares on-chain state against the
+    // pre-sync DB snapshot (dbStateMap) one chunk at a time, and never aborts
+    // the sync. Failures are recorded in chunkErrors.
     let totalSorobanDrift = 0;
     let totalSorobanCorrected = 0;
-    const chunkErrors = [];
 
-    // ── Step 2: Process each chunk independently ──────────────────────────────
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
+    if (SOROBAN_VALIDATION_ENABLED) {
+      const chunks = chunkArray(contractIds, CHUNK_SIZE);
+      for (let i = 0; i < chunks.length; i++) {
+        try {
+          const { drifted, corrected } = await runSorobanValidation(
+            chunks[i], dbStateMap, NETWORK
+          );
+          totalSorobanDrift += drifted;
+          totalSorobanCorrected += corrected;
 
-      try {
-        // Step 3a — TrustlessWork sync (existing, unchanged)
-        const { updated, unchanged, skipped } = await syncChunk(chunk);
-        totalUpdated += updated;
-        totalUnchanged += unchanged;
-        totalSkipped += skipped;
-
-        console.log(
-          `[reconciliation]   chunk ${i + 1}/${chunks.length}` +
-          ` (${chunk.length} ids) — updated: ${updated}, unchanged: ${unchanged}, skipped: ${skipped}`
-        );
-
-        // Step 3b — Soroban RPC validation pass (new — gated by env var)
-        if (SOROBAN_VALIDATION_ENABLED) {
-          try {
-            const chunkResult = await runSorobanValidation(
-              chunk, dbStateMap, NETWORK
+          if (drifted > 0) {
+            console.warn(
+              `[reconciliation] ⚠️  Soroban drift in chunk ${i + 1}:` +
+              ` ${drifted} contracts, ${corrected} auto-corrected`
             );
-            totalSorobanDrift += chunkResult.drifted;
-            totalSorobanCorrected += chunkResult.corrected;
-
-            if (chunkResult.drifted > 0) {
-              console.warn(
-                `[reconciliation] ⚠️  Soroban drift in chunk ${i + 1}:` +
-                ` ${chunkResult.drifted} contracts, ${chunkResult.corrected} auto-corrected`
-              );
-            }
-          } catch (sorobanError) {
-            // Soroban validation failure is non-fatal — TrustlessWork sync still succeeded
-            console.error(
-              `[reconciliation] ⚠️  Soroban validation failed for chunk ${i + 1}:`,
-              sorobanError.message
-            );
-            chunkErrors.push(`soroban_chunk_${i + 1}: ${sorobanError.message}`);
           }
+        } catch (sorobanError) {
+          // Soroban validation failure is non-fatal — the TrustlessWork sync already ran.
+          console.error(
+            `[reconciliation] ⚠️  Soroban validation failed for chunk ${i + 1}:`,
+            sorobanError.message
+          );
+          chunkErrors.push(`soroban_chunk_${i + 1}: ${sorobanError.message}`);
         }
-      } catch (chunkError) {
-        const errMsg = chunkError.message || String(chunkError);
-        console.error(
-          `[reconciliation] ⚠️  Chunk ${i + 1}/${chunks.length} failed: ${errMsg}`
-        );
-        chunkErrors.push(errMsg);
       }
     }
 
-    // ── Step 3: Detect stale escrows (unchanged from current) ─────────────────
+    // ── Step 4: Detect stale escrows (O(log n + k) indexed lookup) ────────────
     const staleContractIds = await findStaleEscrows(STALE_ESCROW_DAYS);
     const staleCount = staleContractIds.length;
 
@@ -159,10 +145,10 @@ async function syncEscrowsHandler(req, res) {
 
     const durationMs = Date.now() - startTime;
 
-    // ── Step 4: Log summary (extended with Soroban metrics) ───────────────────
+    // ── Step 5: Log summary (extended with Soroban metrics) ───────────────────
     console.log(`[reconciliation] ✅ Sync complete in ${durationMs}ms`);
     console.log(`   Total escrows     : ${contractIds.length}`);
-    console.log(`   Chunks            : ${chunks.length}`);
+    console.log(`   Chunks            : ${chunkCount}`);
     console.log(`   Updated rows      : ${totalUpdated}`);
     console.log(`   Unchanged rows    : ${totalUnchanged}`);
     console.log(`   Skipped rows      : ${totalSkipped}`);
@@ -173,11 +159,11 @@ async function syncEscrowsHandler(req, res) {
       console.log(`   Chunk errors      : ${chunkErrors.length}`);
     }
 
-    // ── Step 5: Respond 200 (always — matches existing contract) ─────────────
+    // ── Step 6: Respond 200 (always — matches existing contract) ─────────────
     return res.status(200).json({
       success: true,
       totalEscrows: contractIds.length,
-      chunks: chunks.length,
+      chunks: chunkCount,
       updated: totalUpdated,
       unchanged: totalUnchanged,
       skipped: totalSkipped,
