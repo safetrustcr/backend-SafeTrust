@@ -41,6 +41,9 @@ COPY --from=builder /app/crates/webhook-verifier/package.json /app/crates/webhoo
 # dist/routes/auth resolves correctly.
 COPY --from=builder /app/crates/stellar-utils/package.json /app/crates/stellar-utils/package.json
 COPY --from=builder /app/crates/stellar-utils/native /app/crates/stellar-utils/native
+# chunk-processor: parallel escrow-chunk fetcher (built by build:rust --workspace).
+COPY --from=builder /app/crates/chunk-processor/index.node /app/crates/chunk-processor/index.node
+COPY --from=builder /app/crates/chunk-processor/package.json /app/crates/chunk-processor/package.json
 
 # node user/group already exists in official node:24-alpine image
 USER node
