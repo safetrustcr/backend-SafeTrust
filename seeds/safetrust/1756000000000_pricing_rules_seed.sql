@@ -68,4 +68,13 @@ ON CONFLICT (rule_name) DO NOTHING;
 -- Update timestamps randomly (demo realism)
 UPDATE pricing_rules SET 
     created_at = NOW() - (random() * interval '30 days'),
-    updated_at = NOW() - (random() * interval '7 days');
+    updated_at = NOW() - (random() * interval '7 days')
+WHERE rule_name IN (
+    'USDC Standard Fee', 'USDC Large Transaction', 'USDC Minimum Fee',
+    'XLM Network Fee', 'XLM Service Fee', 'XLM Express Processing',
+    'BTC Standard Fee', 'BTC High Value Transaction', 'BTC Network Fee',
+    'ETH Gas Fee', 'ETH Service Fee', 'ETH Priority Processing',
+    'SafeTrust Platform Fee', 'Escrow Service Fee', 'Trust Verification Fee',
+    'USDC Early Adopter Discount', 'XLM Launch Promotion',
+    'High Volume USDC', 'Enterprise XLM Rate'
+);

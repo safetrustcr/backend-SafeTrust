@@ -2,10 +2,10 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Idempotency: delete only demo seed reservations by wallet address before re-inserting
 DELETE FROM hotel_industry.reservations
-WHERE wallet_address IN (
-    '0x1a2b3c4d', '0x2b3c4d5e', '0x3c4d5e6f', '0x4d5e6f7g',
-    '0x5e6f7g8h', '0x6f7g8h9i', '0x7g8h9i0j', '0x8h9i0j1k',
-    '0x9i0j1k2l', '0xa0j1k2l3', '0xb1k2l3m4', '0xc2l3m4n5'
+WHERE (wallet_address, total_amount) IN (
+    ('0x1a2b3c4d', 361.50), ('0x2b3c4d5e', 675.00), ('0x3c4d5e6f', 520.00), ('0x4d5e6f7g', 160.00),
+    ('0x5e6f7g8h', 456.00), ('0x6f7g8h9i', 180.00), ('0x7g8h9i0j', 400.00), ('0x8h9i0j1k', 340.00),
+    ('0x9i0j1k2l', 482.00), ('0xa0j1k2l3', 375.00), ('0xb1k2l3m4', 280.00), ('0xc2l3m4n5', 1250.00)
 );
 
 INSERT INTO hotel_industry.reservations (

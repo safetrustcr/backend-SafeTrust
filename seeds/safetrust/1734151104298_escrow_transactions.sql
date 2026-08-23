@@ -112,5 +112,4 @@ INSERT INTO public.escrow_transactions (
     'safetrust',
     NOW() - INTERVAL '4 days',
     NOW() - INTERVAL '2 days'
-)
-ON CONFLICT (contract_id) DO NOTHING;
+);

@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS hotel_industry.hotels (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_hotels_name
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hotels_name
     ON hotel_industry.hotels(name);
 CREATE INDEX IF NOT EXISTS idx_hotels_location_area
     ON hotel_industry.hotels(location_area);

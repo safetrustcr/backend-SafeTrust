@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS hotel_industry.pricing_rules (
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT unique_hotel_rule_type_currency UNIQUE (rule_type, currency, room_type, season)
+    CONSTRAINT unique_hotel_rule_type_currency UNIQUE (rule_type, currency, room_type, season),
+    CONSTRAINT unique_hotel_rule_name UNIQUE (rule_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_hotel_pricing_rules_type_currency_active

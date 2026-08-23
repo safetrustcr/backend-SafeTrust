@@ -12,9 +12,6 @@ POSTGRES_PORT="${POSTGRES_PORT:-5433}"
 WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
 HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
 
-# Number of rows per transaction block during seeding (lower = more atomic, higher = faster)
-SEED_CHUNK_SIZE="${SEED_CHUNK_SIZE:-500}"
-
 if [[ $# -eq 0 ]]; then
   echo "❌ Error: At least one tenant name is required."
   echo ""
@@ -143,11 +140,9 @@ echo ""
 # ── 7. Apply seeds for each tenant (parallel, transactional) ─────────────────
 #
 # Each seed file is executed inside a single BEGIN/COMMIT transaction via psql
-# with ON_ERROR_STOP=1 so any failure rolls back the entire file — no partial
 # writes. Independent tenants are seeded in parallel to reduce total wall time.
 #
-# SEED_CHUNK_SIZE controls the documented rows-per-transaction batch size and
-# defaults to 500. All seed files use ON CONFLICT DO NOTHING for idempotency.
+# All seed files use ON CONFLICT DO NOTHING for idempotency.
 #
 apply_seeds_chunked() {
   local TENANT="$1"
@@ -158,7 +153,7 @@ apply_seeds_chunked() {
     return 0
   fi
 
-  echo "   ▶ Seeding tenant: $TENANT (chunk size: ${SEED_CHUNK_SIZE})"
+  echo "   ▶ Seeding tenant: $TENANT"
 
   for seed_file in "$SEED_DIR"/*.sql; do
     [ -f "$seed_file" ] || continue
@@ -184,7 +179,7 @@ EOF
   echo "   ✅ Seeds applied for $TENANT"
 }
 
-echo "🌱 Applying seeds (parallel, chunked)..."
+echo "🌱 Applying seeds (parallel)..."
 SEED_START=$SECONDS
 
 # Launch each tenant seeding in the background

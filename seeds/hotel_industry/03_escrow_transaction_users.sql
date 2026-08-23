@@ -21,4 +21,4 @@ INSERT INTO hotel_industry.escrow_transaction_users (
     (SELECT id FROM hotel_industry.escrow_transactions WHERE contract_id = 'contract-2'),
     'RENTER', 'CONFIRMED', true
   )
-ON CONFLICT (user_email, escrow_transaction_id) DO NOTHING;
+ON CONFLICT ON CONSTRAINT unique_hotel_escrow_user_role DO NOTHING;

@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS pricing_rules (
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  CONSTRAINT unique_safetrust_rule_type_token UNIQUE (rule_type, token)
+  CONSTRAINT unique_safetrust_rule_type_token UNIQUE (rule_type, token),
+  CONSTRAINT unique_safetrust_rule_name UNIQUE (rule_name)
 );
 
 

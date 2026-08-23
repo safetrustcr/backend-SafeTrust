@@ -91,7 +91,7 @@ bin/start tenant-name tenant-name
 | 3 | Build and deploy tenant metadata for all tenants |
 | 4 | Apply all migrations per tenant |
 | 5 | Reload Hasura metadata |
-| 6 | Apply seed data per tenant (parallelized, chunked, transactional) |
+| 6 | Apply seed data per tenant (parallelized, transactional) |
 
 **Target a specific tenant:**
 
@@ -108,11 +108,9 @@ docker compose down -v
 bin/start
 ```
 
-### Seed Chunking & Idempotency
+### Seed Execution & Idempotency
 
-Seeds are applied directly via `psql` within a `BEGIN/COMMIT` transaction block, which ensures partial writes are rolled back if a failure occurs (e.g., if you kill the terminal mid-seed).
-
-The number of rows per batch transaction is configurable via `SEED_CHUNK_SIZE` in `.env` (default is 500). Lower values offer better atomicity while higher values increase seeding speed.
+Seeds are applied directly via `psql`. Each complete SQL file is executed in a single `BEGIN/COMMIT` transaction block, which ensures partial writes are rolled back if a failure occurs (e.g., if you kill the terminal mid-seed).
 
 All seed files are idempotent using `ON CONFLICT DO NOTHING` or scoped `DELETE` guards, which means re-running `bin/start` over an existing database will safely apply any missing seeds without throwing unique constraint violations.
 
