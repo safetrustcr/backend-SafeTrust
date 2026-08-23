@@ -155,33 +155,27 @@ process_metadata_tables() {
 
         echo "⚙️  Adding table: $table_name (schema: $table_schema) to tenant $tenant_name"
 
-        local track_payload
-        if [ -n "$custom_name" ] && [ "$custom_name" != "null" ]; then
-            track_payload="{
-                \"type\": \"pg_track_table\",
-                \"args\": {
-                    \"source\": \"${tenant_name}\",
-                    \"table\": {
-                        \"name\": \"${table_name}\",
-                        \"schema\": \"${table_schema}\"
-                    },
-                    \"configuration\": {
-                        \"custom_name\": \"${custom_name}\"
-                    }
-                }
-            }"
-        else
-            track_payload="{
-                \"type\": \"pg_track_table\",
-                \"args\": {
-                    \"source\": \"${tenant_name}\",
-                    \"table\": {
-                        \"name\": \"${table_name}\",
-                        \"schema\": \"${table_schema}\"
-                    }
-                }
-            }"
+        local configuration_json
+        configuration_json=$(yq -o json e '.configuration' "$table_file" 2>/dev/null)
+        if [ "$configuration_json" = "null" ] || [ -z "$configuration_json" ]; then
+            configuration_json="{}"
         fi
+
+        local track_payload
+        track_payload=$(cat <<EOF
+{
+    "type": "pg_track_table",
+    "args": {
+        "source": "${tenant_name}",
+        "table": {
+            "name": "${table_name}",
+            "schema": "${table_schema}"
+        },
+        "configuration": ${configuration_json}
+    }
+}
+EOF
+)
 
         local track_response
         track_response=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \

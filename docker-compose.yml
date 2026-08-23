@@ -48,6 +48,10 @@ services:
     build:
       context: ./webhook      # ← fixed: local path within backend repo
       dockerfile: Dockerfile
+      cache_from:
+        - type=local,src=/tmp/docker-cache/webhook
+      cache_to:
+        - type=local,dest=/tmp/docker-cache/webhook,mode=max
     container_name: safetrust-webhook
     ports:
       - "3000:3000"

@@ -64,14 +64,16 @@ const releaseFundsHandler = async (req, res) => {
       });
     }
 
+    const escrowId = updated[0].id;
+
     // 3 — Mirror status to public.reservations
     const mirrorMutation = `
-      mutation MirrorCompletedToReservation($contractId: String!) {
-        update_reservations(
-          where: { escrow: { contractId: { _eq: $contractId } } }
+      mutation MirrorCompletedToReservation($escrowId: uuid!) {
+        update_safetrust_reservations(
+          where: { escrowId: { _eq: $escrowId } }
           _set: {
             status: "completed"
-            updated_at: "now()"
+            updatedAt: "now()"
           }
         ) {
           returning { id status }
@@ -79,7 +81,7 @@ const releaseFundsHandler = async (req, res) => {
       }
     `;
 
-    await hasuraRequest(mirrorMutation, { contractId });
+    await hasuraRequest(mirrorMutation, { escrowId });
 
     // 4 — Notify hotel conversation (best-effort, never fail the response)
     await notifyHotelEscrowConversation({

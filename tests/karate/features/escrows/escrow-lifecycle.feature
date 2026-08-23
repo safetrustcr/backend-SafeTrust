@@ -31,7 +31,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
 
   Background:
     * url webhookUrl
-    * configure headers = { 'Content-Type': 'application/json' }
+    * configure headers = function(){ return { 'Content-Type': 'application/json', 'x-trustlesswork-timestamp': pendingTrustlessWorkTimestamp() } }
     * def lifecycleContractId = 'LIFECYCLE_TEST_CONTRACT_001'
     * def disputeContractId = 'DISPUTE_TEST_CONTRACT_001'
     * def timingContractId = 'TIMING_TEST_001'

@@ -47,6 +47,9 @@ build/
 target/
 .gradle/
 
+# Neon native addon (platform-specific; rebuilt by npm run build:rust)
+*.node
+
 # Python specific
 .mypy_cache/
 .pytest_cache/

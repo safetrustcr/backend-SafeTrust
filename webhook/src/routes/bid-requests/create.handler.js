@@ -18,11 +18,13 @@ const INSERT_BID = `
 
 async function createBidRequestHandler(req, res) {
   const { uid } = req.user;
-  const { apartmentId, proposedPrice, desiredMoveIn } = req.body;
+  const apartmentId = req.body.apartmentId || req.body.apartment_id;
+  const proposedPrice = req.body.proposedPrice || req.body.proposed_price;
+  const desiredMoveIn = req.body.desiredMoveIn || req.body.desired_move_in;
 
   if (apartmentId == null || proposedPrice == null || desiredMoveIn == null) {
     return res.status(400).json({
-      error: 'Missing required fields: apartmentId, proposedPrice, desiredMoveIn',
+      error: 'Missing required fields',
     });
   }
 
@@ -40,7 +42,7 @@ async function createBidRequestHandler(req, res) {
     const existing = await db.query(EXISTING_ACTIVE, [uid]);
     if (existing.rows.length > 0) {
       return res.status(409).json({
-        error: 'You already have an active offer. Cancel it before submitting a new one.',
+        error: 'Duplicate pending bid',
       });
     }
 
@@ -50,12 +52,12 @@ async function createBidRequestHandler(req, res) {
     // bid_status_histories entry is inserted automatically by the record_bid_status trigger
 
     console.log(`[bid-requests/create] bid created — id: ${bid.id}`);
-    return res.status(201).json({ bidRequest: bid });
+    return res.status(201).json({ bid });
   } catch (error) {
     // The check_active_bids trigger raises this on concurrent duplicate inserts
     if (error.message && error.message.includes('Tenant already has an active bid')) {
       return res.status(409).json({
-        error: 'You already have an active offer. Cancel it before submitting a new one.',
+        error: 'Duplicate pending bid',
       });
     }
     console.error('[bid-requests/create]', error.message);

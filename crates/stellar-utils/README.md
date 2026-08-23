@@ -15,18 +15,21 @@ Prerequisites: Rust toolchain (`cargo`). The crate targets Node-API v6, which is
 ABI-stable across Node.js versions — no per-Node rebuilds.
 
 ```bash
-# From webhook/crates/stellar-utils:
-cargo build --release && mkdir -p native && cp target/release/libstellar_utils.so native/index.node   # Linux
-npm run build            # cross-platform equivalent via neon-cli (handles .so/.dylib naming)
+# From the repo root (workspace build — builds both crates, shared target/ + Cargo.lock):
+cargo build --release --workspace
+node crates/stellar-utils/copy-native.js   # → native/index.node (handles .so/.dylib/.dll naming)
+
+# Or from webhook/: builds the whole workspace and copies both addons
+npm run build:rust
 ```
 
-The Docker image builds the addon automatically (see `webhook/Dockerfile`) and
-ships `native/index.node` into the production stage.
+The Docker image builds the addon automatically via the workspace
+(see `webhook/Dockerfile`) and ships `native/index.node` into the production stage.
 
 ## Consuming from the webhook
 
 ```js
-const { validateStellarAddress } = require('../../../crates/stellar-utils');
+const { validateStellarAddress } = require('../../../../crates/stellar-utils');
 ```
 
 `sync-wallet.handler.js` uses this for Stellar address validation, falling back

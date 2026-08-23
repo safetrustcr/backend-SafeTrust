@@ -4,6 +4,6 @@ const { meHandler } = require('./me.handler');
 
 const router = express.Router();
 
-router.get('/api/auth/me', authMiddleware, meHandler);
+router.get('/me', authMiddleware, meHandler);
 
 module.exports = router;

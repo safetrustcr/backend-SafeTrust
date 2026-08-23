@@ -116,12 +116,12 @@ async function approveMilestoneHandler(req, res) {
     const reservationStatus = milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
 
     const mirrorMutation = `
-      mutation MirrorMilestoneToReservation($contractId: String!, $status: String!) {
-        update_reservations(
-          where: { escrow: { contractId: { _eq: $contractId } } }
+      mutation MirrorMilestoneToReservation($escrowId: uuid!, $status: String!) {
+        update_safetrust_reservations(
+          where: { escrowId: { _eq: $escrowId } }
           _set: {
             status: $status
-            updated_at: "now()"
+            updatedAt: "now()"
           }
         ) {
           returning { id status }
@@ -129,7 +129,7 @@ async function approveMilestoneHandler(req, res) {
       }
     `;
 
-    await hasuraRequest(mirrorMutation, { contractId, status: reservationStatus });
+    await hasuraRequest(mirrorMutation, { escrowId, status: reservationStatus });
 
     await markWebhookEventProcessed(eventId);
 

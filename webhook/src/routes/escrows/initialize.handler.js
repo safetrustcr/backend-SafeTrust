@@ -120,12 +120,12 @@ const initializeEscrowHandler = async (req, res) => {
     if (reservationId) {
       const linkMutation = `
         mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!) {
-          update_reservations_by_pk(
+          update_safetrust_reservations_by_pk(
             pk_columns: { id: $reservationId }
             _set: {
               escrow_id: $escrowId,
               status: "escrow_created",
-              updated_at: "now()"
+              updatedAt: "now()"
             }
           ) {
             id status escrow_id

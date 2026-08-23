@@ -17,7 +17,7 @@ const BAD_CHECKSUM_STELLAR = 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILI
 // fallback regex, so addon-only assertions are gated on its presence.
 let hasNativeAddon = false;
 try {
-  require('../../../../crates/stellar-utils');
+  require('../../../../../crates/stellar-utils');
   hasNativeAddon = true;
 } catch (err) {
   // Addon not built — JS fallback regex is in use.
