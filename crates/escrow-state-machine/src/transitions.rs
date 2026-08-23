@@ -48,7 +48,7 @@ pub fn transition_table() -> Vec<TransitionRule> {
                 reason: "Escrow fully funded — booking is confirmed and active",
             }),
             MilestoneApproved => rules.push(TransitionRule {
-                from:   &[Active, Funded],
+                from:   &[Active, Funded, MilestoneApproved],
                 to:     MilestoneApproved,
                 event:  MilestoneApproved,
                 reason: "Host approved milestone (check-in or check-out)",
