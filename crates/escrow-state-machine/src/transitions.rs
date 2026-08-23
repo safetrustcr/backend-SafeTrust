@@ -17,56 +17,70 @@ pub fn transition_table() -> Vec<TransitionRule> {
     use EscrowStatus::*;
     use WebhookEvent::*;
 
-    vec![
-        TransitionRule {
-            from:   &[PendingFunding],
-            to:     Created,
-            event:  EscrowInitialized,
-            reason: "Escrow deployed on Stellar — awaiting guest funding",
-        },
-        TransitionRule {
-            from:   &[Created, PendingFunding],
-            to:     Funded,
-            event:  EscrowFunded,
-            reason: "Guest deposited USDC — funds locked in escrow contract",
-        },
-        TransitionRule {
-            from:   &[Funded],
-            to:     Active,
-            event:  EscrowFunded,
-            reason: "Escrow fully funded — booking is confirmed and active",
-        },
-        TransitionRule {
-            from:   &[Active, Funded],
-            to:     MilestoneApproved,
-            event:  MilestoneApproved,
-            reason: "Host approved milestone (check-in or check-out)",
-        },
-        TransitionRule {
-            from:   &[MilestoneApproved],
-            to:     Completed,
-            event:  FundsReleased,
-            reason: "All milestones approved — funds released to host",
-        },
-        TransitionRule {
-            from:   &[Funded, Active, MilestoneApproved],
-            to:     Disputed,
-            event:  DisputeRaised,
-            reason: "Guest or host raised a dispute",
-        },
-        TransitionRule {
-            from:   &[Disputed],
-            to:     Resolved,
-            event:  DisputeResolved,
-            reason: "Dispute resolved by arbitrator",
-        },
-        TransitionRule {
-            from:   &[Created, PendingFunding, Funded],
-            to:     Cancelled,
-            event:  EscrowCancelled,
-            reason: "Booking cancelled before check-in",
-        },
-    ]
+    let mut rules = Vec::new();
+
+    let all_states = [
+        Created, PendingFunding, Funded, Active, MilestoneApproved,
+        Completed, Disputed, Resolved, Cancelled,
+    ];
+
+    for state in all_states {
+        match state {
+            Created => rules.push(TransitionRule {
+                from:   &[PendingFunding],
+                to:     Created,
+                event:  EscrowInitialized,
+                reason: "Escrow deployed on Stellar — awaiting guest funding",
+            }),
+            PendingFunding => {
+                // Terminal/initial state with no incoming transitions in this table
+            }
+            Funded => rules.push(TransitionRule {
+                from:   &[Created, PendingFunding],
+                to:     Funded,
+                event:  EscrowFunded,
+                reason: "Guest deposited USDC — funds locked in escrow contract",
+            }),
+            Active => rules.push(TransitionRule {
+                from:   &[Funded],
+                to:     Active,
+                event:  EscrowFunded,
+                reason: "Escrow fully funded — booking is confirmed and active",
+            }),
+            MilestoneApproved => rules.push(TransitionRule {
+                from:   &[Active, Funded],
+                to:     MilestoneApproved,
+                event:  MilestoneApproved,
+                reason: "Host approved milestone (check-in or check-out)",
+            }),
+            Completed => rules.push(TransitionRule {
+                from:   &[MilestoneApproved],
+                to:     Completed,
+                event:  FundsReleased,
+                reason: "All milestones approved — funds released to host",
+            }),
+            Disputed => rules.push(TransitionRule {
+                from:   &[Funded, Active, MilestoneApproved],
+                to:     Disputed,
+                event:  DisputeRaised,
+                reason: "Guest or host raised a dispute",
+            }),
+            Resolved => rules.push(TransitionRule {
+                from:   &[Disputed],
+                to:     Resolved,
+                event:  DisputeResolved,
+                reason: "Dispute resolved by arbitrator",
+            }),
+            Cancelled => rules.push(TransitionRule {
+                from:   &[Created, PendingFunding, Funded],
+                to:     Cancelled,
+                event:  EscrowCancelled,
+                reason: "Booking cancelled before check-in",
+            }),
+        }
+    }
+
+    rules
 }
 
 /// Returns the valid FROM states for a given target status + event.

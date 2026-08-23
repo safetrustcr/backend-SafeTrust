@@ -71,4 +71,16 @@ impl WebhookEvent {
             other => Err(format!("Unknown webhook event: '{}'", other)),
         }
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::EscrowInitialized => "escrow.initialized",
+            Self::EscrowFunded      => "escrow.funded",
+            Self::MilestoneApproved => "milestone.approved",
+            Self::FundsReleased     => "funds.released",
+            Self::DisputeRaised     => "dispute.raised",
+            Self::DisputeResolved   => "dispute.resolved",
+            Self::EscrowCancelled   => "escrow.cancelled",
+        }
+    }
 }

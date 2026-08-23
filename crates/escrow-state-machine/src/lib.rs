@@ -54,7 +54,7 @@ fn get_transition_table(mut cx: FunctionContext) -> JsResult<JsString> {
         .map(|rule| serde_json::json!({
             "from":   rule.from.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
             "to":     rule.to.as_str(),
-            "event":  format!("{:?}", rule.event),
+            "event":  rule.event.as_str(),
             "reason": rule.reason,
         }))
         .collect();
