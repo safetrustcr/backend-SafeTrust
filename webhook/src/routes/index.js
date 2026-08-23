@@ -49,32 +49,6 @@ function verifyInternalSecret(req, res, next) {
   next()
 }
 
-// ── Service-to-service auth for internal callers (hotel conversations) ────────
-function verifyInternalSecret(req, res, next) {
-  const token  = req.headers['x-internal-secret']
-  const secret = process.env.INTERNAL_SERVICE_SECRET
-
-  if (!secret) {
-    console.error('[internal-auth] INTERNAL_SERVICE_SECRET not set')
-    return res.status(500).json({ error: 'Internal secret not configured' })
-  }
-
-  if (!token) {
-    return res.status(401).json({ error: 'Missing x-internal-secret header' })
-  }
-
-  const expected = Buffer.from(secret)
-  const received = Buffer.from(token)
-
-  if (
-    expected.length !== received.length ||
-    !crypto.timingSafeEqual(expected, received)
-  ) {
-    return res.status(401).json({ error: 'Invalid internal secret' })
-  }
-
-  next()
-}
 
 // ── 1. Health check (public) ──────────────────────────────────────────────────
 router.get('/health', (_req, res) => res.status(200).json({ status: 'ok' }))
