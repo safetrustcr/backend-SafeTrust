@@ -4,7 +4,7 @@
  * @file src/lib/__tests__/reconciliation-bulk.test.js
  *
  * Unit tests for the Rust bulk-upsert integration:
- *   • upsertEscrowsRowByRow  — original per-row path (counts + isolation)
+ *   • upsertEscrows  — original per-row path (counts + isolation)
  *   • upsertEscrowsBulk      — Rust glue, addon faked via the test seam
  *   • upsertEscrowBatch      — path selection on RUST_BULK_UPSERT_ENABLED, plus
  *                              fallback to row-by-row when the bulk path fails
@@ -18,7 +18,7 @@ jest.mock('../../services/db', () => ({ query: jest.fn() }));
 
 const db = require('../../services/db');
 const {
-  upsertEscrowsRowByRow,
+  upsertEscrows,
   upsertEscrowsBulk,
   upsertEscrowBatch,
   buildConnectionString,
@@ -52,14 +52,14 @@ afterEach(() => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// upsertEscrowsRowByRow — original path
+// upsertEscrows — original path
 // ═══════════════════════════════════════════════════════════════════════════════
-describe('upsertEscrowsRowByRow', () => {
+describe('upsertEscrows', () => {
   it('counts updated vs unchanged from RETURNING', async () => {
     db.query
       .mockResolvedValueOnce({ rows: [{ contract_id: 'C1' }] }) // changed
       .mockResolvedValueOnce({ rows: [] }); // unchanged
-    const result = await upsertEscrowsRowByRow([
+    const result = await upsertEscrows([
       makeEscrow({ contractId: 'C1' }),
       makeEscrow({ contractId: 'C2' }),
     ]);
@@ -70,7 +70,7 @@ describe('upsertEscrowsRowByRow', () => {
     db.query
       .mockResolvedValueOnce({ rows: [{ contract_id: 'GOOD' }] })
       .mockRejectedValueOnce(new Error('constraint violation'));
-    const result = await upsertEscrowsRowByRow([
+    const result = await upsertEscrows([
       makeEscrow({ contractId: 'GOOD' }),
       makeEscrow({ contractId: 'BAD' }),
       { status: 'funded' }, // no contractId
