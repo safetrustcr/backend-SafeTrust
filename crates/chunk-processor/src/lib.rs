@@ -16,7 +16,7 @@
 //!   apiKey:         string,   // x-api-key header (omitted when empty)
 //!   maxConcurrency: number,   // max in-flight chunk requests
 //!   timeoutMs:      number,   // hard per-chunk deadline
-//! ) => string                 // JSON: ChunkSyncResult[] — one entry per chunk
+//! ) => Promise<string>        // JSON: ChunkSyncResult[] — one entry per chunk
 //! ```
 //!
 //! # Design contract (mirrors the JavaScript path it replaces)
@@ -229,37 +229,48 @@ async fn process_chunks(
 
 /// `processChunksParallel(chunksJson, apiUrl, apiKey, maxConcurrency, timeoutMs)`.
 ///
-/// Blocks the calling (JS) thread until all chunks resolve — the endpoint is a
-/// background Hasura cron trigger, and the JS integration awaits a synchronous
-/// return, so a blocking bridge keeps the contract simple. Only a caller bug
-/// (malformed `chunksJson`) throws; all network/parse failures are captured
-/// per-chunk in the returned JSON.
-fn process_chunks_parallel(mut cx: FunctionContext) -> JsResult<JsString> {
+/// Returns a `Promise<string>` and does NOT block the Node.js event loop. The
+/// chunk fetches run on the shared Tokio runtime's own threads; when they finish
+/// the promise is settled back on the JS thread via a Neon `Channel`. So while a
+/// sync is in flight the event loop stays free to serve other requests, and the
+/// wall-clock time (which can exceed a single `timeoutMs` when chunks run in
+/// waves) never stalls unrelated work.
+///
+/// The returned promise rejects only for a caller bug (malformed `chunksJson`);
+/// all network/parse failures are captured per-chunk in the resolved JSON.
+fn process_chunks_parallel(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let chunks_json = cx.argument::<JsString>(0)?.value(&mut cx);
     let api_url = cx.argument::<JsString>(1)?.value(&mut cx);
     let api_key = cx.argument::<JsString>(2)?.value(&mut cx);
     let max_concurrency = cx.argument::<JsNumber>(3)?.value(&mut cx) as usize;
     let timeout_ms = cx.argument::<JsNumber>(4)?.value(&mut cx) as u64;
 
+    let (deferred, promise) = cx.promise();
+    let channel = cx.channel();
+
+    // Parse up front so a malformed argument rejects the promise immediately,
+    // without spawning any work.
     let chunks = match parse_chunks(&chunks_json) {
         Ok(chunks) => chunks,
-        Err(e) => return cx.throw_error(e),
+        Err(e) => {
+            let error = cx.error(e)?;
+            deferred.reject(&mut cx, error);
+            return Ok(promise);
+        }
     };
 
-    let results = runtime().block_on(process_chunks(
-        chunks,
-        api_url,
-        api_key,
-        max_concurrency,
-        timeout_ms,
-    ));
+    // Run the fetches on the Tokio runtime, then settle the promise on the JS
+    // thread. `settle_with` schedules its closure on the event loop via `channel`.
+    runtime().spawn(async move {
+        let results = process_chunks(chunks, api_url, api_key, max_concurrency, timeout_ms).await;
+        deferred.settle_with(&channel, move |mut cx| {
+            let json = serde_json::to_string(&results)
+                .or_else(|e| cx.throw_error(format!("failed to serialise results: {e}")))?;
+            Ok(cx.string(json))
+        });
+    });
 
-    let json = match serde_json::to_string(&results) {
-        Ok(json) => json,
-        Err(e) => return cx.throw_error(format!("failed to serialise results: {e}")),
-    };
-
-    Ok(cx.string(json))
+    Ok(promise)
 }
 
 #[neon::main]

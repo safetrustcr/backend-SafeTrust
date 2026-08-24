@@ -13,10 +13,10 @@
  * Prints a table of durations and the measured speedup, and asserts the parallel
  * path returns loss-lessly and isolates a deliberately failing chunk.
  *
- * NOTE: processChunksParallel() blocks the Node event loop for its duration
- * (synchronous bridge), so the mock indexer MUST run in a separate process —
- * an in-process server could not answer requests while the loop is blocked.
- * This file forks itself (MODE=server) to host that indexer.
+ * The mock indexer runs in a forked child process. processChunksParallel() no
+ * longer blocks the event loop (it returns a Promise), so an in-process server
+ * would also work; the child is kept purely to isolate the mock's own latency
+ * timers from the measured loop.
  *
  * Run:  node crates/chunk-processor/benchmark.js
  * (Requires `cargo build --release -p chunk-processor && node copy-native.js`.)
@@ -103,9 +103,9 @@ async function runSequential(baseUrl, chunks) {
   return { durationMs: Date.now() - start, fetched }
 }
 
-function runParallel(baseUrl, chunks) {
+async function runParallel(baseUrl, chunks) {
   const start = Date.now()
-  const json = processChunksParallel(
+  const json = await processChunksParallel(
     JSON.stringify(chunks),
     baseUrl,
     '', // no api key for the mock
@@ -129,7 +129,7 @@ async function main() {
     console.log(`latency=${LATENCY_MS}ms  concurrency=${CONCURRENCY}\n`)
 
     const seq = await runSequential(baseUrl, chunks)
-    const par = runParallel(baseUrl, chunks)
+    const par = await runParallel(baseUrl, chunks)
 
     // Correctness: both paths fetch every id, lossless pass-through.
     assert.strictEqual(seq.fetched, totalIds, 'sequential fetched all ids')
@@ -150,7 +150,7 @@ async function main() {
 
     // Isolation: an unreachable base URL must yield per-chunk errors, no throw.
     const failed = JSON.parse(
-      processChunksParallel(JSON.stringify(chunks), 'http://127.0.0.1:1', '', CONCURRENCY, 500)
+      await processChunksParallel(JSON.stringify(chunks), 'http://127.0.0.1:1', '', CONCURRENCY, 500)
     )
     assert.strictEqual(failed.length, CHUNKS)
     assert.ok(failed.every((r) => r.error), 'every chunk records its own error')

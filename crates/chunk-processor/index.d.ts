@@ -19,15 +19,18 @@ export interface ChunkSyncResult {
  * Fetch every chunk of contract IDs from the TrustlessWork indexer concurrently,
  * with bounded parallelism and a hard per-chunk timeout.
  *
+ * Returns a Promise and does not block the Node.js event loop: the fetches run
+ * on the addon's Tokio runtime and the promise settles when they finish.
+ *
  * Chunk isolation: one failed chunk never aborts the others — its failure is
- * captured in `error`. Only a malformed `chunksJson` argument throws.
+ * captured in `error`. The promise rejects only for a malformed `chunksJson`.
  *
  * @param chunksJson      JSON-encoded `string[][]` — array of contract-id chunks.
  * @param apiUrl          TrustlessWork base URL.
  * @param apiKey          `x-api-key` value; the header is omitted when empty.
  * @param maxConcurrency  Maximum in-flight chunk requests (clamped to >= 1).
  * @param timeoutMs       Hard per-chunk deadline in milliseconds.
- * @returns JSON-encoded `ChunkSyncResult[]`.
+ * @returns Promise resolving to a JSON-encoded `ChunkSyncResult[]`.
  */
 export function processChunksParallel(
   chunksJson: string,
@@ -35,4 +38,4 @@ export function processChunksParallel(
   apiKey: string,
   maxConcurrency: number,
   timeoutMs: number
-): string
+): Promise<string>

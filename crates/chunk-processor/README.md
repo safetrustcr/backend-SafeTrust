@@ -15,7 +15,7 @@ async executor — without blocking Node's event loop per request — collapsing
 
 | JS export              | Signature |
 | ---------------------- | --------- |
-| `processChunksParallel` | `(chunksJson: string, apiUrl: string, apiKey: string, maxConcurrency: number, timeoutMs: number) => string` |
+| `processChunksParallel` | `(chunksJson: string, apiUrl: string, apiKey: string, maxConcurrency: number, timeoutMs: number) => Promise<string>` |
 
 `chunksJson` is a JSON-encoded `string[][]` (array of contract-id chunks). The
 return value is a JSON-encoded `ChunkSyncResult[]`, one entry per chunk, ordered

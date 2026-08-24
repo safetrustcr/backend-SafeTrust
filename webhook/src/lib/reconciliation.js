@@ -333,7 +333,9 @@ async function syncChunksParallel(chunks) {
   const concurrency = envInt('CHUNK_CONCURRENCY', 5);
   const timeoutMs = envInt('CHUNK_TIMEOUT_MS', 5000);
 
-  const resultsJson = addon.processChunksParallel(
+  // processChunksParallel returns a Promise<string> — awaiting it keeps the
+  // Node event loop free while the Rust runtime does the concurrent fetches.
+  const resultsJson = await addon.processChunksParallel(
     JSON.stringify(chunks),
     TW_BASE_URL,
     TW_API_KEY,
