@@ -1,27 +1,30 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
 FROM node:24-alpine AS builder
 
-# Rust toolchain for both Neon addons (webhook-verifier + stellar-utils).
-# gcc + musl-dev provide the C linker and musl headers rustc needs on Alpine.
+# Rust toolchain for the Neon addons (webhook-verifier, stellar-utils,
+# chunk-processor). gcc + musl-dev provide the C linker and musl headers rustc
+# needs on Alpine.
 RUN apk add --no-cache curl build-base rust cargo gcc musl-dev
 
+# Build context is the repo root, so source paths are repo-root relative.
 WORKDIR /app
 
+# 1. Node dependencies first (cached until package.json changes).
 COPY webhook/package*.json ./webhook/
-WORKDIR /app/webhook
-RUN npm ci
+RUN cd webhook && npm ci
 
-COPY tsconfig.json ./
+# 2. Rust workspace: root manifest + lockfile + all member crates at /app so
+#    `cargo build --workspace --manifest-path ../Cargo.toml` resolves from webhook.
+COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 
-# Build the Rust crate → native/index.node (Node-API v6, ABI-stable).
-RUN cd crates/stellar-utils \
-    && cargo build --release \
-    && mkdir -p native \
-    && cp target/release/libstellar_utils.so native/index.node
+# 3. TypeScript sources + config.
+COPY webhook/tsconfig.json ./webhook/
+COPY webhook/src/ ./webhook/src/
 
-COPY src/ ./src/
-RUN npm run build
+# 4. Build the Neon addons (cargo --workspace → each crate's copy-native.js) and
+#    compile TypeScript. See webhook/package.json "build" script.
+RUN cd webhook && npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
 FROM node:24-alpine AS production
