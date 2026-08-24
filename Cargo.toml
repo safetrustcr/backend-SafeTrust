@@ -1,3 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/webhook-verifier", "crates/stellar-utils"]
+members = [
+    "crates/webhook-verifier",
+    "crates/zk-verifier",
+    "crates/stellar-utils",
+]
