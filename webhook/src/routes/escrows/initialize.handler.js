@@ -5,6 +5,7 @@ const {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } = require('../../services/hasura');
+const { verifyProofOfFunds } = require('../../lib/zk-verifier');
 
 const EVENT_TYPE = 'escrow.initialized';
 
@@ -24,6 +25,9 @@ const initializeEscrowHandler = async (req, res) => {
     hotel_id,
     guest_id,
     booking_metadata,
+    zk_proof,
+    zk_verification_key,
+    zk_public_inputs,
   } = req.body;
 
   // 1 — Validate required fields
@@ -41,6 +45,32 @@ const initializeEscrowHandler = async (req, res) => {
     });
   }
 
+  // 3 — Verify an optional proof bundle before logging the event or writing
+  // escrow state. Partial bundles and unavailable native verification fail closed.
+  const zkValues = [zk_proof, zk_verification_key, zk_public_inputs];
+  const hasZkBundle = zkValues.some((value) => value !== undefined && value !== null);
+  if (hasZkBundle) {
+    const hasCompleteBundle =
+      typeof zk_proof === 'string' && zk_proof.length > 0 &&
+      typeof zk_verification_key === 'string' && zk_verification_key.length > 0 &&
+      typeof zk_public_inputs === 'string';
+
+    if (!hasCompleteBundle) {
+      return res.status(400).json({
+        error: 'zk_proof, zk_verification_key, and zk_public_inputs must be supplied together'
+      });
+    }
+
+    try {
+      if (!verifyProofOfFunds(zk_proof, zk_verification_key, zk_public_inputs)) {
+        return res.status(400).json({ error: 'Invalid ZK proof of funds' });
+      }
+    } catch (error) {
+      console.error('[escrow/initialize] ZK verifier unavailable:', error.message);
+      return res.status(503).json({ error: 'ZK proof verification is unavailable' });
+    }
+  }
+
   const mutation = `
     mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
       insert_trustless_work_escrows_one(object: $object) {
@@ -53,7 +83,7 @@ const initializeEscrowHandler = async (req, res) => {
   `;
 
   try {
-    // 3 — Idempotency check
+    // 4 — Idempotency check
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contract_id,
       EVENT_TYPE,
@@ -65,7 +95,7 @@ const initializeEscrowHandler = async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
-    // 4 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
+    // 5 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
     const data = await hasuraRequest(mutation, {
       object: {
         contractId: contract_id,
@@ -94,7 +124,7 @@ const initializeEscrowHandler = async (req, res) => {
       return res.status(500).json({ error: 'Failed to insert escrow record' });
     }
 
-    // 5 — Link escrow to reservation AFTER escrow is confirmed to exist
+    // 6 — Link escrow to reservation AFTER escrow is confirmed to exist
     // booking_metadata.reservation_id is set by the frontend when BOOK was clicked
     const reservationId = booking_metadata?.reservation_id;
     if (reservationId) {
