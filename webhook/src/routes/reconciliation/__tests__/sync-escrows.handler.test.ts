@@ -1,10 +1,11 @@
 'use strict'
 
 import { Request, Response } from 'express'
-import { syncEscrowsHandler } from '../sync-escrows.handler'
 import db from '../../../services/db'
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { syncAllChunks, findStaleEscrows } = require('../../../lib/reconciliation')
+
+process.env.SOROBAN_VALIDATION_ENABLED = 'false'
 
 jest.mock('../../../services/db', () => ({
   query: jest.fn(),
@@ -23,9 +24,13 @@ jest.mock('../../../lib/reconciliation', () => ({
 }))
 
 describe('syncEscrowsHandler', () => {
-  beforeEach(() => {
+  let syncEscrowsHandler: (req: Request, res: Response) => Promise<Response>
+
+  beforeEach(async () => {
     jest.clearAllMocks()
     process.env.SOROBAN_VALIDATION_ENABLED = 'false'
+    const module = await import('../sync-escrows.handler')
+    syncEscrowsHandler = module.syncEscrowsHandler
   })
 
   it('returns 200 with zero counts when no escrows are found', async () => {

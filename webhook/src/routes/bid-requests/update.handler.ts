@@ -17,6 +17,7 @@ export interface BidRequestWithOwner extends BidRequest {
   owner_id: string
 }
 
+/** Valid state transitions for bid requests */
 export const VALID_TRANSITIONS: Record<string, string[]> = {
   PENDING: ['APPROVED', 'CANCELLED'],
   APPROVED: ['CONFIRMED', 'CANCELLED'],
@@ -45,6 +46,10 @@ const INSERT_HISTORY = `
 
 /**
  * PATCH /api/bid-requests/:id — owner updates bid status with history row.
+ *
+ * @param req - Authenticated request containing caller uid, path params (id), and body (status)
+ * @param res - Express response
+ * @returns JSON response with updated bid or error message
  */
 export const updateBidRequestHandler = async (
   req: AuthenticatedRequest,

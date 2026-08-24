@@ -93,17 +93,20 @@ try {
 const STALE_ESCROW_DAYS = 7
 const NETWORK = process.env.STELLAR_NETWORK ?? 'testnet'
 
-// Enable/disable Soroban validation pass — off by default until Phase 2
-const SOROBAN_VALIDATION_ENABLED = process.env.SOROBAN_VALIDATION_ENABLED === 'true'
-
 /**
- * Handle POST /reconciliation/sync-escrows.
+ * Handles the POST /reconciliation/sync-escrows trigger from Hasura cron job.
+ * Synchronizes database escrow states against TrustlessWork indexer and optional Soroban RPC.
+ *
+ * @param req - Express request
+ * @param res - Express response
+ * @returns JSON summary of the reconciliation sync run
  */
 export const syncEscrowsHandler = async (
   req: Request<{}, {}, SyncEscrowsPayload>,
   res: Response
 ): Promise<Response> => {
   const startTime = Date.now()
+  const sorobanValidationEnabled = process.env.SOROBAN_VALIDATION_ENABLED === 'true'
   console.log('[reconciliation] 🔄 Starting escrow sync...')
 
   try {
@@ -127,7 +130,7 @@ export const syncEscrowsHandler = async (
         staleCount: 0,
         staleContractIds: [],
         errors: 0,
-        sorobanEnabled: SOROBAN_VALIDATION_ENABLED,
+        sorobanEnabled: sorobanValidationEnabled,
         sorobanDrift: 0,
         sorobanCorrected: 0,
         durationMs: Date.now() - startTime,
@@ -157,7 +160,7 @@ export const syncEscrowsHandler = async (
     let totalSorobanDrift = 0
     let totalSorobanCorrected = 0
 
-    if (SOROBAN_VALIDATION_ENABLED) {
+    if (sorobanValidationEnabled) {
       const { rows: currentRows } = await db.query<EscrowDbRow>(
         `SELECT contract_id, status, balance, marker, approver
            FROM public.trustless_work_escrows
@@ -234,7 +237,7 @@ export const syncEscrowsHandler = async (
       staleCount,
       staleContractIds: staleContractIds.slice(0, 10),
       errors: chunkErrors.length,
-      sorobanEnabled: SOROBAN_VALIDATION_ENABLED,
+      sorobanEnabled: sorobanValidationEnabled,
       sorobanDrift: totalSorobanDrift,
       sorobanCorrected: totalSorobanCorrected,
       durationMs,
@@ -252,7 +255,16 @@ export const syncEscrowsHandler = async (
 
 // ── Soroban validation helper ──────────────────────────────────────────────────
 
-async function runSorobanValidation(
+/**
+ * Validates a chunk of escrow contracts against on-chain Soroban state via native Rust addon.
+ * Detects discrepancies and auto-corrects critical drift in Hasura GraphQL.
+ *
+ * @param chunk - Batch of contract IDs to reconcile
+ * @param dbStateMap - Map of database escrow states indexed by contract ID
+ * @param network - Stellar network name (e.g. 'testnet')
+ * @returns Counts of drifted and auto-corrected contracts
+ */
+export async function runSorobanValidation(
   chunk: string[],
   dbStateMap: Record<string, EscrowDbRow>,
   network: string
