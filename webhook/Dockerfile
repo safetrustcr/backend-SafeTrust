@@ -1,26 +1,22 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
 FROM node:24-alpine AS builder
 
-# Rust toolchain for both Neon addons (webhook-verifier + stellar-utils).
+# Rust toolchain for the Neon addons.
 # gcc + musl-dev provide the C linker and musl headers rustc needs on Alpine.
 RUN apk add --no-cache curl build-base rust cargo gcc musl-dev
 
 WORKDIR /app
 
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
 COPY webhook/package*.json ./webhook/
 WORKDIR /app/webhook
 RUN npm ci
 
-COPY tsconfig.json ./
-COPY crates/ ./crates/
+COPY webhook/tsconfig.json ./
 
 # Build the Rust crate → native/index.node (Node-API v6, ABI-stable).
-RUN cd crates/stellar-utils \
-    && cargo build --release \
-    && mkdir -p native \
-    && cp target/release/libstellar_utils.so native/index.node
-
-COPY src/ ./src/
+COPY webhook/src/ ./src/
 RUN npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
@@ -36,6 +32,9 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/webhook/dist ./dist
 COPY --from=builder /app/crates/webhook-verifier/index.node /app/crates/webhook-verifier/index.node
 COPY --from=builder /app/crates/webhook-verifier/package.json /app/crates/webhook-verifier/package.json
+COPY --from=builder /app/crates/zk-verifier/index.node /app/crates/zk-verifier/index.node
+COPY --from=builder /app/crates/zk-verifier/package.json /app/crates/zk-verifier/package.json
+COPY --from=builder /app/crates/zk-verifier/index.d.ts /app/crates/zk-verifier/index.d.ts
 # Runtime pieces of the stellar-utils addon (package.json → main: native/index.node).
 # Placed at /app/crates/… so `require('../../../../crates/stellar-utils')` from
 # dist/routes/auth resolves correctly.
