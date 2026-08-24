@@ -103,9 +103,22 @@ fn normalize_escrows(body: Value) -> Result<Vec<Value>, String> {
     }
 }
 
+/// Truncate `s` to at most `max` bytes, snapping back to the nearest UTF-8 char
+/// boundary so indexer-controlled (possibly non-ASCII) text never panics.
+fn truncate_on_boundary(s: &mut String, max: usize) {
+    if s.len() <= max {
+        return;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+}
+
 fn unexpected_shape(body: &Value) -> String {
     let mut preview = body.to_string();
-    preview.truncate(200);
+    truncate_on_boundary(&mut preview, 200);
     format!("Unexpected TrustlessWork API response shape: {preview}")
 }
 
@@ -145,9 +158,8 @@ async fn fetch_chunk(
     let status = response.status();
     if !status.is_success() {
         // Include a short body snippet for diagnosability, like the JS path.
-        let body = response.text().await.unwrap_or_default();
-        let mut snippet = body;
-        snippet.truncate(200);
+        let mut snippet = response.text().await.unwrap_or_default();
+        truncate_on_boundary(&mut snippet, 200);
         return Err(format!(
             "TrustlessWork API responded with status {status}: {snippet}"
         ));
@@ -336,6 +348,29 @@ mod tests {
         assert_eq!(e["amount"], "100.0000000");
         assert_eq!(e["roles"]["approver"], "A");
         assert_eq!(e["escrowType"], "single_release");
+    }
+
+    #[test]
+    fn truncate_on_boundary_never_splits_a_multibyte_char() {
+        // 'é' is two bytes, so every odd byte index is mid-character. A naive
+        // String::truncate at such an index would panic.
+        let mut s = "é".repeat(200); // 400 bytes
+        truncate_on_boundary(&mut s, 201);
+        assert!(s.len() <= 201);
+        assert!(s.is_char_boundary(s.len()), "must end on a char boundary");
+
+        // Non-ASCII shorter than max is left untouched.
+        let mut short = "café".to_string();
+        truncate_on_boundary(&mut short, 200);
+        assert_eq!(short, "café");
+    }
+
+    #[test]
+    fn unexpected_shape_survives_non_ascii_body() {
+        // A valid non-ASCII response must yield an error string, never a panic.
+        let long = "☕".repeat(300);
+        let err = unexpected_shape(&serde_json::Value::String(long));
+        assert!(err.starts_with("Unexpected TrustlessWork API response shape:"));
     }
 
     #[test]
