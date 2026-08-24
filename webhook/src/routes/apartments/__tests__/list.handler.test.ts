@@ -23,15 +23,16 @@ describe('apartments/list.handler', () => {
   })
 
   describe('listApartments', () => {
-    it('returns list of apartments with default pagination', async () => {
+    it('returns list of apartments with default pagination and converts decimal strings to numbers', async () => {
       const mockCount = { rows: [{ total: '1' }] }
-      const mockApartment = {
+      const mockApartmentFromDb = {
         id: 'apt-1',
         name: 'Cozy Apartment',
-        price: 1000,
+        price: '1000.50',
+        warranty_deposit: '500.00',
         bedrooms: 2,
       }
-      const mockData = { rows: [mockApartment] }
+      const mockData = { rows: [mockApartmentFromDb] }
 
       ;(query as jest.Mock)
         .mockResolvedValueOnce(mockCount)
@@ -44,7 +45,49 @@ describe('apartments/list.handler', () => {
 
       expect(res.status).toHaveBeenCalledWith(200)
       expect(res.json).toHaveBeenCalledWith({
-        apartments: [mockApartment],
+        apartments: [
+          {
+            id: 'apt-1',
+            name: 'Cozy Apartment',
+            price: 1000.5,
+            warranty_deposit: 500,
+            bedrooms: 2,
+          },
+        ],
+        total: 1,
+        page: 1,
+        totalPages: 1,
+      })
+    })
+
+    it('preserves null warranty_deposit', async () => {
+      const mockCount = { rows: [{ total: '1' }] }
+      const mockApartmentFromDb = {
+        id: 'apt-1',
+        name: 'Cozy Apartment',
+        price: '1000.00',
+        warranty_deposit: null,
+      }
+
+      ;(query as jest.Mock)
+        .mockResolvedValueOnce(mockCount)
+        .mockResolvedValueOnce({ rows: [mockApartmentFromDb] })
+
+      const req = { query: {} } as Request<any, any, any, any>
+      const res = makeResponse()
+
+      await listApartments(req, res)
+
+      expect(res.status).toHaveBeenCalledWith(200)
+      expect(res.json).toHaveBeenCalledWith({
+        apartments: [
+          {
+            id: 'apt-1',
+            name: 'Cozy Apartment',
+            price: 1000,
+            warranty_deposit: null,
+          },
+        ],
         total: 1,
         page: 1,
         totalPages: 1,
@@ -173,9 +216,9 @@ describe('apartments/list.handler', () => {
       })
     })
 
-    it('creates apartment on valid input', async () => {
-      const created = { id: 'apt-100', name: 'New Spot', price: 1200 }
-      ;(query as jest.Mock).mockResolvedValueOnce({ rows: [created] })
+    it('creates apartment on valid input and formats decimal numbers', async () => {
+      const createdDbRow = { id: 'apt-100', name: 'New Spot', price: '1200.00', warranty_deposit: '1200.00' }
+      ;(query as jest.Mock).mockResolvedValueOnce({ rows: [createdDbRow] })
 
       const req = {
         user: { uid: 'owner-1' },
@@ -194,7 +237,9 @@ describe('apartments/list.handler', () => {
       await createApartment(req, res)
 
       expect(res.status).toHaveBeenCalledWith(201)
-      expect(res.json).toHaveBeenCalledWith({ apartment: created })
+      expect(res.json).toHaveBeenCalledWith({
+        apartment: { id: 'apt-100', name: 'New Spot', price: 1200, warranty_deposit: 1200 },
+      })
     })
 
     it('returns 500 when insert query fails', async () => {
@@ -218,8 +263,8 @@ describe('apartments/list.handler', () => {
   })
 
   describe('getApartmentById', () => {
-    it('returns apartment when found', async () => {
-      const apt = { id: 'apt-1', name: 'Luxury Condo', owner_email: 'owner@example.com' }
+    it('returns apartment when found and converts decimal values', async () => {
+      const apt = { id: 'apt-1', name: 'Luxury Condo', price: '2500.00', warranty_deposit: null, owner_email: 'owner@example.com' }
       ;(query as jest.Mock).mockResolvedValueOnce({ rows: [apt] })
 
       const req = { params: { id: 'apt-1' } } as unknown as Request<{ id: string }>
@@ -228,7 +273,9 @@ describe('apartments/list.handler', () => {
       await getApartmentById(req, res)
 
       expect(res.status).toHaveBeenCalledWith(200)
-      expect(res.json).toHaveBeenCalledWith({ apartment: apt })
+      expect(res.json).toHaveBeenCalledWith({
+        apartment: { id: 'apt-1', name: 'Luxury Condo', price: 2500, warranty_deposit: null, owner_email: 'owner@example.com' },
+      })
     })
 
     it('returns 404 when apartment not found', async () => {

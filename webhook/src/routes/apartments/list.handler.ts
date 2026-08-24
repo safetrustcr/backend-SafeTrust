@@ -4,13 +4,31 @@ import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import db, { query } from '../../services/db'
 
 /**
+ * Format apartment entity so decimal columns (price, warranty_deposit) from pg driver are converted to numbers,
+ * while preserving null or undefined values for warranty_deposit.
+ */
+function formatApartment<T extends Record<string, any>>(apt: T): T {
+  if (!apt) return apt
+  const formatted: Record<string, any> = { ...apt }
+  if ('price' in formatted && formatted.price !== null && formatted.price !== undefined) {
+    formatted.price = Number(formatted.price)
+  }
+  if ('warranty_deposit' in formatted && formatted.warranty_deposit !== null && formatted.warranty_deposit !== undefined) {
+    formatted.warranty_deposit = Number(formatted.warranty_deposit)
+  }
+  return formatted as T
+}
+
+type ApartmentResponse = { apartment: Apartment } | { error: string }
+
+/**
  * GET /api/apartments
  * Paginated apartment listing with optional filters
  */
 export const listApartments = async (
   req: Request<{}, ApartmentListResponse | { error: string }, {}, ApartmentListQuery>,
-  res: Response
-): Promise<Response> => {
+  res: Response<ApartmentListResponse | { error: string }>
+): Promise<Response<ApartmentListResponse | { error: string }>> => {
   try {
     const {
       location,
@@ -142,7 +160,7 @@ export const listApartments = async (
     const totalPages = Math.ceil(totalCount / validatedLimit)
 
     return res.status(200).json({
-      apartments: dataResult.rows,
+      apartments: dataResult.rows.map(formatApartment),
       total: totalCount,
       page: validatedPage,
       totalPages,
@@ -159,9 +177,9 @@ export const listApartments = async (
  * Create apartment listing for authenticated owner
  */
 export const createApartment = async (
-  req: AuthenticatedRequest,
-  res: Response
-): Promise<Response> => {
+  req: Request,
+  res: Response<ApartmentResponse>
+): Promise<Response<ApartmentResponse>> => {
   const ownerId = req.user?.uid
   const {
     name,
@@ -240,7 +258,7 @@ export const createApartment = async (
       Boolean(petFriendly),
     ])
 
-    return res.status(201).json({ apartment: result.rows[0] })
+    return res.status(201).json({ apartment: formatApartment(result.rows[0]) })
   } catch (error) {
     const err = error as Error
     console.error('[apartments/create] ❌', err.message)
@@ -254,8 +272,8 @@ export const createApartment = async (
  */
 export const getApartmentById = async (
   req: Request<{ id: string }>,
-  res: Response
-): Promise<Response> => {
+  res: Response<ApartmentResponse>
+): Promise<Response<ApartmentResponse>> => {
   try {
     const { id } = req.params
     const querySql = `
@@ -270,7 +288,7 @@ export const getApartmentById = async (
       return res.status(404).json({ error: 'Apartment not found' })
     }
 
-    return res.status(200).json({ apartment: result.rows[0] })
+    return res.status(200).json({ apartment: formatApartment(result.rows[0]) })
   } catch (error) {
     const err = error as Error
     console.error('[apartments/get] ❌', err.message)
