@@ -4,8 +4,6 @@ members = [
     "crates/webhook-verifier",
     "crates/stellar-utils",
     "crates/chunk-processor",
-    "crates/soroban-reconciler",
-    "crates/x402-processor",
 ]
 
 [workspace.dependencies]
