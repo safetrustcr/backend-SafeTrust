@@ -64,18 +64,25 @@ fi
 # ── 2. Wait for Hasura to be healthy ─────────────────────────────────────────
 echo "⏳ Waiting for Hasura to be healthy on ${HASURA_ENDPOINT}..."
 
-max_attempts=90
-attempt=1
-until curl -sf "${HASURA_ENDPOINT}/healthz" > /dev/null; do
-  if [[ "$attempt" -ge "$max_attempts" ]]; then
-    echo "❌ Hasura health check timed out after $((max_attempts * 2)) seconds"
+MAX_WAIT_SECONDS=120
+POLL_INTERVAL=0.5
+START_TS=$SECONDS
+until curl -sf "${HASURA_ENDPOINT}/healthz" > /dev/null 2>&1; do
+  ELAPSED=$((SECONDS - START_TS))
+  if [[ "$ELAPSED" -ge "$MAX_WAIT_SECONDS" ]]; then
+    echo "❌ Hasura health check timed out after ${MAX_WAIT_SECONDS}s"
+    echo "   Last Hasura response:"
+    curl -s "${HASURA_ENDPOINT}/healthz" || true
     exit 1
   fi
-  attempt=$((attempt + 1))
-  sleep 2
+  # Progress indicator every 5 seconds
+  if (( ELAPSED % 5 == 0 && ELAPSED > 0 )); then
+    echo "   ⏳ Still waiting... (${ELAPSED}s elapsed)"
+  fi
+  sleep "$POLL_INTERVAL"
 done
-
-echo "✅ Hasura is healthy"
+HASURA_READY_AT=$((SECONDS - START_TS))
+echo "✅ Hasura is healthy (ready in ${HASURA_READY_AT}s)"
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
   TIMING_HASURA_HEALTH=$((SECONDS - TIMER_START))
