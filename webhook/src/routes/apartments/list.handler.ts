@@ -1,0 +1,299 @@
+import { Request, Response } from 'express'
+import type { Apartment, ApartmentListQuery, ApartmentListResponse } from '@safetrust/types'
+import { AuthenticatedRequest } from '../../middleware/auth.middleware'
+import db, { query } from '../../services/db'
+
+/**
+ * Format apartment entity so decimal columns (price, warranty_deposit) from pg driver are converted to numbers,
+ * while preserving null or undefined values for warranty_deposit.
+ */
+function formatApartment<T extends Record<string, any>>(apt: T): T {
+  if (!apt) return apt
+  const formatted: Record<string, any> = { ...apt }
+  if ('price' in formatted && formatted.price !== null && formatted.price !== undefined) {
+    formatted.price = Number(formatted.price)
+  }
+  if ('warranty_deposit' in formatted && formatted.warranty_deposit !== null && formatted.warranty_deposit !== undefined) {
+    formatted.warranty_deposit = Number(formatted.warranty_deposit)
+  }
+  return formatted as T
+}
+
+type ApartmentResponse = { apartment: Apartment } | { error: string }
+
+/**
+ * GET /api/apartments
+ * Paginated apartment listing with optional filters
+ */
+export const listApartments = async (
+  req: Request<{}, ApartmentListResponse | { error: string }, {}, ApartmentListQuery>,
+  res: Response<ApartmentListResponse | { error: string }>
+): Promise<Response<ApartmentListResponse | { error: string }>> => {
+  try {
+    const {
+      location,
+      minPrice,
+      maxPrice,
+      bedrooms,
+      petFriendly,
+      category,
+      page = '1',
+      limit = '10',
+      sort = 'created_at',
+    } = req.query
+
+    const MAX_LIMIT = 100
+    let validatedPage = parseInt(String(page), 10)
+    let validatedLimit = parseInt(String(limit), 10)
+
+    if (isNaN(validatedPage) || validatedPage < 1) validatedPage = 1
+    if (isNaN(validatedLimit) || validatedLimit < 1) validatedLimit = 10
+    if (validatedLimit > MAX_LIMIT) validatedLimit = MAX_LIMIT
+
+    const offset = (validatedPage - 1) * validatedLimit
+
+    const whereClause: string[] = ['a.deleted_at IS NULL']
+    const queryParams: unknown[] = []
+    let paramIndex = 1
+
+    if (location) {
+      whereClause.push(`(a.name ILIKE $${paramIndex} OR a.description ILIKE $${paramIndex})`)
+      queryParams.push(`%${location}%`)
+      paramIndex++
+    }
+
+    if (minPrice) {
+      const min = parseFloat(String(minPrice))
+      if (isNaN(min)) return res.status(400).json({ error: 'Invalid minPrice value. Expected a number.' })
+      whereClause.push(`a.price >= $${paramIndex}`)
+      queryParams.push(min)
+      paramIndex++
+    }
+
+    if (maxPrice) {
+      const max = parseFloat(String(maxPrice))
+      if (isNaN(max)) return res.status(400).json({ error: 'Invalid maxPrice value. Expected a number.' })
+      whereClause.push(`a.price <= $${paramIndex}`)
+      queryParams.push(max)
+      paramIndex++
+    }
+
+    if (bedrooms) {
+      const beds = parseInt(String(bedrooms), 10)
+      if (isNaN(beds)) return res.status(400).json({ error: 'Invalid bedrooms value. Expected an integer.' })
+      whereClause.push(`a.bedrooms = $${paramIndex}`)
+      queryParams.push(beds)
+      paramIndex++
+    }
+
+    if (petFriendly !== undefined) {
+      const normalizedPet = String(petFriendly).toLowerCase()
+      const truthy = ['true', '1', 'yes']
+      const falsy = ['false', '0', 'no']
+
+      if (truthy.includes(normalizedPet)) {
+        whereClause.push(`a.pet_friendly = $${paramIndex}`)
+        queryParams.push(true)
+        paramIndex++
+      } else if (falsy.includes(normalizedPet)) {
+        whereClause.push(`a.pet_friendly = $${paramIndex}`)
+        queryParams.push(false)
+        paramIndex++
+      } else {
+        return res.status(400).json({ error: 'Invalid petFriendly value. Expected true, false, 1, 0, yes, or no.' })
+      }
+    }
+
+    if (category) {
+      whereClause.push(`a.category = $${paramIndex}`)
+      queryParams.push(category)
+      paramIndex++
+    }
+
+    const whereString = `WHERE ${whereClause.join(' AND ')}`
+
+    const allowedSorts = ['price_asc', 'price_desc', 'created_at']
+    if (sort && !allowedSorts.includes(sort)) {
+      return res.status(400).json({ error: `Invalid sort parameter. Supported values: ${allowedSorts.join(', ')}` })
+    }
+
+    const sortMapping: Record<string, string> = {
+      price_asc: 'a.price ASC',
+      price_desc: 'a.price DESC',
+      created_at: 'a.created_at DESC',
+    }
+    const orderClause = sortMapping[sort] || sortMapping['created_at']
+
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM public.apartments a
+      ${whereString}
+    `
+    const countResult = await query<{ total: string }>(countQuery, queryParams)
+    const totalCount = parseInt(countResult.rows[0].total, 10)
+
+    const dataQuery = `
+      SELECT
+        a.id,
+        a.name,
+        a.description,
+        a.price,
+        a.warranty_deposit,
+        a.address,
+        a.is_available,
+        a.available_from,
+        a.available_until,
+        a.bedrooms,
+        a.pet_friendly,
+        a.category,
+        a.created_at,
+        u.email as owner_email
+      FROM public.apartments a
+      LEFT JOIN public.users u ON a.owner_id = u.id
+      ${whereString}
+      ORDER BY ${orderClause}
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `
+
+    const finalParams = [...queryParams, validatedLimit, offset]
+    const dataResult = await query<Apartment>(dataQuery, finalParams)
+    const totalPages = Math.ceil(totalCount / validatedLimit)
+
+    return res.status(200).json({
+      apartments: dataResult.rows.map(formatApartment),
+      total: totalCount,
+      page: validatedPage,
+      totalPages,
+    })
+  } catch (error) {
+    const err = error as Error
+    console.error('[apartments/list] ❌ error:', err.message)
+    return res.status(500).json({ error: 'Database error' })
+  }
+}
+
+/**
+ * POST /api/apartments
+ * Create apartment listing for authenticated owner
+ */
+export const createApartment = async (
+  req: Request,
+  res: Response<ApartmentResponse>
+): Promise<Response<ApartmentResponse>> => {
+  const ownerId = req.user?.uid
+  const {
+    name,
+    location,
+    pricePerMonth,
+    promotionPercent = null,
+    rooms = 1,
+    bathrooms = 1,
+    petFriendly = false,
+    description = '',
+  } = req.body || {}
+
+  const normalizedName = typeof name === 'string' ? name.trim() : ''
+  const normalizedLocation = typeof location === 'string' ? location.trim() : ''
+
+  if (!ownerId) return res.status(401).json({ error: 'Unauthorized' })
+
+  if (!normalizedName || !normalizedLocation || pricePerMonth === undefined || pricePerMonth === null) {
+    return res.status(400).json({ error: 'Missing required fields: name, location, pricePerMonth' })
+  }
+
+  const parsedPrice = Number(pricePerMonth)
+  if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+    return res.status(400).json({ error: 'Invalid pricePerMonth' })
+  }
+
+  const parsedRooms = Number(rooms)
+  if (!Number.isInteger(parsedRooms) || parsedRooms < 1) {
+    return res.status(400).json({ error: 'Invalid rooms value' })
+  }
+
+  if (promotionPercent !== null) {
+    const promo = Number(promotionPercent)
+    if (!Number.isFinite(promo) || promo < 0 || promo > 100) {
+      return res.status(400).json({ error: 'Invalid promotionPercent' })
+    }
+  }
+
+  const parsedBathrooms = Number(bathrooms)
+  if (!Number.isFinite(parsedBathrooms) || parsedBathrooms < 1) {
+    return res.status(400).json({ error: 'Invalid bathrooms value' })
+  }
+
+  const insertSql = `
+    INSERT INTO public.apartments (
+      owner_id,
+      name,
+      description,
+      price,
+      warranty_deposit,
+      coordinates,
+      address,
+      available_from,
+      bedrooms,
+      pet_friendly
+    )
+    VALUES ($1, $2, $3, $4, $5, point(0, 0), $6::jsonb, NOW(), $7, $8)
+    RETURNING *
+  `
+
+  const payloadAddress = {
+    location: normalizedLocation,
+    bathrooms: parsedBathrooms,
+    promotionPercent,
+  }
+
+  try {
+    const result = await query<Apartment>(insertSql, [
+      ownerId,
+      normalizedName,
+      String(description ?? ''),
+      parsedPrice,
+      parsedPrice,
+      JSON.stringify(payloadAddress),
+      parsedRooms,
+      Boolean(petFriendly),
+    ])
+
+    return res.status(201).json({ apartment: formatApartment(result.rows[0]) })
+  } catch (error) {
+    const err = error as Error
+    console.error('[apartments/create] ❌', err.message)
+    return res.status(500).json({ error: 'Failed to create apartment' })
+  }
+}
+
+/**
+ * GET /api/apartments/:id
+ * Get a single apartment by ID
+ */
+export const getApartmentById = async (
+  req: Request<{ id: string }>,
+  res: Response<ApartmentResponse>
+): Promise<Response<ApartmentResponse>> => {
+  try {
+    const { id } = req.params
+    const querySql = `
+      SELECT a.*, u.email as owner_email
+      FROM public.apartments a
+      LEFT JOIN public.users u ON a.owner_id = u.id
+      WHERE a.id = $1
+    `
+    const result = await query<Apartment & { owner_email: string }>(querySql, [id])
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Apartment not found' })
+    }
+
+    return res.status(200).json({ apartment: formatApartment(result.rows[0]) })
+  } catch (error) {
+    const err = error as Error
+    console.error('[apartments/get] ❌', err.message)
+    return res.status(500).json({ error: 'Database error' })
+  }
+}
+
+export default { listApartments, createApartment, getApartmentById }
