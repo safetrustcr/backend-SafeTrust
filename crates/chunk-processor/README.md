@@ -8,8 +8,10 @@ It replaces the sequential `for` loop in
 that calls the TrustlessWork indexer one chunk at a time. Each chunk is an
 independent HTTP round-trip, so total sync time is dominated by network latency
 paid **serially**. This addon issues those requests concurrently on Tokio's
-async executor — without blocking Node's event loop per request — collapsing
-`N × latency` into roughly `latency` (bounded by `CHUNK_CONCURRENCY`).
+async executor (without blocking Node's event loop), so the idealized wall-clock
+cost drops from `N × latency` to about `ceil(N / CHUNK_CONCURRENCY) × latency`
+plus overhead. When `CHUNK_CONCURRENCY >= N` that is roughly a single `latency`;
+with more chunks than the limit it scales down by the concurrency factor.
 
 ## What it provides
 
