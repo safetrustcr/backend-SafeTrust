@@ -58,7 +58,7 @@ async function syncEscrowsHandler(req, res) {
   try {
     // ── Step 1: Fetch all known contract IDs ─────────────────────────────────
     const { rows } = await db.query(
-      `SELECT contract_id, status, balance, marker, approver
+      `SELECT contract_id
          FROM public.trustless_work_escrows
         WHERE tenant_id = 'safetrust'`
     );
@@ -84,7 +84,6 @@ async function syncEscrowsHandler(req, res) {
     }
 
     const contractIds = rows.map((r) => r.contract_id);
-    const dbStateMap = Object.fromEntries(rows.map((r) => [r.contract_id, r]));
 
     // ── Step 2: TrustlessWork fetch + upsert ──────────────────────────────────
     // syncAllChunks processes the chunks sequentially, or concurrently via the
@@ -99,13 +98,24 @@ async function syncEscrowsHandler(req, res) {
     } = await syncAllChunks(contractIds);
 
     // ── Step 3: Optional Soroban RPC validation pass (gated by env var) ───────
-    // Independent of the fetch above: it compares on-chain state against the
-    // pre-sync DB snapshot (dbStateMap) one chunk at a time, and never aborts
-    // the sync. Failures are recorded in chunkErrors.
+    // Compares on-chain state against the DB, one chunk at a time, and never
+    // aborts the sync. The snapshot is read AFTER Step 2 so drift is measured
+    // against the just-synced rows (not a pre-sync snapshot): this avoids both
+    // overstating drift and reverting a freshly-synced row on a stale compare.
+    // Failures are recorded in chunkErrors.
     let totalSorobanDrift = 0;
     let totalSorobanCorrected = 0;
 
     if (SOROBAN_VALIDATION_ENABLED) {
+      const { rows: currentRows } = await db.query(
+        `SELECT contract_id, status, balance, marker, approver
+           FROM public.trustless_work_escrows
+          WHERE tenant_id = 'safetrust'`
+      );
+      const dbStateMap = Object.fromEntries(
+        currentRows.map((r) => [r.contract_id, r])
+      );
+
       const chunks = chunkArray(contractIds, CHUNK_SIZE);
       for (let i = 0; i < chunks.length; i++) {
         try {
