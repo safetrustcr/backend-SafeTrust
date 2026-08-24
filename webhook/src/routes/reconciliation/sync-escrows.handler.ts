@@ -1,7 +1,7 @@
-'use strict';
+'use strict'
 
 /**
- * @file src/routes/reconciliation/sync-escrows.handler.js
+ * @file src/routes/reconciliation/sync-escrows.handler.ts
  * @description POST /reconciliation/sync-escrows — Hasura cron trigger target.
  *
  * Flow
@@ -14,57 +14,108 @@
  *  5. Return 200 with full summary JSON (including Soroban metrics) regardless of partial chunk failures
  */
 
-const db = require('../../services/db');
-const { hasuraRequest } = require('../../services/hasura');
+import { Request, Response } from 'express'
+import db from '../../services/db'
+import { hasuraRequest } from '../../services/hasura'
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
   syncAllChunks,
   chunkArray,
   CHUNK_SIZE,
   findStaleEscrows,
-} = require('../../lib/reconciliation');
+} = require('../../lib/reconciliation')
+
+export interface SyncEscrowsPayload {
+  [key: string]: unknown
+}
+
+export interface SyncEscrowsResult {
+  success: boolean
+  message?: string
+  totalEscrows: number
+  chunks: number
+  updated: number
+  unchanged: number
+  skipped: number
+  staleCount: number
+  staleContractIds: string[]
+  errors: number
+  sorobanEnabled: boolean
+  sorobanDrift: number
+  sorobanCorrected: number
+  durationMs: number
+}
+
+interface EscrowDbRow {
+  contract_id: string
+  id?: string
+  status?: string
+  balance?: string
+  marker?: string
+  approver?: string
+}
+
+interface SorobanOnChainState {
+  status: string
+  balance: number
+}
+
+interface Discrepancy {
+  field: string
+  severity: string
+  in_database: string
+  on_chain: string
+}
+
+interface ReconciliationReport {
+  in_sync: boolean
+  discrepancies: Discrepancy[]
+}
 
 // Rust Soroban reconciler — queries blockchain directly via native addon if available
-let queryEscrowStateBatch = null;
-let reconcileBatch = null;
+let queryEscrowStateBatch: ((contractId: string, network: string) => string) | null = null
+let reconcileBatch: ((onChainJson: string, dbJson: string) => string) | null = null
 
 try {
-  const sorobanReconciler = require('../../../crates/soroban-reconciler');
-  queryEscrowStateBatch = sorobanReconciler.queryEscrowStateBatch;
-  reconcileBatch = sorobanReconciler.reconcileBatch;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const sorobanReconciler = require('../../../crates/soroban-reconciler')
+  queryEscrowStateBatch = sorobanReconciler.queryEscrowStateBatch
+  reconcileBatch = sorobanReconciler.reconcileBatch
 } catch (err) {
+  const error = err as Error
   console.warn(
     '[reconciliation] ⚠️ soroban-reconciler native addon unavailable:',
-    err.message
-  );
+    error.message
+  )
 }
 
 /** Escrows not updated within this many days are reported as stale. */
-const STALE_ESCROW_DAYS = 7;
-const NETWORK = process.env.STELLAR_NETWORK ?? 'testnet';
+const STALE_ESCROW_DAYS = 7
+const NETWORK = process.env.STELLAR_NETWORK ?? 'testnet'
 
 // Enable/disable Soroban validation pass — off by default until Phase 2
-const SOROBAN_VALIDATION_ENABLED = process.env.SOROBAN_VALIDATION_ENABLED === 'true';
+const SOROBAN_VALIDATION_ENABLED = process.env.SOROBAN_VALIDATION_ENABLED === 'true'
 
 /**
  * Handle POST /reconciliation/sync-escrows.
- *
- * @param {import('express').Request}  req
- * @param {import('express').Response} res
  */
-async function syncEscrowsHandler(req, res) {
-  const startTime = Date.now();
-  console.log('[reconciliation] 🔄 Starting escrow sync...');
+export const syncEscrowsHandler = async (
+  req: Request<{}, {}, SyncEscrowsPayload>,
+  res: Response
+): Promise<Response> => {
+  const startTime = Date.now()
+  console.log('[reconciliation] 🔄 Starting escrow sync...')
 
   try {
     // ── Step 1: Fetch all known contract IDs ─────────────────────────────────
-    const { rows } = await db.query(
+    const { rows } = await db.query<EscrowDbRow>(
       `SELECT contract_id
          FROM public.trustless_work_escrows
         WHERE tenant_id = 'safetrust'`
-    );
+    )
 
     if (rows.length === 0) {
-      console.log('[reconciliation] ℹ️  No escrows found to sync.');
+      console.log('[reconciliation] ℹ️  No escrows found to sync.')
       return res.status(200).json({
         success: true,
         message: 'No escrows to sync',
@@ -80,10 +131,10 @@ async function syncEscrowsHandler(req, res) {
         sorobanDrift: 0,
         sorobanCorrected: 0,
         durationMs: Date.now() - startTime,
-      });
+      })
     }
 
-    const contractIds = rows.map((r) => r.contract_id);
+    const contractIds = rows.map((r) => r.contract_id)
 
     // ── Step 2: TrustlessWork fetch + upsert ──────────────────────────────────
     // syncAllChunks processes the chunks sequentially, or concurrently via the
@@ -95,7 +146,7 @@ async function syncEscrowsHandler(req, res) {
       unchanged: totalUnchanged,
       skipped: totalSkipped,
       errors: chunkErrors,
-    } = await syncAllChunks(contractIds);
+    } = await syncAllChunks(contractIds)
 
     // ── Step 3: Optional Soroban RPC validation pass (gated by env var) ───────
     // Compares on-chain state against the DB, one chunk at a time, and never
@@ -103,70 +154,73 @@ async function syncEscrowsHandler(req, res) {
     // against the just-synced rows (not a pre-sync snapshot): this avoids both
     // overstating drift and reverting a freshly-synced row on a stale compare.
     // Failures are recorded in chunkErrors.
-    let totalSorobanDrift = 0;
-    let totalSorobanCorrected = 0;
+    let totalSorobanDrift = 0
+    let totalSorobanCorrected = 0
 
     if (SOROBAN_VALIDATION_ENABLED) {
-      const { rows: currentRows } = await db.query(
+      const { rows: currentRows } = await db.query<EscrowDbRow>(
         `SELECT contract_id, status, balance, marker, approver
            FROM public.trustless_work_escrows
           WHERE tenant_id = 'safetrust'`
-      );
+      )
       const dbStateMap = Object.fromEntries(
         currentRows.map((r) => [r.contract_id, r])
-      );
+      )
 
-      const chunks = chunkArray(contractIds, CHUNK_SIZE);
+      const chunks: string[][] = chunkArray(contractIds, CHUNK_SIZE)
       for (let i = 0; i < chunks.length; i++) {
         try {
           const { drifted, corrected } = await runSorobanValidation(
-            chunks[i], dbStateMap, NETWORK
-          );
-          totalSorobanDrift += drifted;
-          totalSorobanCorrected += corrected;
+            chunks[i],
+            dbStateMap,
+            NETWORK
+          )
+          totalSorobanDrift += drifted
+          totalSorobanCorrected += corrected
 
           if (drifted > 0) {
             console.warn(
               `[reconciliation] ⚠️  Soroban drift in chunk ${i + 1}:` +
-              ` ${drifted} contracts, ${corrected} auto-corrected`
-            );
+                ` ${drifted} contracts, ${corrected} auto-corrected`
+            )
           }
         } catch (sorobanError) {
+          const sErr = sorobanError as Error
           // Soroban validation failure is non-fatal — the TrustlessWork sync already ran.
           console.error(
             `[reconciliation] ⚠️  Soroban validation failed for chunk ${i + 1}:`,
-            sorobanError.message
-          );
-          chunkErrors.push(`soroban_chunk_${i + 1}: ${sorobanError.message}`);
+            sErr.message
+          )
+          chunkErrors.push(`soroban_chunk_${i + 1}: ${sErr.message}`)
         }
       }
     }
 
     // ── Step 4: Detect stale escrows (O(log n + k) indexed lookup) ────────────
-    const staleContractIds = await findStaleEscrows(STALE_ESCROW_DAYS);
-    const staleCount = staleContractIds.length;
+    const staleContractIds: string[] = await findStaleEscrows(STALE_ESCROW_DAYS)
+    const staleCount = staleContractIds.length
 
     if (staleCount > 0) {
       console.warn(
         `[reconciliation] ⚠️  ${staleCount} escrows not updated in ${STALE_ESCROW_DAYS}+ days:`,
         staleContractIds.slice(0, 5)
-      );
+      )
     }
 
-    const durationMs = Date.now() - startTime;
+    const durationMs = Date.now() - startTime
 
     // ── Step 5: Log summary (extended with Soroban metrics) ───────────────────
-    console.log(`[reconciliation] ✅ Sync complete in ${durationMs}ms`);
-    console.log(`   Total escrows     : ${contractIds.length}`);
-    console.log(`   Chunks            : ${chunkCount}`);
-    console.log(`   Updated rows      : ${totalUpdated}`);
-    console.log(`   Unchanged rows    : ${totalUnchanged}`);
-    console.log(`   Skipped rows      : ${totalSkipped}`);
-    console.log(`   Stale rows        : ${staleCount}`);
-    console.log(`   Soroban drift     : ${totalSorobanDrift}`);
-    console.log(`   Soroban corrected : ${totalSorobanCorrected}`);
+    console.log(`[reconciliation] ✅ Sync complete in ${durationMs}ms`)
+    console.log(`   Total escrows     : ${contractIds.length}`)
+    console.log(`   Chunks            : ${chunkCount}`)
+    console.log(`   Updated rows      : ${totalUpdated}`)
+    console.log(`   Unchanged rows    : ${totalUnchanged}`)
+    console.log(`   Skipped rows      : ${totalSkipped}`)
+    console.log(`   Stale rows        : ${staleCount}`)
+    console.log(`   Soroban drift     : ${totalSorobanDrift}`)
+    console.log(`   Soroban corrected : ${totalSorobanCorrected}`)
     if (chunkErrors.length > 0) {
-      console.log(`   Chunk errors      : ${chunkErrors.length}`);
+      console.log(`   Chunk errors      : ${chunkErrors.length}`)
     }
 
     // ── Step 6: Respond 200 (always — matches existing contract) ─────────────
@@ -184,35 +238,40 @@ async function syncEscrowsHandler(req, res) {
       sorobanDrift: totalSorobanDrift,
       sorobanCorrected: totalSorobanCorrected,
       durationMs,
-    });
+    })
   } catch (fatalError) {
-    console.error('[reconciliation] ❌ Fatal error:', fatalError.message);
+    const fErr = fatalError as Error
+    console.error('[reconciliation] ❌ Fatal error:', fErr.message)
     return res.status(500).json({
       success: false,
       error: 'Reconciliation failed',
-      details: fatalError.message,
-    });
+      details: fErr.message,
+    })
   }
 }
 
 // ── Soroban validation helper ──────────────────────────────────────────────────
 
-async function runSorobanValidation(chunk, dbStateMap, network) {
-  let drifted = 0;
-  let corrected = 0;
+async function runSorobanValidation(
+  chunk: string[],
+  dbStateMap: Record<string, EscrowDbRow>,
+  network: string
+): Promise<{ drifted: number; corrected: number }> {
+  let drifted = 0
+  let corrected = 0
 
   if (!queryEscrowStateBatch || !reconcileBatch) {
-    throw new Error('soroban-reconciler native addon is not available');
+    throw new Error('soroban-reconciler native addon is not available')
   }
 
   for (const contractId of chunk) {
     try {
       // Query Soroban RPC via Rust crate
-      const onChainJson = queryEscrowStateBatch(contractId, network);
-      const onChain = JSON.parse(onChainJson);
+      const onChainJson = queryEscrowStateBatch(contractId, network)
+      const onChain: SorobanOnChainState = JSON.parse(onChainJson)
 
-      const dbState = dbStateMap[contractId];
-      if (!dbState) continue;
+      const dbState = dbStateMap[contractId]
+      if (!dbState) continue
 
       // Compare via Rust diff engine
       const reportJson = reconcileBatch(
@@ -225,20 +284,23 @@ async function runSorobanValidation(chunk, dbStateMap, network) {
           marker: dbState.marker ?? '',
           approver: dbState.approver ?? '',
         })
-      );
-      const report = JSON.parse(reportJson);
+      )
+      const report: ReconciliationReport = JSON.parse(reportJson)
 
       if (!report.in_sync) {
-        drifted++;
+        drifted++
 
-        const criticalDiscrepancies = report.discrepancies
-          .filter((d) => d.severity === 'critical');
+        const criticalDiscrepancies = report.discrepancies.filter(
+          (d) => d.severity === 'critical'
+        )
 
         if (criticalDiscrepancies.length > 0) {
           console.warn(
             `[reconciliation] 🚨 Soroban drift for ${contractId}:`,
-            criticalDiscrepancies.map((d) => `${d.field}: ${d.in_database} → ${d.on_chain}`)
-          );
+            criticalDiscrepancies.map(
+              (d) => `${d.field}: ${d.in_database} → ${d.on_chain}`
+            )
+          )
 
           // Auto-correct: update database to match blockchain ground truth
           await hasuraRequest(
@@ -261,19 +323,16 @@ async function runSorobanValidation(chunk, dbStateMap, network) {
               status: onChain.status,
               balance: onChain.balance / 10_000_000,
             }
-          );
-          corrected++;
+          )
+          corrected++
         }
       }
     } catch (err) {
+      const e = err as Error
       // Per-contract failure is non-fatal inside the Soroban pass
-      console.warn(
-        `[reconciliation] ⚠️  Soroban skip for ${contractId}: ${err.message}`
-      );
+      console.warn(`[reconciliation] ⚠️  Soroban skip for ${contractId}: ${e.message}`)
     }
   }
 
-  return { drifted, corrected };
+  return { drifted, corrected }
 }
-
-module.exports = { syncEscrowsHandler };
