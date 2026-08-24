@@ -61,6 +61,9 @@ router.use(releaseFundsRoute)
 router.use(disputeRoute)
 router.use(resolveDisputeRoute)
 
+const transitionsRoute = require('./escrow-transitions.route');
+router.use(transitionsRoute);
+
 // ── 3. Hotel conversations (service-to-service auth) ─────────────────────────
 router.use('/api/hotel', verifyInternalSecret as RequestHandler)
 router.use(hotelConversationsRoute)

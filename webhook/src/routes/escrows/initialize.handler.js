@@ -41,13 +41,31 @@ const initializeEscrowHandler = async (req, res) => {
     });
   }
 
+  const { getValidPriorStates } = require('../../../../crates/escrow-state-machine');
+  
+  let validStates;
+  try {
+    const validStatesJson = getValidPriorStates('created', 'escrow.initialized');
+    validStates = JSON.parse(validStatesJson);
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to retrieve valid prior states' });
+  }
+
   const mutation = `
-    mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
-      insert_trustless_work_escrows_one(object: $object) {
-        id
-        contractId
-        status
-        createdAt
+    mutation InitializeEscrow($contractId: String!, $validStates: [String!]!, $setObj: trustless_work_escrows_set_input!) {
+      update_trustless_work_escrows(
+        where: {
+          contractId: { _eq: $contractId }
+          status: { _in: $validStates }
+        }
+        _set: $setObj
+      ) {
+        returning {
+          id
+          contractId
+          status
+          createdAt
+        }
       }
     }
   `;
@@ -65,10 +83,11 @@ const initializeEscrowHandler = async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
-    // 4 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
+    // 4 — Update public.trustless_work_escrows via Hasura GraphQL mutation
     const data = await hasuraRequest(mutation, {
-      object: {
-        contractId: contract_id,
+      contractId: contract_id,
+      validStates,
+      setObj: {
         marker,
         approver,
         releaser,
@@ -89,10 +108,11 @@ const initializeEscrowHandler = async (req, res) => {
       }
     });
 
-    const escrow = data.insert_trustless_work_escrows_one;
-    if (!escrow) {
-      return res.status(500).json({ error: 'Failed to insert escrow record' });
+    const returning = data.update_trustless_work_escrows?.returning;
+    if (!returning || !returning.length) {
+      return res.status(404).json({ error: 'Failed to update escrow record or invalid state transition' });
     }
+    const escrow = returning[0];
 
     // 5 — Link escrow to reservation AFTER escrow is confirmed to exist
     // booking_metadata.reservation_id is set by the frontend when BOOK was clicked
