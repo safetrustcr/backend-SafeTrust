@@ -46,6 +46,8 @@ services:
 
   webhook:
     build:
+      # Repo root: the webhook image needs the root Cargo workspace (Cargo.toml,
+      # Cargo.lock, crates/) alongside webhook/, so it cannot build from ./webhook.
       context: .
       dockerfile: webhook/Dockerfile
       cache_from:
