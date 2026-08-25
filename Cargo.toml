@@ -4,6 +4,7 @@ members = [
     "crates/webhook-verifier",
     "crates/stellar-utils",
     "crates/chunk-processor",
+    "crates/pg-bulk-upsert",
 ]
 
 [workspace.dependencies]
