@@ -1,0 +1,22 @@
+[package]
+name = "pg-bulk-upsert"
+version = "0.1.0"
+edition = "2021"
+description = "Neon native addon that bulk-upserts escrow rows into PostgreSQL with a single UNNEST statement (tokio-postgres)"
+
+[lib]
+# cdylib -> Node-API addon (index.node); rlib -> lets `cargo test` build the pure
+# columnar-transform logic as a plain test binary without a Node.js runtime.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neon           = { version = "1", default-features = false, features = ["napi-6"] }
+# NoTls only: the reconciliation DB connection uses no SSL (see webhook services/db),
+# so tokio-postgres needs no TLS backend and the build stays free of OpenSSL.
+tokio-postgres = "0.7"
+tokio          = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+serde          = { version = "1", features = ["derive"] }
+serde_json     = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }

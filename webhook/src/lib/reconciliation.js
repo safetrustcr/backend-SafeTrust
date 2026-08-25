@@ -93,6 +93,84 @@ function __resetChunkProcessorForTests() {
   _chunkProcessorLoadFailed = false;
 }
 
+// ─── Optional Rust bulk upsert ───────────────────────────────────────────────
+/**
+ * When RUST_BULK_UPSERT_ENABLED=true, a chunk's escrow writes go through the
+ * `pg-bulk-upsert` Neon addon, which folds up to 50 per-row UPSERT round trips
+ * into a single INSERT ... ON CONFLICT ... UNNEST statement. The SQL mirrors
+ * UPSERT_ESCROW_SQL below, so the updated/unchanged counts and the response are
+ * identical to the row-by-row path. Composes with the parallel fetch above: the
+ * chunk-processor fetches concurrently, then each chunk is bulk-written here.
+ *
+ * Everything here is gated: with the flag unset (default) the addon is never
+ * loaded and the row-by-row loop runs exactly as before.
+ */
+const BULK_UPSERT_MODULE = '../../../crates/pg-bulk-upsert';
+
+/** True when the operator has opted into the Rust bulk upsert path. */
+function isRustBulkUpsertEnabled() {
+  return process.env.RUST_BULK_UPSERT_ENABLED === 'true';
+}
+
+/**
+ * Build a libpq connection string from the same POSTGRES_* env vars the Node
+ * pg pool uses (see services/db). Credentials (user + password) have no default:
+ * if either is unset this throws, so the bulk path fails loudly and falls back to
+ * row-by-row rather than silently connecting with a well-known default password.
+ * User and password are URL-encoded so special characters cannot corrupt the
+ * string.
+ */
+function buildConnectionString() {
+  const user = process.env.POSTGRES_USER;
+  const password = process.env.POSTGRES_PASSWORD;
+  if (!user || !password) {
+    throw new Error(
+      'pg-bulk-upsert requires POSTGRES_USER and POSTGRES_PASSWORD to be set'
+    );
+  }
+  const enc = encodeURIComponent;
+  const host = process.env.POSTGRES_HOST ?? 'localhost';
+  const port = process.env.POSTGRES_PORT ?? '5432';
+  const database = process.env.POSTGRES_DB ?? 'postgres';
+  return `postgresql://${enc(user)}:${enc(password)}@${host}:${port}/${database}`;
+}
+
+// Lazily require the native addon so the flag-off path never touches it and a
+// missing/unbuilt binary can degrade gracefully to the row-by-row loop.
+let _bulkUpsert = null;
+let _bulkUpsertLoadFailed = false;
+// Test seam: `undefined` means "no override"; a set value (object or null) is
+// returned as-is, so a test can inject a fake addon or simulate an absent one.
+let _bulkUpsertOverride;
+function loadBulkUpsert() {
+  if (_bulkUpsertOverride !== undefined) return _bulkUpsertOverride;
+  if (_bulkUpsert || _bulkUpsertLoadFailed) return _bulkUpsert;
+  try {
+    _bulkUpsert = require(BULK_UPSERT_MODULE);
+  } catch (err) {
+    _bulkUpsertLoadFailed = true;
+    console.error(
+      '[reconciliation] ⚠️  pg-bulk-upsert addon unavailable — ' +
+        `falling back to row-by-row upsert: ${err.message}`
+    );
+  }
+  return _bulkUpsert;
+}
+
+/** @internal Test-only: force loadBulkUpsert() to return `mock` (null = absent). */
+function __setBulkUpsertForTests(mock) {
+  _bulkUpsertOverride = mock;
+  _bulkUpsert = null;
+  _bulkUpsertLoadFailed = false;
+}
+
+/** @internal Test-only: drop the override and restore the real require path. */
+function __resetBulkUpsertForTests() {
+  _bulkUpsertOverride = undefined;
+  _bulkUpsert = null;
+  _bulkUpsertLoadFailed = false;
+}
+
 // ─── Idempotent UPSERT ────────────────────────────────────────────────────────
 /**
  * INSERT … ON CONFLICT (contract_id) DO UPDATE …
@@ -302,9 +380,94 @@ async function upsertEscrows(escrows) {
 }
 
 /**
+ * Bulk path: fold the whole batch into a single UNNEST UPSERT via the Rust
+ * addon. Malformed records (no contractId) are filtered out first and counted as
+ * skipped, matching {@link upsertEscrows}. The addon's rows_affected maps to
+ * `updated` and its unchanged count to `unchanged`, because the statement's
+ * IS DISTINCT FROM guard is identical to UPSERT_ESCROW_SQL. Throws if the addon
+ * is unavailable or the statement fails, so the caller can fall back.
+ *
+ * @param {object[]} escrows
+ * @returns {Promise<{updated: number, unchanged: number, skipped: number}>}
+ */
+async function upsertEscrowsBulk(escrows) {
+  const addon = loadBulkUpsert();
+  if (!addon) {
+    throw new Error('pg-bulk-upsert addon not loaded');
+  }
+
+  let skipped = 0;
+  const valid = [];
+  for (const escrow of escrows) {
+    if (!escrow?.contractId) {
+      console.warn('[reconciliation] ⚠️  Skipping escrow without contractId:', escrow);
+      skipped++;
+      continue;
+    }
+    valid.push(escrow);
+  }
+
+  if (valid.length === 0) {
+    return { updated: 0, unchanged: 0, skipped };
+  }
+
+  // Map to the addon's row shape, applying the same defaults as upsertEscrows so
+  // the counts match. Numeric columns are stringified to preserve DECIMAL(20,7)
+  // precision across the boundary.
+  const updates = valid.map((escrow) => ({
+    contract_id: escrow.contractId,
+    status: escrow.status ?? 'created',
+    amount: String(escrow.amount ?? 0),
+    balance: String(escrow.balance ?? 0),
+    marker: escrow.roles?.marker ?? '',
+    approver: escrow.roles?.approver ?? '',
+    releaser: escrow.roles?.releaser ?? '',
+    escrow_type: escrow.escrowType ?? 'single_release',
+  }));
+
+  // bulkUpsertEscrows returns a Promise<string> — awaiting it keeps the Node
+  // event loop free while tokio-postgres runs the statement.
+  const resultJson = await addon.bulkUpsertEscrows(
+    JSON.stringify(updates),
+    buildConnectionString()
+  );
+  const result = JSON.parse(resultJson);
+
+  return {
+    updated: result.rows_affected,
+    unchanged: result.unchanged,
+    skipped,
+  };
+}
+
+/**
+ * Upsert a batch of escrow objects, choosing the Rust bulk path when
+ * RUST_BULK_UPSERT_ENABLED=true and the addon loads, otherwise the row-by-row
+ * {@link upsertEscrows}. Both return the same shape and counts. Any bulk failure
+ * (addon missing, bad credentials, statement error) degrades safely to
+ * row-by-row, so a batch is never lost.
+ *
+ * @param {object[]} escrows
+ * @returns {Promise<{updated: number, unchanged: number, skipped: number}>}
+ */
+async function upsertEscrowBatch(escrows) {
+  if (!isRustBulkUpsertEnabled() || escrows.length === 0) {
+    return upsertEscrows(escrows);
+  }
+  try {
+    return await upsertEscrowsBulk(escrows);
+  } catch (err) {
+    console.error(
+      `[reconciliation] ⚠️  Bulk upsert failed, using row-by-row: ${err.message}`
+    );
+    return upsertEscrows(escrows);
+  }
+}
+
+/**
  * Fetch one chunk of contract IDs from the indexer and upsert the results.
  *
- * Thin composition of {@link fetchEscrowsByContractIds} + {@link upsertEscrows};
+ * Thin composition of {@link fetchEscrowsByContractIds} + {@link upsertEscrowBatch};
  * a network failure rejects so the caller can isolate this chunk from the rest.
  *
  * @param {string[]} contractIds  Up to CHUNK_SIZE contract IDs.
@@ -312,7 +475,7 @@ async function upsertEscrows(escrows) {
  */
 async function syncChunk(contractIds) {
   const escrows = await fetchEscrowsByContractIds(contractIds);
-  return upsertEscrows(escrows);
+  return upsertEscrowBatch(escrows);
 }
 
 /**
@@ -356,7 +519,7 @@ async function syncChunksParallel(chunks) {
       errors.push(`chunk_${result.chunk_index}: ${result.error}`);
       continue;
     }
-    const counts = await upsertEscrows(result.escrows || []);
+    const counts = await upsertEscrowBatch(result.escrows || []);
     updated += counts.updated;
     unchanged += counts.unchanged;
     skipped += counts.skipped;
@@ -464,11 +627,17 @@ module.exports = {
   chunkArray,
   fetchEscrowsByContractIds,
   upsertEscrows,
+  upsertEscrowsBulk,
+  upsertEscrowBatch,
   syncChunk,
   syncChunksParallel,
   syncAllChunks,
   isRustChunkProcessingEnabled,
+  isRustBulkUpsertEnabled,
+  buildConnectionString,
   findStaleEscrows,
   __setChunkProcessorForTests,
   __resetChunkProcessorForTests,
+  __setBulkUpsertForTests,
+  __resetBulkUpsertForTests,
 };
