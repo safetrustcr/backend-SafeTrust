@@ -1,14 +1,17 @@
-'use strict';
-
-const {
+import { Request, Response } from 'express';
+import { InitializeEscrowPayload } from '@safetrust/types';
+import {
   hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} = require('../../services/hasura');
+} from '../../services/hasura';
 
 const EVENT_TYPE = 'escrow.initialized';
 
-const initializeEscrowHandler = async (req, res) => {
+export const initializeEscrowHandler = async (
+  req: Request<{}, {}, InitializeEscrowPayload>,
+  res: Response
+): Promise<Response> => {
   const {
     contract_id,
     marker,
@@ -57,7 +60,7 @@ const initializeEscrowHandler = async (req, res) => {
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contract_id,
       EVENT_TYPE,
-      req.body
+      req.body as Record<string, unknown>
     );
 
     if (isDuplicate) {
@@ -66,7 +69,7 @@ const initializeEscrowHandler = async (req, res) => {
     }
 
     // 4 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
-    const data = await hasuraRequest(mutation, {
+    const data = await hasuraRequest<{ insert_trustless_work_escrows_one?: { id: string } }>(mutation, {
       object: {
         contractId: contract_id,
         marker,
@@ -126,12 +129,11 @@ const initializeEscrowHandler = async (req, res) => {
     return res.status(200).json({ received: true });
 
   } catch (error) {
-    console.error('[escrow/initialize] ❌ Error:', error.details || error.message);
-    if (error.details) {
-      return res.status(500).json({ error: 'Failed to persist escrow record', details: error.details });
+    const err = error as Error & { details?: unknown };
+    console.error('[escrow/initialize] ❌ Error:', err.details || err.message);
+    if (err.details) {
+      return res.status(500).json({ error: 'Failed to persist escrow record', details: err.details });
     }
-    return res.status(500).json({ error: 'Internal server error', details: error.message });
+    return res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 };
-
-module.exports = { initializeEscrowHandler };

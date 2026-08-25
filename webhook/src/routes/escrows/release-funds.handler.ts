@@ -1,17 +1,20 @@
-'use strict';
-
-const {
+import { Request, Response } from 'express';
+import { ReleaseFundsPayload } from '@safetrust/types';
+import {
   hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} = require('../../services/hasura');
-const {
+} from '../../services/hasura';
+import {
   notifyHotelEscrowConversation,
-} = require('../../services/hotel-conversation-notify');
+} from '../../services/hotel-conversation-notify';
 
 const EVENT_TYPE = 'escrow.completed';
 
-const releaseFundsHandler = async (req, res) => {
+export const releaseFundsHandler = async (
+  req: Request<{}, {}, ReleaseFundsPayload>,
+  res: Response
+): Promise<Response> => {
   const { contractId, releaseSigner } = req.body;
 
   if (!contractId || !releaseSigner) {
@@ -25,7 +28,7 @@ const releaseFundsHandler = async (req, res) => {
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contractId,
       EVENT_TYPE,
-      req.body
+      req.body as Record<string, unknown>
     );
 
     if (isDuplicate) {
@@ -48,7 +51,11 @@ const releaseFundsHandler = async (req, res) => {
       }
     `;
 
-    const data = await hasuraRequest(mutation, { contractId });
+    const data = await hasuraRequest<{
+      update_trustless_work_escrows?: {
+        returning: Array<{ id: string; contractId: string; status: string; balance: number }>;
+      };
+    }>(mutation, { contractId });
     const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {
@@ -89,12 +96,11 @@ const releaseFundsHandler = async (req, res) => {
     return res.status(200).json({ received: true });
 
   } catch (error) {
-    console.error('[escrow/release-funds] ❌ error:', error.details || error.message);
-    if (error.details) {
-      return res.status(500).json({ error: 'Failed to update escrow status', details: error.details });
+    const err = error as Error & { details?: unknown };
+    console.error('[escrow/release-funds] ❌ error:', err.details || err.message);
+    if (err.details) {
+      return res.status(500).json({ error: 'Failed to update escrow status', details: err.details });
     }
-    return res.status(500).json({ error: 'Internal server error', details: error.message });
+    return res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 };
-
-module.exports = { releaseFundsHandler };
