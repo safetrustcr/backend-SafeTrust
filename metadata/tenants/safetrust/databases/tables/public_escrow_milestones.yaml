@@ -23,7 +23,6 @@ configuration:
       custom_name: updatedAt
     tenant_id:
       custom_name: tenantId
-  custom_name: escrowMilestones
 object_relationships:
   - name: escrow
     using:

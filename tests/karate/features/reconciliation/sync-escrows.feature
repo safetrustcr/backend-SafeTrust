@@ -33,6 +33,9 @@ Feature: Reconciliation — POST /reconciliation/sync-escrows
     And match response.staleCount == '#number'
     And match response.staleContractIds == '#[]'
     And match response.errors == '#number'
+    And match response.sorobanEnabled == false
+    And match response.sorobanDrift == 0
+    And match response.sorobanCorrected == 0
     And match response.durationMs == '#number'
 
   # ───────────────────────────────────────────────────────────────────────────

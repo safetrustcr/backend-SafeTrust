@@ -34,7 +34,7 @@ jobs:
       - name: Smoke-test native addons inside the image
         run: |
           docker run --rm safetrust-webhook:verify node -e "
-            const stellar = require('/app/webhook/crates/stellar-utils');
+            const stellar = require('/app/crates/stellar-utils');
             const verifier = require('/app/crates/webhook-verifier');
             const good = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57';
             const checks = [

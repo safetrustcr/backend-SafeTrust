@@ -1,34 +1,30 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
 FROM node:24-alpine AS builder
 
-# Rust toolchain for both Neon addons (webhook-verifier + stellar-utils).
-# gcc + musl-dev provide the C linker and musl headers rustc needs on Alpine.
+# Rust toolchain for the Neon addons (webhook-verifier, stellar-utils,
+# chunk-processor). gcc + musl-dev provide the C linker and musl headers rustc
+# needs on Alpine.
 RUN apk add --no-cache curl build-base rust cargo gcc musl-dev
 
+# Build context is the repo root, so source paths are repo-root relative.
 WORKDIR /app
 
+# 1. Node dependencies first (cached until package.json changes).
 COPY webhook/package*.json ./webhook/
-WORKDIR /app/webhook
-RUN npm ci
+RUN cd webhook && npm ci
 
-WORKDIR /app
+# 2. Rust workspace: root manifest + lockfile + all member crates at /app so
+#    `cargo build --workspace --manifest-path ../Cargo.toml` resolves from webhook.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+
+# 3. TypeScript sources + config.
 COPY webhook/tsconfig.json ./webhook/
 COPY webhook/src/ ./webhook/src/
-# Copy stellar-utils before the repo-root Cargo workspace so this crate
-# stays a standalone package (it is not a workspace member).
-COPY webhook/crates/ ./webhook/crates/
 
-# Build stellar-utils → native/index.node (Node-API v6, ABI-stable).
-RUN cd /app/webhook/crates/stellar-utils \
-    && cargo build --release \
-    && mkdir -p native \
-    && cp target/release/libstellar_utils.so native/index.node
-
-COPY crates/ ./crates/
-COPY Cargo.toml Cargo.lock ./
-
-WORKDIR /app/webhook
-RUN npm run build
+# 4. Build the Neon addons (cargo --workspace → each crate's copy-native.js) and
+#    compile TypeScript. See webhook/package.json "build" script.
+RUN cd webhook && npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
 FROM node:24-alpine AS production
@@ -43,9 +39,17 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/webhook/dist ./dist
 COPY --from=builder /app/crates/webhook-verifier/index.node /app/crates/webhook-verifier/index.node
 COPY --from=builder /app/crates/webhook-verifier/package.json /app/crates/webhook-verifier/package.json
-# Runtime pieces of the stellar-utils addon (package.json → main: native/index.node)
-COPY --from=builder /app/webhook/crates/stellar-utils/package.json ./crates/stellar-utils/package.json
-COPY --from=builder /app/webhook/crates/stellar-utils/native ./crates/stellar-utils/native
+# Runtime pieces of the stellar-utils addon (package.json → main: native/index.node).
+# Placed at /app/crates/… so `require('../../../../crates/stellar-utils')` from
+# dist/routes/auth resolves correctly.
+COPY --from=builder /app/crates/stellar-utils/package.json /app/crates/stellar-utils/package.json
+COPY --from=builder /app/crates/stellar-utils/native /app/crates/stellar-utils/native
+# chunk-processor: parallel escrow-chunk fetcher (built by build:rust --workspace).
+COPY --from=builder /app/crates/chunk-processor/index.node /app/crates/chunk-processor/index.node
+COPY --from=builder /app/crates/chunk-processor/package.json /app/crates/chunk-processor/package.json
+# pg-bulk-upsert: single-statement escrow UPSERT (built by build:rust --workspace).
+COPY --from=builder /app/crates/pg-bulk-upsert/index.node /app/crates/pg-bulk-upsert/index.node
+COPY --from=builder /app/crates/pg-bulk-upsert/package.json /app/crates/pg-bulk-upsert/package.json
 
 # node user/group already exists in official node:24-alpine image
 USER node

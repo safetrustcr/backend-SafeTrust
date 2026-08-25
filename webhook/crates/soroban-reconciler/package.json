@@ -1,0 +1,13 @@
+{
+  "name": "soroban-reconciler",
+  "version": "0.1.0",
+  "description": "Rust-native Soroban RPC escrow state reconciler exposed to Node.js via Neon.",
+  "main": "native/index.node",
+  "scripts": {
+    "build": "neon build --release",
+    "build:debug": "neon build"
+  },
+  "devDependencies": {
+    "neon-cli": "^0.10.1"
+  }
+}

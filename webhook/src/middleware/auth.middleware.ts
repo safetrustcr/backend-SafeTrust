@@ -59,13 +59,21 @@ async function resolveUserRole(uid: string): Promise<{ roles: string[]; role: st
   return { roles, role: roles[0] ?? 'guest' }
 }
 
+declare global {
+  namespace Express {
+    interface Request {
+      user?: AuthenticatedUser
+    }
+  }
+}
+
 /**
  * Verifies a Firebase Bearer token and attaches `uid`, `email`, `name`, `role`,
  * `roles`, and `admin` to `req.user`. Roles are sourced from `safetrust.user_roles`
  * (not Firebase custom claims) in both the test-bypass and verified-token paths.
  */
 export const authMiddleware = async (
-  req: AuthenticatedRequest,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {

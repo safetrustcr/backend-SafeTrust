@@ -1,7 +1,7 @@
-'use strict';
+'use strict'
 
 /**
- * @file src/routes/reconciliation/sync-escrows.route.js
+ * @file src/routes/reconciliation/sync-escrows.route.ts
  * @description Express router for POST /reconciliation/sync-escrows.
  *
  * This route is intentionally NOT protected by Firebase auth because it is
@@ -14,33 +14,30 @@
  * production.
  */
 
-const express = require('express');
-const { syncEscrowsHandler } = require('./sync-escrows.handler');
+import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
+import { syncEscrowsHandler } from './sync-escrows.handler'
 
-const router = express.Router();
+const router = Router()
 
 // ─── Optional: shared-secret guard for Hasura cron trigger ───────────────────
 /**
  * Validates the `x-hasura-event-secret` header when HASURA_EVENT_SECRET is
- * set.  Returns 401 if the secret does not match.
- *
- * @param {import('express').Request}  req
- * @param {import('express').Response} res
- * @param {import('express').NextFunction} next
+ * set. Returns 401 if the secret does not match.
  */
-function hasuraSecretGuard(req, res, next) {
-  const secret = process.env.HASURA_EVENT_SECRET;
+export function hasuraSecretGuard(req: Request, res: Response, next: NextFunction): void {
+  const secret = process.env.HASURA_EVENT_SECRET
   if (!secret) {
     // No secret configured → open (dev mode)
-    return next();
+    return next()
   }
 
-  const provided = req.headers['x-hasura-event-secret'];
+  const provided = req.headers['x-hasura-event-secret']
   if (!provided || provided !== secret) {
-    console.warn('[reconciliation] ⛔ Invalid or missing x-hasura-event-secret');
-    return res.status(401).json({ error: 'Unauthorized: invalid event secret' });
+    console.warn('[reconciliation] ⛔ Invalid or missing x-hasura-event-secret')
+    res.status(401).json({ error: 'Unauthorized: invalid event secret' })
+    return
   }
-  return next();
+  return next()
 }
 
 /**
@@ -50,6 +47,6 @@ function hasuraSecretGuard(req, res, next) {
  *         of 50 → upserts changed rows → returns sync summary.
  * @access Server-to-server (Hasura cron trigger)
  */
-router.post('/sync-escrows', hasuraSecretGuard, syncEscrowsHandler);
+router.post('/sync-escrows', hasuraSecretGuard, syncEscrowsHandler as unknown as RequestHandler)
 
-module.exports = router;
+export default router

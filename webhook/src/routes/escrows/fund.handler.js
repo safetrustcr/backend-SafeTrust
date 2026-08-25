@@ -70,14 +70,20 @@ const fundEscrowHandler = async (req, res) => {
       });
     }
 
+<<<<<<< HEAD
     // 4 — Mirror status to safetrust.reservations
+=======
+    const escrowId = updated[0].id;
+
+    // 4 — Mirror status to public.reservations
+>>>>>>> origin/main
     const mirrorMutation = `
-      mutation MirrorFundedToReservation($contractId: String!) {
-        update_reservations(
-          where: { escrow: { contractId: { _eq: $contractId } } }
+      mutation MirrorFundedToReservation($escrowId: uuid!) {
+        update_safetrust_reservations(
+          where: { escrowId: { _eq: $escrowId } }
           _set: {
             status: "funded"
-            updated_at: "now()"
+            updatedAt: "now()"
           }
         ) {
           returning { id status }
@@ -85,7 +91,7 @@ const fundEscrowHandler = async (req, res) => {
       }
     `;
 
-    await hasuraRequest(mirrorMutation, { contractId });
+    await hasuraRequest(mirrorMutation, { escrowId });
 
     // 5 — Notify hotel conversation (best-effort, never fail the response)
     await notifyHotelEscrowConversation({
@@ -102,7 +108,7 @@ const fundEscrowHandler = async (req, res) => {
   } catch (error) {
     console.error('[escrow/fund] ❌ error:', error.details || error.message);
     if (error.details) {
-      return res.status(500).json({ error: 'Failed to update escrow status' });
+      return res.status(500).json({ error: 'Failed to update escrow status', details: error.details });
     }
     return res.status(500).json({ error: 'Internal server error' });
   }

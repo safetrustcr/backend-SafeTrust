@@ -58,7 +58,6 @@ configuration:
     updated_at: UpdatedAt
     tenant_id: TenantId
   custom_root_fields: {}
-  custom_name: trustlessWorkEscrows
 array_relationships:
   - name: milestones
     using:
