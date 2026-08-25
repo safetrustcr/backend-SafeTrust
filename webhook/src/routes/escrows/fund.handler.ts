@@ -35,7 +35,7 @@ export const fundEscrowHandler = async (
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contractId,
       EVENT_TYPE,
-      req.body as Record<string, unknown>
+      req.body as unknown as Record<string, unknown>
     );
 
     if (isDuplicate) {
