@@ -15,7 +15,8 @@ INSERT INTO hotel_industry.reservations (
   (uuid_generate_v4(), '0x9i0j1k2l', (SELECT room_id FROM hotel_industry.rooms WHERE room_number = '101' LIMIT 1), '2024-07-01 15:00:00+00', '2024-07-05 11:00:00+00', 2, 'COMPLETED', 482.00),
   (uuid_generate_v4(), '0xa0j1k2l3', (SELECT room_id FROM hotel_industry.rooms WHERE room_number = '102' LIMIT 1), '2024-06-15 15:00:00+00', '2024-06-18 11:00:00+00', 3, 'COMPLETED', 375.00),
   (uuid_generate_v4(), '0xb1k2l3m4', (SELECT room_id FROM hotel_industry.rooms WHERE room_number = '201' LIMIT 1), '2024-07-20 15:00:00+00', '2024-07-22 11:00:00+00', 2, 'COMPLETED', 280.00),
-  (uuid_generate_v4(), '0xc2l3m4n5', (SELECT room_id FROM hotel_industry.rooms WHERE room_number = '101' LIMIT 1), '2024-05-10 15:00:00+00', '2024-05-15 11:00:00+00', 4, 'COMPLETED', 1250.00);
+  (uuid_generate_v4(), '0xc2l3m4n5', (SELECT room_id FROM hotel_industry.rooms WHERE room_number = '101' LIMIT 1), '2024-05-10 15:00:00+00', '2024-05-15 11:00:00+00', 4, 'COMPLETED', 1250.00)
+ON CONFLICT DO NOTHING;
 
 UPDATE hotel_industry.reservations SET updated_at = created_at + INTERVAL '1 hour'      WHERE reservation_status = 'COMPLETED';
 UPDATE hotel_industry.reservations SET updated_at = created_at + INTERVAL '30 minutes'  WHERE reservation_status = 'CONFIRMED';

@@ -1,5 +1,9 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
 
 # Load .env file if available
 if [ -f .env ]; then
@@ -21,6 +25,11 @@ if [[ $# -eq 0 ]]; then
 fi
 
 TENANTS=("$@")
+SEED_CHUNK_SIZE="${SEED_CHUNK_SIZE:-500}"
+if ! [[ "$SEED_CHUNK_SIZE" =~ ^[1-9][0-9]*$ ]]; then
+  echo "❌ SEED_CHUNK_SIZE must be a positive integer"
+  exit 1
+fi
 
 TRACK_SAFETRUST_TIMINGS=false
 if [[ "${#TENANTS[@]}" -eq 1 && "${TENANTS[0]}" == "safetrust" ]]; then
@@ -146,15 +155,50 @@ fi
 echo ""
 
 # ── 7. Apply seeds for each tenant ───────────────────────────────────────────
-echo "🌱 Applying seeds..."
-for TENANT in "${TENANTS[@]}"; do
-  echo "   ▶ Seeding tenant: $TENANT"
-  hasura seed apply \
-    --endpoint "${HASURA_ENDPOINT}" \
-    --admin-secret "$HASURA_ADMIN_SECRET" \
-    --database-name "$TENANT"
+echo "🌱 Applying seeds (parallel, transactional, chunk size: ${SEED_CHUNK_SIZE})..."
+
+apply_seeds_chunked() {
+  local TENANT="$1"
+  local SEED_DIR="$ROOT_DIR/seeds/$TENANT"
+
+  echo "   ▶ Seeding tenant: $TENANT (chunk size: $SEED_CHUNK_SIZE)"
+  for seed_file in "$SEED_DIR"/*.sql; do
+    [[ -f "$seed_file" ]] || continue
+    echo "   ⚙️  [$TENANT] Applying $(basename "$seed_file")..."
+
+    # Keep each seed file atomic. The SQL files use multi-row INSERTs, so a
+    # file is the smallest safe batch boundary without parsing SQL.
+    docker exec -i backend-safetrust-postgres-1 psql \
+      -U postgres -d postgres \
+      -v ON_ERROR_STOP=1 \
+      <<EOF
+BEGIN;
+$(cat "$seed_file")
+COMMIT;
+EOF
+
+    echo "   ✅ [$TENANT] $(basename "$seed_file") applied"
+  done
   echo "   ✅ Seeds applied for $TENANT"
+}
+
+PIDS=()
+for TENANT in "${TENANTS[@]}"; do
+  apply_seeds_chunked "$TENANT" &
+  PIDS+=("$!")
 done
+
+FAILED=()
+for i in "${!PIDS[@]}"; do
+  if ! wait "${PIDS[$i]}"; then
+    FAILED+=("${TENANTS[$i]}")
+  fi
+done
+
+if [[ ${#FAILED[@]} -gt 0 ]]; then
+  echo "❌ Seed failed for: ${FAILED[*]}"
+  exit 1
+fi
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
   TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
