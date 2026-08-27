@@ -50,10 +50,9 @@ COPY --from=builder /app/crates/chunk-processor/package.json /app/crates/chunk-p
 # pg-bulk-upsert: single-statement escrow UPSERT (built by build:rust --workspace).
 COPY --from=builder /app/crates/pg-bulk-upsert/index.node /app/crates/pg-bulk-upsert/index.node
 COPY --from=builder /app/crates/pg-bulk-upsert/package.json /app/crates/pg-bulk-upsert/package.json
-# escrow-state-machine: compile-time SafeTrust escrow lifecycle (built by build:rust --workspace).
-COPY --from=builder /app/crates/escrow-state-machine/index.node /app/crates/escrow-state-machine/index.node
-COPY --from=builder /app/crates/escrow-state-machine/package.json /app/crates/escrow-state-machine/package.json
-COPY --from=builder /app/crates/escrow-state-machine/index.d.ts /app/crates/escrow-state-machine/index.d.ts
+# x402-processor: x402 payment protocol verifier (built by build:rust --workspace).
+COPY --from=builder /app/crates/x402-processor/index.node /app/crates/x402-processor/index.node
+COPY --from=builder /app/crates/x402-processor/package.json /app/crates/x402-processor/package.json
 
 # node user/group already exists in official node:24-alpine image
 USER node
