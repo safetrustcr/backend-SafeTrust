@@ -4,6 +4,11 @@ import crypto from 'crypto'
 import verifyTrustlessWorkSignature from '../middleware/trustlesswork-signature.middleware'
 import { authMiddleware } from '../middleware/auth.middleware'
 
+// Compile-time SafeTrust escrow state machine (Neon native addon).
+const { getTransitionTable } = require('../../../crates/escrow-state-machine') as {
+  getTransitionTable: () => string
+}
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 import initializeRoute from './escrows/initialize.route'
 import fundRoute from './escrows/fund.route'
@@ -50,6 +55,21 @@ function verifyInternalSecret(req: Request, res: Response, next: NextFunction) {
 // ── 1. Health check (public) ──────────────────────────────────────────────────
 router.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({ status: 'ok' })
+})
+
+// ── 1b. Escrow state-machine inspection (public; admin dashboard / docs) ───────
+// Returns the authoritative SafeTrust transition graph from the Rust crate.
+// Registered before the `/api` auth middleware so it is reachable without a
+// Firebase token; it only exposes the transition table, no mutable state.
+router.get('/api/escrow/transitions', (_req: Request, res: Response) => {
+  try {
+    const table = JSON.parse(getTransitionTable() as string)
+    res.status(200).json({ transitions: table })
+  } catch (error) {
+    const err = error as Error
+    console.error('[escrow/transitions] failed to serialize transition table:', err.message)
+    res.status(500).json({ error: 'Failed to load escrow transition table' })
+  }
 })
 
 // ── 2. TrustlessWork webhook callbacks (HMAC verified, no Firebase auth) ──────
