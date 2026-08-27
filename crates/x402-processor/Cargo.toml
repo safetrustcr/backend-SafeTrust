@@ -1,0 +1,19 @@
+[package]
+name = "x402-processor"
+version = "0.1.0"
+edition = "2021"
+description = "Neon native addon for x402 payment protocol validation on Stellar"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neon = { version = "1", default-features = false, features = ["napi-6"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "test-util"] }
