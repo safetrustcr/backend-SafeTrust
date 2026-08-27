@@ -12,15 +12,50 @@ POSTGRES_PORT="${POSTGRES_PORT:-5433}"
 WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
 HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
 
-if [[ $# -eq 0 ]]; then
+RESET_DATABASE=false
+RESTART_CONTAINERS=false
+TENANTS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --reset)
+      RESET_DATABASE=true
+      shift
+      ;;
+    --restart)
+      RESTART_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: bin/start [--reset] [--restart] <tenant1> [tenant2 ...]
+
+Options:
+  --reset    Stop the stack and remove its volumes before starting.
+  --restart  Recreate the containers while preserving volumes.
+  -h, --help Show this help.
+USAGE
+      exit 0
+      ;;
+    -* )
+      echo "❌ Error: Unknown option: $1"
+      echo "   Run 'bin/start --help' for usage."
+      exit 1
+      ;;
+    *)
+      TENANTS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ "${#TENANTS[@]}" -eq 0 ]]; then
   echo "❌ Error: At least one tenant name is required."
   echo ""
-  echo "Usage:   bin/start <tenant1> [tenant2 ...]"
-  echo "Example: bin/start safetrust hotel_industry"
+  echo "Usage:   bin/start [--reset] [--restart] <tenant1> [tenant2 ...]"
+  echo "Example: bin/start --restart safetrust hotel_industry"
   exit 1
 fi
-
-TENANTS=("$@")
 
 TRACK_SAFETRUST_TIMINGS=false
 if [[ "${#TENANTS[@]}" -eq 1 && "${TENANTS[0]}" == "safetrust" ]]; then
@@ -35,6 +70,14 @@ echo ""
 
 
 # ── 1. Start containers ───────────────────────────────────────────────────────
+if [[ "$RESET_DATABASE" == "true" ]]; then
+  echo "🧹 Resetting containers and database volumes..."
+  docker compose down -v
+elif [[ "$RESTART_CONTAINERS" == "true" ]]; then
+  echo "🔄 Restarting containers (preserving database volumes)..."
+  docker compose down
+fi
+
 echo "📦 Starting containers..."
 docker compose up -d --build
 
