@@ -1,9 +1,17 @@
 use neon::prelude::*;
+use std::sync::LazyLock;
 use tokio::runtime::Runtime;
 
 pub mod facilitator;
 pub mod parser;
 pub mod types;
+
+static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to initialize x402 tokio runtime")
+});
 
 /// Validate an X-Payment header against the required amount.
 /// Calls the facilitator /verify endpoint.
@@ -13,12 +21,7 @@ fn validate_x402_payment(mut cx: FunctionContext) -> JsResult<JsString> {
     let header = cx.argument::<JsString>(0)?.value(&mut cx);
     let required_amount = cx.argument::<JsNumber>(1)?.value(&mut cx);
 
-    let rt = match Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => return cx.throw_error(e.to_string()),
-    };
-
-    let result = rt.block_on(async {
+    let result = RUNTIME.block_on(async {
         match parser::parse_x_payment_header(&header) {
             Err(e) => types::X402ValidationResult {
                 is_valid: false,
@@ -143,6 +146,33 @@ mod tests {
         let result = parse_x_payment_header(&header);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must be positive"));
+    }
+
+    #[test]
+    fn rejects_negative_amount() {
+        use base64::{engine::general_purpose, Engine as _};
+        let payload = serde_json::json!({
+            "scheme": "exact",
+            "network": "stellar:testnet",
+            "payload": "abc",
+            "amount": -0.10,
+            "facilitatorUrl": ""
+        });
+        let encoded = general_purpose::STANDARD.encode(payload.to_string().as_bytes());
+        let header = format!("x402 {}", encoded);
+        let result = parse_x_payment_header(&header);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must be positive"));
+    }
+
+    #[test]
+    fn facilitator_allowlist_checks() {
+        use super::facilitator::*;
+        assert!(is_allowed_facilitator("https://x402.org/facilitator"));
+        assert!(is_allowed_facilitator("https://channels.openzeppelin.com/x402/testnet"));
+        assert!(is_allowed_facilitator("https://channels.openzeppelin.com/x402"));
+        assert!(!is_allowed_facilitator("https://attacker.evil/facilitator"));
+        assert!(!is_allowed_facilitator("http://insecure.site"));
     }
 
     #[test]

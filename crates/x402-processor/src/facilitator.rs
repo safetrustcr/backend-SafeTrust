@@ -6,14 +6,24 @@ pub const COINBASE_FACILITATOR_TESTNET: &str = "https://x402.org/facilitator";
 pub const OPENZEPPELIN_FACILITATOR_TESTNET: &str = "https://channels.openzeppelin.com/x402/testnet";
 pub const OPENZEPPELIN_FACILITATOR_MAINNET: &str = "https://channels.openzeppelin.com/x402";
 
+pub const ALLOWED_FACILITATORS: &[&str] = &[
+    COINBASE_FACILITATOR_TESTNET,
+    OPENZEPPELIN_FACILITATOR_TESTNET,
+    OPENZEPPELIN_FACILITATOR_MAINNET,
+];
+
+pub fn is_allowed_facilitator(url: &str) -> bool {
+    let normalized = url.trim().trim_end_matches('/');
+    ALLOWED_FACILITATORS.iter().any(|allowed| allowed.trim_end_matches('/') == normalized)
+}
+
 /// Verify an x402 payment with the facilitator.
 /// Calls POST /verify on the facilitator URL from the payment header.
 pub async fn verify_with_facilitator(
     payment: &X402PaymentHeader,
     required_amount: f64,
 ) -> Result<X402ValidationResult, String> {
-    // Use the facilitator URL from the payment header
-    // Fallback to OpenZeppelin testnet if not specified
+    // Use the facilitator URL from the payment header if in allowlist, otherwise default
     let facilitator_url = if payment.facilitator_url.is_empty() {
         if payment.network.contains("mainnet") {
             OPENZEPPELIN_FACILITATOR_MAINNET
@@ -21,6 +31,18 @@ pub async fn verify_with_facilitator(
             OPENZEPPELIN_FACILITATOR_TESTNET
         }
     } else {
+        if !is_allowed_facilitator(&payment.facilitator_url) {
+            return Ok(X402ValidationResult {
+                is_valid: false,
+                payer_address: None,
+                amount_usdc: payment.amount,
+                network: payment.network.clone(),
+                invalid_reason: Some(format!(
+                    "Untrusted facilitator URL: '{}' is not in allowlist",
+                    payment.facilitator_url
+                )),
+            });
+        }
         &payment.facilitator_url
     };
 

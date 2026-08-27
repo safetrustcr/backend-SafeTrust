@@ -80,7 +80,8 @@ describe('x402-processor native addon', () => {
   })
 
   it('validateX402Payment returns is_valid: false for zero or negative amounts', () => {
-    const payload = Buffer.from(
+    // Test zero amount
+    const zeroPayload = Buffer.from(
       JSON.stringify({
         scheme: 'exact',
         network: 'stellar:testnet',
@@ -90,10 +91,41 @@ describe('x402-processor native addon', () => {
       })
     ).toString('base64')
 
+    const zeroResult = JSON.parse(validateX402Payment(`x402 ${zeroPayload}`, 0.10))
+    expect(zeroResult.is_valid).toBe(false)
+    expect(zeroResult.invalid_reason).toContain('must be positive')
+
+    // Test negative amount
+    const negPayload = Buffer.from(
+      JSON.stringify({
+        scheme: 'exact',
+        network: 'stellar:testnet',
+        payload: 'test-payload',
+        amount: -0.50,
+        facilitatorUrl: '',
+      })
+    ).toString('base64')
+
+    const negResult = JSON.parse(validateX402Payment(`x402 ${negPayload}`, 0.10))
+    expect(negResult.is_valid).toBe(false)
+    expect(negResult.invalid_reason).toContain('must be positive')
+  })
+
+  it('validateX402Payment rejects untrusted/malicious facilitator URLs', () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        scheme: 'exact',
+        network: 'stellar:testnet',
+        payload: 'test-payload',
+        amount: 0.10,
+        facilitatorUrl: 'https://attacker.evil/facilitator',
+      })
+    ).toString('base64')
+
     const jsonStr = validateX402Payment(`x402 ${payload}`, 0.10)
     const result = JSON.parse(jsonStr)
 
     expect(result.is_valid).toBe(false)
-    expect(result.invalid_reason).toContain('must be positive')
+    expect(result.invalid_reason).toContain('Untrusted facilitator URL')
   })
 })
