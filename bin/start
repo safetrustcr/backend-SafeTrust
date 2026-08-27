@@ -33,25 +33,6 @@ echo "🚀 Starting SafeTrust backend..."
 echo "   Tenants to deploy: ${TENANTS[*]}"
 echo ""
 
-# ── 0. Pre-pull base images in parallel ───────────────────────────────────────
-echo "🐳 Pre-pulling Docker images..."
-IMAGES=(
-  "node:24-alpine"
-  "hasura/graphql-engine:v2.47.0"
-  "postgis/postgis:15-3.3"
-)
-
-PIDS=()
-for IMAGE in "${IMAGES[@]}"; do
-  docker pull "$IMAGE" --quiet &
-  PIDS+=($!)
-done
-
-for PID in "${PIDS[@]}"; do
-  wait "$PID" || true  # Non-fatal — compose will pull if needed
-done
-
-echo "✅ Images ready"
 
 # ── 1. Start containers ───────────────────────────────────────────────────────
 echo "📦 Starting containers..."
