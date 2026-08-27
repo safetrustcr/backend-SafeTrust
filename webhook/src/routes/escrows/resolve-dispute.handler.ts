@@ -1,14 +1,17 @@
-'use strict';
-
-const {
+import { Request, Response } from 'express';
+import { ResolveDisputePayload } from '@safetrust/types';
+import {
   hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} = require('../../services/hasura');
+} from '../../services/hasura';
 
 const EVENT_TYPE = 'escrow.resolved';
 
-const resolveDisputeHandler = async (req, res) => {
+export const resolveDisputeHandler = async (
+  req: Request<{}, {}, ResolveDisputePayload>,
+  res: Response
+): Promise<Response> => {
   const { contractId, resolver, resolutionNote } = req.body;
 
   if (!contractId || !resolver) {
@@ -22,7 +25,7 @@ const resolveDisputeHandler = async (req, res) => {
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contractId,
       EVENT_TYPE,
-      req.body
+      req.body as unknown as Record<string, unknown>
     );
 
     if (isDuplicate) {
@@ -48,7 +51,11 @@ const resolveDisputeHandler = async (req, res) => {
       }
     `;
 
-    const data = await hasuraRequest(mutation, { contractId });
+    const data = await hasuraRequest<{
+      update_trustless_work_escrows?: {
+        returning: Array<{ id: string; contractId: string; status: string; balance: number }>;
+      };
+    }>(mutation, { contractId });
     const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {
@@ -105,12 +112,11 @@ const resolveDisputeHandler = async (req, res) => {
     return res.status(200).json({ received: true });
 
   } catch (error) {
-    console.error('[escrow/resolve-dispute] ❌ error:', error.details || error.message);
-    if (error.details) {
-      return res.status(500).json({ error: 'Failed to update escrow status', details: error.details });
+    const err = error as Error & { details?: unknown };
+    console.error('[escrow/resolve-dispute] ❌ error:', err.details || err.message);
+    if (err.details) {
+      return res.status(500).json({ error: 'Failed to update escrow status', details: err.details });
     }
-    return res.status(500).json({ error: 'Internal server error', details: error.message });
+    return res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 };
-
-module.exports = { resolveDisputeHandler };

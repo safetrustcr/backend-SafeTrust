@@ -51,3 +51,19 @@ jobs:
             }
             console.log('addon smoke test OK - exports and validation behave as expected');
           "
+
+  cargo-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run workspace unit tests
+        run: cargo test --workspace
+        working-directory: crates
