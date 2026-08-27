@@ -1,4 +1,4 @@
-import { initializeApp, cert, getApps } from 'firebase-admin/app'
+import { initializeApp, cert, getApp } from 'firebase-admin/app'
 
 interface ServiceAccount {
   projectId: string
@@ -11,7 +11,14 @@ interface ServiceAccount {
  * In non-production, missing env vars skip init so mock-token tests can run without Firebase.
  */
 export function initializeFirebaseAdmin(): void {
-  if (getApps().length > 0) {
+  let defaultAppExists: boolean
+  try {
+    getApp()
+    defaultAppExists = true
+  } catch {
+    defaultAppExists = false
+  }
+  if (defaultAppExists) {
     return
   }
 
