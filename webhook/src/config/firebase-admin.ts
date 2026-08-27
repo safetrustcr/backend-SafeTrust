@@ -1,10 +1,4 @@
-import { initializeApp, cert, getApp } from 'firebase-admin/app'
-
-interface ServiceAccount {
-  projectId: string
-  clientEmail: string
-  privateKey: string
-}
+import { initializeApp, cert, getApp, type ServiceAccount } from 'firebase-admin/app'
 
 /**
  * Initializes Firebase Admin with service account credentials when fully configured.
