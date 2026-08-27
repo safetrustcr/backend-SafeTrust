@@ -1,14 +1,17 @@
-'use strict';
-
-const {
+import { Request, Response } from 'express';
+import { ApproveMilestonePayload } from '@safetrust/types';
+import {
   hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} = require('../../services/hasura');
+} from '../../services/hasura';
 
 const EVENT_TYPE = 'milestone.approved';
 
-async function approveMilestoneHandler(req, res) {
+export async function approveMilestoneHandler(
+  req: Request<{}, {}, ApproveMilestonePayload>,
+  res: Response
+): Promise<Response> {
   const { contractId, milestoneId, approver, flag } = req.body || {};
 
   if (!contractId || !milestoneId || !approver || flag === undefined) {
@@ -29,7 +32,7 @@ async function approveMilestoneHandler(req, res) {
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contractId,
       `${EVENT_TYPE}:${milestoneId}`,
-      req.body
+      req.body as unknown as Record<string, unknown>
     );
 
     if (isDuplicate) {
@@ -46,7 +49,9 @@ async function approveMilestoneHandler(req, res) {
       }
     `;
 
-    const lookupData = await hasuraRequest(lookupQuery, { contractId });
+    const lookupData = await hasuraRequest<{
+      trustless_work_escrows?: Array<{ id: string }>;
+    }>(lookupQuery, { contractId });
     const escrowId = lookupData.trustless_work_escrows?.[0]?.id;
 
     if (!escrowId) {
@@ -78,7 +83,9 @@ async function approveMilestoneHandler(req, res) {
       }
     `;
 
-    const milestoneResult = await hasuraRequest(mutationMilestone, {
+    const milestoneResult = await hasuraRequest<{
+      update_escrow_milestones?: { affected_rows: number };
+    }>(mutationMilestone, {
       escrowId,
       milestoneId,
       approver,
@@ -104,7 +111,9 @@ async function approveMilestoneHandler(req, res) {
       }
     `;
 
-    const escrowResult = await hasuraRequest(mutationEscrow, {
+    const escrowResult = await hasuraRequest<{
+      update_trustless_work_escrows?: { affected_rows: number };
+    }>(mutationEscrow, {
       escrowId,
       approvedAt,
     });
@@ -140,9 +149,8 @@ async function approveMilestoneHandler(req, res) {
     return res.status(200).json({ received: true });
 
   } catch (error) {
-    console.error('[escrow/approve-milestone] ❌ failed:', error.details || error.message);
+    const err = error as Error & { details?: unknown };
+    console.error('[escrow/approve-milestone] ❌ failed:', err.details || err.message);
     return res.status(500).json({ error: 'Failed to update milestone approval' });
   }
 }
-
-module.exports = { approveMilestoneHandler };
