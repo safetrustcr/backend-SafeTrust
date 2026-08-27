@@ -50,11 +50,18 @@ USAGE
 done
 
 if [[ "${#TENANTS[@]}" -eq 0 ]]; then
-  echo "❌ Error: At least one tenant name is required."
-  echo ""
-  echo "Usage:   bin/start [--reset] [--restart] <tenant1> [tenant2 ...]"
-  echo "Example: bin/start --restart safetrust hotel_industry"
-  exit 1
+  cat <<'USAGE'
+Usage: bin/start [--reset] [--restart] <tenant1> [tenant2 ...]
+
+Options:
+  --reset    Stop the stack and remove its volumes before starting.
+  --restart  Recreate the containers while preserving volumes.
+  -h, --help Show this help.
+
+Example:
+  bin/start --restart safetrust hotel_industry
+USAGE
+  exit 0
 fi
 
 TRACK_SAFETRUST_TIMINGS=false
