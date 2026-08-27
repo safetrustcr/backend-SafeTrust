@@ -49,6 +49,11 @@ USAGE
   esac
 done
 
+if [[ "$RESET_DATABASE" == "true" && "$RESTART_CONTAINERS" == "true" ]]; then
+  echo "❌ Error: --reset and --restart cannot be used together."
+  exit 1
+fi
+
 if [[ "${#TENANTS[@]}" -eq 0 ]]; then
   cat <<'USAGE'
 Usage: bin/start [--reset] [--restart] <tenant1> [tenant2 ...]
@@ -152,18 +157,23 @@ echo ""
 
 # ── 4. Apply migrations for each tenant ──────────────────────────────────────
 # Tables are created here — must run before metadata deploy.
-echo "📂 Applying migrations..."
-for TENANT in "${TENANTS[@]}"; do
-  echo "   ▶ Migrating tenant: $TENANT"
-  hasura migrate apply \
-    --endpoint "${HASURA_ENDPOINT}" \
-    --admin-secret "$HASURA_ADMIN_SECRET" \
-    --database-name "$TENANT"
-  echo "   ✅ Migrations applied for $TENANT"
-done
+if [[ "$RESTART_CONTAINERS" != "true" ]]; then
+  echo "📂 Applying migrations..."
+  for TENANT in "${TENANTS[@]}"; do
+    echo "   ▶ Migrating tenant: $TENANT"
+    hasura migrate apply \
+      --endpoint "${HASURA_ENDPOINT}" \
+      --admin-secret "$HASURA_ADMIN_SECRET" \
+      --database-name "$TENANT"
+    echo "   ✅ Migrations applied for $TENANT"
+  done
 
-if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
+  if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+    TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
+  fi
+else
+  echo "⏭️  --restart: skipping migrations (schema unchanged)"
+  TIMING_MIGRATIONS_SAFETRUST=0
 fi
 
 echo ""
@@ -196,20 +206,28 @@ fi
 echo ""
 
 # ── 7. Apply seeds for each tenant ───────────────────────────────────────────
-echo "🌱 Applying seeds..."
-for TENANT in "${TENANTS[@]}"; do
-  echo "   ▶ Seeding tenant: $TENANT"
-  hasura seed apply \
-    --endpoint "${HASURA_ENDPOINT}" \
-    --admin-secret "$HASURA_ADMIN_SECRET" \
-    --database-name "$TENANT"
-  echo "   ✅ Seeds applied for $TENANT"
-done
+if [[ "$RESTART_CONTAINERS" != "true" ]]; then
+  echo "🌱 Applying seeds..."
+  for TENANT in "${TENANTS[@]}"; do
+    echo "   ▶ Seeding tenant: $TENANT"
+    hasura seed apply \
+      --endpoint "${HASURA_ENDPOINT}" \
+      --admin-secret "$HASURA_ADMIN_SECRET" \
+      --database-name "$TENANT"
+    echo "   ✅ Seeds applied for $TENANT"
+  done
+
+  if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+    TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
+    TIMING_TOTAL=$((SECONDS - TIMER_START))
+  fi
+else
+  echo "⏭️  --restart: skipping seeds (data unchanged)"
+  TIMING_SEEDS_SAFETRUST=0
+  TIMING_TOTAL=$((SECONDS - TIMER_START))
+fi
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
-  TIMING_TOTAL=$((SECONDS - TIMER_START))
-
   mkdir -p tests/results
   node -e "
 const t = {
