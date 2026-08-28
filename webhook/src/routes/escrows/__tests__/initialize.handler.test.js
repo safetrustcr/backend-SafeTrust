@@ -10,7 +10,7 @@ jest.mock('../../../lib/zk-verifier', () => ({
   verifyProofOfFunds: jest.fn(),
 }));
 
-const { initializeEscrowHandler } = require('../initialize.handler');
+const { initializeEscrowHandler, amountToStroops } = require('../initialize.handler');
 const {
   hasuraRequest,
   logAndCheckWebhookEvent,
@@ -70,12 +70,18 @@ describe('initializeEscrowHandler ZK verification', () => {
     const req = makeRequest({
       zk_proof: 'proof-hex',
       zk_verification_key: 'vk-hex',
-      zk_public_inputs: 'inputs-hex',
+      zk_threshold_stroops: '1000000000',
+      zk_balance_commitment: 'ab'.repeat(32),
     });
     const res = makeResponse();
     await initializeEscrowHandler(req, res);
 
-    expect(verifyProofOfFunds).toHaveBeenCalledWith('proof-hex', 'vk-hex', 'inputs-hex');
+    expect(verifyProofOfFunds).toHaveBeenCalledWith(
+      'proof-hex',
+      'vk-hex',
+      '1000000000',
+      'ab'.repeat(32)
+    );
     expect(logAndCheckWebhookEvent).toHaveBeenCalledTimes(1);
     expect(hasuraRequest).toHaveBeenCalledTimes(1);
     expect(res.status).toHaveBeenCalledWith(200);
@@ -97,9 +103,31 @@ describe('initializeEscrowHandler ZK verification', () => {
     await initializeEscrowHandler(makeRequest({
       zk_proof: 'bad-proof',
       zk_verification_key: 'vk-hex',
-      zk_public_inputs: 'inputs-hex',
+      zk_threshold_stroops: '1000000000',
+      zk_balance_commitment: 'ab'.repeat(32),
     }), res);
 
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid ZK proof of funds' });
+    expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
+    expect(hasuraRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects a valid proof whose threshold does not match the escrow amount', async () => {
+    const res = makeResponse();
+    await initializeEscrowHandler(makeRequest({
+      zk_proof: 'valid-proof-for-a-different-threshold',
+      zk_verification_key: 'vk-hex',
+      zk_threshold_stroops: '999999999',
+      zk_balance_commitment: 'ab'.repeat(32),
+    }), res);
+
+    expect(verifyProofOfFunds).toHaveBeenCalledWith(
+      'valid-proof-for-a-different-threshold',
+      'vk-hex',
+      '999999999',
+      'ab'.repeat(32)
+    );
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({ error: 'Invalid ZK proof of funds' });
     expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
@@ -114,11 +142,27 @@ describe('initializeEscrowHandler ZK verification', () => {
     await initializeEscrowHandler(makeRequest({
       zk_proof: 'proof-hex',
       zk_verification_key: 'vk-hex',
-      zk_public_inputs: '',
+      zk_threshold_stroops: '1000000000',
+      zk_balance_commitment: 'ab'.repeat(32),
     }), res);
 
     expect(res.status).toHaveBeenCalledWith(503);
     expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
     expect(hasuraRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('amountToStroops', () => {
+  it('converts whole and fractional asset amounts to stroops', () => {
+    expect(amountToStroops(100)).toBe('1000000000');
+    expect(amountToStroops(0.0000001)).toBe('1');
+    expect(amountToStroops('1.2345678')).toBe('12345678');
+    expect(amountToStroops('0.0000001')).toBe('1');
+  });
+
+  it('rejects sub-stroop precision, zero, and u64 overflow', () => {
+    expect(amountToStroops('1.00000001')).toBeNull();
+    expect(amountToStroops('0')).toBeNull();
+    expect(amountToStroops('1844674407370.9551616')).toBeNull();
   });
 });

@@ -8,6 +8,42 @@ const {
 const { verifyProofOfFunds } = require('../../lib/zk-verifier');
 
 const EVENT_TYPE = 'escrow.initialized';
+const STROOPS_PER_UNIT = 10_000_000n;
+const U64_MAX = 18_446_744_073_709_551_615n;
+
+/** Convert a positive decimal asset amount to an exact u64 stroop string. */
+function amountToStroops(amount) {
+  if (typeof amount !== 'string' && typeof amount !== 'number') return null;
+  if (typeof amount === 'number') {
+    const scaled = amount * Number(STROOPS_PER_UNIT);
+    if (!Number.isSafeInteger(scaled) || scaled <= 0) return null;
+    return BigInt(scaled).toString();
+  }
+
+  const match = /^(0|[1-9]\d*)(?:\.(\d+))?$/.exec(amount);
+  if (!match) return null;
+
+  const [, whole, fraction = ''] = match;
+  if (whole.length > 13) return null;
+  const excessFraction = fraction.slice(7);
+  if (excessFraction && !/^0+$/.test(excessFraction)) return null;
+
+  const fractionalStroops = (fraction.slice(0, 7) + '0000000').slice(0, 7);
+  const stroops = BigInt(whole) * STROOPS_PER_UNIT + BigInt(fractionalStroops);
+  if (stroops === 0n || stroops > U64_MAX) return null;
+
+  return stroops.toString();
+}
+
+/** Normalize an untrusted decimal string to its canonical u64 representation. */
+function normalizeU64(value) {
+  if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) return null;
+  if (value.length > 20) return null;
+
+  const parsed = BigInt(value);
+  if (parsed > U64_MAX) return null;
+  return parsed.toString();
+}
 
 const initializeEscrowHandler = async (req, res) => {
   const {
@@ -27,7 +63,8 @@ const initializeEscrowHandler = async (req, res) => {
     booking_metadata,
     zk_proof,
     zk_verification_key,
-    zk_public_inputs,
+    zk_threshold_stroops,
+    zk_balance_commitment,
   } = req.body;
 
   // 1 — Validate required fields
@@ -47,22 +84,40 @@ const initializeEscrowHandler = async (req, res) => {
 
   // 3 — Verify an optional proof bundle before logging the event or writing
   // escrow state. Partial bundles and unavailable native verification fail closed.
-  const zkValues = [zk_proof, zk_verification_key, zk_public_inputs];
+  const zkValues = [
+    zk_proof,
+    zk_verification_key,
+    zk_threshold_stroops,
+    zk_balance_commitment,
+  ];
   const hasZkBundle = zkValues.some((value) => value !== undefined && value !== null);
   if (hasZkBundle) {
     const hasCompleteBundle =
       typeof zk_proof === 'string' && zk_proof.length > 0 &&
       typeof zk_verification_key === 'string' && zk_verification_key.length > 0 &&
-      typeof zk_public_inputs === 'string';
+      typeof zk_threshold_stroops === 'string' && zk_threshold_stroops.length > 0 &&
+      typeof zk_balance_commitment === 'string' && zk_balance_commitment.length > 0;
 
     if (!hasCompleteBundle) {
       return res.status(400).json({
-        error: 'zk_proof, zk_verification_key, and zk_public_inputs must be supplied together'
+        error: 'zk_proof, zk_verification_key, zk_threshold_stroops, and zk_balance_commitment must be supplied together'
       });
     }
 
+    const expectedThreshold = amountToStroops(amount);
+    const suppliedThreshold = normalizeU64(zk_threshold_stroops);
+    if (!expectedThreshold || !suppliedThreshold) {
+      return res.status(400).json({ error: 'Invalid ZK proof of funds' });
+    }
+
     try {
-      if (!verifyProofOfFunds(zk_proof, zk_verification_key, zk_public_inputs)) {
+      const isValidProof = verifyProofOfFunds(
+        zk_proof,
+        zk_verification_key,
+        suppliedThreshold,
+        zk_balance_commitment
+      );
+      if (!isValidProof || suppliedThreshold !== expectedThreshold) {
         return res.status(400).json({ error: 'Invalid ZK proof of funds' });
       }
     } catch (error) {
@@ -164,4 +219,4 @@ const initializeEscrowHandler = async (req, res) => {
   }
 };
 
-module.exports = { initializeEscrowHandler };
+module.exports = { initializeEscrowHandler, amountToStroops };

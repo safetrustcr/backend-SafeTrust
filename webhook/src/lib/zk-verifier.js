@@ -15,7 +15,12 @@ try {
  * Verify a proof-of-funds proof with the Rust UltraHonk addon.
  * The addon is optional for non-ZK requests, but ZK requests fail closed.
  */
-function verifyProofOfFunds(proofHex, verificationKeyHex, publicInputsHex) {
+function verifyProofOfFunds(
+  proofHex,
+  verificationKeyHex,
+  thresholdStroops,
+  balanceCommitmentHex
+) {
   if (!nativeVerifier) {
     const error = new Error('ZK proof verifier is unavailable');
     error.code = 'ZK_VERIFIER_UNAVAILABLE';
@@ -48,7 +53,8 @@ function verifyProofOfFunds(proofHex, verificationKeyHex, publicInputsHex) {
   return nativeVerifier.verifyProofOfFunds(
     proofHex,
     verificationKeyHex,
-    publicInputsHex
+    thresholdStroops,
+    balanceCommitmentHex
   );
 }
 

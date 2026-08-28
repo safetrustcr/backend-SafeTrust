@@ -3,8 +3,10 @@ use zk_verifier::verify_proof_of_funds_hex;
 
 fn main() {
     let paths: Vec<_> = env::args_os().skip(1).collect();
-    if paths.len() != 3 {
-        eprintln!("usage: verify_artifacts <proof> <vk> <public_inputs>");
+    if paths.len() != 4 {
+        eprintln!(
+            "usage: verify_artifacts <proof> <vk> <threshold_stroops> <balance_commitment_hex>"
+        );
         process::exit(2);
     }
 
@@ -16,10 +18,13 @@ fn main() {
         }
     };
 
+    let threshold_stroops = paths[2].to_string_lossy();
+    let balance_commitment = paths[3].to_string_lossy();
     let is_valid = verify_proof_of_funds_hex(
         &read_hex(&paths[0]),
         &read_hex(&paths[1]),
-        &read_hex(&paths[2]),
+        &threshold_stroops,
+        &balance_commitment,
     );
 
     println!("{}", if is_valid { "valid" } else { "invalid" });
