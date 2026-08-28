@@ -52,6 +52,9 @@ COPY --from=builder /app/crates/pg-bulk-upsert/package.json /app/crates/pg-bulk-
 # soroban-reconciler: reconcile escrow state.
 COPY --from=builder /app/crates/soroban-reconciler/package.json /app/crates/soroban-reconciler/package.json
 COPY --from=builder /app/crates/soroban-reconciler/native /app/crates/soroban-reconciler/native
+# x402-processor: x402 payment protocol verifier (built by build:rust --workspace).
+COPY --from=builder /app/crates/x402-processor/index.node /app/crates/x402-processor/index.node
+COPY --from=builder /app/crates/x402-processor/package.json /app/crates/x402-processor/package.json
 
 # node user/group already exists in official node:24-alpine image
 USER node

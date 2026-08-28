@@ -5,6 +5,7 @@ members = [
     "stellar-utils",
     "chunk-processor",
     "pg-bulk-upsert",
+    "x402-processor",
     "soroban-reconciler",
 ]
 
