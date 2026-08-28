@@ -38,7 +38,7 @@ describe('escrow-state-machine native addon', () => {
     expect(Array.isArray(table)).toBe(true)
     expect(table.length).toBe(8)
     const fundedRule = table.find(
-      (r: { to: string; event: string }) => r.to === 'funded' && r.event === 'EscrowFunded'
+      (r: { to: string; event: string }) => r.to === 'funded' && r.event === 'escrow.funded'
     )
     expect(fundedRule.from.sort()).toEqual(['created', 'pending_funding'])
   })
