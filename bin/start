@@ -12,15 +12,62 @@ POSTGRES_PORT="${POSTGRES_PORT:-5433}"
 WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
 HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
 
-if [[ $# -eq 0 ]]; then
-  echo "❌ Error: At least one tenant name is required."
-  echo ""
-  echo "Usage:   bin/start <tenant1> [tenant2 ...]"
-  echo "Example: bin/start safetrust hotel_industry"
+RESET_DATABASE=false
+RESTART_CONTAINERS=false
+TENANTS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --reset)
+      RESET_DATABASE=true
+      shift
+      ;;
+    --restart)
+      RESTART_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: bin/start [--reset] [--restart] <tenant1> [tenant2 ...]
+
+Options:
+  --reset    Stop the stack and remove its volumes before starting.
+  --restart  Recreate the containers while preserving volumes.
+  -h, --help Show this help.
+USAGE
+      exit 0
+      ;;
+    -* )
+      echo "❌ Error: Unknown option: $1"
+      echo "   Run 'bin/start --help' for usage."
+      exit 1
+      ;;
+    *)
+      TENANTS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ "$RESET_DATABASE" == "true" && "$RESTART_CONTAINERS" == "true" ]]; then
+  echo "❌ Error: --reset and --restart cannot be used together."
   exit 1
 fi
 
-TENANTS=("$@")
+if [[ "${#TENANTS[@]}" -eq 0 ]]; then
+  cat <<'USAGE'
+Usage: bin/start [--reset] [--restart] <tenant1> [tenant2 ...]
+
+Options:
+  --reset    Stop the stack and remove its volumes before starting.
+  --restart  Recreate the containers while preserving volumes.
+  -h, --help Show this help.
+
+Example:
+  bin/start --restart safetrust hotel_industry
+USAGE
+  exit 0
+fi
 
 TRACK_SAFETRUST_TIMINGS=false
 if [[ "${#TENANTS[@]}" -eq 1 && "${TENANTS[0]}" == "safetrust" ]]; then
@@ -35,6 +82,14 @@ echo ""
 
 
 # ── 1. Start containers ───────────────────────────────────────────────────────
+if [[ "$RESET_DATABASE" == "true" ]]; then
+  echo "🧹 Resetting containers and database volumes..."
+  docker compose down -v
+elif [[ "$RESTART_CONTAINERS" == "true" ]]; then
+  echo "🔄 Restarting containers (preserving database volumes)..."
+  docker compose down
+fi
+
 echo "📦 Starting containers..."
 docker compose up -d --build
 
@@ -102,18 +157,23 @@ echo ""
 
 # ── 4. Apply migrations for each tenant ──────────────────────────────────────
 # Tables are created here — must run before metadata deploy.
-echo "📂 Applying migrations..."
-for TENANT in "${TENANTS[@]}"; do
-  echo "   ▶ Migrating tenant: $TENANT"
-  hasura migrate apply \
-    --endpoint "${HASURA_ENDPOINT}" \
-    --admin-secret "$HASURA_ADMIN_SECRET" \
-    --database-name "$TENANT"
-  echo "   ✅ Migrations applied for $TENANT"
-done
+if [[ "$RESTART_CONTAINERS" != "true" ]]; then
+  echo "📂 Applying migrations..."
+  for TENANT in "${TENANTS[@]}"; do
+    echo "   ▶ Migrating tenant: $TENANT"
+    hasura migrate apply \
+      --endpoint "${HASURA_ENDPOINT}" \
+      --admin-secret "$HASURA_ADMIN_SECRET" \
+      --database-name "$TENANT"
+    echo "   ✅ Migrations applied for $TENANT"
+  done
 
-if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
+  if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+    TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
+  fi
+else
+  echo "⏭️  --restart: skipping migrations (schema unchanged)"
+  TIMING_MIGRATIONS_SAFETRUST=0
 fi
 
 echo ""
@@ -146,20 +206,28 @@ fi
 echo ""
 
 # ── 7. Apply seeds for each tenant ───────────────────────────────────────────
-echo "🌱 Applying seeds..."
-for TENANT in "${TENANTS[@]}"; do
-  echo "   ▶ Seeding tenant: $TENANT"
-  hasura seed apply \
-    --endpoint "${HASURA_ENDPOINT}" \
-    --admin-secret "$HASURA_ADMIN_SECRET" \
-    --database-name "$TENANT"
-  echo "   ✅ Seeds applied for $TENANT"
-done
+if [[ "$RESTART_CONTAINERS" != "true" ]]; then
+  echo "🌱 Applying seeds..."
+  for TENANT in "${TENANTS[@]}"; do
+    echo "   ▶ Seeding tenant: $TENANT"
+    hasura seed apply \
+      --endpoint "${HASURA_ENDPOINT}" \
+      --admin-secret "$HASURA_ADMIN_SECRET" \
+      --database-name "$TENANT"
+    echo "   ✅ Seeds applied for $TENANT"
+  done
+
+  if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+    TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
+    TIMING_TOTAL=$((SECONDS - TIMER_START))
+  fi
+else
+  echo "⏭️  --restart: skipping seeds (data unchanged)"
+  TIMING_SEEDS_SAFETRUST=0
+  TIMING_TOTAL=$((SECONDS - TIMER_START))
+fi
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
-  TIMING_TOTAL=$((SECONDS - TIMER_START))
-
   mkdir -p tests/results
   node -e "
 const t = {
