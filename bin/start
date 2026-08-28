@@ -16,19 +16,61 @@ POSTGRES_PORT="${POSTGRES_PORT:-5433}"
 WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
 HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
 
-if [[ $# -eq 0 ]]; then
-  echo "❌ Error: At least one tenant name is required."
-  echo ""
-  echo "Usage:   bin/start <tenant1> [tenant2 ...]"
-  echo "Example: bin/start safetrust hotel_industry"
+RESET_DATABASE=false
+RESTART_CONTAINERS=false
+TENANTS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --reset)
+      RESET_DATABASE=true
+      shift
+      ;;
+    --restart)
+      RESTART_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: bin/start [--reset] [--restart] <tenant1> [tenant2 ...]
+
+Options:
+  --reset    Stop the stack and remove its volumes before starting.
+  --restart  Recreate the containers while preserving volumes.
+  -h, --help Show this help.
+USAGE
+      exit 0
+      ;;
+    -* )
+      echo "❌ Error: Unknown option: $1"
+      echo "   Run 'bin/start --help' for usage."
+      exit 1
+      ;;
+    *)
+      TENANTS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ "$RESET_DATABASE" == "true" && "$RESTART_CONTAINERS" == "true" ]]; then
+  echo "❌ Error: --reset and --restart cannot be used together."
   exit 1
 fi
 
-TENANTS=("$@")
-SEED_CHUNK_SIZE="${SEED_CHUNK_SIZE:-500}"
-if ! [[ "$SEED_CHUNK_SIZE" =~ ^[1-9][0-9]*$ ]]; then
-  echo "❌ SEED_CHUNK_SIZE must be a positive integer"
-  exit 1
+if [[ "${#TENANTS[@]}" -eq 0 ]]; then
+  cat <<'USAGE'
+Usage: bin/start [--reset] [--restart] <tenant1> [tenant2 ...]
+
+Options:
+  --reset    Stop the stack and remove its volumes before starting.
+  --restart  Recreate the containers while preserving volumes.
+  -h, --help Show this help.
+
+Example:
+  bin/start --restart safetrust hotel_industry
+USAGE
+  exit 0
 fi
 
 TRACK_SAFETRUST_TIMINGS=false
@@ -44,6 +86,14 @@ echo ""
 
 
 # ── 1. Start containers ───────────────────────────────────────────────────────
+if [[ "$RESET_DATABASE" == "true" ]]; then
+  echo "🧹 Resetting containers and database volumes..."
+  docker compose down -v
+elif [[ "$RESTART_CONTAINERS" == "true" ]]; then
+  echo "🔄 Restarting containers (preserving database volumes)..."
+  docker compose down
+fi
+
 echo "📦 Starting containers..."
 docker compose up -d --build
 
@@ -111,18 +161,23 @@ echo ""
 
 # ── 4. Apply migrations for each tenant ──────────────────────────────────────
 # Tables are created here — must run before metadata deploy.
-echo "📂 Applying migrations..."
-for TENANT in "${TENANTS[@]}"; do
-  echo "   ▶ Migrating tenant: $TENANT"
-  hasura migrate apply \
-    --endpoint "${HASURA_ENDPOINT}" \
-    --admin-secret "$HASURA_ADMIN_SECRET" \
-    --database-name "$TENANT"
-  echo "   ✅ Migrations applied for $TENANT"
-done
+if [[ "$RESTART_CONTAINERS" != "true" ]]; then
+  echo "📂 Applying migrations..."
+  for TENANT in "${TENANTS[@]}"; do
+    echo "   ▶ Migrating tenant: $TENANT"
+    hasura migrate apply \
+      --endpoint "${HASURA_ENDPOINT}" \
+      --admin-secret "$HASURA_ADMIN_SECRET" \
+      --database-name "$TENANT"
+    echo "   ✅ Migrations applied for $TENANT"
+  done
 
-if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
+  if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+    TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
+  fi
+else
+  echo "⏭️  --restart: skipping migrations (schema unchanged)"
+  TIMING_MIGRATIONS_SAFETRUST=0
 fi
 
 echo ""
@@ -155,55 +210,28 @@ fi
 echo ""
 
 # ── 7. Apply seeds for each tenant ───────────────────────────────────────────
-echo "🌱 Applying seeds (parallel, transactional, chunk size: ${SEED_CHUNK_SIZE})..."
-
-apply_seeds_chunked() {
-  local TENANT="$1"
-  local SEED_DIR="$ROOT_DIR/seeds/$TENANT"
-
-  echo "   ▶ Seeding tenant: $TENANT (chunk size: $SEED_CHUNK_SIZE)"
-  for seed_file in "$SEED_DIR"/*.sql; do
-    [[ -f "$seed_file" ]] || continue
-    echo "   ⚙️  [$TENANT] Applying $(basename "$seed_file")..."
-
-    # Keep each seed file atomic. The SQL files use multi-row INSERTs, so a
-    # file is the smallest safe batch boundary without parsing SQL.
-    docker exec -i backend-safetrust-postgres-1 psql \
-      -U postgres -d postgres \
-      -v ON_ERROR_STOP=1 \
-      <<EOF
-BEGIN;
-$(cat "$seed_file")
-COMMIT;
-EOF
-
-    echo "   ✅ [$TENANT] $(basename "$seed_file") applied"
+if [[ "$RESTART_CONTAINERS" != "true" ]]; then
+  echo "🌱 Applying seeds..."
+  for TENANT in "${TENANTS[@]}"; do
+    echo "   ▶ Seeding tenant: $TENANT"
+    hasura seed apply \
+      --endpoint "${HASURA_ENDPOINT}" \
+      --admin-secret "$HASURA_ADMIN_SECRET" \
+      --database-name "$TENANT"
+    echo "   ✅ Seeds applied for $TENANT"
   done
-  echo "   ✅ Seeds applied for $TENANT"
-}
 
-PIDS=()
-for TENANT in "${TENANTS[@]}"; do
-  apply_seeds_chunked "$TENANT" &
-  PIDS+=("$!")
-done
-
-FAILED=()
-for i in "${!PIDS[@]}"; do
-  if ! wait "${PIDS[$i]}"; then
-    FAILED+=("${TENANTS[$i]}")
+  if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+    TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
+    TIMING_TOTAL=$((SECONDS - TIMER_START))
   fi
-done
-
-if [[ ${#FAILED[@]} -gt 0 ]]; then
-  echo "❌ Seed failed for: ${FAILED[*]}"
-  exit 1
+else
+  echo "⏭️  --restart: skipping seeds (data unchanged)"
+  TIMING_SEEDS_SAFETRUST=0
+  TIMING_TOTAL=$((SECONDS - TIMER_START))
 fi
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
-  TIMING_TOTAL=$((SECONDS - TIMER_START))
-
   mkdir -p tests/results
   node -e "
 const t = {

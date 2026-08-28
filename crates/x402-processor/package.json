@@ -1,0 +1,11 @@
+{
+  "name": "x402-processor",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.node",
+  "types": "index.d.ts",
+  "files": [
+    "index.node",
+    "index.d.ts"
+  ]
+}
