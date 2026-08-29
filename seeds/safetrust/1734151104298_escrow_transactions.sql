@@ -32,8 +32,7 @@ INSERT INTO public.escrow_transactions (
     'safetrust',
     NOW() - INTERVAL '4 days',
     NOW() - INTERVAL '1 day'
-)
-ON CONFLICT DO NOTHING;
+),
 -- Scenario 2: Funded
 (
     gen_random_uuid(),
