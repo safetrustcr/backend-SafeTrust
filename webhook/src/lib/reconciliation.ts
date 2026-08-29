@@ -1,7 +1,7 @@
-'use strict';
+'use strict'
 
 /**
- * @file src/lib/reconciliation.js
+ * @file src/lib/reconciliation.ts
  * @description Core helpers for the reconciliation service.
  *
  * Responsibilities
@@ -15,17 +15,89 @@
  * without requiring a live database or external API.
  */
 
-const https = require('https');
-const http = require('http');
-const db = require('../services/db');
+import https from 'https'
+import http from 'http'
+import db from '../services/db'
+
+// ─── Interfaces ───────────────────────────────────────────────────────────────
+
+export interface EscrowRoles {
+  marker?:   string
+  approver?: string
+  releaser?: string
+}
+
+export interface EscrowRecord {
+  contractId:  string
+  status?:     string
+  amount?:     string | number
+  balance?:    string | number
+  escrowType?: string
+  roles?:      EscrowRoles
+}
+
+export interface UpsertResult {
+  updated:   number
+  unchanged: number
+  skipped:   number
+}
+
+export interface ChunkSyncResult extends UpsertResult {
+  errors: string[]
+}
+
+export interface SyncAllResult extends ChunkSyncResult {
+  chunks: number
+}
+
+export interface BulkUpsertAddon {
+  bulkUpsertEscrows: (updatesJson: string, connString: string) => Promise<string>
+}
+
+export interface ChunkProcessorAddon {
+  processChunksParallel: (
+    chunksJson:    string,
+    apiUrl:        string,
+    apiKey:        string,
+    concurrency:   number,
+    timeoutMs:     number
+  ) => Promise<string>
+}
+
+export interface BulkUpsertResult {
+  rows_affected: number
+  unchanged:     number
+  duration_ms:   number
+}
+
+export interface ChunkResult {
+  chunk_index: number
+  fetched:     number
+  duration_ms: number
+  error:       string | null
+  escrows:     EscrowRecord[]
+}
+
+interface BulkUpsertRow {
+  contract_id: string
+  status:      string
+  amount:      string
+  balance:     string
+  marker:      string
+  approver:    string
+  releaser:    string
+  escrow_type: string
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 /** Maximum contract IDs the TrustlessWork indexer accepts per request. */
-const CHUNK_SIZE = 50;
+export const CHUNK_SIZE = 50
 
 // ─── TrustlessWork API base URL (injected from env) ──────────────────────────
 const TW_BASE_URL =
-  process.env.TRUSTLESS_WORK_API_URL || 'https://dev.api.trustlesswork.com';
-const TW_API_KEY = process.env.TRUSTLESS_WORK_API_KEY || '';
+  process.env.TRUSTLESS_WORK_API_URL || 'https://dev.api.trustlesswork.com'
+const TW_API_KEY = process.env.TRUSTLESS_WORK_API_KEY || ''
 
 // ─── Optional Rust parallel chunk processor ──────────────────────────────────
 /**
@@ -38,59 +110,61 @@ const TW_API_KEY = process.env.TRUSTLESS_WORK_API_KEY || '';
  * Everything below is gated: with the flag unset (default) the addon is never
  * loaded and behaviour is byte-for-byte unchanged.
  */
-const CHUNK_PROCESSOR_MODULE = '../../../crates/chunk-processor';
+const CHUNK_PROCESSOR_MODULE = '../../../crates/chunk-processor'
 
 /** Parse an int env var, falling back to `fallback` on absent/invalid values. */
-function envInt(name, fallback) {
-  const parsed = parseInt(process.env[name] ?? '', 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+function envInt(name: string, fallback: number): number {
+  const parsed = parseInt(process.env[name] ?? '', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
 /** True when the operator has opted into the Rust parallel path. */
-function isRustChunkProcessingEnabled() {
-  return process.env.RUST_CHUNKS_ENABLED === 'true';
+export function isRustChunkProcessingEnabled(): boolean {
+  return process.env.RUST_CHUNKS_ENABLED === 'true'
 }
 
 // Lazily require the native addon so the flag-off path never touches it and a
 // missing/unbuilt binary can degrade gracefully to the sequential loop.
-let _chunkProcessor = null;
-let _chunkProcessorLoadFailed = false;
+let _chunkProcessor: ChunkProcessorAddon | null = null
+let _chunkProcessorLoadFailed = false
 // Test seam: lets unit tests inject a fake addon (or simulate an unavailable one)
 // without a native build. `undefined` means "no override" — prod code never
 // touches it, so the real require path runs.
-let _chunkProcessorOverride;
-function loadChunkProcessor() {
+let _chunkProcessorOverride: ChunkProcessorAddon | null | undefined
+function loadChunkProcessor(): ChunkProcessorAddon | null {
   // A set override (object OR null) short-circuits the real require. `null`
   // deliberately simulates an unavailable addon.
-  if (_chunkProcessorOverride !== undefined) return _chunkProcessorOverride;
-  if (_chunkProcessor || _chunkProcessorLoadFailed) return _chunkProcessor;
+  if (_chunkProcessorOverride !== undefined) return _chunkProcessorOverride
+  if (_chunkProcessor || _chunkProcessorLoadFailed) return _chunkProcessor
   try {
-    _chunkProcessor = require(CHUNK_PROCESSOR_MODULE);
+    _chunkProcessor = require(CHUNK_PROCESSOR_MODULE)
   } catch (err) {
-    _chunkProcessorLoadFailed = true;
+    _chunkProcessorLoadFailed = true
     console.error(
       '[reconciliation] ⚠️  chunk-processor addon unavailable — ' +
-        `falling back to sequential sync: ${err.message}`
-    );
+        `falling back to sequential sync: ${(err as Error).message}`
+    )
   }
-  return _chunkProcessor;
+  return _chunkProcessor
 }
 
 /**
  * @internal Test-only: force `loadChunkProcessor()` to return `mock` (pass `null`
  * to simulate an unavailable addon).
  */
-function __setChunkProcessorForTests(mock) {
-  _chunkProcessorOverride = mock;
-  _chunkProcessor = null;
-  _chunkProcessorLoadFailed = false;
+export function __setChunkProcessorForTests(
+  mock: ChunkProcessorAddon | null | undefined
+): void {
+  _chunkProcessorOverride = mock
+  _chunkProcessor = null
+  _chunkProcessorLoadFailed = false
 }
 
 /** @internal Test-only: drop the override and restore the real require path. */
-function __resetChunkProcessorForTests() {
-  _chunkProcessorOverride = undefined;
-  _chunkProcessor = null;
-  _chunkProcessorLoadFailed = false;
+export function __resetChunkProcessorForTests(): void {
+  _chunkProcessorOverride = undefined
+  _chunkProcessor = null
+  _chunkProcessorLoadFailed = false
 }
 
 // ─── Optional Rust bulk upsert ───────────────────────────────────────────────
@@ -105,11 +179,11 @@ function __resetChunkProcessorForTests() {
  * Everything here is gated: with the flag unset (default) the addon is never
  * loaded and the row-by-row loop runs exactly as before.
  */
-const BULK_UPSERT_MODULE = '../../../crates/pg-bulk-upsert';
+const BULK_UPSERT_MODULE = '../../../crates/pg-bulk-upsert'
 
 /** True when the operator has opted into the Rust bulk upsert path. */
-function isRustBulkUpsertEnabled() {
-  return process.env.RUST_BULK_UPSERT_ENABLED === 'true';
+export function isRustBulkUpsertEnabled(): boolean {
+  return process.env.RUST_BULK_UPSERT_ENABLED === 'true'
 }
 
 /**
@@ -120,55 +194,57 @@ function isRustBulkUpsertEnabled() {
  * User and password are URL-encoded so special characters cannot corrupt the
  * string.
  */
-function buildConnectionString() {
-  const user = process.env.POSTGRES_USER;
-  const password = process.env.POSTGRES_PASSWORD;
+export function buildConnectionString(): string {
+  const user = process.env.POSTGRES_USER
+  const password = process.env.POSTGRES_PASSWORD
   if (!user || !password) {
     throw new Error(
       'pg-bulk-upsert requires POSTGRES_USER and POSTGRES_PASSWORD to be set'
-    );
+    )
   }
-  const enc = encodeURIComponent;
-  const host = process.env.POSTGRES_HOST ?? 'localhost';
-  const port = process.env.POSTGRES_PORT ?? '5432';
-  const database = process.env.POSTGRES_DB ?? 'postgres';
-  return `postgresql://${enc(user)}:${enc(password)}@${host}:${port}/${database}`;
+  const enc = encodeURIComponent
+  const host = process.env.POSTGRES_HOST ?? 'localhost'
+  const port = process.env.POSTGRES_PORT ?? '5432'
+  const database = process.env.POSTGRES_DB ?? 'postgres'
+  return `postgresql://${enc(user)}:${enc(password)}@${host}:${port}/${database}`
 }
 
 // Lazily require the native addon so the flag-off path never touches it and a
 // missing/unbuilt binary can degrade gracefully to the row-by-row loop.
-let _bulkUpsert = null;
-let _bulkUpsertLoadFailed = false;
+let _bulkUpsert: BulkUpsertAddon | null = null
+let _bulkUpsertLoadFailed = false
 // Test seam: `undefined` means "no override"; a set value (object or null) is
 // returned as-is, so a test can inject a fake addon or simulate an absent one.
-let _bulkUpsertOverride;
-function loadBulkUpsert() {
-  if (_bulkUpsertOverride !== undefined) return _bulkUpsertOverride;
-  if (_bulkUpsert || _bulkUpsertLoadFailed) return _bulkUpsert;
+let _bulkUpsertOverride: BulkUpsertAddon | null | undefined
+function loadBulkUpsert(): BulkUpsertAddon | null {
+  if (_bulkUpsertOverride !== undefined) return _bulkUpsertOverride
+  if (_bulkUpsert || _bulkUpsertLoadFailed) return _bulkUpsert
   try {
-    _bulkUpsert = require(BULK_UPSERT_MODULE);
+    _bulkUpsert = require(BULK_UPSERT_MODULE)
   } catch (err) {
-    _bulkUpsertLoadFailed = true;
+    _bulkUpsertLoadFailed = true
     console.error(
       '[reconciliation] ⚠️  pg-bulk-upsert addon unavailable — ' +
-        `falling back to row-by-row upsert: ${err.message}`
-    );
+        `falling back to row-by-row upsert: ${(err as Error).message}`
+    )
   }
-  return _bulkUpsert;
+  return _bulkUpsert
 }
 
 /** @internal Test-only: force loadBulkUpsert() to return `mock` (null = absent). */
-function __setBulkUpsertForTests(mock) {
-  _bulkUpsertOverride = mock;
-  _bulkUpsert = null;
-  _bulkUpsertLoadFailed = false;
+export function __setBulkUpsertForTests(
+  mock: BulkUpsertAddon | null | undefined
+): void {
+  _bulkUpsertOverride = mock
+  _bulkUpsert = null
+  _bulkUpsertLoadFailed = false
 }
 
 /** @internal Test-only: drop the override and restore the real require path. */
-function __resetBulkUpsertForTests() {
-  _bulkUpsertOverride = undefined;
-  _bulkUpsert = null;
-  _bulkUpsertLoadFailed = false;
+export function __resetBulkUpsertForTests(): void {
+  _bulkUpsertOverride = undefined
+  _bulkUpsert = null
+  _bulkUpsertLoadFailed = false
 }
 
 // ─── Idempotent UPSERT ────────────────────────────────────────────────────────
@@ -223,42 +299,42 @@ const UPSERT_ESCROW_SQL = `
     EXCLUDED.releaser
   )
   RETURNING contract_id, (xmax = 0) AS inserted
-`;
+`
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
  * Split `arr` into consecutive sub-arrays of at most `size` elements.
  *
- * @param {any[]} arr   Source array.
- * @param {number} size Maximum chunk length (must be > 0).
- * @returns {any[][]}   Array of chunks.
+ * @param arr   Source array.
+ * @param size Maximum chunk length (must be > 0).
+ * @returns   Array of chunks.
  */
-function chunkArray(arr, size) {
-  if (!Array.isArray(arr)) throw new TypeError('chunkArray: arr must be an array');
+export function chunkArray<T>(arr: T[], size: number): T[][] {
+  if (!Array.isArray(arr)) throw new TypeError('chunkArray: arr must be an array')
   if (!Number.isInteger(size) || size < 1) {
-    throw new RangeError('chunkArray: size must be a positive integer');
+    throw new RangeError('chunkArray: size must be a positive integer')
   }
 
-  const chunks = [];
+  const chunks: T[][] = []
   for (let i = 0; i < arr.length; i += size) {
-    chunks.push(arr.slice(i, i + size));
+    chunks.push(arr.slice(i, i + size))
   }
-  return chunks;
+  return chunks
 }
 
 /**
  * Lightweight HTTP/HTTPS GET helper — uses Node's built-in modules so that
  * no extra runtime dependency is required.
  *
- * @param {string} url  Absolute URL (http or https).
- * @param {object} [headers] Additional request headers.
- * @returns {Promise<object>} Parsed JSON response body.
+ * @param url  Absolute URL (http or https).
+ * @param headers Additional request headers.
+ * @returns Parsed JSON response body.
  */
-function httpGet(url, headers = {}) {
+function httpGet(url: string, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const transport = parsed.protocol === 'https:' ? https : http;
+    const parsed = new URL(url)
+    const transport = parsed.protocol === 'https:' ? https : http
 
     const options = {
       hostname: parsed.hostname,
@@ -270,34 +346,34 @@ function httpGet(url, headers = {}) {
         ...(TW_API_KEY ? { 'x-api-key': TW_API_KEY } : {}),
         ...headers,
       },
-    };
+    }
 
     const req = transport.request(options, (res) => {
-      let raw = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => { raw += chunk; });
+      let raw = ''
+      res.setEncoding('utf8')
+      res.on('data', (chunk: string) => { raw += chunk })
       res.on('end', () => {
-        if (res.statusCode < 200 || res.statusCode >= 300) {
+        if (res.statusCode! < 200 || res.statusCode! >= 300) {
           return reject(
             new Error(
               `TrustlessWork API responded with status ${res.statusCode}: ${raw}`
             )
-          );
+          )
         }
         try {
-          resolve(JSON.parse(raw));
+          resolve(JSON.parse(raw))
         } catch (e) {
-          reject(new Error(`Failed to parse TrustlessWork API response: ${e.message}`));
+          reject(new Error(`Failed to parse TrustlessWork API response: ${(e as Error).message}`))
         }
-      });
-    });
+      })
+    })
 
-    req.on('error', reject);
+    req.on('error', reject)
     req.setTimeout(30_000, () => {
-      req.destroy(new Error('TrustlessWork API request timed out after 30 s'));
-    });
-    req.end();
-  });
+      req.destroy(new Error('TrustlessWork API request timed out after 30 s'))
+    })
+    req.end()
+  })
 }
 
 /**
@@ -305,22 +381,24 @@ function httpGet(url, headers = {}) {
  *
  * Endpoint: GET /helper/get-escrows-by-contract-ids?contractIds=id1,id2,...
  *
- * @param {string[]} contractIds  Array of contract IDs (max CHUNK_SIZE).
- * @returns {Promise<object[]>}   Array of escrow objects from the indexer.
+ * @param contractIds  Array of contract IDs (max CHUNK_SIZE).
+ * @returns   Array of escrow objects from the indexer.
  */
-async function fetchEscrowsByContractIds(contractIds) {
-  const qs = encodeURIComponent(contractIds.join(','));
-  const url = `${TW_BASE_URL}/helper/get-escrows-by-contract-ids?contractIds=${qs}`;
+export async function fetchEscrowsByContractIds(contractIds: string[]): Promise<EscrowRecord[]> {
+  const qs = encodeURIComponent(contractIds.join(','))
+  const url = `${TW_BASE_URL}/helper/get-escrows-by-contract-ids?contractIds=${qs}`
 
-  const data = await httpGet(url);
+  const data = await httpGet(url)
 
   // The API may return { escrows: [...] } or a bare array — handle both.
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.escrows)) return data.escrows;
+  if (Array.isArray(data)) return data as unknown as EscrowRecord[]
+  if (Array.isArray((data as Record<string, unknown>).escrows)) {
+    return (data as Record<string, unknown>).escrows as EscrowRecord[]
+  }
 
   throw new Error(
     `Unexpected TrustlessWork API response shape: ${JSON.stringify(data).slice(0, 200)}`
-  );
+  )
 }
 
 /**
@@ -332,24 +410,23 @@ async function fetchEscrowsByContractIds(contractIds) {
  * path ({@link syncChunksParallel}) so both write identical columns with
  * identical counting — the only difference is how the escrows were fetched.
  *
- * @param {object[]} escrows  Escrow objects as returned by the indexer.
- * @returns {Promise<{updated: number, unchanged: number, skipped: number}>}
+ * @param escrows  Escrow objects as returned by the indexer.
  */
-async function upsertEscrows(escrows) {
-  let updated = 0;
-  let unchanged = 0;
-  let skipped = 0;
+export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResult> {
+  let updated = 0
+  let unchanged = 0
+  let skipped = 0
 
   for (const escrow of escrows) {
     // Guard: contract_id is mandatory — skip malformed records.
     if (!escrow?.contractId) {
-      console.warn('[reconciliation] ⚠️  Skipping escrow without contractId:', escrow);
-      skipped++;
-      continue;
+      console.warn('[reconciliation] ⚠️  Skipping escrow without contractId:', escrow)
+      skipped++
+      continue
     }
 
     try {
-      const result = await db.query(UPSERT_ESCROW_SQL, [
+      const result = await db.query<{ contract_id: string }>(UPSERT_ESCROW_SQL, [
         escrow.contractId,                   // $1 contract_id
         escrow.status ?? 'created',          // $2 status
         escrow.amount ?? 0,                  // $3 amount
@@ -358,25 +435,25 @@ async function upsertEscrows(escrows) {
         escrow.roles?.approver ?? '',        // $6 approver
         escrow.roles?.releaser ?? '',        // $7 releaser
         escrow.escrowType ?? 'single_release', // $8 escrow_type
-      ]);
+      ])
 
       // RETURNING only fires when a row was actually changed.
       if (result.rows.length > 0) {
-        updated++;
+        updated++
       } else {
-        unchanged++;
+        unchanged++
       }
     } catch (rowError) {
       // Isolate per-row errors — log and count as skipped.
       console.error(
         `[reconciliation] ⚠️  Row error for contract_id "${escrow.contractId}":`,
-        rowError.message
-      );
-      skipped++;
+        (rowError as Error).message
+      )
+      skipped++
     }
   }
 
-  return { updated, unchanged, skipped };
+  return { updated, unchanged, skipped }
 }
 
 /**
@@ -387,34 +464,33 @@ async function upsertEscrows(escrows) {
  * IS DISTINCT FROM guard is identical to UPSERT_ESCROW_SQL. Throws if the addon
  * is unavailable or the statement fails, so the caller can fall back.
  *
- * @param {object[]} escrows
- * @returns {Promise<{updated: number, unchanged: number, skipped: number}>}
+ * @param escrows
  */
-async function upsertEscrowsBulk(escrows) {
-  const addon = loadBulkUpsert();
+export async function upsertEscrowsBulk(escrows: EscrowRecord[]): Promise<UpsertResult> {
+  const addon = loadBulkUpsert()
   if (!addon) {
-    throw new Error('pg-bulk-upsert addon not loaded');
+    throw new Error('pg-bulk-upsert addon not loaded')
   }
 
-  let skipped = 0;
-  const valid = [];
+  let skipped = 0
+  const valid: EscrowRecord[] = []
   for (const escrow of escrows) {
     if (!escrow?.contractId) {
-      console.warn('[reconciliation] ⚠️  Skipping escrow without contractId:', escrow);
-      skipped++;
-      continue;
+      console.warn('[reconciliation] ⚠️  Skipping escrow without contractId:', escrow)
+      skipped++
+      continue
     }
-    valid.push(escrow);
+    valid.push(escrow)
   }
 
   if (valid.length === 0) {
-    return { updated: 0, unchanged: 0, skipped };
+    return { updated: 0, unchanged: 0, skipped }
   }
 
   // Map to the addon's row shape, applying the same defaults as upsertEscrows so
   // the counts match. Numeric columns are stringified to preserve DECIMAL(20,7)
   // precision across the boundary.
-  const updates = valid.map((escrow) => ({
+  const updates: BulkUpsertRow[] = valid.map((escrow) => ({
     contract_id: escrow.contractId,
     status: escrow.status ?? 'created',
     amount: String(escrow.amount ?? 0),
@@ -423,21 +499,21 @@ async function upsertEscrowsBulk(escrows) {
     approver: escrow.roles?.approver ?? '',
     releaser: escrow.roles?.releaser ?? '',
     escrow_type: escrow.escrowType ?? 'single_release',
-  }));
+  }))
 
   // bulkUpsertEscrows returns a Promise<string> — awaiting it keeps the Node
   // event loop free while tokio-postgres runs the statement.
   const resultJson = await addon.bulkUpsertEscrows(
     JSON.stringify(updates),
     buildConnectionString()
-  );
-  const result = JSON.parse(resultJson);
+  )
+  const result: BulkUpsertResult = JSON.parse(resultJson)
 
   return {
     updated: result.rows_affected,
     unchanged: result.unchanged,
     skipped,
-  };
+  }
 }
 
 /**
@@ -447,20 +523,19 @@ async function upsertEscrowsBulk(escrows) {
  * (addon missing, bad credentials, statement error) degrades safely to
  * row-by-row, so a batch is never lost.
  *
- * @param {object[]} escrows
- * @returns {Promise<{updated: number, unchanged: number, skipped: number}>}
+ * @param escrows
  */
-async function upsertEscrowBatch(escrows) {
+export async function upsertEscrowBatch(escrows: EscrowRecord[]): Promise<UpsertResult> {
   if (!isRustBulkUpsertEnabled() || escrows.length === 0) {
-    return upsertEscrows(escrows);
+    return upsertEscrows(escrows)
   }
   try {
-    return await upsertEscrowsBulk(escrows);
+    return await upsertEscrowsBulk(escrows)
   } catch (err) {
     console.error(
-      `[reconciliation] ⚠️  Bulk upsert failed, using row-by-row: ${err.message}`
-    );
-    return upsertEscrows(escrows);
+      `[reconciliation] ⚠️  Bulk upsert failed, using row-by-row: ${(err as Error).message}`
+    )
+    return upsertEscrows(escrows)
   }
 }
 
@@ -470,12 +545,11 @@ async function upsertEscrowBatch(escrows) {
  * Thin composition of {@link fetchEscrowsByContractIds} + {@link upsertEscrowBatch};
  * a network failure rejects so the caller can isolate this chunk from the rest.
  *
- * @param {string[]} contractIds  Up to CHUNK_SIZE contract IDs.
- * @returns {Promise<{updated: number, unchanged: number, skipped: number}>}
+ * @param contractIds  Up to CHUNK_SIZE contract IDs.
  */
-async function syncChunk(contractIds) {
-  const escrows = await fetchEscrowsByContractIds(contractIds);
-  return upsertEscrowBatch(escrows);
+export async function syncChunk(contractIds: string[]): Promise<UpsertResult> {
+  const escrows = await fetchEscrowsByContractIds(contractIds)
+  return upsertEscrowBatch(escrows)
 }
 
 /**
@@ -483,18 +557,17 @@ async function syncChunk(contractIds) {
  * escrows in JavaScript. Preserves the chunk-isolation contract: a chunk whose
  * HTTP request failed is recorded in `errors` and never aborts the others.
  *
- * @param {string[][]} chunks  Pre-split contract-id chunks.
- * @returns {Promise<{updated:number, unchanged:number, skipped:number, errors:string[]}>}
+ * @param chunks  Pre-split contract-id chunks.
  */
-async function syncChunksParallel(chunks) {
-  const addon = loadChunkProcessor();
+export async function syncChunksParallel(chunks: string[][]): Promise<ChunkSyncResult> {
+  const addon = loadChunkProcessor()
   if (!addon) {
     // Signal the caller to fall back to the sequential path.
-    throw new Error('chunk-processor addon not loaded');
+    throw new Error('chunk-processor addon not loaded')
   }
 
-  const concurrency = envInt('CHUNK_CONCURRENCY', 5);
-  const timeoutMs = envInt('CHUNK_TIMEOUT_MS', 5000);
+  const concurrency = envInt('CHUNK_CONCURRENCY', 5)
+  const timeoutMs = envInt('CHUNK_TIMEOUT_MS', 5000)
 
   // processChunksParallel returns a Promise<string> — awaiting it keeps the
   // Node event loop free while the Rust runtime does the concurrent fetches.
@@ -504,33 +577,33 @@ async function syncChunksParallel(chunks) {
     TW_API_KEY,
     concurrency,
     timeoutMs
-  );
+  )
 
-  const chunkResults = JSON.parse(resultsJson);
+  const chunkResults: ChunkResult[] = JSON.parse(resultsJson)
 
-  let updated = 0;
-  let unchanged = 0;
-  let skipped = 0;
-  const errors = [];
+  let updated = 0
+  let unchanged = 0
+  let skipped = 0
+  const errors: string[] = []
 
   for (const result of chunkResults) {
     if (result.error) {
       // A failed chunk mirrors the sequential path's per-chunk catch.
-      errors.push(`chunk_${result.chunk_index}: ${result.error}`);
-      continue;
+      errors.push(`chunk_${result.chunk_index}: ${result.error}`)
+      continue
     }
-    const counts = await upsertEscrowBatch(result.escrows || []);
-    updated += counts.updated;
-    unchanged += counts.unchanged;
-    skipped += counts.skipped;
+    const counts = await upsertEscrowBatch(result.escrows || [])
+    updated += counts.updated
+    unchanged += counts.unchanged
+    skipped += counts.skipped
     console.log(
       `[reconciliation]   chunk ${result.chunk_index + 1}/${chunks.length}` +
         ` (${chunks[result.chunk_index]?.length ?? 0} ids, ${result.duration_ms}ms) —` +
         ` updated: ${counts.updated}, unchanged: ${counts.unchanged}, skipped: ${counts.skipped}`
-    );
+    )
   }
 
-  return { updated, unchanged, skipped, errors };
+  return { updated, unchanged, skipped, errors }
 }
 
 /**
@@ -538,54 +611,53 @@ async function syncChunksParallel(chunks) {
  * when RUST_CHUNKS_ENABLED=true and the addon loads, otherwise the sequential
  * loop. Both paths return the same aggregate shape and identical counts.
  *
- * @param {string[]} contractIds  All contract IDs to reconcile.
- * @returns {Promise<{chunks:number, updated:number, unchanged:number, skipped:number, errors:string[]}>}
+ * @param contractIds  All contract IDs to reconcile.
  */
-async function syncAllChunks(contractIds) {
-  const chunks = chunkArray(contractIds, CHUNK_SIZE);
+export async function syncAllChunks(contractIds: string[]): Promise<SyncAllResult> {
+  const chunks = chunkArray(contractIds, CHUNK_SIZE)
   if (chunks.length === 0) {
-    return { chunks: 0, updated: 0, unchanged: 0, skipped: 0, errors: [] };
+    return { chunks: 0, updated: 0, unchanged: 0, skipped: 0, errors: [] }
   }
 
   // ── Rust parallel path (opt-in) ─────────────────────────────────────────────
   if (isRustChunkProcessingEnabled()) {
     try {
-      const r = await syncChunksParallel(chunks);
-      return { chunks: chunks.length, ...r };
+      const r = await syncChunksParallel(chunks)
+      return { chunks: chunks.length, ...r }
     } catch (err) {
       // Any addon-level failure degrades safely to the sequential loop below.
       console.error(
-        `[reconciliation] ⚠️  Parallel chunk path failed, using sequential: ${err.message}`
-      );
+        `[reconciliation] ⚠️  Parallel chunk path failed, using sequential: ${(err as Error).message}`
+      )
     }
   }
 
   // ── Sequential path (default) ───────────────────────────────────────────────
-  let updated = 0;
-  let unchanged = 0;
-  let skipped = 0;
-  const errors = [];
+  let updated = 0
+  let unchanged = 0
+  let skipped = 0
+  const errors: string[] = []
 
   for (let i = 0; i < chunks.length; i++) {
     try {
-      const r = await syncChunk(chunks[i]);
-      updated += r.updated;
-      unchanged += r.unchanged;
-      skipped += r.skipped;
+      const r = await syncChunk(chunks[i])
+      updated += r.updated
+      unchanged += r.unchanged
+      skipped += r.skipped
       console.log(
         `[reconciliation]   chunk ${i + 1}/${chunks.length}` +
           ` (${chunks[i].length} ids) — updated: ${r.updated}, unchanged: ${r.unchanged}, skipped: ${r.skipped}`
-      );
+      )
     } catch (chunkError) {
-      const errMsg = chunkError.message || String(chunkError);
+      const errMsg = (chunkError as Error).message || String(chunkError)
       console.error(
         `[reconciliation] ⚠️  Chunk ${i + 1}/${chunks.length} failed: ${errMsg}`
-      );
-      errors.push(`chunk_${i}: ${errMsg}`);
+      )
+      errors.push(`chunk_${i}: ${errMsg}`)
     }
   }
 
-  return { chunks: chunks.length, updated, unchanged, skipped, errors };
+  return { chunks: chunks.length, updated, unchanged, skipped, errors }
 }
 
 /**
@@ -600,15 +672,15 @@ async function syncAllChunks(contractIds) {
  * Terminal statuses (completed, resolved, cancelled) are excluded — they never
  * need stale detection and are omitted from the partial index.
  *
- * @param {number} [staleDays=7] - escrows not updated in this many days are stale
- * @returns {Promise<string[]>} contract_ids of stale escrows
+ * @param staleDays - escrows not updated in this many days are stale (default 7)
+ * @returns contract_ids of stale escrows
  */
-async function findStaleEscrows(staleDays = 7) {
+export async function findStaleEscrows(staleDays = 7): Promise<string[]> {
   if (!Number.isFinite(staleDays) || staleDays < 1) {
-    throw new RangeError('findStaleEscrows: staleDays must be a positive number');
+    throw new RangeError('findStaleEscrows: staleDays must be a positive number')
   }
 
-  const { rows } = await db.query(
+  const { rows } = await db.query<{ contract_id: string }>(
     `SELECT contract_id
        FROM public.trustless_work_escrows
       WHERE tenant_id = 'safetrust'
@@ -616,28 +688,7 @@ async function findStaleEscrows(staleDays = 7) {
         AND updated_at < NOW() - ($1 * INTERVAL '1 day')
       ORDER BY updated_at ASC`,
     [staleDays]
-  );
+  )
 
-  return rows.map((r) => r.contract_id);
+  return rows.map((r) => r.contract_id)
 }
-
-// ─── Exports ──────────────────────────────────────────────────────────────────
-module.exports = {
-  CHUNK_SIZE,
-  chunkArray,
-  fetchEscrowsByContractIds,
-  upsertEscrows,
-  upsertEscrowsBulk,
-  upsertEscrowBatch,
-  syncChunk,
-  syncChunksParallel,
-  syncAllChunks,
-  isRustChunkProcessingEnabled,
-  isRustBulkUpsertEnabled,
-  buildConnectionString,
-  findStaleEscrows,
-  __setChunkProcessorForTests,
-  __resetChunkProcessorForTests,
-  __setBulkUpsertForTests,
-  __resetBulkUpsertForTests,
-};
