@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/webhook-verifier",
+    "crates/zk-verifier",
     "crates/stellar-utils",
     "crates/chunk-processor",
     "crates/pg-bulk-upsert",

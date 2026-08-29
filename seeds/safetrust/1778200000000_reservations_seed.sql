@@ -136,4 +136,5 @@ INSERT INTO public.reservations (
   NOW() + INTERVAL '30 days',
   NOW() + INTERVAL '37 days',
   1500.00, 'USDC', 'cancelled', 'safetrust'
-);
+)
+ON CONFLICT DO NOTHING;
