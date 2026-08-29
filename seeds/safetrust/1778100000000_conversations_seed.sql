@@ -45,7 +45,8 @@ INSERT INTO public.conversations (
   'demo-tenant-uid-001',
   'active',
   'safetrust'
-);
+)
+ON CONFLICT DO NOTHING;
 
 INSERT INTO public.messages (
   conversation_id,

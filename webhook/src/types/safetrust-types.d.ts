@@ -103,6 +103,10 @@ declare module '@safetrust/types' {
       reservation_id?: string
       [key: string]: unknown
     } | null
+    zk_proof?: string | null
+    zk_verification_key?: string | null
+    zk_threshold_stroops?: string | null
+    zk_balance_commitment?: string | null
     [key: string]: unknown
   }
 

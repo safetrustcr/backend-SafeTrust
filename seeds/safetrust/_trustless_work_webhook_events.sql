@@ -103,4 +103,5 @@ INSERT INTO public.trustless_work_webhook_events (
   }'::jsonb,
   'sha256=abc123signature006',
   TRUE, NOW() - INTERVAL '6 hours', NULL, 0, 3, NULL, 'safetrust'
-);
+)
+ON CONFLICT DO NOTHING;

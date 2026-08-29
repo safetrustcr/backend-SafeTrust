@@ -57,4 +57,5 @@ INSERT INTO pricing_overrides (override_name, base_rule_id, override_percentage,
 
 -- Expired Override (for testing)
 INSERT INTO pricing_overrides (override_name, base_rule_id, override_percentage, effective_from, effective_until, priority, is_active) VALUES
-('Summer 2024 Expired', (SELECT id FROM pricing_rules WHERE rule_name = 'USDC Standard Fee' LIMIT 1), 0.0150, '2024-06-01 00:00:00', '2024-08-31 23:59:59', 20, false);
+('Summer 2024 Expired', (SELECT id FROM pricing_rules WHERE rule_name = 'USDC Standard Fee' LIMIT 1), 0.0150, '2024-06-01 00:00:00', '2024-08-31 23:59:59', 20, false)
+ON CONFLICT DO NOTHING;

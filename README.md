@@ -91,7 +91,16 @@ bin/start tenant-name tenant-name
 | 3 | Build and deploy tenant metadata for all tenants |
 | 4 | Apply all migrations per tenant |
 | 5 | Reload Hasura metadata |
-| 6 | Apply seed data per tenant |
+| 6 | Apply seed data per tenant in parallel, with one transaction per seed file |
+
+Seed files are applied directly with PostgreSQL and `ON_ERROR_STOP=1`. Each file
+is wrapped in `BEGIN`/`COMMIT`, so a failed file rolls back completely; the two
+independent tenants run concurrently. Seed inserts use conflict-safe or
+stable-key cleanup patterns, making `bin/start` safe to rerun without
+`docker compose down -v`.
+
+Set `SEED_CHUNK_SIZE` in `.env` to tune the configured seed batch size (default
+`500`).
 
 **Target a specific tenant:**
 
@@ -197,6 +206,9 @@ hasura seed apply \
   --admin-secret myadminsecretkey
 
 ```
+
+For the same transactional behavior as startup, use `bin/start` for seed
+application rather than invoking `hasura seed apply` directly.
 
 ---
 

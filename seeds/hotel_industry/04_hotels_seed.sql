@@ -18,4 +18,5 @@ VALUES
     '456 Elm St',
     'Suburb',
     ST_SetSRID(ST_MakePoint(-84.1, 9.935), 4326)
-  );
+  )
+ON CONFLICT DO NOTHING;

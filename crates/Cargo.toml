@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "webhook-verifier",
+    "zk-verifier",
     "stellar-utils",
     "chunk-processor",
     "pg-bulk-upsert",
