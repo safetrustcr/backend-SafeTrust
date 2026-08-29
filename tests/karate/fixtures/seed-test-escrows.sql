@@ -11,19 +11,6 @@
 --
 -- Dependency: seed-test-users.sql must run first
 
-DELETE FROM safetrust.trustless_work_webhook_events
-WHERE contract_id IN (
-  'escrow-created-001',
-  'escrow-pending-001',
-  'escrow-funded-001',
-  'escrow-disputed-001',
-  'escrow-completed-001',
-  'STELLAR_CONTRACT_TEST_001',
-  'CAATN5DTEST00001',
-  'CAATN5DTEST00002',
-  'CAATN5DTEST00003'
-);
-
 DELETE FROM safetrust.trustless_work_escrows
 WHERE contract_id IN (
   'escrow-created-001',
