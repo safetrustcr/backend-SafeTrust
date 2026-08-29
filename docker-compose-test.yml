@@ -3,7 +3,7 @@ services:
     image: postgis/postgis:15-3.3
     restart: always
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - test_db_data:/var/lib/postgresql/data
     environment:
       POSTGRES_PASSWORD: postgrespassword
     ports:
@@ -148,15 +148,36 @@ services:
       sh -c "
         until curl -s http://graphql-engine-test:8080/healthz; do echo 'Waiting for Hasura...'; sleep 2; done;
         sleep 5;
-        curl -s -X POST http://graphql-engine-test:8080/v1/metadata -H 'X-Hasura-Admin-Secret: myadminsecretkey' -H 'Content-Type: application/json' -d '{\"type\": \"pg_add_source\", \"args\": {\"name\": \"safetrust\", \"configuration\": {\"connection_info\": { \"database_url\": \"postgres://postgres:postgrespassword@postgres_test:5432/postgres\", \"isolation_level\": \"read-committed\" } } } }';
+        for TENANT in safetrust hotel_industry; do
+          curl -s -X POST http://graphql-engine-test:8080/v1/metadata -H 'X-Hasura-Admin-Secret: ${TEST_ADMIN_SECRET:-myadminsecretkey}' -H 'Content-Type: application/json' -d '{\"type\": \"pg_add_source\", \"args\": {\"name\": \"'\"$$TENANT\"'\", \"configuration\": {\"connection_info\": { \"database_url\": \"postgres://postgres:postgrespassword@postgres_test:5432/postgres\", \"isolation_level\": \"read-committed\" } } } }';
+        done;
         sleep 2;
-        for i in 1 2 3 4 5; do hasura migrate apply --database-name safetrust --endpoint http://graphql-engine-test:8080 --admin-secret myadminsecretkey && break || sleep 5; done;
+        for TENANT in safetrust hotel_industry; do
+          echo \"[migrate-test] 📂 Migrating tenant: $$TENANT\";
+          MIGRATED=false;
+          WAIT=2;
+          for ATTEMPT in 1 2 3 4 5; do
+            echo \"[migrate-test] attempt $$ATTEMPT/5 for $$TENANT...\";
+            if hasura migrate apply --database-name \"$$TENANT\" --endpoint http://graphql-engine-test:8080 --admin-secret \"${TEST_ADMIN_SECRET:-myadminsecretkey}\"; then
+              echo \"[migrate-test] ✅ Migrations applied for $$TENANT\";
+              MIGRATED=true;
+              break;
+            fi;
+            echo \"[migrate-test] ⚠️ Attempt $$ATTEMPT failed — retrying in $${WAIT}s\";
+            sleep $$WAIT;
+            WAIT=$$((WAIT * 2));
+          done;
+          if [ \"$$MIGRATED\" = \"false\" ]; then
+            echo \"[migrate-test] ❌ Migration failed for $$TENANT after 5 attempts\";
+            exit 1;
+          fi;
+        done;
         case $$(uname -m) in
           aarch64|arm64) ARCH=arm64 ;;
           *) ARCH=amd64 ;;
         esac;
         curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$$ARCH -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq;
-        cd metadata && ./setup-tenant.sh safetrust --endpoint http://graphql-engine-test:8080 --admin-secret myadminsecretkey
+        cd metadata && ./setup-tenant.sh safetrust hotel_industry --endpoint http://graphql-engine-test:8080 --admin-secret \"${TEST_ADMIN_SECRET:-myadminsecretkey}\"
       "
     depends_on:
       graphql-engine-test:
@@ -165,7 +186,7 @@ services:
       - test-network
 
 volumes:
-  db_data:
+  test_db_data:
 
 networks:
   test-network:

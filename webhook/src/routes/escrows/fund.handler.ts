@@ -63,7 +63,8 @@ export const fundEscrowHandler = async (
             balance
           }
         }
-      `;
+      }
+    `;
 
     const data = await hasuraRequest<{
       update_trustless_work_escrows?: {
