@@ -156,30 +156,29 @@ fn verify_ultrahonk(
     verification_key: &[u8],
     public_inputs: &[PublicInput],
     proof: Vec<Vec<u8>>,
-) -> bool {
+) -> Result<bool, String> {
     let verification_key = match split_fields(verification_key) {
         Some(fields) => fields,
-        None => return false,
+        None => return Ok(false),
     };
     let public_inputs = public_inputs
         .iter()
         .map(|input| input.to_vec())
         .collect::<Vec<_>>();
-    let artifacts = match create_artifact_directory() {
-        Ok(directory) => directory,
-        Err(_) => return false,
-    };
+    let artifacts = create_artifact_directory()
+        .map_err(|error| format!("could not create temporary artifact directory: {error}"))?;
     let proof_path = artifacts.0.join("proof.json");
     let key_path = artifacts.0.join("vk.json");
     let inputs_path = artifacts.0.join("public_inputs.json");
-    if write_fields_json(&proof_path, "proof", &proof).is_err()
-        || write_fields_json(&key_path, "vk", &verification_key).is_err()
-        || write_fields_json(&inputs_path, "public_inputs", &public_inputs).is_err()
-    {
-        return false;
-    }
+    write_fields_json(&proof_path, "proof", &proof)
+        .map_err(|error| format!("could not write proof JSON artifact: {error}"))?;
+    write_fields_json(&key_path, "vk", &verification_key)
+        .map_err(|error| format!("could not write vk JSON artifact: {error}"))?;
+    write_fields_json(&inputs_path, "public_inputs", &public_inputs)
+        .map_err(|error| format!("could not write public_inputs JSON artifact: {error}"))?;
 
-    let mut command = Command::new(bb_binary_path());
+    let binary = bb_binary_path();
+    let mut command = Command::new(&binary);
     command
         .arg("verify")
         .arg("--proof_path")
@@ -197,17 +196,17 @@ fn verify_ultrahonk(
     let crs_path = env::var_os("ZK_BB_CRS_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crs"));
-    if fs::create_dir_all(&crs_path).is_err() {
-        return false;
-    }
+    fs::create_dir_all(&crs_path)
+        .map_err(|error| format!("could not create CRS directory {}: {error}", crs_path.display()))?;
     command.arg("--crs_path").arg(crs_path);
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 
-    command
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    let output = command
+        .output()
+        .map_err(|error| format!("could not execute bb binary at {}: {error}", binary.display()))?;
+
+    Ok(output.status.success())
 }
 
 #[cfg(not(windows))]
@@ -215,11 +214,9 @@ fn verify_ultrahonk(
     verification_key: &[u8],
     public_inputs: &[PublicInput],
     proof: Vec<Vec<u8>>,
-) -> bool {
-    let backend = match PipeBackend::new(bb_binary_path(), Some(1)) {
-        Ok(backend) => backend,
-        Err(_) => return false,
-    };
+) -> Result<bool, String> {
+    let backend = PipeBackend::new(bb_binary_path(), Some(1))
+        .map_err(|error| format!("could not start the bb backend: {error}"))?;
     let mut api = BarretenbergApi::new(backend);
     let settings = ProofSystemSettings {
         ipa_accumulation: false,
@@ -231,7 +228,7 @@ fn verify_ultrahonk(
     let verified = api
         .circuit_verify(verification_key, inputs, proof, settings)
         .map(|response| response.verified)
-        .unwrap_or(false);
+        .map_err(|error| format!("circuit verification failed: {error}"));
     let _ = api.destroy();
     verified
 }
@@ -241,40 +238,40 @@ fn verify_ultrahonk(
 /// Public inputs are constructed in the circuit ABI order from an unsigned
 /// 64-bit threshold in stroops and a 32-byte balance commitment. The ZK proof
 /// is verified by the exact Barretenberg version used by SafeTrust's Noir
-/// toolchain. Every decoding or verification failure is returned as `false`;
-/// untrusted input must never crash Node.
+/// toolchain. Decoding or verification failure returns `Ok(false)`;
+/// backend startup or transport errors return `Err`.
 pub fn verify_proof_of_funds_hex(
     proof_hex: &str,
     verification_key_hex: &str,
     threshold_stroops: &str,
     balance_commitment_hex: &str,
-) -> bool {
+) -> Result<bool, String> {
     let proof_bytes = match decode_hex(proof_hex, MAX_PROOF_BYTES) {
         Ok(bytes) => bytes,
-        Err(_) => return false,
+        Err(_) => return Ok(false),
     };
     let verification_key = match decode_hex(verification_key_hex, MAX_VERIFICATION_KEY_BYTES) {
         Ok(bytes) => bytes,
-        Err(_) => return false,
+        Err(_) => return Ok(false),
     };
     let threshold = match encode_threshold(threshold_stroops) {
         Ok(input) => input,
-        Err(_) => return false,
+        Err(_) => return Ok(false),
     };
     let balance_commitment = match decode_balance_commitment(balance_commitment_hex) {
         Ok(input) => input,
-        Err(_) => return false,
+        Err(_) => return Ok(false),
     };
     let public_inputs = [threshold, balance_commitment];
     let proof = match split_fields(&proof_bytes) {
         Some(fields) => fields,
-        None => return false,
+        None => return Ok(false),
     };
 
     catch_unwind(AssertUnwindSafe(|| {
         verify_ultrahonk(&verification_key, &public_inputs, proof)
     }))
-    .unwrap_or(false)
+    .unwrap_or_else(|_| Err("backend panicked during verification".to_string()))
 }
 
 fn verify_proof_of_funds(mut cx: FunctionContext) -> JsResult<JsBoolean> {
@@ -283,13 +280,15 @@ fn verify_proof_of_funds(mut cx: FunctionContext) -> JsResult<JsBoolean> {
     let threshold_stroops = cx.argument::<JsString>(2)?.value(&mut cx);
     let balance_commitment = cx.argument::<JsString>(3)?.value(&mut cx);
 
-    let is_valid = verify_proof_of_funds_hex(
+    match verify_proof_of_funds_hex(
         &proof_hex,
         &verification_key,
         &threshold_stroops,
         &balance_commitment,
-    );
-    Ok(cx.boolean(is_valid))
+    ) {
+        Ok(is_valid) => Ok(cx.boolean(is_valid)),
+        Err(err) => cx.throw_error(err),
+    }
 }
 
 #[neon::main]
@@ -305,26 +304,31 @@ mod tests {
     #[test]
     fn rejects_malformed_hex() {
         let commitment = "00".repeat(FIELD_SIZE);
-        assert!(!verify_proof_of_funds_hex(
-            "not-hex",
-            "00",
-            "1",
-            &commitment
-        ));
-        assert!(!verify_proof_of_funds_hex(
-            "00",
-            "not-hex",
-            "1",
-            &commitment
-        ));
-        assert!(!verify_proof_of_funds_hex("00", "00", "1", "xyz"));
+        assert_eq!(
+            verify_proof_of_funds_hex("not-hex", "00", "1", &commitment),
+            Ok(false)
+        );
+        assert_eq!(
+            verify_proof_of_funds_hex("00", "not-hex", "1", &commitment),
+            Ok(false)
+        );
+        assert_eq!(
+            verify_proof_of_funds_hex("00", "00", "1", "xyz"),
+            Ok(false)
+        );
     }
 
     #[test]
     fn rejects_empty_proof_and_key() {
         let commitment = "00".repeat(FIELD_SIZE);
-        assert!(!verify_proof_of_funds_hex("", "00", "1", &commitment));
-        assert!(!verify_proof_of_funds_hex("00", "", "1", &commitment));
+        assert_eq!(
+            verify_proof_of_funds_hex("", "00", "1", &commitment),
+            Ok(false)
+        );
+        assert_eq!(
+            verify_proof_of_funds_hex("00", "", "1", &commitment),
+            Ok(false)
+        );
     }
 
     #[test]

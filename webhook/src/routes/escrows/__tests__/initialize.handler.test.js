@@ -122,12 +122,7 @@ describe('initializeEscrowHandler ZK verification', () => {
       zk_balance_commitment: 'ab'.repeat(32),
     }), res);
 
-    expect(verifyProofOfFunds).toHaveBeenCalledWith(
-      'valid-proof-for-a-different-threshold',
-      'vk-hex',
-      '999999999',
-      'ab'.repeat(32)
-    );
+    expect(verifyProofOfFunds).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({ error: 'Invalid ZK proof of funds' });
     expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();

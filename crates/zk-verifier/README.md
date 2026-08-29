@@ -44,5 +44,5 @@ cargo run -p zk-verifier --example verify_artifacts -- proof vk 1000000000 BALAN
 After `npm run build:rust` (from `webhook/`), exercise the exported Node API:
 
 ```sh
-node crates/zk-verifier/examples/verify-artifacts.js proof vk 1000000000 BALANCE_COMMITMENT_HEX
+cd .. && node crates/zk-verifier/examples/verify-artifacts.js proof vk 1000000000 BALANCE_COMMITMENT_HEX
 ```

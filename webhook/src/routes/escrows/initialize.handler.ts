@@ -109,7 +109,7 @@ export const initializeEscrowHandler = async (
 
     const expectedThreshold = amountToStroops(amount);
     const suppliedThreshold = normalizeU64(zk_threshold_stroops);
-    if (!expectedThreshold || !suppliedThreshold) {
+    if (!expectedThreshold || !suppliedThreshold || suppliedThreshold !== expectedThreshold) {
       return res.status(400).json({ error: 'Invalid ZK proof of funds' });
     }
 
@@ -120,7 +120,7 @@ export const initializeEscrowHandler = async (
         suppliedThreshold,
         zk_balance_commitment
       );
-      if (!isValidProof || suppliedThreshold !== expectedThreshold) {
+      if (!isValidProof) {
         return res.status(400).json({ error: 'Invalid ZK proof of funds' });
       }
     } catch (error) {

@@ -20,12 +20,18 @@ fn main() {
 
     let threshold_stroops = paths[2].to_string_lossy();
     let balance_commitment = paths[3].to_string_lossy();
-    let is_valid = verify_proof_of_funds_hex(
+    let is_valid = match verify_proof_of_funds_hex(
         &read_hex(&paths[0]),
         &read_hex(&paths[1]),
         &threshold_stroops,
         &balance_commitment,
-    );
+    ) {
+        Ok(valid) => valid,
+        Err(error) => {
+            eprintln!("verification error: {error}");
+            process::exit(1);
+        }
+    };
 
     println!("{}", if is_valid { "valid" } else { "invalid" });
     if !is_valid {
