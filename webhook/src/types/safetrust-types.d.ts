@@ -84,4 +84,59 @@ declare module '@safetrust/types' {
     created_at?: string
     tenant_id?: string
   }
+
+  export interface InitializeEscrowPayload {
+    contract_id: string
+    marker: string
+    approver: string
+    releaser: string
+    resolver?: string | null
+    amount: number
+    escrow_type: 'single_release' | 'multi_release' | string
+    asset_code?: string
+    asset_issuer?: string | null
+    booking_id?: string | null
+    room_id?: string | null
+    hotel_id?: string | null
+    guest_id?: string | null
+    booking_metadata?: {
+      reservation_id?: string
+      [key: string]: unknown
+    } | null
+    zk_proof?: string | null
+    zk_verification_key?: string | null
+    zk_threshold_stroops?: string | null
+    zk_balance_commitment?: string | null
+    [key: string]: unknown
+  }
+
+  export interface FundEscrowPayload {
+    contractId: string
+    signer: string
+    amount: number
+  }
+
+  export interface ApproveMilestonePayload {
+    contractId: string
+    milestoneId: string
+    approver: string
+    flag: boolean
+  }
+
+  export interface ReleaseFundsPayload {
+    contractId: string
+    releaseSigner: string
+  }
+
+  export interface DisputeEscrowPayload {
+    contractId: string
+    disputeFlag: boolean
+    disputer: string
+  }
+
+  export interface ResolveDisputePayload {
+    contractId: string
+    resolver: string
+    resolutionNote?: string
+  }
 }
