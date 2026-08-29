@@ -4,7 +4,7 @@ Feature: Reconciliation — POST /reconciliation/sync-escrows
   # Integration tests for the reconciliation endpoint.
   #
   # The webhook service must be running and connected to the test database.
-  # Seed data (at least one row in public.trustless_work_escrows) must be
+  # Seed data (at least one row in safetrust.trustless_work_escrows) must be
   # present for the "happy path" scenario.
   #
   # The TrustlessWork indexer is called live; if unavailable the service

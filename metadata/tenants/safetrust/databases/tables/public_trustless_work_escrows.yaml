@@ -1,6 +1,6 @@
 table:
   name: trustless_work_escrows
-  schema: public
+  schema: safetrust
 configuration:
   column_config:
     id:
@@ -65,21 +65,21 @@ array_relationships:
         column: escrow_id
         table:
           name: escrow_milestones
-          schema: public
+          schema: safetrust
   - name: webhookEvents
     using:
       foreign_key_constraint_on:
         column: contract_id
         table:
           name: trustless_work_webhook_events
-          schema: public
+          schema: safetrust
   - name: pendingApprovals
     using:
       foreign_key_constraint_on:
         column: escrow_id
         table:
           name: escrow_pending_approvals
-          schema: public
+          schema: safetrust
 object_relationships:
   - name: apartment
     using:

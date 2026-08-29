@@ -3,14 +3,14 @@
 -- Depends on: 1733963959819_user_seed.sql (canonical: 01_users_seed.sql), 1733970410880_departments_seed.sql (canonical: 02_apartments_seed.sql) — must run after both
 
 -- Idempotency: remove demo bid requests before reinserting
-DELETE FROM public.bid_requests
+DELETE FROM safetrust.bid_requests
 WHERE tenant_id IN (
-    SELECT id FROM public.users
+    SELECT id FROM safetrust.users
     WHERE firebase_uid = 'demo-tenant-uid-001'
 );
 
 -- Bid Request 1: PENDING on Apartment 1
-INSERT INTO public.bid_requests (
+INSERT INTO safetrust.bid_requests (
     id,
     apartment_id,
     tenant_id,
@@ -25,11 +25,11 @@ SELECT
     'PENDING',
     1150.00,
     NOW() + INTERVAL '1 month'
-FROM public.users u WHERE u.firebase_uid = 'demo-tenant-uid-001'
+FROM safetrust.users u WHERE u.firebase_uid = 'demo-tenant-uid-001'
 ON CONFLICT (id) DO NOTHING;
 
 -- Bid Request 2: CANCELLED on Apartment 2
-INSERT INTO public.bid_requests (
+INSERT INTO safetrust.bid_requests (
     id,
     apartment_id,
     tenant_id,
@@ -44,5 +44,5 @@ SELECT
     'CANCELLED',
     900.00,
     NOW() + INTERVAL '2 months'
-FROM public.users u WHERE u.firebase_uid = 'demo-tenant-uid-001'
+FROM safetrust.users u WHERE u.firebase_uid = 'demo-tenant-uid-001'
 ON CONFLICT (id) DO NOTHING;

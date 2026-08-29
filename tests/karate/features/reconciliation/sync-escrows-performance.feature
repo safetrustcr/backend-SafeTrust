@@ -29,7 +29,7 @@ Feature: POST /reconciliation/sync-escrows — Big O linear scaling verification
     * def clearPerfFixtures =
     """
     function() {
-      db.execute("DELETE FROM public.trustless_work_escrows WHERE contract_id LIKE 'PERF_TEST_%' OR contract_id LIKE 'SCALE_TEST_%' OR contract_id LIKE 'CTEST_CHUNK_%'");
+      db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE contract_id LIKE 'PERF_TEST_%' OR contract_id LIKE 'SCALE_TEST_%' OR contract_id LIKE 'CTEST_CHUNK_%'");
     }
     """
     * def stashNonBenchmarkEscrows =
@@ -37,13 +37,13 @@ Feature: POST /reconciliation/sync-escrows — Big O linear scaling verification
     function() {
       // Park other safetrust rows so chunk counts equal ⌈n/50⌉ for this scenario
       // without DELETE-ing shared suite data.
-      db.execute("UPDATE public.trustless_work_escrows SET tenant_id = 'safetrust_perf_stash' WHERE tenant_id = 'safetrust'");
+      db.execute("UPDATE safetrust.trustless_work_escrows SET tenant_id = 'safetrust_perf_stash' WHERE tenant_id = 'safetrust'");
     }
     """
     * def restoreStashedEscrows =
     """
     function() {
-      db.execute("UPDATE public.trustless_work_escrows SET tenant_id = 'safetrust' WHERE tenant_id = 'safetrust_perf_stash'");
+      db.execute("UPDATE safetrust.trustless_work_escrows SET tenant_id = 'safetrust' WHERE tenant_id = 'safetrust_perf_stash'");
     }
     """
     * def teardownPerf =
@@ -65,7 +65,7 @@ Feature: POST /reconciliation/sync-escrows — Big O linear scaling verification
 
   Scenario: n=1 escrow — baseline O(1) sync duration < 5s
     * prepareBenchmark()
-    * db.execute("INSERT INTO public.trustless_work_escrows (contract_id, marker, approver, releaser, escrow_type, status, asset_code, amount, tenant_id) VALUES ('PERF_TEST_001', 'GMARKER', 'GAPPROVER', 'GRELEASER', 'single_release', 'created', 'USDC', 100, 'safetrust') ON CONFLICT (contract_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id")
+    * db.execute("INSERT INTO safetrust.trustless_work_escrows (contract_id, marker, approver, releaser, escrow_type, status, asset_code, amount, tenant_id) VALUES ('PERF_TEST_001', 'GMARKER', 'GAPPROVER', 'GRELEASER', 'single_release', 'created', 'USDC', 100, 'safetrust') ON CONFLICT (contract_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id")
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
@@ -93,7 +93,7 @@ Feature: POST /reconciliation/sync-escrows — Big O linear scaling verification
   Scenario: n=100 escrow — O(n) sync duration < 25s and chunks == 2
     * prepareBenchmark()
     * db.execute(karate.read('file:tests/karate/fixtures/seed-50-escrows.sql'))
-    * db.execute("INSERT INTO public.trustless_work_escrows (contract_id, marker, approver, releaser, escrow_type, status, asset_code, amount, tenant_id) SELECT 'PERF_TEST_EXTRA_' || LPAD(i::text, 3, '0'), 'GMARKER', 'GAPPROVER', 'GRELEASER', 'single_release', 'created', 'USDC', 100, 'safetrust' FROM generate_series(1, 50) AS s(i) ON CONFLICT (contract_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id")
+    * db.execute("INSERT INTO safetrust.trustless_work_escrows (contract_id, marker, approver, releaser, escrow_type, status, asset_code, amount, tenant_id) SELECT 'PERF_TEST_EXTRA_' || LPAD(i::text, 3, '0'), 'GMARKER', 'GAPPROVER', 'GRELEASER', 'single_release', 'created', 'USDC', 100, 'safetrust' FROM generate_series(1, 50) AS s(i) ON CONFLICT (contract_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id")
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
@@ -105,7 +105,7 @@ Feature: POST /reconciliation/sync-escrows — Big O linear scaling verification
 
   Scenario: n=200 escrow — O(n) scaling ratio vs n=1 must be < 400 (rejects O(n²))
     * prepareBenchmark()
-    * db.execute("INSERT INTO public.trustless_work_escrows (contract_id, marker, approver, releaser, escrow_type, status, asset_code, amount, tenant_id) SELECT 'SCALE_TEST_' || LPAD(i::text, 3, '0'), 'GMARKER', 'GAPPROVER', 'GRELEASER', 'single_release', 'created', 'USDC', 100, 'safetrust' FROM generate_series(1, 200) AS s(i) ON CONFLICT (contract_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id")
+    * db.execute("INSERT INTO safetrust.trustless_work_escrows (contract_id, marker, approver, releaser, escrow_type, status, asset_code, amount, tenant_id) SELECT 'SCALE_TEST_' || LPAD(i::text, 3, '0'), 'GMARKER', 'GAPPROVER', 'GRELEASER', 'single_release', 'created', 'USDC', 100, 'safetrust' FROM generate_series(1, 200) AS s(i) ON CONFLICT (contract_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id")
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
