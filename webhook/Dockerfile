@@ -1,10 +1,14 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM node:24-alpine AS builder
+FROM node:24-bookworm-slim AS builder
 
-# Rust toolchain for the Neon addons (webhook-verifier, stellar-utils,
-# chunk-processor). gcc + musl-dev provide the C linker and musl headers rustc
-# needs on Alpine.
-RUN apk add --no-cache curl build-base rust cargo gcc musl-dev
+# Rust toolchain for the Neon addons (webhook-verifier, zk-verifier,
+# stellar-utils, chunk-processor, pg-bulk-upsert, x402-processor), plus a glibc
+# runtime for the pinned Barretenberg binary.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Build context is the repo root, so source paths are repo-root relative.
 WORKDIR /app
@@ -27,11 +31,12 @@ COPY webhook/src/ ./webhook/src/
 RUN cd webhook && npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
-FROM node:24-alpine AS production
+FROM node:24-bookworm-slim AS production
 
 WORKDIR /app/webhook
 
-RUN apk add --no-cache curl
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY webhook/package*.json ./
 RUN npm ci --omit=dev
@@ -39,6 +44,11 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/webhook/dist ./dist
 COPY --from=builder /app/crates/webhook-verifier/index.node /app/crates/webhook-verifier/index.node
 COPY --from=builder /app/crates/webhook-verifier/package.json /app/crates/webhook-verifier/package.json
+COPY --from=builder /app/crates/zk-verifier/index.node /app/crates/zk-verifier/index.node
+COPY --from=builder /app/crates/zk-verifier/package.json /app/crates/zk-verifier/package.json
+COPY --from=builder /app/crates/zk-verifier/index.d.ts /app/crates/zk-verifier/index.d.ts
+COPY --from=builder /app/crates/zk-verifier/bb /app/crates/zk-verifier/bb
+RUN chmod 0755 /app/crates/zk-verifier/bb
 # Runtime pieces of the stellar-utils addon (package.json → main: native/index.node).
 # Placed at /app/crates/… so `require('../../../../crates/stellar-utils')` from
 # dist/routes/auth resolves correctly.
@@ -54,7 +64,7 @@ COPY --from=builder /app/crates/pg-bulk-upsert/package.json /app/crates/pg-bulk-
 COPY --from=builder /app/crates/x402-processor/index.node /app/crates/x402-processor/index.node
 COPY --from=builder /app/crates/x402-processor/package.json /app/crates/x402-processor/package.json
 
-# node user/group already exists in official node:24-alpine image
+# node user/group already exists in the official Node image.
 USER node
 
 EXPOSE 3001

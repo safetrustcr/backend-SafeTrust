@@ -1,0 +1,14 @@
+{
+  "name": "zk-verifier",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.node",
+  "types": "index.d.ts",
+  "files": [
+    "bb",
+    "bb.exe",
+    "index.node",
+    "index.d.ts",
+    "install-bb.js"
+  ]
+}
