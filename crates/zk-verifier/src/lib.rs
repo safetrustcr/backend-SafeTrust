@@ -1,9 +1,35 @@
 use neon::prelude::*;
+#[cfg(windows)]
+use serde_json::{json, Value};
+use std::env;
+#[cfg(windows)]
+use std::fs::{self, File};
+#[cfg(windows)]
+use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use ultrahonk_no_std::{verify, ProofType, ProofVariant, PublicInput, PUB_SIZE};
+use std::path::PathBuf;
+#[cfg(windows)]
+use std::process::{Command, Stdio};
+#[cfg(windows)]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(windows)]
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(not(windows))]
+use barretenberg_rs::{
+    backends::PipeBackend, generated_types::ProofSystemSettings, BarretenbergApi,
+};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use std::path::Path;
 
 const MAX_PROOF_BYTES: usize = 1024 * 1024;
 const MAX_VERIFICATION_KEY_BYTES: usize = 128 * 1024;
+const FIELD_SIZE: usize = 32;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+type PublicInput = [u8; FIELD_SIZE];
 const BN254_SCALAR_MODULUS: PublicInput = [
     0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d,
     0x28, 0x33, 0xe8, 0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
@@ -39,13 +65,13 @@ fn encode_threshold(threshold_stroops: &str) -> Result<PublicInput, DecodeError>
     let threshold = threshold_stroops
         .parse::<u64>()
         .map_err(|_| DecodeError::InvalidThreshold)?;
-    let mut encoded = [0_u8; PUB_SIZE];
-    encoded[PUB_SIZE - 8..].copy_from_slice(&threshold.to_be_bytes());
+    let mut encoded = [0_u8; FIELD_SIZE];
+    encoded[FIELD_SIZE - 8..].copy_from_slice(&threshold.to_be_bytes());
     Ok(encoded)
 }
 
 fn decode_balance_commitment(value: &str) -> Result<PublicInput, DecodeError> {
-    let bytes = decode_hex(value, PUB_SIZE)?;
+    let bytes = decode_hex(value, FIELD_SIZE)?;
     let commitment: PublicInput = bytes
         .try_into()
         .map_err(|_| DecodeError::InvalidFieldSize)?;
@@ -55,12 +81,168 @@ fn decode_balance_commitment(value: &str) -> Result<PublicInput, DecodeError> {
     Ok(commitment)
 }
 
+fn bb_binary_path() -> PathBuf {
+    env::var_os("ZK_BB_BINARY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(if cfg!(windows) {
+                "bb.exe"
+            } else {
+                "bb"
+            })
+        })
+}
+
+#[allow(clippy::manual_is_multiple_of)] // Keep compatibility with Rust 1.86 used by Noir tooling.
+fn split_fields(bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
+    if bytes.is_empty() || bytes.len() % FIELD_SIZE != 0 {
+        return None;
+    }
+
+    Some(bytes.chunks_exact(FIELD_SIZE).map(<[u8]>::to_vec).collect())
+}
+
+#[cfg(windows)]
+struct ArtifactDirectory(PathBuf);
+
+#[cfg(windows)]
+impl Drop for ArtifactDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(windows)]
+fn create_artifact_directory() -> io::Result<ArtifactDirectory> {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+
+    for _ in 0..16 {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let path = env::temp_dir().join(format!(
+            "safetrust-zk-{}-{timestamp}-{id}",
+            std::process::id()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(ArtifactDirectory(path)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a private artifact directory",
+    ))
+}
+
+#[cfg(windows)]
+fn write_fields_json(path: &Path, property: &str, fields: &[Vec<u8>]) -> io::Result<()> {
+    let encoded = fields
+        .iter()
+        .map(|field| format!("0x{}", hex::encode(field)))
+        .collect::<Vec<_>>();
+    let mut object = serde_json::Map::new();
+    object.insert(property.to_owned(), json!(encoded));
+    serde_json::to_writer(File::create(path)?, &Value::Object(object))
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+#[cfg(windows)]
+fn verify_ultrahonk(
+    verification_key: &[u8],
+    public_inputs: &[PublicInput],
+    proof: Vec<Vec<u8>>,
+) -> bool {
+    let verification_key = match split_fields(verification_key) {
+        Some(fields) => fields,
+        None => return false,
+    };
+    let public_inputs = public_inputs
+        .iter()
+        .map(|input| input.to_vec())
+        .collect::<Vec<_>>();
+    let artifacts = match create_artifact_directory() {
+        Ok(directory) => directory,
+        Err(_) => return false,
+    };
+    let proof_path = artifacts.0.join("proof.json");
+    let key_path = artifacts.0.join("vk.json");
+    let inputs_path = artifacts.0.join("public_inputs.json");
+    if write_fields_json(&proof_path, "proof", &proof).is_err()
+        || write_fields_json(&key_path, "vk", &verification_key).is_err()
+        || write_fields_json(&inputs_path, "public_inputs", &public_inputs).is_err()
+    {
+        return false;
+    }
+
+    let mut command = Command::new(bb_binary_path());
+    command
+        .arg("verify")
+        .arg("--proof_path")
+        .arg(proof_path)
+        .arg("--vk_path")
+        .arg(key_path)
+        .arg("--public_inputs_path")
+        .arg(inputs_path)
+        .arg("--verifier_target")
+        .arg("evm")
+        .env("HARDWARE_CONCURRENCY", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let crs_path = env::var_os("ZK_BB_CRS_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crs"));
+    if fs::create_dir_all(&crs_path).is_err() {
+        return false;
+    }
+    command.arg("--crs_path").arg(crs_path);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    command
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn verify_ultrahonk(
+    verification_key: &[u8],
+    public_inputs: &[PublicInput],
+    proof: Vec<Vec<u8>>,
+) -> bool {
+    let backend = match PipeBackend::new(bb_binary_path(), Some(1)) {
+        Ok(backend) => backend,
+        Err(_) => return false,
+    };
+    let mut api = BarretenbergApi::new(backend);
+    let settings = ProofSystemSettings {
+        ipa_accumulation: false,
+        oracle_hash_type: "keccak".to_owned(),
+        disable_zk: false,
+        optimized_solidity_verifier: false,
+    };
+    let inputs = public_inputs.iter().map(|input| input.to_vec()).collect();
+    let verified = api
+        .circuit_verify(verification_key, inputs, proof, settings)
+        .map(|response| response.verified)
+        .unwrap_or(false);
+    let _ = api.destroy();
+    verified
+}
+
 /// Verify a Keccak/EVM UltraHonk proof generated by Noir's `bb` backend.
 ///
 /// Public inputs are constructed in the circuit ABI order from an unsigned
-/// 64-bit threshold in stroops and a 32-byte balance commitment. Both ZK and
-/// plain UltraHonk proof variants are supported. Every decoding or verification
-/// failure is returned as `false`; untrusted input must never crash Node.
+/// 64-bit threshold in stroops and a 32-byte balance commitment. The ZK proof
+/// is verified by the exact Barretenberg version used by SafeTrust's Noir
+/// toolchain. Every decoding or verification failure is returned as `false`;
+/// untrusted input must never crash Node.
 pub fn verify_proof_of_funds_hex(
     proof_hex: &str,
     verification_key_hex: &str,
@@ -84,23 +266,13 @@ pub fn verify_proof_of_funds_hex(
         Err(_) => return false,
     };
     let public_inputs = [threshold, balance_commitment];
-
-    // A variant with an impossible byte length is rejected before invoking
-    // the curve implementation. Usually exactly one variant matches.
-    let verify_variant = |variant: ProofVariant| {
-        if variant.log_n_from_byte_len(proof_bytes.len()).is_err() {
-            return false;
-        }
-
-        let proof = match variant {
-            ProofVariant::ZK => ProofType::ZK(proof_bytes.clone().into_boxed_slice()),
-            ProofVariant::Plain => ProofType::Plain(proof_bytes.clone().into_boxed_slice()),
-        };
-        verify::<()>(&verification_key, &proof, &public_inputs).is_ok()
+    let proof = match split_fields(&proof_bytes) {
+        Some(fields) => fields,
+        None => return false,
     };
 
     catch_unwind(AssertUnwindSafe(|| {
-        verify_variant(ProofVariant::ZK) || verify_variant(ProofVariant::Plain)
+        verify_ultrahonk(&verification_key, &public_inputs, proof)
     }))
     .unwrap_or(false)
 }
@@ -132,7 +304,7 @@ mod tests {
 
     #[test]
     fn rejects_malformed_hex() {
-        let commitment = "00".repeat(PUB_SIZE);
+        let commitment = "00".repeat(FIELD_SIZE);
         assert!(!verify_proof_of_funds_hex(
             "not-hex",
             "00",
@@ -150,7 +322,7 @@ mod tests {
 
     #[test]
     fn rejects_empty_proof_and_key() {
-        let commitment = "00".repeat(PUB_SIZE);
+        let commitment = "00".repeat(FIELD_SIZE);
         assert!(!verify_proof_of_funds_hex("", "00", "1", &commitment));
         assert!(!verify_proof_of_funds_hex("00", "", "1", &commitment));
     }
@@ -165,8 +337,8 @@ mod tests {
         let threshold = 10_000_000_000_u64;
         let encoded = encode_threshold(&threshold.to_string()).unwrap();
 
-        assert_eq!(&encoded[..PUB_SIZE - 8], &[0_u8; PUB_SIZE - 8]);
-        assert_eq!(&encoded[PUB_SIZE - 8..], &threshold.to_be_bytes());
+        assert_eq!(&encoded[..FIELD_SIZE - 8], &[0_u8; FIELD_SIZE - 8]);
+        assert_eq!(&encoded[FIELD_SIZE - 8..], &threshold.to_be_bytes());
     }
 
     #[test]
@@ -181,8 +353,11 @@ mod tests {
 
     #[test]
     fn requires_a_32_byte_balance_commitment() {
-        let commitment = "2a".repeat(PUB_SIZE);
-        assert_eq!(decode_balance_commitment(&commitment), Ok([0x2a; PUB_SIZE]));
+        let commitment = "2a".repeat(FIELD_SIZE);
+        assert_eq!(
+            decode_balance_commitment(&commitment),
+            Ok([0x2a; FIELD_SIZE])
+        );
         assert_eq!(
             decode_balance_commitment("ab"),
             Err(DecodeError::InvalidFieldSize)
@@ -200,5 +375,12 @@ mod tests {
             decode_hex(&oversized, MAX_PROOF_BYTES),
             Err(DecodeError::TooLarge)
         );
+    }
+
+    #[test]
+    fn proof_must_be_an_exact_sequence_of_fields() {
+        assert_eq!(split_fields(&[]), None);
+        assert_eq!(split_fields(&[0_u8; FIELD_SIZE - 1]), None);
+        assert_eq!(split_fields(&[0_u8; FIELD_SIZE]).unwrap().len(), 1);
     }
 }

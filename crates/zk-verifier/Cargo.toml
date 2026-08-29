@@ -10,6 +10,9 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 hex = "0.4"
 neon = { version = "1", default-features = false, features = ["napi-6"] }
-# Pin the verifier revision because UltraHonk's serialized proof format can
-# change between Barretenberg releases.
-ultrahonk-no-std = { git = "https://github.com/zkVerify/ultrahonk_verifier.git", rev = "986b79b232d0f44c52fe50cd85ba8c3f505fc3c8" }
+
+[target.'cfg(windows)'.dependencies]
+serde_json = "1"
+
+[target.'cfg(not(windows))'.dependencies]
+barretenberg-rs = { version = "=5.0.0-nightly.20260522", default-features = false, features = ["native"] }
