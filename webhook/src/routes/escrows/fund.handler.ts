@@ -64,6 +64,7 @@ export const fundEscrowHandler = async (
           }
         }
       }
+      }
     `;
 
     const data = await hasuraRequest<{
