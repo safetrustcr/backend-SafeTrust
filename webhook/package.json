@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "build:rust": "node ../crates/zk-verifier/install-bb.js && cargo build --release --workspace --manifest-path ../Cargo.toml && node ../crates/webhook-verifier/copy-native.js && node ../crates/zk-verifier/copy-native.js && node ../crates/stellar-utils/copy-native.js && node ../crates/chunk-processor/copy-native.js && node ../crates/pg-bulk-upsert/copy-native.js",
+    "build:rust": "node ../crates/zk-verifier/install-bb.js && cargo build --release --workspace --manifest-path ../Cargo.toml && node ../crates/webhook-verifier/copy-native.js && node ../crates/zk-verifier/copy-native.js && node ../crates/stellar-utils/copy-native.js && node ../crates/chunk-processor/copy-native.js && node ../crates/pg-bulk-upsert/copy-native.js && node ../crates/x402-processor/copy-native.js",
     "build": "npm run build:rust && tsc",
     "dev": "nodemon --exec ts-node src/index.ts",
     "start": "node dist/index.js",

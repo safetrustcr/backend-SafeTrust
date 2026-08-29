@@ -1,18 +1,18 @@
-'use strict';
-
-const {
+import { Request, Response } from 'express';
+import { InitializeEscrowPayload } from '@safetrust/types';
+import {
   hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} = require('../../services/hasura');
-const { verifyProofOfFunds } = require('../../lib/zk-verifier');
+} from '../../services/hasura';
+import { verifyProofOfFunds } from '../../lib/zk-verifier';
 
 const EVENT_TYPE = 'escrow.initialized';
 const STROOPS_PER_UNIT = 10_000_000n;
 const U64_MAX = 18_446_744_073_709_551_615n;
 
 /** Convert a positive decimal asset amount to an exact u64 stroop string. */
-function amountToStroops(amount) {
+export function amountToStroops(amount: unknown): string | null {
   if (typeof amount !== 'string' && typeof amount !== 'number') return null;
   if (typeof amount === 'number') {
     const scaled = amount * Number(STROOPS_PER_UNIT);
@@ -36,7 +36,7 @@ function amountToStroops(amount) {
 }
 
 /** Normalize an untrusted decimal string to its canonical u64 representation. */
-function normalizeU64(value) {
+function normalizeU64(value: unknown): string | null {
   if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) return null;
   if (value.length > 20) return null;
 
@@ -45,7 +45,10 @@ function normalizeU64(value) {
   return parsed.toString();
 }
 
-const initializeEscrowHandler = async (req, res) => {
+export const initializeEscrowHandler = async (
+  req: Request<{}, {}, InitializeEscrowPayload>,
+  res: Response
+): Promise<Response> => {
   const {
     contract_id,
     marker,
@@ -121,7 +124,8 @@ const initializeEscrowHandler = async (req, res) => {
         return res.status(400).json({ error: 'Invalid ZK proof of funds' });
       }
     } catch (error) {
-      console.error('[escrow/initialize] ZK verifier unavailable:', error.message);
+      const err = error as Error;
+      console.error('[escrow/initialize] ZK verifier unavailable:', err.message);
       return res.status(503).json({ error: 'ZK proof verification is unavailable' });
     }
   }
@@ -142,7 +146,7 @@ const initializeEscrowHandler = async (req, res) => {
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contract_id,
       EVENT_TYPE,
-      req.body
+      req.body as unknown as Record<string, unknown>
     );
 
     if (isDuplicate) {
@@ -151,7 +155,7 @@ const initializeEscrowHandler = async (req, res) => {
     }
 
     // 5 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
-    const data = await hasuraRequest(mutation, {
+    const data = await hasuraRequest<{ insert_trustless_work_escrows_one?: { id: string } }>(mutation, {
       object: {
         contractId: contract_id,
         marker,
@@ -211,12 +215,11 @@ const initializeEscrowHandler = async (req, res) => {
     return res.status(200).json({ received: true });
 
   } catch (error) {
-    console.error('[escrow/initialize] ❌ Error:', error.details || error.message);
-    if (error.details) {
-      return res.status(500).json({ error: 'Failed to persist escrow record', details: error.details });
+    const err = error as Error & { details?: unknown };
+    console.error('[escrow/initialize] ❌ Error:', err.details || err.message);
+    if (err.details) {
+      return res.status(500).json({ error: 'Failed to persist escrow record', details: err.details });
     }
-    return res.status(500).json({ error: 'Internal server error', details: error.message });
+    return res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 };
-
-module.exports = { initializeEscrowHandler, amountToStroops };

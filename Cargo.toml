@@ -6,6 +6,7 @@ members = [
     "crates/stellar-utils",
     "crates/chunk-processor",
     "crates/pg-bulk-upsert",
+    "crates/x402-processor",
 ]
 
 [workspace.dependencies]

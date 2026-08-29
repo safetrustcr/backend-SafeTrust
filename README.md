@@ -104,9 +104,16 @@ bin/start safetrust hotel_industry # both explicitly
 ### Reset the database
 
 ```bash
-docker compose down -v
-bin/start
+bin/start --reset safetrust
 
+```
+
+`--reset` removes the Docker volumes before starting, so tenant data is
+recreated by migrations and seeds. To recreate the containers while keeping
+the database volumes, use:
+
+```bash
+bin/start --restart safetrust
 ```
 
 ### Rollback migrations
@@ -272,4 +279,3 @@ Reports are generated at:
 ## 📄 License
 
 © 2026 SafeTrust. Released under the [MIT License](https://opensource.org/license/MIT).
-

@@ -2,8 +2,8 @@
 FROM node:24-bookworm-slim AS builder
 
 # Rust toolchain for the Neon addons (webhook-verifier, zk-verifier,
-# stellar-utils, chunk-processor, pg-bulk-upsert), plus a glibc runtime for the
-# pinned Barretenberg binary.
+# stellar-utils, chunk-processor, pg-bulk-upsert, x402-processor), plus a glibc
+# runtime for the pinned Barretenberg binary.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
@@ -60,6 +60,9 @@ COPY --from=builder /app/crates/chunk-processor/package.json /app/crates/chunk-p
 # pg-bulk-upsert: single-statement escrow UPSERT (built by build:rust --workspace).
 COPY --from=builder /app/crates/pg-bulk-upsert/index.node /app/crates/pg-bulk-upsert/index.node
 COPY --from=builder /app/crates/pg-bulk-upsert/package.json /app/crates/pg-bulk-upsert/package.json
+# x402-processor: x402 payment protocol verifier (built by build:rust --workspace).
+COPY --from=builder /app/crates/x402-processor/index.node /app/crates/x402-processor/index.node
+COPY --from=builder /app/crates/x402-processor/package.json /app/crates/x402-processor/package.json
 
 # node user/group already exists in the official Node image.
 USER node
