@@ -315,18 +315,17 @@ fi
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
   mkdir -p tests/results
-  node -e "
-const t = {
-  docker_up: ${TIMING_DOCKER_UP},
-  hasura_health: ${TIMING_HASURA_HEALTH},
-  migrations_safetrust: ${TIMING_MIGRATIONS_SAFETRUST},
-  metadata_deploy_safetrust: ${TIMING_METADATA_DEPLOY_SAFETRUST},
-  metadata_reload: ${TIMING_METADATA_RELOAD},
-  seeds_safetrust: ${TIMING_SEEDS_SAFETRUST},
-  total: ${TIMING_TOTAL}
-};
-console.log(JSON.stringify(t, null, 2));
-" > tests/results/dc-prep-timings.json
+  cat > tests/results/dc-prep-timings.json <<EOF
+{
+  "docker_up": ${TIMING_DOCKER_UP},
+  "hasura_health": ${TIMING_HASURA_HEALTH},
+  "migrations_safetrust": ${TIMING_MIGRATIONS_SAFETRUST},
+  "metadata_deploy_safetrust": ${TIMING_METADATA_DEPLOY_SAFETRUST},
+  "metadata_reload": ${TIMING_METADATA_RELOAD},
+  "seeds_safetrust": ${TIMING_SEEDS_SAFETRUST},
+  "total": ${TIMING_TOTAL}
+}
+EOF
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
