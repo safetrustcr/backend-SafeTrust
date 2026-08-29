@@ -20,4 +20,5 @@ INSERT INTO hotel_industry.escrow_transaction_users (
     (SELECT email FROM hotel_industry.users WHERE email = 'diana.renter@example.com'),
     (SELECT id FROM hotel_industry.escrow_transactions WHERE contract_id = 'contract-2'),
     'RENTER', 'CONFIRMED', true
-  );
+  )
+ON CONFLICT DO NOTHING;
