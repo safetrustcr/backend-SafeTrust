@@ -66,8 +66,8 @@ services:
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine-test:8080
       PG_DATABASE_URL: postgres://postgres:postgrespassword@postgres_test:5432/postgres
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
+      CONSOLE_PORT: 9696
     working_dir: /app
-    command: hasura console --address 0.0.0.0 --console-port 9696
     ports:
       - "9696:9696"
     depends_on:
