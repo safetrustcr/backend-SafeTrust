@@ -1,5 +1,5 @@
 -- seed-test-escrows.sql
--- Test fixture for public.trustless_work_escrows
+-- Test fixture for safetrust.trustless_work_escrows
 -- Aligned with migration: 1731909059420_create_trustless_work_escrows/up.sql
 --
 -- Valid statuses (CHECK constraint):
@@ -11,7 +11,7 @@
 --
 -- Dependency: seed-test-users.sql must run first
 
-DELETE FROM public.trustless_work_escrows
+DELETE FROM safetrust.trustless_work_escrows
 WHERE contract_id IN (
   'escrow-created-001',
   'escrow-pending-001',
@@ -22,7 +22,7 @@ WHERE contract_id IN (
 
 -- status: created
 -- Used by: initialize.feature (duplicate contract_id test), fund.feature
-INSERT INTO public.trustless_work_escrows (
+INSERT INTO safetrust.trustless_work_escrows (
   contract_id,
   marker,
   approver,
@@ -50,7 +50,7 @@ INSERT INTO public.trustless_work_escrows (
 
 -- status: pending_funding
 -- Used by: fund handler pre-condition tests
-INSERT INTO public.trustless_work_escrows (
+INSERT INTO safetrust.trustless_work_escrows (
   contract_id,
   marker,
   approver,
@@ -78,7 +78,7 @@ INSERT INTO public.trustless_work_escrows (
 
 -- status: funded
 -- Used by: milestone approval tests, reconciliation sync tests
-INSERT INTO public.trustless_work_escrows (
+INSERT INTO safetrust.trustless_work_escrows (
   contract_id,
   marker,
   approver,
@@ -106,7 +106,7 @@ INSERT INTO public.trustless_work_escrows (
 
 -- status: disputed
 -- Used by: open_dispute.feature, resolve dispute tests
-INSERT INTO public.trustless_work_escrows (
+INSERT INTO safetrust.trustless_work_escrows (
   contract_id,
   marker,
   approver,
@@ -136,7 +136,7 @@ INSERT INTO public.trustless_work_escrows (
 
 -- status: completed
 -- Used by: sync-escrows.feature, reconciliation tests
-INSERT INTO public.trustless_work_escrows (
+INSERT INTO safetrust.trustless_work_escrows (
   contract_id,
   marker,
   approver,
@@ -163,7 +163,7 @@ INSERT INTO public.trustless_work_escrows (
 );
 
 -- Insert milestone for escrow-funded-001
-INSERT INTO public.escrow_milestones (
+INSERT INTO safetrust.escrow_milestones (
   escrow_id,
   milestone_id,
   description,
@@ -190,13 +190,13 @@ SELECT
   NULL,
   '{"type": "check_in"}'::jsonb,
   'safetrust'
-FROM public.trustless_work_escrows 
+FROM safetrust.trustless_work_escrows 
 WHERE contract_id = 'escrow-funded-001';
 
 -- Test escrows for get-escrow-by-contract-ids.feature
 -- Contract IDs CAATN5DTEST00001, CAATN5DTEST00002, CAATN5DTEST00003 used by new scenarios
-DELETE FROM public.trustless_work_escrows WHERE contract_id IN ('CAATN5DTEST00001', 'CAATN5DTEST00002', 'CAATN5DTEST00003');
-INSERT INTO public.trustless_work_escrows (
+DELETE FROM safetrust.trustless_work_escrows WHERE contract_id IN ('CAATN5DTEST00001', 'CAATN5DTEST00002', 'CAATN5DTEST00003');
+INSERT INTO safetrust.trustless_work_escrows (
   contract_id, marker, approver, releaser, escrow_type, status, amount, balance, asset_code, tenant_id
 ) VALUES
   ('CAATN5DTEST00001', 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z', 'GAPPROVER11111111111111111111111111111111111111111111111111', 'GRELEASER1111111111111111111111111111111111111111111111111', 'single_release', 'funded', 500.00, 300.00, 'USDC', 'safetrust'),

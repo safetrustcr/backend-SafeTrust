@@ -69,7 +69,7 @@ export const releaseFundsHandler = async (
     // 3 — Mirror status to public.reservations
     const mirrorMutation = `
       mutation MirrorCompletedToReservation($escrowId: uuid!) {
-        update_safetrust_reservations(
+        update_reservations(
           where: { escrowId: { _eq: $escrowId } }
           _set: {
             status: "completed"

@@ -15,7 +15,7 @@ Feature: POST /api/escrows/release-funds
     When method POST
     Then status 200
     And match response == { received: true }
-    * def rows = db.query("SELECT status, balance FROM public.trustless_work_escrows WHERE contract_id = '" + contractId + "'")
+    * def rows = db.query("SELECT status, balance FROM safetrust.trustless_work_escrows WHERE contract_id = '" + contractId + "'")
     And match rows[0].status == 'completed'
     And assert rows[0].balance == '0' || rows[0].balance == '0.0000000'
 

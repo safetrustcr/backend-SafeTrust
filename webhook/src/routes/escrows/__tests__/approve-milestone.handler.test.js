@@ -9,9 +9,9 @@ jest.mock('../../../services/hasura', () => ({
 
 const {
   approveMilestoneHandler,
-  getHasuraEndpoint,
 } = require('../approve-milestone.handler');
 const {
+  getHasuraEndpoint,
   hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
@@ -80,6 +80,9 @@ describe('approveMilestoneHandler', () => {
     hasuraRequest.mockResolvedValueOnce({
       update_trustless_work_escrows: { affected_rows: 1 },
     });
+    hasuraRequest.mockResolvedValueOnce({
+      update_reservations: { returning: [] },
+    });
 
     const req = {
       body: {
@@ -111,6 +114,9 @@ describe('approveMilestoneHandler', () => {
     hasuraRequest.mockResolvedValueOnce({
       update_trustless_work_escrows: { affected_rows: 1 },
     });
+    hasuraRequest.mockResolvedValueOnce({
+      update_reservations: { returning: [] },
+    });
 
     const req = {
       body: {
@@ -124,7 +130,7 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res);
 
-    expect(hasuraRequest).toHaveBeenCalledTimes(3);
+    expect(hasuraRequest).toHaveBeenCalledTimes(4);
     expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-1');
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ received: true });
@@ -172,7 +178,7 @@ describe('approveMilestoneHandler', () => {
 
     expect(res.status).toHaveBeenCalledWith(404);
     expect(res.json).toHaveBeenCalledWith({
-      error: 'Escrow or milestone not found',
+      error: 'Escrow not found',
     });
     expect(markWebhookEventProcessed).not.toHaveBeenCalled();
   });

@@ -71,7 +71,7 @@ export const disputeEscrowHandler = async (
     // 3 — Mirror status to public.reservations
     const mirrorMutation = `
       mutation MirrorDisputedToReservation($escrowId: uuid!) {
-        update_safetrust_reservations(
+        update_reservations(
           where: { escrowId: { _eq: $escrowId } }
           _set: {
             status: "disputed"

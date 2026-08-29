@@ -103,7 +103,7 @@ export const initializeEscrowHandler = async (
     if (reservationId) {
       const linkMutation = `
         mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!) {
-          update_safetrust_reservations_by_pk(
+          update_reservations_by_pk(
             pk_columns: { id: $reservationId }
             _set: {
               escrow_id: $escrowId,

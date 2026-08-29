@@ -1,19 +1,19 @@
 function:
-  schema: public
+  schema: safetrust
   name: get_apartments_in_bounds
 definition: |
-  CREATE OR REPLACE FUNCTION public.get_apartments_in_bounds(
+  CREATE OR REPLACE FUNCTION safetrust.get_apartments_in_bounds(
     min_lat FLOAT,
     max_lat FLOAT,
     min_lng FLOAT,
     max_lng FLOAT
   )
-  RETURNS SETOF public.apartments
+  RETURNS SETOF safetrust.apartments
   LANGUAGE sql
   STABLE
   AS $$
     SELECT a.*
-    FROM public.apartments a
+    FROM safetrust.apartments a
     WHERE
       a.deleted_at IS NULL
       AND a.is_available = true

@@ -2,7 +2,7 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
 
   # The reconciliation engine splits contract IDs into chunks of 50 (CHUNK_SIZE).
   # For n escrows, exactly ⌈n/50⌉ calls are made to TrustlessWork.
-  # Each chunk is upserted into public.trustless_work_escrows via:
+  # Each chunk is upserted into safetrust.trustless_work_escrows via:
   #   INSERT ... ON CONFLICT (contract_id) DO UPDATE ... WHERE IS DISTINCT FROM
   # Unchanged rows produce 0 affected rows — only real changes increment `updated`.
   #
@@ -21,7 +21,7 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
 
   # ── Boundary: exactly 0 escrows ───────────────────────────────────────────
   Scenario: sync with 0 seeded escrows returns totalEscrows 0 and skipped 0
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE tenant_id = 'safetrust'")
+    * db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE tenant_id = 'safetrust'")
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
@@ -33,8 +33,8 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
 
   # ── Boundary: exactly 1 escrow → exactly 1 chunk → 1 TW call ─────────────
   Scenario: sync with 1 escrow produces 1 chunk
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE tenant_id = 'safetrust'")
-    * db.execute("INSERT INTO public.trustless_work_escrows (contract_id, marker, approver, releaser, escrow_type, status, asset_code, amount, tenant_id) VALUES ('CTEST001', 'GMARKER', 'GAPPROVER', 'GRELEASER', 'single_release', 'created', 'USDC', 100, 'safetrust')")
+    * db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE tenant_id = 'safetrust'")
+    * db.execute("INSERT INTO safetrust.trustless_work_escrows (contract_id, marker, approver, releaser, escrow_type, status, asset_code, amount, tenant_id) VALUES ('CTEST001', 'GMARKER', 'GAPPROVER', 'GRELEASER', 'single_release', 'created', 'USDC', 100, 'safetrust')")
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
@@ -44,7 +44,7 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
 
   # ── Boundary: exactly 50 escrows → exactly 1 chunk (CHUNK_SIZE boundary) ──
   Scenario: sync with exactly 50 escrows produces exactly 1 chunk
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE tenant_id = 'safetrust'")
+    * db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE tenant_id = 'safetrust'")
     * def insertSql = karate.read('file:tests/karate/fixtures/seed-50-escrows.sql')
     * db.execute(insertSql)
     Given path '/reconciliation/sync-escrows'
@@ -55,7 +55,7 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
 
   # ── Boundary: 51 escrows → 2 chunks (crosses CHUNK_SIZE boundary) ─────────
   Scenario: sync with 51 escrows produces exactly 2 chunks — O(⌈n/50⌉) verified
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE tenant_id = 'safetrust'")
+    * db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE tenant_id = 'safetrust'")
     * def insertSql = karate.read('file:tests/karate/fixtures/seed-51-escrows.sql')
     * db.execute(insertSql)
     Given path '/reconciliation/sync-escrows'
@@ -66,8 +66,8 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
 
   # ── Idempotency: unchanged rows → updated = 0 (IS DISTINCT FROM guard) ────
   Scenario: calling sync twice on unchanged data returns updated 0 on second call
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE tenant_id = 'safetrust'")
-    * db.execute("INSERT INTO public.trustless_work_escrows (contract_id, marker, approver, releaser, escrow_type, status, asset_code, amount, tenant_id) VALUES ('CTEST_IDEM', 'GMARKER', 'GAPPROVER', 'GRELEASER', 'single_release', 'created', 'USDC', 100, 'safetrust')")
+    * db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE tenant_id = 'safetrust'")
+    * db.execute("INSERT INTO safetrust.trustless_work_escrows (contract_id, marker, approver, releaser, escrow_type, status, asset_code, amount, tenant_id) VALUES ('CTEST_IDEM', 'GMARKER', 'GAPPROVER', 'GRELEASER', 'single_release', 'created', 'USDC', 100, 'safetrust')")
     # First sync
     Given path '/reconciliation/sync-escrows'
     When method POST
@@ -82,7 +82,7 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
 
   # ── Performance baseline: O(n) duration grows linearly ────────────────────
   Scenario: sync with 50 escrows completes within 30 seconds
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE tenant_id = 'safetrust'")
+    * db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE tenant_id = 'safetrust'")
     * def insertSql = karate.read('file:tests/karate/fixtures/seed-50-escrows.sql')
     * db.execute(insertSql)
     Given path '/reconciliation/sync-escrows'

@@ -69,7 +69,7 @@ export const resolveDisputeHandler = async (
     // 3 — Mirror status to public.reservations
     const mirrorMutation = `
       mutation MirrorResolvedToReservation($escrowId: uuid!) {
-        update_safetrust_reservations(
+        update_reservations(
           where: { escrowId: { _eq: $escrowId } }
           _set: {
             status: "resolved"

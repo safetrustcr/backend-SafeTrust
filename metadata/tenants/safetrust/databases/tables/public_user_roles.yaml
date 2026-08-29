@@ -1,6 +1,6 @@
 table:
   name: user_roles
-  schema: public
+  schema: safetrust
 configuration:
   column_config: {}
   custom_column_names: {}

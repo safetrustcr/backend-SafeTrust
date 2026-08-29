@@ -1,6 +1,6 @@
 table:
   name: roles
-  schema: public
+  schema: safetrust
 configuration:
   column_config: {}
   custom_column_names: {}
@@ -13,7 +13,7 @@ array_relationships:
         column: role_id
         table:
           name: user_roles
-          schema: public
+          schema: safetrust
 select_permissions:
   - role: admin
     permission:

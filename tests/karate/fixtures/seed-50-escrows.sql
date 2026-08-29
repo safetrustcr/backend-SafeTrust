@@ -1,4 +1,4 @@
-INSERT INTO public.trustless_work_escrows
+INSERT INTO safetrust.trustless_work_escrows
   (contract_id, marker, approver, releaser, escrow_type, status, asset_code, amount, tenant_id)
 SELECT
   'CTEST_CHUNK_' || LPAD(i::text, 3, '0'),
