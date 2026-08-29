@@ -2,7 +2,25 @@
 -- Canonical source: dApp-SafeTrust/infra/hasura/seeds/safetrust/02_apartments_seed.sql
 -- Owner lookup uses firebase_uid for stable cross-seed references
 
--- Idempotency: remove demo apartments before reinserting
+-- Idempotency: remove child records and demo apartments before reinserting
+DELETE FROM public.apartment_images
+WHERE apartment_id IN (
+    SELECT id FROM public.apartments
+    WHERE owner_id IN (
+        SELECT id FROM public.users
+        WHERE firebase_uid IN ('demo-tenant-uid-001', 'demo-owner-uid-002')
+    )
+);
+
+DELETE FROM public.reservations
+WHERE apartment_id IN (
+    SELECT id FROM public.apartments
+    WHERE owner_id IN (
+        SELECT id FROM public.users
+        WHERE firebase_uid IN ('demo-tenant-uid-001', 'demo-owner-uid-002')
+    )
+);
+
 DELETE FROM public.apartments
 WHERE owner_id IN (
     SELECT id FROM public.users

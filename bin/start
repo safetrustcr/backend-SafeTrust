@@ -163,14 +163,53 @@ echo ""
 # Tables are created here — must run before metadata deploy.
 if [[ "$RESTART_CONTAINERS" != "true" ]]; then
   echo "📂 Applying migrations..."
-  for TENANT in "${TENANTS[@]}"; do
+
+  if [[ "${#TENANTS[@]}" -eq 1 ]]; then
+    # Single tenant — no parallelization overhead needed
+    TENANT="${TENANTS[0]}"
     echo "   ▶ Migrating tenant: $TENANT"
     hasura migrate apply \
       --endpoint "${HASURA_ENDPOINT}" \
       --admin-secret "$HASURA_ADMIN_SECRET" \
       --database-name "$TENANT"
     echo "   ✅ Migrations applied for $TENANT"
-  done
+  else
+    # Multiple tenants — run in parallel background jobs
+    # Tenants are schema-isolated: no cross-tenant migration dependencies
+    MIGRATION_PIDS=()
+    MIGRATION_LOGS=$(mktemp -d)
+
+    for TENANT in "${TENANTS[@]}"; do
+      (
+        hasura migrate apply \
+          --endpoint "${HASURA_ENDPOINT}" \
+          --admin-secret "$HASURA_ADMIN_SECRET" \
+          --database-name "$TENANT" \
+          > "$MIGRATION_LOGS/$TENANT.log" 2>&1
+      ) &
+      MIGRATION_PIDS+=($!)
+      echo "   ▶ Migrating tenant: $TENANT (pid ${MIGRATION_PIDS[-1]})"
+    done
+
+    MIGRATION_FAILED=()
+    for i in "${!MIGRATION_PIDS[@]}"; do
+      TENANT="${TENANTS[$i]}"
+      if wait "${MIGRATION_PIDS[$i]}"; then
+        echo "   ✅ Migrations applied for $TENANT"
+      else
+        echo "   ❌ Migration failed for $TENANT:"
+        cat "$MIGRATION_LOGS/$TENANT.log"
+        MIGRATION_FAILED+=("$TENANT")
+      fi
+    done
+
+    rm -rf "$MIGRATION_LOGS"
+
+    if [[ ${#MIGRATION_FAILED[@]} -gt 0 ]]; then
+      echo "❌ Migrations failed for: ${MIGRATION_FAILED[*]}"
+      exit 1
+    fi
+  fi
 
   if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
     TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
@@ -185,11 +224,54 @@ echo ""
 # ── 5. Deploy tenant metadata AFTER migrations ────────────────────────────────
 # Tables now exist in the DB so Hasura can track them successfully.
 echo "🏗️  Deploying tenant metadata: ${TENANTS[*]}"
-cd metadata
-./setup-tenant.sh "${TENANTS[@]}" \
-  --endpoint "${HASURA_ENDPOINT}" \
-  --admin-secret "$HASURA_ADMIN_SECRET"
-cd ..
+
+if [[ "${#TENANTS[@]}" -eq 1 ]]; then
+  # Single tenant — call setup-tenant.sh directly, no parallelization
+  cd metadata
+  ./setup-tenant.sh "${TENANTS[0]}" \
+    --endpoint "${HASURA_ENDPOINT}" \
+    --admin-secret "$HASURA_ADMIN_SECRET"
+  cd ..
+else
+  # Multiple tenants — deploy metadata in parallel background jobs
+  # setup-tenant.sh uses mktemp -d internally so parallel runs are safe
+  METADATA_PIDS=()
+  METADATA_LOGS=$(mktemp -d)
+
+  for TENANT in "${TENANTS[@]}"; do
+    (
+      cd metadata
+      ./setup-tenant.sh "$TENANT" \
+        --endpoint "${HASURA_ENDPOINT}" \
+        --admin-secret "$HASURA_ADMIN_SECRET" \
+        > "$METADATA_LOGS/$TENANT.log" 2>&1
+      cd ..
+    ) &
+    METADATA_PIDS+=($!)
+    echo "   ▶ Deploying metadata for $TENANT (pid ${METADATA_PIDS[-1]})"
+  done
+
+  METADATA_FAILED=()
+  for i in "${!METADATA_PIDS[@]}"; do
+    TENANT="${TENANTS[$i]}"
+    if wait "${METADATA_PIDS[$i]}"; then
+      # Stream the log output after completion so it appears in order
+      cat "$METADATA_LOGS/$TENANT.log"
+      echo "   ✅ Metadata deployed for $TENANT"
+    else
+      cat "$METADATA_LOGS/$TENANT.log"
+      echo "   ❌ Metadata deployment failed for $TENANT"
+      METADATA_FAILED+=("$TENANT")
+    fi
+  done
+
+  rm -rf "$METADATA_LOGS"
+
+  if [[ ${#METADATA_FAILED[@]} -gt 0 ]]; then
+    echo "❌ Metadata deployment failed for: ${METADATA_FAILED[*]}"
+    exit 1
+  fi
+fi
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
   TIMING_METADATA_DEPLOY_SAFETRUST=$((SECONDS - TIMER_START))
@@ -233,18 +315,17 @@ fi
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
   mkdir -p tests/results
-  node -e "
-const t = {
-  docker_up: ${TIMING_DOCKER_UP},
-  hasura_health: ${TIMING_HASURA_HEALTH},
-  migrations_safetrust: ${TIMING_MIGRATIONS_SAFETRUST},
-  metadata_deploy_safetrust: ${TIMING_METADATA_DEPLOY_SAFETRUST},
-  metadata_reload: ${TIMING_METADATA_RELOAD},
-  seeds_safetrust: ${TIMING_SEEDS_SAFETRUST},
-  total: ${TIMING_TOTAL}
-};
-console.log(JSON.stringify(t, null, 2));
-" > tests/results/dc-prep-timings.json
+  cat > tests/results/dc-prep-timings.json <<EOF
+{
+  "docker_up": ${TIMING_DOCKER_UP},
+  "hasura_health": ${TIMING_HASURA_HEALTH},
+  "migrations_safetrust": ${TIMING_MIGRATIONS_SAFETRUST},
+  "metadata_deploy_safetrust": ${TIMING_METADATA_DEPLOY_SAFETRUST},
+  "metadata_reload": ${TIMING_METADATA_RELOAD},
+  "seeds_safetrust": ${TIMING_SEEDS_SAFETRUST},
+  "total": ${TIMING_TOTAL}
+}
+EOF
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────

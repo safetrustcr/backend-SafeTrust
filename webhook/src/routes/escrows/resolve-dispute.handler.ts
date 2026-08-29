@@ -6,6 +6,12 @@ import {
   markWebhookEventProcessed,
 } from '../../services/hasura';
 
+// Compile-time SafeTrust escrow state machine (Neon native addon).
+// Replaces hardcoded status strings with the authoritative transition table.
+const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
+  getValidPriorStates: (to: string, event: string) => string
+}
+
 const EVENT_TYPE = 'escrow.resolved';
 
 export const resolveDisputeHandler = async (
@@ -34,12 +40,18 @@ export const resolveDisputeHandler = async (
     }
 
     // 2 — Update trustless_work_escrows
+    // Valid prior states are driven by the Rust state machine, replacing the
+    // previously hardcoded status: { _eq: "disputed" } guard.
+    const validStates: string[] = JSON.parse(
+      getValidPriorStates('resolved', 'dispute.resolved') as string
+    );
+
     const mutation = `
-      mutation ResolveDispute($contractId: String!) {
+      mutation ResolveDispute($contractId: String!, $validStates: [String!]!) {
         update_trustless_work_escrows(
           where: {
             contractId: { _eq: $contractId }
-            status: { _eq: "disputed" }
+            status: { _in: $validStates }
           }
           _set: {
             status: "resolved"
@@ -55,7 +67,7 @@ export const resolveDisputeHandler = async (
       update_trustless_work_escrows?: {
         returning: Array<{ id: string; contractId: string; status: string; balance: number }>;
       };
-    }>(mutation, { contractId });
+    }>(mutation, { contractId, validStates });
     const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {

@@ -4,6 +4,11 @@ import crypto from 'crypto'
 import verifyTrustlessWorkSignature from '../middleware/trustlesswork-signature.middleware'
 import { authMiddleware } from '../middleware/auth.middleware'
 
+// Compile-time SafeTrust escrow state machine (Neon native addon).
+const { getTransitionTable } = require('../../../crates/escrow-state-machine') as {
+  getTransitionTable: () => string
+}
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 import initializeRoute from './escrows/initialize.route'
 import fundRoute from './escrows/fund.route'
