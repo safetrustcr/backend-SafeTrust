@@ -1,0 +1,15 @@
+[package]
+name    = "escrow-state-machine"
+version = "0.1.0"
+edition = "2021"
+description = "Compile-time SafeTrust escrow state machine (Neon native addon)"
+
+[lib]
+# cdylib → Node-API addon (index.node); rlib → lets `cargo test` build
+# the pure logic as a regular test binary.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+neon       = { version = "0.10", default-features = false, features = ["napi-6"] }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"

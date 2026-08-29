@@ -36,6 +36,7 @@ jobs:
           docker run --rm safetrust-webhook:verify node -e "
             const stellar = require('/app/crates/stellar-utils');
             const verifier = require('/app/crates/webhook-verifier');
+            const escrow = require('/app/crates/escrow-state-machine');
             const good = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57';
             const checks = [
               stellar.validateStellarAddress(good) === true,
@@ -43,7 +44,14 @@ jobs:
               stellar.validateStellarAddress('GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z') === false,
               Object.keys(stellar).sort().join(',') === 'validateStellarAddress,verifyStellarEd25519',
               typeof verifier.verifyHmacSignature === 'function',
-              typeof verifier.validateStellarAddress === 'function'
+              typeof verifier.validateStellarAddress === 'function',
+              typeof escrow.validateTransition === 'function',
+              typeof escrow.getValidPriorStates === 'function',
+              typeof escrow.getTransitionTable === 'function',
+              escrow.validateTransition('created', 'funded', 'escrow.funded') === true,
+              escrow.validateTransition('completed', 'created', 'escrow.initialized') === false,
+              escrow.getValidPriorStates('funded', 'escrow.funded') === '[\"created\",\"pending_funding\"]',
+              (() => { try { escrow.getValidPriorStates('completed', 'dispute.raised'); return false; } catch (e) { return /No valid prior states/.test(e.message); } })()
             ];
             if (checks.includes(false)) {
               console.error('addon smoke test FAILED:', checks);
