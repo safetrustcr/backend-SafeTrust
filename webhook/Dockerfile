@@ -18,8 +18,7 @@ COPY webhook/package*.json ./webhook/
 RUN cd webhook && npm ci
 
 # 2. Rust workspace: root manifest + lockfile + all member crates at /app so
-#    `cargo build --workspace --manifest-path ../Cargo.toml` resolves from webhook.
-COPY Cargo.toml Cargo.lock ./
+#    `cargo build --workspace --manifest-path ../crates/Cargo.toml` resolves from webhook.
 COPY crates/ ./crates/
 
 # 3. TypeScript sources + config.
@@ -60,6 +59,9 @@ COPY --from=builder /app/crates/chunk-processor/package.json /app/crates/chunk-p
 # pg-bulk-upsert: single-statement escrow UPSERT (built by build:rust --workspace).
 COPY --from=builder /app/crates/pg-bulk-upsert/index.node /app/crates/pg-bulk-upsert/index.node
 COPY --from=builder /app/crates/pg-bulk-upsert/package.json /app/crates/pg-bulk-upsert/package.json
+# soroban-reconciler: reconcile escrow state.
+COPY --from=builder /app/crates/soroban-reconciler/package.json /app/crates/soroban-reconciler/package.json
+COPY --from=builder /app/crates/soroban-reconciler/native /app/crates/soroban-reconciler/native
 # x402-processor: x402 payment protocol verifier (built by build:rust --workspace).
 COPY --from=builder /app/crates/x402-processor/index.node /app/crates/x402-processor/index.node
 COPY --from=builder /app/crates/x402-processor/package.json /app/crates/x402-processor/package.json

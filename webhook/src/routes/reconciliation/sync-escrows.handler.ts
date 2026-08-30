@@ -78,7 +78,7 @@ let reconcileBatch: ((onChainJson: string, dbJson: string) => string) | null = n
 
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const sorobanReconciler = require('../../../crates/soroban-reconciler')
+  const sorobanReconciler = require('../../../../crates/soroban-reconciler')
   queryEscrowStateBatch = sorobanReconciler.queryEscrowStateBatch
   reconcileBatch = sorobanReconciler.reconcileBatch
 } catch (err) {

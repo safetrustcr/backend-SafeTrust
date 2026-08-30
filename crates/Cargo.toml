@@ -1,13 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/webhook-verifier",
-    "crates/zk-verifier",
-    "crates/stellar-utils",
-    "crates/chunk-processor",
-    "crates/pg-bulk-upsert",
-    "crates/x402-processor",
-    "crates/escrow-state-machine",
+    "webhook-verifier",
+    "zk-verifier",
+    "stellar-utils",
+    "chunk-processor",
+    "pg-bulk-upsert",
+    "x402-processor",
+    "escrow-state-machine",
+    "soroban-reconciler",
 ]
 
 [workspace.dependencies]
