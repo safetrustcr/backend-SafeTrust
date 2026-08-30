@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-# Configuration
-BUILD_DIR="$(pwd)/build"
+# Configuration — paths relative to the script location, matching build-metadata.sh
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="${BUILD_DIR:-$SCRIPT_DIR/build}"
 HASURA_ENDPOINT="http://localhost:8080"
 HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
 
@@ -66,10 +67,10 @@ EOL
     sources_resp=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
         -H "X-Hasura-Admin-Secret: ${admin_secret}" \
         -H "Content-Type: application/json" \
-        -d '{"type": "pg_export_metadata", "args": {}}')
+        -d '{"type": "export_metadata", "args": {}}')
 
     if echo "$sources_resp" | jq -e --arg n "$tenant_name" \
-        '(.sources // []) | type == "array" and (map(.name // "") | index($n)) != null' >/dev/null 2>&1; then
+        '(.metadata.sources? // []) | any(.name == $n)' >/dev/null 2>&1; then
         echo "Source $tenant_name already exists, skipping creation" >&2
     else
         echo "Source $tenant_name doesn't exist, creating it..." >&2
@@ -127,8 +128,15 @@ process_metadata_tables() {
         return 0
     fi
 
-    local table_files=("$tables_dir"/*.yaml)
-    if [ ! -e "${table_files[0]}" ]; then
+    local table_files=()
+    while IFS= read -r -d '' f; do
+        case "$(basename "$f")" in
+            tables.yaml | functions.yaml) continue ;;
+            *) table_files+=("$f") ;;
+        esac
+    done < <(find "$tables_dir" -maxdepth 1 -type f -name '*.yaml' -print0)
+
+    if [ "${#table_files[@]}" -eq 0 ]; then
         echo "⚠️  No table definitions found for $tenant_name"
         return 0
     fi
@@ -136,10 +144,10 @@ process_metadata_tables() {
     # One yq pass over all table YAML, then a single jq pass to shape the args.
     local tables_json
     tables_json=$(yq -o json e '.' "${table_files[@]}" 2>/dev/null \
-        | jq -s 'map(select((.table.name? // "") != ""))
-                  | map({ table: { name: .table.name, schema: (.table.schema // "public") },
-                           configuration: (.configuration // {}) })') \
-        || { echo "❌ Failed to parse table metadata for $tenant_name"; return 1; }
+        | jq -s 'map(select(type == "object" and ((.table.name? // "") != ""))) | map({ table: { name: .table.name, schema: (.table.schema // "public") }, configuration: (.configuration // {}) })') || {
+        echo "❌ Failed to read table metadata for $tenant_name" >&2
+        return 1
+    }
 
     if [ -z "$tables_json" ] || [ "$tables_json" = "[]" ] || [ "$tables_json" = "null" ]; then
         echo "⚠️  No trackable tables found for $tenant_name"
@@ -184,18 +192,25 @@ process_metadata_functions() {
 
     echo "⚙️  Processing functions for $tenant_name..."
 
-    local function_files=("$functions_dir"/*.yaml)
-    if [ ! -e "${function_files[0]}" ]; then
+    local function_files=()
+    while IFS= read -r -d '' f; do
+        case "$(basename "$f")" in
+            tables.yaml | functions.yaml) continue ;;
+            *) function_files+=("$f") ;;
+        esac
+    done < <(find "$functions_dir" -maxdepth 1 -type f -name '*.yaml' -print0)
+
+    if [ "${#function_files[@]}" -eq 0 ]; then
         echo "⚠️  No function definitions found for $tenant_name"
         return 0
     fi
 
     local functions_json
     functions_json=$(yq -o json e '.' "${function_files[@]}" 2>/dev/null \
-        | jq -s 'map(select((.function.name? // "") != ""))
-                  | map({ function: { name: .function.name, schema: (.function.schema // "public") },
-                           configuration: ((.configuration // {}) + { exposed_as: (.configuration.exposed_as // "query") }) })') \
-        || { echo "❌ Failed to parse function metadata for $tenant_name"; return 1; }
+        | jq -s 'map(select(type == "array") | .[]) | map(select((.name? // "") != "")) | map({ function: { name: .name, schema: (.schema // "public") }, configuration: ((.configuration // {}) + { exposed_as: (.configuration.exposed_as // "query") }) })') || {
+        echo "❌ Failed to read function metadata for $tenant_name" >&2
+        return 1
+    }
 
     if [ -z "$functions_json" ] || [ "$functions_json" = "[]" ] || [ "$functions_json" = "null" ]; then
         echo "⚠️  No trackable functions found for $tenant_name"
