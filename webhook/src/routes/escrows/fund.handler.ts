@@ -9,6 +9,12 @@ import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
 
+// Compile-time SafeTrust escrow state machine (Neon native addon).
+// Replaces hardcoded status arrays with the authoritative transition table.
+const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
+  getValidPriorStates: (to: string, event: string) => string
+}
+
 const EVENT_TYPE = 'escrow.funded';
 
 export const fundEscrowHandler = async (
@@ -44,12 +50,18 @@ export const fundEscrowHandler = async (
     }
 
     // 3 — Update public.trustless_work_escrows
+    // Valid prior states are driven by the Rust state machine, replacing the
+    // previously hardcoded _in: ["created", "pending_funding"].
+    const validStates: string[] = JSON.parse(
+      getValidPriorStates('funded', 'escrow.funded') as string
+    );
+
     const mutation = `
-      mutation FundEscrow($contractId: String!, $amount: numeric!) {
+      mutation FundEscrow($contractId: String!, $amount: numeric!, $validStates: [String!]!) {
         update_trustless_work_escrows(
           where: {
             contractId: { _eq: $contractId }
-            status: { _in: ["created", "pending_funding"] }
+            status: { _in: $validStates }
           }
           _set: {
             status: "funded"
@@ -63,13 +75,14 @@ export const fundEscrowHandler = async (
             balance
           }
         }
-      `;
+      }
+    `;
 
     const data = await hasuraRequest<{
       update_trustless_work_escrows?: {
         returning: Array<{ id: string; contractId: string; status: string; balance: number }>;
       };
-    }>(mutation, { contractId, amount });
+    }>(mutation, { contractId, amount, validStates });
     const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {

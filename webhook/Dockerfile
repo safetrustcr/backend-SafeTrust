@@ -65,6 +65,10 @@ COPY --from=builder /app/crates/soroban-reconciler/native /app/crates/soroban-re
 # x402-processor: x402 payment protocol verifier (built by build:rust --workspace).
 COPY --from=builder /app/crates/x402-processor/index.node /app/crates/x402-processor/index.node
 COPY --from=builder /app/crates/x402-processor/package.json /app/crates/x402-processor/package.json
+# escrow-state-machine: compile-time SafeTrust escrow lifecycle (built by build:rust --workspace).
+COPY --from=builder /app/crates/escrow-state-machine/index.node /app/crates/escrow-state-machine/index.node
+COPY --from=builder /app/crates/escrow-state-machine/package.json /app/crates/escrow-state-machine/package.json
+COPY --from=builder /app/crates/escrow-state-machine/index.d.ts /app/crates/escrow-state-machine/index.d.ts
 
 # node user/group already exists in the official Node image.
 USER node

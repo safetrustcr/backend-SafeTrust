@@ -6,6 +6,12 @@ import {
   markWebhookEventProcessed,
 } from '../../services/hasura';
 
+// Compile-time SafeTrust escrow state machine (Neon native addon).
+// Replaces hardcoded status strings with the authoritative transition table.
+const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
+  getValidPriorStates: (to: string, event: string) => string
+}
+
 const EVENT_TYPE = 'milestone.approved';
 
 export async function approveMilestoneHandler(
@@ -97,10 +103,19 @@ export async function approveMilestoneHandler(
     }
 
     // 3 — Update trustless_work_escrows
+    // Valid prior states are driven by the Rust state machine, enforcing the
+    // legal from-states for milestone approval (active | funded).
+    const validStates: string[] = JSON.parse(
+      getValidPriorStates('milestone_approved', 'milestone.approved') as string
+    );
+
     const mutationEscrow = `
-      mutation ApproveEscrow($escrowId: uuid!, $approvedAt: timestamptz!) {
+      mutation ApproveEscrow($escrowId: uuid!, $approvedAt: timestamptz!, $validStates: [String!]!) {
         update_trustless_work_escrows(
-          where: { id: { _eq: $escrowId } }
+          where: {
+            id: { _eq: $escrowId }
+            status: { _in: $validStates }
+          }
           _set: {
             status: "milestone_approved"
             updatedAt: $approvedAt
@@ -116,6 +131,7 @@ export async function approveMilestoneHandler(
     }>(mutationEscrow, {
       escrowId,
       approvedAt,
+      validStates,
     });
 
     if (!escrowResult.update_trustless_work_escrows?.affected_rows) {
