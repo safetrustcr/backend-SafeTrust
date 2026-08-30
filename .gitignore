@@ -1,4 +1,3 @@
-```
 # Compiled and build artifacts
 *.pyc
 __pycache__/
@@ -19,6 +18,10 @@ venv/
 .env.local
 .env.*
 !.env.example
+!.env.test.example
+
+# Docker cache
+.docker-cache/
 
 # Karate test artifacts
 tests/results/**
