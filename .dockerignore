@@ -5,3 +5,4 @@
 **/dist
 tests/results
 *.node
+.env.test

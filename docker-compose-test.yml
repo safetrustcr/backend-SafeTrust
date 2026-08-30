@@ -23,6 +23,7 @@ services:
       - "${TEST_HASURA_PORT:-8081}:8080"
     restart: always
     environment:
+      # NOTE: TEST_POSTGRES_PASSWORD must be URI-safe (no @, /, :, ?) — see .env.test.example
       HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
       PG_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
