@@ -3,7 +3,7 @@ services:
     image: postgis/postgis:15-3.3
     restart: always
     volumes:
-      - test_db_data:/var/lib/postgresql/data
+      - db_data_test:/var/lib/postgresql/data
     environment:
       POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:-postgrespassword}
     ports:
@@ -63,6 +63,8 @@ services:
       - test-network
 
   webhook:
+    ports:
+      - "${TEST_WEBHOOK_PORT:-3001}:3001"
     build:
       context: .
       dockerfile: webhook/Dockerfile
@@ -137,7 +139,7 @@ services:
     command: >
       sh -c "
         ELAPSED=0;
-        until curl -s http://graphql-engine-test:8080/healthz; do
+        until curl -fsS --connect-timeout 5 --max-time 5 http://graphql-engine-test:8080/healthz; do
           if [ $${ELAPSED} -ge 120 ]; then
             echo '[migrate-test] ❌ Hasura did not become healthy after 120s';
             exit 1;
@@ -148,41 +150,41 @@ services:
         done;
         sleep 5;
         for TENANT in safetrust hotel_industry; do
-          curl -s -X POST http://graphql-engine-test:8080/v1/metadata -H 'X-Hasura-Admin-Secret: ${TEST_ADMIN_SECRET:-myadminsecretkey}' -H 'Content-Type: application/json' -d '{\"type\": \"pg_add_source\", \"args\": {\"name\": \"'\"$${TENANT}\"'\", \"configuration\": {\"connection_info\": { \"database_url\": \"postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres\", \"isolation_level\": \"read-committed\" } } } }';
+          curl -s -X POST http://graphql-engine-test:8080/v1/metadata -H 'X-Hasura-Admin-Secret: ${TEST_ADMIN_SECRET:-myadminsecretkey}' -H 'Content-Type: application/json' -d '{\\\"type\\\": \\\"pg_add_source\\\", \\\"args\\\": {\\\"name\\\": \\\"'\\\"$${TENANT}\\\"'\\\", \\\"configuration\\\": {\\\"connection_info\\\": { \\\"database_url\\\": \\\"postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres\\\", \\\"isolation_level\\\": \\\"read-committed\\\" } } } }';
         done;
         sleep 2;
         for TENANT in safetrust hotel_industry; do
-          echo \"[migrate-test] 📂 Migrating tenant: $$TENANT\";
+          echo \\\"[migrate-test] 📂 Migrating tenant: $$TENANT\\\";
           MIGRATED=false;
           WAIT=2;
           for ATTEMPT in 1 2 3 4 5; do
-            echo \"[migrate-test] attempt $$ATTEMPT/5 for $$TENANT...\";
-            if hasura migrate apply --database-name \"$$TENANT\" --endpoint http://graphql-engine-test:8080 --admin-secret \"${TEST_ADMIN_SECRET:-myadminsecretkey}\"; then
-              echo \"[migrate-test] ✅ Migrations applied for $$TENANT\";
+            echo \\\"[migrate-test] attempt $$ATTEMPT/5 for $$TENANT...\\\";
+            if hasura migrate apply --database-name \\\"$$TENANT\\\" --endpoint http://graphql-engine-test:8080 --admin-secret \\\"${TEST_ADMIN_SECRET:-myadminsecretkey}\\\"; then
+              echo \\\"[migrate-test] ✅ Migrations applied for $$TENANT\\\";
               MIGRATED=true;
               break;
             fi;
-            if [ \"$$ATTEMPT\" -lt 5 ]; then
-              echo \"[migrate-test] ⚠️ Attempt $$ATTEMPT failed — retrying in $${WAIT}s\";
+            if [ \\\"$$ATTEMPT\\\" -lt 5 ]; then
+              echo \\\"[migrate-test] ⚠️ Attempt $$ATTEMPT failed — retrying in $${WAIT}s\\\";
               sleep $$WAIT;
               WAIT=$$((WAIT * 2));
             fi;
           done;
-          if [ \"$$MIGRATED\" = \"false\" ]; then
-            echo \"[migrate-test] ❌ Migration failed for $$TENANT after 5 attempts\";
+          if [ \\\"$$MIGRATED\\\" = \\\"false\\\" ]; then
+            echo \\\"[migrate-test] ❌ Migration failed for $$TENANT after 5 attempts\\\";
             exit 1;
           fi;
         done;
-        cd metadata && ./setup-tenant.sh safetrust hotel_industry --endpoint http://graphql-engine-test:8080 --admin-secret \"${TEST_ADMIN_SECRET:-myadminsecretkey}\"
+        cd metadata && ./setup-tenant.sh safetrust hotel_industry --endpoint http://graphql-engine-test:8080 --admin-secret \\\"${TEST_ADMIN_SECRET:-myadminsecretkey}\\\"
       "
     depends_on:
       graphql-engine-test:
-        condition: service_healthy
+        condition: service_started
     networks:
       - test-network
 
 volumes:
-  test_db_data:
+  db_data_test:
 
 networks:
   test-network:

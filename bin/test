@@ -2,4 +2,11 @@
 set -euo pipefail
 
 echo "🥋 Running Karate API tests..."
-docker compose -f docker-compose-test.yml run --rm --build karate
+
+# Load .env.test if it exists so TEST_* variables are available to compose
+ENV_FILE_FLAG=""
+if [ -f .env.test ]; then
+  ENV_FILE_FLAG="--env-file .env.test"
+fi
+
+docker compose -f docker-compose-test.yml ${ENV_FILE_FLAG} run --rm --build karate
