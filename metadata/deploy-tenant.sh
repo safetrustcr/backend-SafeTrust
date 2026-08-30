@@ -66,10 +66,10 @@ EOL
     sources_resp=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
         -H "X-Hasura-Admin-Secret: ${admin_secret}" \
         -H "Content-Type: application/json" \
-        -d '{"type": "pg_list_sources", "args": {}}')
+        -d '{"type": "pg_export_metadata", "args": {}}')
 
     if echo "$sources_resp" | jq -e --arg n "$tenant_name" \
-        'type == "array" and (map(.name // "") | index($n)) != null' >/dev/null 2>&1; then
+        '(.sources // []) | type == "array" and (map(.name // "") | index($n)) != null' >/dev/null 2>&1; then
         echo "Source $tenant_name already exists, skipping creation" >&2
     else
         echo "Source $tenant_name doesn't exist, creating it..." >&2
@@ -136,9 +136,10 @@ process_metadata_tables() {
     # One yq pass over all table YAML, then a single jq pass to shape the args.
     local tables_json
     tables_json=$(yq -o json e '.' "${table_files[@]}" 2>/dev/null \
-        | jq -s 'map(select((.table.name? // "") != "")) \
+        | jq -s 'map(select((.table.name? // "") != ""))
                   | map({ table: { name: .table.name, schema: (.table.schema // "public") },
-                           configuration: (.configuration // {}) })')
+                           configuration: (.configuration // {}) })') \
+        || { echo "❌ Failed to parse table metadata for $tenant_name"; return 1; }
 
     if [ -z "$tables_json" ] || [ "$tables_json" = "[]" ] || [ "$tables_json" = "null" ]; then
         echo "⚠️  No trackable tables found for $tenant_name"
@@ -191,9 +192,10 @@ process_metadata_functions() {
 
     local functions_json
     functions_json=$(yq -o json e '.' "${function_files[@]}" 2>/dev/null \
-        | jq -s 'map(select((.function.name? // "") != "")) \
+        | jq -s 'map(select((.function.name? // "") != ""))
                   | map({ function: { name: .function.name, schema: (.function.schema // "public") },
-                           configuration: { exposed_as: (.configuration.exposed_as // "query") } })')
+                           configuration: ((.configuration // {}) + { exposed_as: (.configuration.exposed_as // "query") }) })') \
+        || { echo "❌ Failed to parse function metadata for $tenant_name"; return 1; }
 
     if [ -z "$functions_json" ] || [ "$functions_json" = "[]" ] || [ "$functions_json" = "null" ]; then
         echo "⚠️  No trackable functions found for $tenant_name"
