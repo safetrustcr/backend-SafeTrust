@@ -82,41 +82,65 @@ SUCCESSFUL_TENANTS=()
 FAILED_TENANTS=()
 SETUP_START=$SECONDS
 
-# ── Process each tenant sequentially ─────────────────────────────────────────
+# ── Parallel tenant processing with per-tenant log capture ────────────────────
+PIDS=()
+LOG_FILES=()
+
 for TENANT in "${TENANTS[@]}"; do
-  echo "────────────────────────────────────────────────────"
-  echo "  Processing tenant: $TENANT"
-  echo "────────────────────────────────────────────────────"
+  LOG_FILE=$(mktemp)
+  LOG_FILES+=("$LOG_FILE")
 
-  TENANT_START=$SECONDS
+  (
+    echo "────────────────────────────────────────────────────"
+    echo "  Processing tenant: $TENANT"
+    echo "────────────────────────────────────────────────────"
 
-  # Step 1 — Build metadata (base + tenant-specific merge)
-  echo "🔨 Building metadata for $TENANT..."
-  if ! "$SCRIPT_DIR/build-metadata.sh" "$TENANT"; then
-    echo "❌ [$TENANT] Build failed."
+    TENANT_START=$SECONDS
+
+    # Step 1 — Build metadata (base + tenant-specific merge)
+    echo "🔨 Building metadata for $TENANT..."
+    if ! "$SCRIPT_DIR/build-metadata.sh" "$TENANT"; then
+      echo "❌ [$TENANT] Build failed."
+      exit 1
+    fi
+    echo "✅ Metadata built for $TENANT"
+    echo ""
+
+    # Step 2 — Deploy metadata
+    # deploy-tenant.sh handles: source registration, table tracking, function tracking
+    # Do NOT add any duplicate tracking logic here.
+    echo "🚀 Deploying metadata for $TENANT..."
+    if ! "$SCRIPT_DIR/deploy-tenant.sh" "$TENANT" \
+        --endpoint "$ENDPOINT" \
+        --admin-secret "$ADMIN_SECRET"; then
+      echo "❌ [$TENANT] Deploy failed."
+      exit 1
+    fi
+
+    TENANT_ELAPSED=$(( SECONDS - TENANT_START ))
+    echo ""
+    echo "✅ [$TENANT] Successfully deployed in ${TENANT_ELAPSED}s"
+  ) > "$LOG_FILE" 2>&1 &
+
+  PIDS+=($!)
+done
+
+# ── Wait for all tenant processes and collect results ────────────────────────
+for i in "${!PIDS[@]}"; do
+  TENANT="${TENANTS[$i]}"
+  PID="${PIDS[$i]}"
+  LOG_FILE="${LOG_FILES[$i]}"
+
+  # Stream per-tenant log to stdout as it completes
+  if wait "$PID"; then
+    SUCCESSFUL_TENANTS+=("$TENANT")
+  else
     FAILED_TENANTS+=("$TENANT")
-    continue
-  fi
-  echo "✅ Metadata built for $TENANT"
-  echo ""
-
-  # Step 2 — Deploy metadata
-  # deploy-tenant.sh handles: source registration, table tracking, function tracking
-  # Do NOT add any duplicate tracking logic here.
-  echo "🚀 Deploying metadata for $TENANT..."
-  if ! "$SCRIPT_DIR/deploy-tenant.sh" "$TENANT" \
-      --endpoint "$ENDPOINT" \
-      --admin-secret "$ADMIN_SECRET"; then
-    echo "❌ [$TENANT] Deploy failed."
-    FAILED_TENANTS+=("$TENANT")
-    continue
   fi
 
-  TENANT_ELAPSED=$(( SECONDS - TENANT_START ))
-  echo ""
-  echo "✅ [$TENANT] Successfully deployed in ${TENANT_ELAPSED}s"
-  SUCCESSFUL_TENANTS+=("$TENANT")
-  echo ""
+  # Print captured log for this tenant
+  cat "$LOG_FILE"
+  rm -f "$LOG_FILE"
 done
 
 SETUP_ELAPSED=$(( SECONDS - SETUP_START ))
