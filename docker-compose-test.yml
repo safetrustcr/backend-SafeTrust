@@ -3,11 +3,11 @@ services:
     image: postgis/postgis:15-3.3
     restart: always
     volumes:
-      - test_db_data:/var/lib/postgresql/data
+      - db_data_test:/var/lib/postgresql/data
     environment:
-      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:-postgrespassword}
     ports:
-      - "5434:5432"
+      - "${TEST_POSTGRES_PORT:-5434}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -18,40 +18,27 @@ services:
       - test-network
 
   graphql-engine-test:
-    image: hasura/graphql-engine:v2.42.0
+    image: hasura/graphql-engine:v2.47.0
     ports:
-      - "8081:8080"
+      - "${TEST_HASURA_PORT:-8081}:8080"
     restart: always
     environment:
-      HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:postgrespassword@postgres_test:5432/postgres
-      PG_DATABASE_URL: postgres://postgres:postgrespassword@postgres_test:5432/postgres
+      # NOTE: TEST_POSTGRES_PASSWORD must be URI-safe (no @, /, :, ?) — see .env.test.example
+      HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
+      PG_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
       HASURA_GRAPHQL_DEV_MODE: "true"
       HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
-      HASURA_GRAPHQL_METADATA_DEFAULTS: '{"backend_configs":{"dataconnector":{"athena":{"uri":"http://data-connector-agent-test:8081/api/v1/athena"},"mariadb":{"uri":"http://data-connector-agent-test:8081/api/v1/mariadb"},"mysql8":{"uri":"http://data-connector-agent-test:8081/api/v1/mysql"},"oracle":{"uri":"http://data-connector-agent-test:8081/api/v1/oracle"},"snowflake":{"uri":"http://data-connector-agent-test:8081/api/v1/snowflake"}}}}'
     depends_on:
       postgres_test:
         condition: service_healthy
-      data-connector-agent-test:
-        condition: service_healthy
-    networks:
-      - test-network
-
-  data-connector-agent-test:
-    image: hasura/graphql-data-connector:v2.42.0
-    restart: always
-    ports:
-      - "8082:8081"
-    environment:
-      QUARKUS_LOG_LEVEL: ERROR
-      QUARKUS_OPENTELEMETRY_ENABLED: "false"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/api/v1/athena/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 5s
-      timeout: 10s
-      retries: 5
-      start_period: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks:
       - test-network
 
@@ -64,7 +51,7 @@ services:
       - .:/app
     environment:
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine-test:8080
-      PG_DATABASE_URL: postgres://postgres:postgrespassword@postgres_test:5432/postgres
+      PG_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
     working_dir: /app
     command: hasura console --address 0.0.0.0 --console-port 9696
@@ -77,9 +64,15 @@ services:
       - test-network
 
   webhook:
+    ports:
+      - "${TEST_WEBHOOK_PORT:-3001}:3001"
     build:
       context: .
       dockerfile: webhook/Dockerfile
+      cache_from:
+        - type=local,src=.docker-cache/webhook
+      cache_to:
+        - type=local,dest=.docker-cache/webhook,mode=max
     environment:
       - NODE_ENV=test
       - WEBHOOK_PORT=3001
@@ -89,9 +82,9 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgrespassword
+      - POSTGRES_PASSWORD=${TEST_POSTGRES_PASSWORD:-postgrespassword}
       - USE_MOCK_DATA=true
-      - TRUSTLESSWORK_WEBHOOK_SECRET=dev-secret
+      - TRUSTLESSWORK_WEBHOOK_SECRET=${TEST_WEBHOOK_SECRET:-dev-secret}
     depends_on:
       postgres_test:
         condition: service_healthy
@@ -113,8 +106,8 @@ services:
       baseUrl: http://graphql-engine-test:8080/v1/graphql
       webhookUrl: http://webhook:3001
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
-      JWT_SECRET: testsecret
-      TRUSTLESSWORK_WEBHOOK_SECRET: dev-secret
+      JWT_SECRET: ${TEST_JWT_SECRET:-testsecret}
+      TRUSTLESSWORK_WEBHOOK_SECRET: ${TEST_WEBHOOK_SECRET:-dev-secret}
     command: >
       java -cp /app/tests/karate.jar:/app/tests/postgresql-jdbc.jar:/app/tests/karate/src/test/resources
       com.intuit.karate.Main
@@ -132,7 +125,7 @@ services:
       migrate-test:
         condition: service_completed_successfully
       graphql-engine-test:
-        condition: service_started
+        condition: service_healthy
     networks:
       - test-network
 
@@ -146,40 +139,44 @@ services:
     working_dir: /app
     command: >
       sh -c "
-        until curl -s http://graphql-engine-test:8080/healthz; do echo 'Waiting for Hasura...'; sleep 2; done;
+        ELAPSED=0;
+        until curl -fsS --connect-timeout 5 --max-time 5 http://graphql-engine-test:8080/healthz; do
+          if [ $${ELAPSED} -ge 120 ]; then
+            echo '[migrate-test] ❌ Hasura did not become healthy after 120s';
+            exit 1;
+          fi;
+          echo '[migrate-test] Waiting for Hasura... ($${ELAPSED}s elapsed)';
+          sleep 2;
+          ELAPSED=$$((ELAPSED + 2));
+        done;
         sleep 5;
         for TENANT in safetrust hotel_industry; do
-          curl -s -X POST http://graphql-engine-test:8080/v1/metadata -H 'X-Hasura-Admin-Secret: ${TEST_ADMIN_SECRET:-myadminsecretkey}' -H 'Content-Type: application/json' -d '{\"type\": \"pg_add_source\", \"args\": {\"name\": \"'\"$$TENANT\"'\", \"configuration\": {\"connection_info\": { \"database_url\": \"postgres://postgres:postgrespassword@postgres_test:5432/postgres\", \"isolation_level\": \"read-committed\" } } } }';
+          curl -s -X POST http://graphql-engine-test:8080/v1/metadata -H 'X-Hasura-Admin-Secret: ${TEST_ADMIN_SECRET:-myadminsecretkey}' -H 'Content-Type: application/json' -d '{\\\"type\\\": \\\"pg_add_source\\\", \\\"args\\\": {\\\"name\\\": \\\"'\\\"$${TENANT}\\\"'\\\", \\\"configuration\\\": {\\\"connection_info\\\": { \\\"database_url\\\": \\\"postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres\\\", \\\"isolation_level\\\": \\\"read-committed\\\" } } } }';
         done;
         sleep 2;
         for TENANT in safetrust hotel_industry; do
-          echo \"[migrate-test] 📂 Migrating tenant: $$TENANT\";
+          echo \\\"[migrate-test] 📂 Migrating tenant: $$TENANT\\\";
           MIGRATED=false;
           WAIT=2;
           for ATTEMPT in 1 2 3 4 5; do
-            echo \"[migrate-test] attempt $$ATTEMPT/5 for $$TENANT...\";
-            if hasura migrate apply --database-name \"$$TENANT\" --endpoint http://graphql-engine-test:8080 --admin-secret \"${TEST_ADMIN_SECRET:-myadminsecretkey}\"; then
-              echo \"[migrate-test] ✅ Migrations applied for $$TENANT\";
+            echo \\\"[migrate-test] attempt $$ATTEMPT/5 for $$TENANT...\\\";
+            if hasura migrate apply --database-name \\\"$$TENANT\\\" --endpoint http://graphql-engine-test:8080 --admin-secret \\\"${TEST_ADMIN_SECRET:-myadminsecretkey}\\\"; then
+              echo \\\"[migrate-test] ✅ Migrations applied for $$TENANT\\\";
               MIGRATED=true;
               break;
             fi;
-            if [ \"$$ATTEMPT\" -lt 5 ]; then
-              echo \"[migrate-test] ⚠️ Attempt $$ATTEMPT failed — retrying in $${WAIT}s\";
+            if [ \\\"$$ATTEMPT\\\" -lt 5 ]; then
+              echo \\\"[migrate-test] ⚠️ Attempt $$ATTEMPT failed — retrying in $${WAIT}s\\\";
               sleep $$WAIT;
               WAIT=$$((WAIT * 2));
             fi;
           done;
-          if [ \"$$MIGRATED\" = \"false\" ]; then
-            echo \"[migrate-test] ❌ Migration failed for $$TENANT after 5 attempts\";
+          if [ \\\"$$MIGRATED\\\" = \\\"false\\\" ]; then
+            echo \\\"[migrate-test] ❌ Migration failed for $$TENANT after 5 attempts\\\";
             exit 1;
           fi;
         done;
-        case $$(uname -m) in
-          aarch64|arm64) ARCH=arm64 ;;
-          *) ARCH=amd64 ;;
-        esac;
-        curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$$ARCH -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq;
-        cd metadata && ./setup-tenant.sh safetrust hotel_industry --endpoint http://graphql-engine-test:8080 --admin-secret \"${TEST_ADMIN_SECRET:-myadminsecretkey}\"
+        cd metadata && ./setup-tenant.sh safetrust hotel_industry --endpoint http://graphql-engine-test:8080 --admin-secret \\\"${TEST_ADMIN_SECRET:-myadminsecretkey}\\\"
       "
     depends_on:
       graphql-engine-test:
@@ -188,7 +185,7 @@ services:
       - test-network
 
 volumes:
-  test_db_data:
+  db_data_test:
 
 networks:
   test-network:
