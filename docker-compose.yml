@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -20,17 +20,20 @@ services:
   graphql-engine:
     image: hasura/graphql-engine:v2.47.0
     ports:
-      - "8080:8080"
+      - "${HASURA_PORT:-8080}:8080"
     restart: always
     environment:
-      HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
-      PG_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      HASURA_GRAPHQL_METADATA_DATABASE_URL: >-
+        postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      PG_DATABASE_URL: >-
+        postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
       HASURA_GRAPHQL_DEV_MODE: "true"
-      HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
-      HASURA_GRAPHQL_ADMIN_SECRET: "myadminsecretkey"
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES: >-
+        startup, http-log, webhook-log, websocket-log, query-log
+      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}
       HASURA_GRAPHQL_JWT_SECRET: ${HASURA_GRAPHQL_JWT_SECRET}
-      WEBHOOK_URL: http://safetrust-webhook:3000
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://safetrust-webhook:3000}
       HASURA_EVENT_SECRET: ${HASURA_EVENT_SECRET}
     depends_on:
       postgres:
@@ -50,31 +53,43 @@ services:
       # Cargo.lock, crates/) alongside webhook/, so it cannot build from ./webhook.
       context: .
       dockerfile: webhook/Dockerfile
+      # Cross-platform layer cache — works on Linux, macOS Docker Desktop,
+      # and GitHub Actions (ACTIONS_CACHE_URL not required for local dev).
+      # Relative path is accessible from Docker's build context on all platforms;
+      # /tmp/docker-cache breaks on macOS Desktop (host /tmp ≠ VM /tmp).
       cache_from:
-        - type=local,src=/tmp/docker-cache/webhook
+        - type=local,src=.docker-cache/webhook
       cache_to:
-        - type=local,dest=/tmp/docker-cache/webhook,mode=max
+        - type=local,dest=.docker-cache/webhook,mode=max
     container_name: safetrust-webhook
     ports:
-      - "3000:3000"
+      - "${WEBHOOK_PORT:-3000}:${WEBHOOK_PORT:-3000}"
     environment:
-      NODE_ENV: development
-      PORT: 3000
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${WEBHOOK_PORT:-3000}
+      WEBHOOK_PORT: ${WEBHOOK_PORT:-3000}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_DB: postgres
-      POSTGRES_USER: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}
+      HASURA_GRAPHQL_ENDPOINT: >-
+        http://graphql-engine:8080/v1/graphql
+      TRUSTLESSWORK_API_URL: ${TRUSTLESSWORK_API_URL:-https://dev.api.trustlesswork.com}
+      TRUSTLESSWORK_API_KEY: ${TRUSTLESSWORK_API_KEY}
+      TRUSTLESSWORK_WEBHOOK_SECRET: ${TRUSTLESSWORK_WEBHOOK_SECRET}
+      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
     depends_on:
       postgres:
         condition: service_healthy
       graphql-engine:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      test: ["CMD", "curl", "-f", "http://localhost:${WEBHOOK_PORT:-3000}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
       start_period: 20s
     networks:
       - safetrust-network
