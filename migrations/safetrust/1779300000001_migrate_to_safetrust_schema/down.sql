@@ -28,5 +28,5 @@ ALTER FUNCTION IF EXISTS safetrust.get_apartments_in_bounds(double precision, do
 ALTER FUNCTION IF EXISTS safetrust.get_escrow_analytics_by_day(date, date) SET SCHEMA public;
 ALTER FUNCTION IF EXISTS safetrust.get_escrow_status_summary() SET SCHEMA public;
 
-ALTER DATABASE postgres RESET search_path;
+ALTER ROLE CURRENT_USER SET search_path TO public;
 DROP SCHEMA IF EXISTS safetrust;

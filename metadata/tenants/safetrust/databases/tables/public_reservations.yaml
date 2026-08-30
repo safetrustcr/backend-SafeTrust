@@ -2,6 +2,7 @@ table:
   name: reservations
   schema: safetrust
 configuration:
+  custom_name: safetrust_reservations
   column_config:
     apartment_id:
       custom_name: apartmentId

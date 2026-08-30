@@ -35,7 +35,7 @@ ALTER FUNCTION IF EXISTS public.get_escrow_status_summary() SET SCHEMA safetrust
 
 -- Step 3: Add safetrust to search_path so existing queries still work
 -- during transition period (remove after all queries are updated)
-ALTER DATABASE postgres SET search_path TO safetrust, public;
+ALTER ROLE CURRENT_USER SET search_path TO safetrust, public;
 
 -- Step 4: Grant schema permissions to hasura role
 GRANT USAGE ON SCHEMA safetrust TO postgres;
