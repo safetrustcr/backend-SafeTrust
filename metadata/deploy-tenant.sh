@@ -1,18 +1,11 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-# Configuration
-BUILD_DIR="$(pwd)/build"
+# Configuration — paths relative to the script location, matching build-metadata.sh
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="${BUILD_DIR:-$SCRIPT_DIR/build}"
 HASURA_ENDPOINT="http://localhost:8080"
 HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
-
-# Clean up temp directories on exit
-cleanup() {
-    if [[ -n "${TEMP_DIR:-}" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
-    fi
-}
-trap cleanup EXIT
 
 # ─────────────────────────────────────────────────────────────────────────────
 # create_metadata_source
@@ -67,17 +60,25 @@ EOL
         echo "No databases.yaml found, using tenant name: $tenant_name" >&2
     fi
 
+    # Robust source existence check: list configured sources and test membership
+    # with jq, instead of matching the string "error" in a response body.
     echo "Checking if source ${tenant_name} already exists..." >&2
-    local check_source
-    check_source=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
+    local sources_resp
+    sources_resp=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
         -H "X-Hasura-Admin-Secret: ${admin_secret}" \
         -H "Content-Type: application/json" \
-        -d "{\"type\": \"pg_get_source_tables\", \"args\": {\"source\": \"${tenant_name}\"}}")
+        -d '{"type": "export_metadata", "args": {}}')
 
-    if [[ "$check_source" == *"error"* ]]; then
+    if echo "$sources_resp" | jq -e --arg n "$tenant_name" \
+        '(.metadata.sources? // []) | any(.name == $n)' >/dev/null 2>&1; then
+        echo "Source $tenant_name already exists, skipping creation" >&2
+    else
         echo "Source $tenant_name doesn't exist, creating it..." >&2
-        local source_response
-        source_response=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
+        local source_file
+        local source_code
+        source_file=$(mktemp)
+        source_code=$(curl -sS -o "$source_file" -w '%{http_code}' \
+            -X POST "${hasura_endpoint}/v1/metadata" \
             -H "X-Hasura-Admin-Secret: ${admin_secret}" \
             -H "Content-Type: application/json" \
             -d "{
@@ -93,14 +94,15 @@ EOL
                     }
                 }
             }")
+        local source_body
+        source_body=$(cat "$source_file")
+        rm -f "$source_file"
 
-        if [[ "$source_response" == *"error"* ]]; then
+        if [ "$source_code" != "200" ] || echo "$source_body" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
             echo "❌ Failed to create source for $tenant_name" >&2
-            echo "Error: $source_response" >&2
+            echo "Error: $source_body" >&2
             return 1
         fi
-    else
-        echo "Source $tenant_name already exists, skipping creation" >&2
     fi
 
     echo "✅ Tenant source created/verified: $tenant_name" >&2
@@ -109,8 +111,8 @@ EOL
 
 # ─────────────────────────────────────────────────────────────────────────────
 # process_metadata_tables
-# Returns non-zero if any table fails to track
-# ─────────────────────────────────────────────────────────────────────────────
+# Bulk-tracks all tables in a single pg_track_tables call per tenant.
+# -----------------------------------------------------------------------------
 process_metadata_tables() {
     local tenant="$1"
     local tenant_name="$2"
@@ -126,89 +128,56 @@ process_metadata_tables() {
         return 0
     fi
 
-    local track_failures=0
+    local table_files=()
+    while IFS= read -r -d '' f; do
+        case "$(basename "$f")" in
+            tables.yaml | functions.yaml) continue ;;
+            *) table_files+=("$f") ;;
+        esac
+    done < <(find "$tables_dir" -maxdepth 1 -type f -name '*.yaml' -print0)
 
-    for table_file in "$tables_dir"/*.yaml; do
-        [ -f "$table_file" ] || continue
+    if [ "${#table_files[@]}" -eq 0 ]; then
+        echo "⚠️  No table definitions found for $tenant_name"
+        return 0
+    fi
 
-        local base_name
-        base_name=$(basename "$table_file" .yaml)
-
-        if [[ "$base_name" == "tables" ]]; then
-            echo "ℹ️  Warning: Could not determine table name from $table_file, skipping"
-            continue
-        fi
-
-        local table_name table_schema custom_name
-        table_name=$(yq e '.table.name' "$table_file" 2>/dev/null | tr -d '\r')
-        table_schema=$(yq e '.table.schema' "$table_file" 2>/dev/null | tr -d '\r')
-        custom_name=$(yq e '.configuration.custom_name' "$table_file" 2>/dev/null | tr -d '\r')
-
-        if [ -z "$table_schema" ] || [ "$table_schema" = "null" ]; then
-            table_schema="public"
-        fi
-
-        if [ -z "$table_name" ] || [ "$table_name" = "null" ]; then
-            echo "ℹ️  Warning: Could not determine table name from $table_file, skipping"
-            continue
-        fi
-
-        echo "⚙️  Adding table: $table_name (schema: $table_schema) to tenant $tenant_name"
-
-        local configuration_json
-        configuration_json=$(yq -o json e '.configuration' "$table_file" 2>/dev/null)
-        if [ "$configuration_json" = "null" ] || [ -z "$configuration_json" ]; then
-            configuration_json="{}"
-        fi
-
-        local track_payload
-        track_payload=$(cat <<EOF
-{
-    "type": "pg_track_table",
-    "args": {
-        "source": "${tenant_name}",
-        "table": {
-            "name": "${table_name}",
-            "schema": "${table_schema}"
-        },
-        "configuration": ${configuration_json}
+    # One yq pass over all table YAML, then a single jq pass to shape the args.
+    local tables_json
+    tables_json=$(yq -o json e '.' "${table_files[@]}" 2>/dev/null \
+        | jq -s 'map(select(type == "object" and ((.table.name? // "") != ""))) | map({ table: { name: .table.name, schema: (.table.schema // "public") }, configuration: (.configuration // {}) })') || {
+        echo "❌ Failed to read table metadata for $tenant_name" >&2
+        return 1
     }
-}
-EOF
-)
 
-        local track_response
-        track_response=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
-            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
-            -H "Content-Type: application/json" \
-            -d "$track_payload")
+    if [ -z "$tables_json" ] || [ "$tables_json" = "[]" ] || [ "$tables_json" = "null" ]; then
+        echo "⚠️  No trackable tables found for $tenant_name"
+        return 0
+    fi
 
-        echo "🔎 Tracking table $table_name..."
-        if [[ "$track_response" == *'"message":"success"'* ]] || \
-           [[ "$track_response" == *'already tracked'* ]] || \
-           [[ -z "$track_response" ]]; then
-            echo "✅ Successfully tracked table $table_name"
-        elif [[ "$track_response" == *'"error"'* ]]; then
-            echo "❌ Error tracking table $table_name: $track_response"
-            track_failures=$(( track_failures + 1 ))
-        else
-            echo "✅ Successfully tracked table $table_name"
-        fi
-    done
+    local track_payload
+    track_payload=$(jq -cn --arg source "$tenant_name" --argjson tables "$tables_json" \
+        '{type:"pg_track_tables", args:{source:$source, tables:$tables}}')
 
-    if [ "$track_failures" -gt 0 ]; then
-        echo "❌ ${track_failures} table(s) failed to track for $tenant_name"
+    echo "🔎 Bulk-tracking tables for $tenant_name..."
+    local track_response
+    track_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+        -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+        -H "Content-Type: application/json" \
+        -d "$track_payload")
+
+    if echo "$track_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+        echo "❌ Error tracking tables for $tenant_name: $track_response"
         return 1
     fi
 
-    echo "✅ Metadata deployment for $tenant_name tenant completed"
+    echo "✅ Successfully tracked tables for $tenant_name"
     return 0
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # process_metadata_functions
-# Returns non-zero if any function fails to track
-# ─────────────────────────────────────────────────────────────────────────────
+# Bulk-tracks all functions in a single pg_track_functions call per tenant.
+# -----------------------------------------------------------------------------
 process_metadata_functions() {
     local tenant="$1"
     local tenant_name="$2"
@@ -223,85 +192,64 @@ process_metadata_functions() {
 
     echo "⚙️  Processing functions for $tenant_name..."
 
-    local track_failures=0
+    local function_files=()
+    while IFS= read -r -d '' f; do
+        case "$(basename "$f")" in
+            tables.yaml | functions.yaml) continue ;;
+            *) function_files+=("$f") ;;
+        esac
+    done < <(find "$functions_dir" -maxdepth 1 -type f -name '*.yaml' -print0)
 
-    for func_file in "$functions_dir"/*.yaml; do
-        [ -f "$func_file" ] || continue
+    if [ "${#function_files[@]}" -eq 0 ]; then
+        echo "⚠️  No function definitions found for $tenant_name"
+        return 0
+    fi
 
-        if [[ "$(basename "$func_file")" == "functions.yaml" ]]; then
-            continue
-        fi
+    local functions_json
+    functions_json=$(yq -o json e '.' "${function_files[@]}" 2>/dev/null \
+        | jq -s 'map(select(type == "array") | .[]) | map(select((.name? // "") != "")) | map({ function: { name: .name, schema: (.schema // "public") }, configuration: ((.configuration // {}) + { exposed_as: (.configuration.exposed_as // "query") }) })') || {
+        echo "❌ Failed to read function metadata for $tenant_name" >&2
+        return 1
+    }
 
-        local func_name func_schema exposed_as
-        func_name=$(yq e '.function.name' "$func_file" 2>/dev/null | tr -d '\r')
-        func_schema=$(yq e '.function.schema' "$func_file" 2>/dev/null | tr -d '\r')
-        exposed_as=$(yq e '.configuration.exposed_as' "$func_file" 2>/dev/null | tr -d '\r')
+    if [ -z "$functions_json" ] || [ "$functions_json" = "[]" ] || [ "$functions_json" = "null" ]; then
+        echo "⚠️  No trackable functions found for $tenant_name"
+        return 0
+    fi
 
-        if [ -z "$func_schema" ] || [ "$func_schema" = "null" ]; then
-            func_schema="public"
-        fi
-        if [ -z "$exposed_as" ] || [ "$exposed_as" = "null" ]; then
-            exposed_as="query"
-        fi
+    local track_payload
+    track_payload=$(jq -cn --arg source "$tenant_name" --argjson functions "$functions_json" \
+        '{type:"pg_track_functions", args:{source:$source, functions:$functions}}')
 
-        if [ -z "$func_name" ] || [ "$func_name" = "null" ]; then
-            echo "ℹ️  Warning: Could not determine function name from $func_file, skipping"
-            continue
-        fi
+    echo "🔎 Bulk-tracking functions for $tenant_name..."
+    local track_response
+    track_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+        -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+        -H "Content-Type: application/json" \
+        -d "$track_payload")
 
-        echo "⚙️  Adding function: $func_name (schema: $func_schema) to tenant $tenant_name"
-        echo "🔎 Tracking function $func_name..."
-
-        local track_response
-        track_response=$(curl -s -X POST "${hasura_endpoint}/v1/metadata" \
-            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
-            -H "Content-Type: application/json" \
-            -d "{
-                \"type\": \"pg_track_function\",
-                \"args\": {
-                    \"source\": \"${tenant_name}\",
-                    \"function\": {
-                        \"schema\": \"${func_schema}\",
-                        \"name\": \"${func_name}\"
-                    },
-                    \"configuration\": {
-                        \"exposed_as\": \"${exposed_as}\"
-                    }
-                }
-            }")
-
-        if [[ "$track_response" == *'"message":"success"'* ]] || \
-           [[ "$track_response" == *'already tracked'* ]] || \
-           [[ -z "$track_response" ]]; then
-            echo "✅ Successfully tracked function $func_name"
-        elif [[ "$track_response" == *'"error"'* ]]; then
-            echo "❌ Error: Issue tracking function $func_name: $track_response"
-            track_failures=$(( track_failures + 1 ))
-        else
-            echo "✅ Successfully tracked function $func_name"
-        fi
-    done
-
-    if [ "$track_failures" -gt 0 ]; then
-        echo "❌ ${track_failures} function(s) failed to track for $tenant_name"
+    if echo "$track_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+        echo "❌ Error tracking functions for $tenant_name: $track_response"
         return 1
     fi
 
+    echo "✅ Successfully tracked functions for $tenant_name"
     return 0
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # deploy_tenant
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 deploy_tenant() {
     local tenant="$1"
     local hasura_endpoint="$2"
     local admin_secret="$3"
     local tenant_start=$SECONDS
 
+    # Local temp dir only — no global TEMP_DIR, so parallel tenant deploys never
+    # clobber each other's working directory.
     local temp_dir
     temp_dir=$(mktemp -d)
-    TEMP_DIR="$temp_dir"
 
     local tenant_name
     if ! tenant_name=$(create_metadata_source "$tenant" "$temp_dir" "$hasura_endpoint" "$admin_secret"); then
