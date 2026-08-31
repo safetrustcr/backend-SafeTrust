@@ -21,8 +21,8 @@ flowchart TD
 ## Usage
 
 - `bin/start safetrust` vs `bin/start safetrust hotel_industry`
-- `bin/start --reset` — full teardown and fresh start
-- `bin/start --restart` — restart containers, skip data
+- `bin/start --reset safetrust hotel_industry` — full teardown and fresh start
+- `bin/start --restart safetrust hotel_industry` — recreate containers while preserving volumes
 - `TRACK_SAFETRUST_TIMINGS=true` output format
 
 ## Common failures and fixes
