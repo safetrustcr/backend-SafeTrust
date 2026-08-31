@@ -11,19 +11,27 @@ Content is synced to the public Gitbook at docs.safetrust.xyz.
 
 | Document | Description |
 |---|---|
-| [Architecture Overview](architecture/overview.md) | Full system diagram |
 | [Multi-Tenant Architecture](architecture/multi-tenant.md) | Hasura tenant isolation |
 | [Rust Crates](architecture/rust-crates.md) | Why Rust, what each crate does |
-| [Escrow Lifecycle](stellar/escrow-lifecycle.md) | Full state machine |
-| [Fund Escrow](stellar/fund-escrow.md) | Fund flow diagram |
-| [Approve Milestone](stellar/approve-milestone.md) | Milestone flow diagram |
-| [Release Funds](stellar/release-funds.md) | Release flow diagram |
-| [Dispute & Resolve](stellar/dispute-resolve.md) | Dispute flow diagram |
-| [x402 Protocol](stellar/x402-protocol.md) | AI agent payment flow |
-| [ZK Privacy Layer](zk/zk-overview.md) | Zero-knowledge circuits |
-| [bin/start Guide](infra/bin-start.md) | Local deployment |
-| [bin/deploy_init Guide](infra/deploy-init.md) | Benchmarking tool |
-| [Wave Guide](contributing/wave-guide.md) | Contribution waves |
+| [SafeTrust Schema Migration](migrations/safetrust-schema-migration.md) | Schema separation and Hasura metadata |
+
+### Planned documentation
+
+The following pages are part of the docs roadmap and will be added by
+their dedicated issues. They are listed here for visibility but are not
+linked until they land.
+
+- **Architecture Overview** — full system diagram (planned)
+- **Escrow Lifecycle** — full state machine (planned)
+- **Fund Escrow** — fund flow diagram (planned)
+- **Approve Milestone** — milestone flow diagram (planned)
+- **Release Funds** — release flow diagram (planned)
+- **Dispute & Resolve** — dispute flow diagram (planned)
+- **x402 Protocol** — AI agent payment flow (planned)
+- **ZK Privacy Layer** — zero-knowledge circuits (planned)
+- **bin/start Guide** — local deployment (planned)
+- **bin/deploy_init Guide** — benchmarking tool (planned)
+- **Wave Guide** — contribution waves (planned)
 
 ## How to contribute to docs
 
@@ -36,7 +44,8 @@ Content is synced to the public Gitbook at docs.safetrust.xyz.
 
 All diagrams use fenced Mermaid blocks. GitHub renders them
 natively — no external tool needed. Example:
-````
+
+````text
 ```mermaid
 flowchart LR
   A --> B --> C
