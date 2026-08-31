@@ -98,12 +98,13 @@ sequenceDiagram
 
 ## Milestone Identifiers
 
-The `milestoneId` is a **string business identifier**, not a numeric index.
+The `milestoneId` is a **string business identifier** used in the API. The escrow
+contract maps these to numeric indices for on-chain tracking.
 
-| milestoneId  | Meaning              | Reservation Status |
-|--------------|----------------------|--------------------|
-| `"check_in"` | Guest check-in       | `"checked_in"`     |
-| `"check_out"`| Guest check-out      | `"checked_out"`    |
+| milestoneId  | Contract Index | Meaning              | Reservation Status |
+|--------------|----------------|----------------------|--------------------|
+| `"check_in"` | `0`            | Guest check-in       | `"checked_in"`     |
+| `"check_out"`| `1`            | Guest check-out      | `"checked_out"`    |
 
 The handler uses string comparison (`milestoneId === 'check_in'`) to determine the
 reservation status to mirror. Any value other than `"check_in"` results in
@@ -182,11 +183,17 @@ enforces this on-chain.
 
 ## Wallet Roles
 
-| Role        | Description                                                       |
-|-------------|-------------------------------------------------------------------|
-| `approver`  | The host's Stellar wallet that approves the milestone             |
-| `marker`    | The host wallet — set during escrow initialization                |
-| `releaser`  | The SafeTrust platform wallet — releases funds after all milestones |
+| Role        | Description                                                                                          |
+|-------------|------------------------------------------------------------------------------------------------------|
+| `approver`  | The host's Stellar wallet that approved the milestone (sent in the callback by TrustlessWork)        |
+| `marker`    | The host (hotel) wallet — stored in the escrow record and set during initialization                  |
+| `releaser`  | The SafeTrust platform wallet — releases funds after all milestones                                  |
+
+> **Note on naming:** The `approver` field in the `trustless_work_escrows` table stores
+> the *guest* wallet address (set during initialization). The `approver` parameter in
+> *this* callback is the *host* wallet that approved the milestone — these are
+> semantically different despite sharing the name. The handler stores the callback's
+> `approver` value in the `escrow_milestones.approved_by` column.
 
 ## Error Handling
 
