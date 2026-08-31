@@ -1,5 +1,7 @@
 # SafeTrust Documentation
 
+Welcome to the SafeTrust backend documentation repository.
+
 SafeTrust is a decentralized P2P escrow platform for hospitality
 bookings built on Stellar. This directory is the canonical source
 of truth for architecture, data flows, and contributor guides.
@@ -40,3 +42,13 @@ flowchart LR
   A --> B --> C
 ```
 ````
+
+## 📖 Table of Contents
+
+- [Database](#-database)
+
+---
+
+## 🐘 Database
+
+- [SafeTrust Schema Migration Strategy](migrations/safetrust-schema-migration.md) — Explains schema separation (`public` → `safetrust`), rationale, three-layer escrow hierarchy, deployment sequence, rollback strategy, and Hasura metadata changes.
