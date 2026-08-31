@@ -116,7 +116,8 @@ short-circuits immediately:
 { "received": true }
 ```
 
-No database mutations occur; the webhook event is marked processed.
+The escrow, balance, and reservation rows remain unchanged. The webhook event is
+marked as processed in `trustless_work_webhook_events` to prevent re-processing.
 
 ### Error Responses
 

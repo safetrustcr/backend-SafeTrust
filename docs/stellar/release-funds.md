@@ -57,8 +57,11 @@ sequenceDiagram
 - The escrow must exist with status `milestone_approved`.
 - All milestones must have been approved (the TrustlessWork contract enforces this
   on-chain before allowing the release transaction).
-- The `releaseSigner` must be the SafeTrust platform wallet (the `releaser` field
-  on the escrow).
+- The `releaseSigner` must be the SafeTrust platform wallet. The on-chain contract
+  (or TrustlessWork) verifies this matches the escrow's stored `releaser` before
+  executing the release. The backend handler itself does not validate the wallet
+  address against the stored escrow — it relies on TrustlessWork's HMAC signature
+  as proof of authenticity.
 
 ## Request
 
@@ -110,9 +113,15 @@ The escrow is now `completed` and `balance` is `0`.
 
 ### Success — Idempotent duplicate
 
+If TrustlessWork retries the same callback (same `contractId` + `event_type`), the handler
+short-circuits immediately:
+
 ```json
 { "received": true }
 ```
+
+The escrow, balance, and reservation rows remain unchanged. The webhook event is
+marked as processed in `trustless_work_webhook_events` to prevent re-processing.
 
 ### Error Responses
 
@@ -169,13 +178,8 @@ stateDiagram-v2
     [*] --> created: initialize
     created --> funded: fund
     funded --> milestone_approved: approve check_in
+    milestone_approved --> milestone_approved: approve check_out
     milestone_approved --> completed: release-funds
-
-    state funded {
-        [*] --> milestone_approved_check_in
-        milestone_approved_check_in --> milestone_approved_check_out: approve check_out
-    }
-
     completed --> [*]
 ```
 
