@@ -30,8 +30,8 @@ where:
 
 Example measurements:
 - N=1 (sequential baseline): ~45s
-- N=2 (parallel): ~28s → 142% efficiency
-- N=5 (parallel): ~18s → 280% efficiency
+- N=2 (parallel): ~28s → 1.61× speedup, ~80% efficiency
+- N=5 (parallel): ~18s → 2.50× speedup, 50% efficiency
 
 ## USE_INIT_SQL=true fast path
 - `hasura migrate apply`: ~8s (15+ subprocess calls)
