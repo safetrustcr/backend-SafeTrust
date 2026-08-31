@@ -6,8 +6,12 @@ Welcome to the **SafeTrust Backend** documentation. This directory provides comp
 
 ## 📖 Documentation Index
 
+### 🏗️ Core Architecture
+- [Multi-Tenant Architecture](architecture/multi-tenant.md) — Two-tenant model (`safetrust` and `hotel_industry`), schema routing, metadata splitting, tenant resolution, and RBAC rules.
+- [Rust Crates in SafeTrust](architecture/rust-crates.md) — High-assurance native Rust extensions via Neon bindings for cryptographic security, parallel processing, and blockchain parsing.
+
 ### 🐘 Database & Migrations
-- [SafeTrust Schema Migration Architecture](migrations/safetrust-schema-migration.md) — Detailed architecture, six atomic Mermaid diagrams, before/after schema namespace breakdown, deployment sequence, and rollback procedures for migration `1779300000001_migrate_to_safetrust_schema`.
+- [SafeTrust Schema Migration Architecture](migrations/safetrust-schema-migration.md) — Detailed architecture, atomic Mermaid diagrams, before/after schema namespace breakdown, deployment sequence, and rollback procedures for migration `1779300000001_migrate_to_safetrust_schema`.
 
 ### 🏢 Multi-Tenant Architecture
 - **Tenant Isolation**: Separation of product domains across `safetrust` and `hotel_industry` schemas.

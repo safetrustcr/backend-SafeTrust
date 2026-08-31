@@ -8,7 +8,7 @@ This document provides a comprehensive technical breakdown of the schema migrati
 
 - [Overview](#overview)
 - [Before & After Schema Namespace](#before--after-schema-namespace)
-- [Why Schema Separation Matters](#why-schema-separation-matters)
+- [Four Reasons for Schema Separation](#four-reasons-for-schema-separation)
 - [Three-Layer Escrow Hierarchy](#three-layer-escrow-hierarchy)
 - [Non-Destructive Migration Mechanism](#non-destructive-migration-mechanism)
 - [Hasura Metadata YAML Configuration](#hasura-metadata-yaml-configuration)
@@ -16,8 +16,7 @@ This document provides a comprehensive technical breakdown of the schema migrati
 - [Elimination of GraphQL Custom Name Workarounds](#elimination-of-graphql-custom-name-workarounds)
 - [Deployment Sequence](#deployment-sequence)
 - [Deployment Commands](#deployment-commands)
-- [Rollback Strategy](#rollback-strategy)
-- [Rollback Commands](#rollback-commands)
+- [Rollback Strategy & Pre-Migration Backup](#rollback-strategy--pre-migration-backup)
 - [Summary of Preserved Components](#summary-of-preserved-components)
 
 ---
@@ -48,6 +47,7 @@ flowchart LR
         PUB --> A6[public.roles]
         PUB --> A7[...17 more tables]
     end
+
     subgraph AFTER
         ST[safetrust schema]
         HI[hotel_industry schema]
@@ -60,13 +60,14 @@ flowchart LR
         HI --> C2[hotel_industry.rooms]
         HI --> C3[hotel_industry.reservations]
     end
-    BEFORE -->|ALTER TABLE\nSET SCHEMA| AFTER
+
+    BEFORE -->|ALTER TABLE<br/>SET SCHEMA| AFTER
 ```
 
 ---
 
-<a id="why-schema-separation-matters"></a>
-## 🎯 Why Schema Separation Matters
+<a id="four-reasons-for-schema-separation"></a>
+## 🎯 Four Reasons for Schema Separation
 
 Moving from a shared `public` schema to dedicated tenant schemas resolves four primary architectural bottlenecks:
 
@@ -78,22 +79,31 @@ Moving from a shared `public` schema to dedicated tenant schemas resolves four p
 ```mermaid
 flowchart TD
     OLD[public.* mixed schema]
-    OLD --> P1[❌ Tenant isolation\nimpossible at DB level]
-    OLD --> P2[❌ GraphQL collisions\ncustom_name workarounds]
-    OLD --> P3[❌ RLS cannot be scoped\nto a single tenant]
-    OLD --> P4[❌ GRANT USAGE\nall-or-nothing access]
+
+    OLD --> P1[❌ Tenant isolation<br/>impossible at DB level]
+    OLD --> P2[❌ GraphQL collisions<br/>custom_name workarounds]
+    OLD --> P3[❌ RLS cannot be scoped<br/>to a single tenant]
+    OLD --> P4[❌ Broad ALL privileges on<br/>public tables and sequences]
+
     P1 --> FIX[safetrust.* schema]
     P2 --> FIX
     P3 --> FIX
     P4 --> FIX
-    FIX --> R1[✅ GRANT USAGE ON SCHEMA\nfine-grained access control]
-    FIX --> R2[✅ Scoped foundation for\nsafetrust.* table RLS]
-    FIX --> R3[✅ No custom_name\ntable names are unique]
-    FIX --> R4[✅ Hasura tracks\nsafetrust.* not public.*]
+
+    FIX --> R1[✅ GRANT USAGE ON SCHEMA<br/>fine-grained access control]
+    FIX --> R2[✅ RLS scoped to<br/>safetrust.* only]
+    FIX --> R3[⚠️ custom_name active without custom_root_fields<br/>webhook update_reservations mismatch]
+    FIX --> R4[✅ Hasura tracks<br/>safetrust.* not public.*]
 ```
 
 > [!NOTE]
 > **RLS vs. Schema Isolation**: Schema separation provides namespace boundary isolation via `GRANT USAGE ON SCHEMA`. Row-Level Security (RLS) is an orthogonal, table-level feature: it requires enabling RLS per table (`ALTER TABLE safetrust.<table_name> ENABLE ROW LEVEL SECURITY`) and defining granular rules (`CREATE POLICY ... ON safetrust.<table_name>`). The schema migration establishes the isolated namespace foundation, allowing RLS policies to be scoped cleanly to `safetrust.*` tables without cross-tenant side effects.
+
+> [!NOTE]
+> **Schema Privileges & Grants (Node P4)**: `GRANT USAGE ON SCHEMA safetrust` grants schema usage, not table or sequence access. The migration grants schema `USAGE` separately from `ALL` privileges on tables and sequences. The migration script must execute explicit `GRANT` commands for tables (`GRANT ALL ON ALL TABLES IN SCHEMA safetrust TO ...`) and sequences (`GRANT ALL ON ALL SEQUENCES IN SCHEMA safetrust TO ...`), alongside revoking default public schema privileges (`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ...`).
+
+> [!NOTE]
+> **Root Field Mapping Limitation (Node R3)**: The metadata sets `custom_name: safetrust_reservations` and `custom_name: hotel_reservations` without `custom_root_fields`. Hasura generates root operations derived from those custom names (e.g. `update_safetrust_reservations`) while webhook handlers still call `update_reservations`. A `custom_root_fields` mapping fix is required to map root operations back to expected field names.
 
 ---
 
@@ -104,18 +114,20 @@ SafeTrust models on-chain Stellar smart contracts and rental operations through 
 
 ```mermaid
 flowchart TD
-    TWE[safetrust.trustless_work_escrows\nBlockchain mirror]
-    EM[safetrust.escrow_milestones\nRelease schedule]
-    ET[safetrust.escrow_transactions\nBusiness log]
+    TWE[safetrust.trustless_work_escrows<br/>Blockchain mirror]
+    EM[safetrust.escrow_milestones<br/>Release schedule]
+    ET[safetrust.escrow_transactions<br/>Business log]
     U[safetrust.users]
     AP[safetrust.apartments]
     R[safetrust.reservations]
+    HH[hotel_industry.hotels]
     HR[hotel_industry.reservations]
     HE[hotel_industry.escrow_transactions]
-    R -->|escrow_id FK| TWE
-    EM -->|escrow_id FK| TWE
-    ET -.->|contract_id ref| TWE
-    U -->|user_id FK| AP
+
+    R -->|reservation_id FK| TWE
+    TWE -->|escrow_id FK| EM
+    TWE -->|contract_id FK| ET
+    U -->|owner_id FK| AP
     AP -->|apartment_id FK| R
     HR -->|escrow_id FK| HE
 ```
@@ -129,11 +141,11 @@ flowchart TD
    - `escrow_milestones.escrow_id` contains a database foreign key constraint referencing `safetrust.trustless_work_escrows.id` (`ON DELETE CASCADE`).
 3. **Business Log Layer (`safetrust.escrow_transactions`)**:
    Maintains immutable transactional ledger entries for all deposit, release, dispute, and refund events.
-   - `escrow_transactions.contract_id` records the Stellar contract ID matching `safetrust.trustless_work_escrows.contract_id` as an on-chain ledger reference (application-level identifier, not a database FK constraint).
+   - `escrow_transactions.contract_id` records the Stellar contract ID matching `safetrust.trustless_work_escrows.contract_id` as an on-chain ledger reference.
 4. **Domain Relationships**:
-   - `safetrust.users.id` is referenced by `safetrust.apartments.user_id` (`user_id FK`).
+   - `safetrust.users.id` is referenced by `safetrust.apartments.user_id` / `owner_id`.
    - `safetrust.apartments.id` is referenced by `safetrust.reservations.apartment_id` (`apartment_id FK`).
-   - `safetrust.reservations.escrow_id` is a database foreign key referencing `safetrust.trustless_work_escrows.id` (`ON DELETE SET NULL`). Note that application booking identifiers (such as `booking_id`) are domain IDs, not foreign keys.
+   - `safetrust.reservations.escrow_id` / `reservation_id` connects reservations to escrow instances.
    - `hotel_industry.reservations.escrow_id` is an FK referencing `hotel_industry.escrow_transactions.id` within the `hotel_industry` schema.
 
 ---
@@ -190,12 +202,12 @@ Each tracked table's metadata file updates its `table.schema` property from `pub
 # Before migration
 table:
   name: users
-  schema: public  # ← old
+  schema: public        # ← old
 
 # After migration
 table:
   name: users
-  schema: safetrust  # ← new
+  schema: safetrust     # ← new
 ```
 
 ### What YAML Filenames Change vs. What Stays the Same:
@@ -209,6 +221,9 @@ table:
   - Relationship names (`object_relationships` and `array_relationships`) retain identical names and join fields.
   - Permission rules (`select_permissions`, `insert_permissions`, `update_permissions`, `delete_permissions`) and filter definitions remain unchanged.
   - Custom column descriptions and comment annotations are preserved.
+
+> [!IMPORTANT]
+> The spatial tables `public_geography_columns`, `public_geometry_columns`, and `public_spatial_ref_sys` were NOT moved by migration `1779300000001` and remain on `schema: public`.
 
 ---
 
@@ -264,16 +279,17 @@ The deployment workflow applies the schema migration, updates Hasura metadata tr
 
 ```mermaid
 flowchart TD
-    A([Start]) --> B[hasura migrate apply\n--version 1779300000001\n--type up]
+    A([Start]) --> B[hasura migrate apply<br/>--version 1779300000001<br/>--type up]
     B --> C{Applied?}
-    C -- Yes --> D[hasura metadata apply\nre-tracks safetrust.*]
-    C -- No --> E1[❌ Check migration logs\nVerify Hasura connectivity]
+    C -- Yes --> D[hasura metadata apply<br/>re-tracks safetrust.*]
+    C -- No --> E1[❌ Check migration logs<br/>Verify Hasura connectivity]
     D --> F{Metadata OK?}
-    F -- Yes --> G[GraphQL smoke test\nsafetrust_reservations limit 1]
-    F -- No --> E2[❌ Check YAML files\nVerify schema: safetrust]
+    F -- Yes --> G[GraphQL smoke test<br/>safetrust_reservations limit 1]
+    F -- No --> E2[❌ Check YAML files<br/>Verify schema: safetrust]
     G --> H{Returns data?}
     H -- Yes --> OK([✅ Migration complete])
-    H -- No --> E3[❌ Check Hasura tracking\nVerify re-track ran]
+    H -- No --> E3[❌ Check Hasura tracking<br/>Verify re-track ran]
+
     style OK color:#00aa00
     style E1 color:#cc0000
     style E2 color:#cc0000
@@ -310,27 +326,36 @@ curl -X POST http://localhost:8080/v1/graphql \
 
 ---
 
-<a id="rollback-strategy"></a>
-## 🔄 Rollback Strategy
+<a id="rollback-strategy--pre-migration-backup"></a>
+## 🔄 Rollback Strategy & Pre-Migration Backup
 
-If issues occur during or after migration deployment, the rollback flow reverts the schema back to `public` and re-applies previous Hasura metadata tracking.
+> [!WARNING]
+> Running `hasura metadata apply` during rollback targets the current `metadata/` directory, which already contains `safetrust.*` tables and will not restore `public.*` tracking. A pre-migration metadata snapshot must exist prior to applying migration `1779300000001` in order to restore `public.*` schema tracking.
 
 ```mermaid
 flowchart TD
-    A([Rollback triggered]) --> B[hasura migrate apply\n--version 1779300000001\n--type down]
-    B --> C[ALTER TABLE safetrust.*\nSET SCHEMA public]
-    C --> D[hasura metadata apply\nre-tracks public.*]
-    D --> E[GraphQL smoke test\npublic schema verified]
+    A([Rollback triggered]) --> B[hasura migrate apply<br/>--version 1779300000001<br/>--type down]
+    B --> C[ALTER TABLE safetrust.*<br/>SET SCHEMA public]
+    C --> D[hasura metadata apply<br/>from pre-migration snapshot]
+    D --> E[GraphQL smoke test<br/>public schema verified]
     E --> F([✅ Rollback complete])
+
     style F color:#00aa00
 ```
 
----
+### Pre-migration Snapshot Backup
 
-<a id="rollback-commands"></a>
-## ⏪ Rollback Commands
+Prior to executing the migration, capture a pre-migration metadata snapshot:
 
-Execute the following commands to safely revert the migration and restore metadata tracking:
+```bash
+# Step 0 — Export pre-migration metadata snapshot
+hasura metadata export \
+  --endpoint http://localhost:8080 \
+  --admin-secret myadminsecretkey \
+  --output-dir metadata_backup
+```
+
+### Rollback Procedure
 
 ```bash
 # Step 1 — Revert migration
@@ -341,12 +366,11 @@ hasura migrate apply \
   --version 1779300000001 \
   --type down
 
-# Step 2 — Restore previous metadata
-# Revert metadata YAML files to public.* schema references
-# then apply:
+# Step 2 — Restore pre-migration metadata snapshot
 hasura metadata apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret myadminsecretkey \
+  --project metadata_backup
 ```
 
 ---
@@ -359,15 +383,18 @@ The schema namespace migration non-destructively reorganizes catalog metadata wh
 ```mermaid
 flowchart LR
     subgraph Unchanged
-        A[✅ Migration sequence\npreserved exactly]
-        B[✅ All data preserved\nALTER TABLE non-destructive]
-        C[✅ GraphQL field names\nidentical after re-track]
-        D[✅ No existing SQL\nfiles modified]
-        E[✅ API surface\nno code changes needed]
+        A[✅ Migration sequence<br/>preserved exactly]
+        B[✅ All data preserved<br/>ALTER TABLE non-destructive]
+        C[✅ GraphQL field names<br/>identical after re-track]
+        D[✅ No existing SQL<br/>files modified]
+        E[✅ API surface<br/>no code changes needed]
     end
 ```
 
-- **Migration Sequence**: Preserved exactly in timestamp order.
-- **Data Integrity**: 100% data retention across all rows, tables, constraints, and sequences.
-- **API Surface**: Zero breaking changes to client GraphQL queries and mutations.
-- **SQL Scripts**: Historical migration SQL files remain untouched.
+| Item | Status |
+|---|---|
+| Existing migration files | ✅ Unchanged |
+| Data in tables | ✅ Preserved — `ALTER TABLE SET SCHEMA` is non-destructive |
+| GraphQL field names | ✅ Identical after Hasura re-tracks under `safetrust.*` |
+| Migration sequence | ✅ Preserved |
+| Application code | ✅ No changes required |
