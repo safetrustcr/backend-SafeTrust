@@ -8,7 +8,7 @@ Content is synced to the public Gitbook at docs.safetrust.xyz.
 ## Quick links
 
 | Document | Description |
-|-----|-----|
+|---|---|
 | [Architecture Overview](architecture/overview.md) | Full system diagram |
 | [Multi-Tenant Architecture](architecture/multi-tenant.md) | Hasura tenant isolation |
 | [Rust Crates](architecture/rust-crates.md) | Why Rust, what each crate does |
@@ -25,16 +25,18 @@ Content is synced to the public Gitbook at docs.safetrust.xyz.
 
 ## How to contribute to docs
 
-1. Find the relevant file in docs/
+1. Find the relevant file in `docs/`
 2. Edit in place — Mermaid diagrams render on GitHub natively
-3. Open a PR targeting consolidation-pattern
+3. Open a PR targeting `consolidation-pattern`
 4. Gitbook syncs automatically after merge
 
 ## Mermaid diagrams
 
 All diagrams use fenced Mermaid blocks. GitHub renders them
 natively — no external tool needed. Example:
+````
 ```mermaid
 flowchart LR
   A --> B --> C
 ```
+````
