@@ -1,3 +1,3 @@
 table:
   name: escrow_status_summary
-  schema: public
+  schema: safetrust

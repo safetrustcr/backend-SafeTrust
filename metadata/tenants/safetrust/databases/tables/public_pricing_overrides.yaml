@@ -1,6 +1,6 @@
 table:
   name: pricing_overrides
-  schema: public
+  schema: safetrust
 
 object_relationships:
   - name: base_rule

@@ -143,7 +143,7 @@ export async function approveMilestoneHandler(
 
     const mirrorMutation = `
       mutation MirrorMilestoneToReservation($escrowId: uuid!, $status: String!) {
-        update_safetrust_reservations(
+        update_reservations(
           where: { escrowId: { _eq: $escrowId } }
           _set: {
             status: $status

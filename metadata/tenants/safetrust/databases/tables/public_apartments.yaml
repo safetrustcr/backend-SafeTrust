@@ -1,6 +1,6 @@
 table:
   name: apartments
-  schema: public
+  schema: safetrust
 object_relationships:
   - name: owner
     using:
@@ -12,14 +12,14 @@ array_relationships:
         column: apartment_id
         table:
           name: bid_requests
-          schema: public
+          schema: safetrust
   - name: apartment_images
     using:
       foreign_key_constraint_on:
         column: apartment_id
         table:
           name: apartment_images
-          schema: public
+          schema: safetrust
 select_permissions:
   - role: anonymous
     permission:

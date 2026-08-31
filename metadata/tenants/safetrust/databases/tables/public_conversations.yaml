@@ -1,6 +1,6 @@
 table:
   name: conversations
-  schema: public
+  schema: safetrust
 object_relationships:
   - name: apartment
     using:
@@ -21,7 +21,7 @@ array_relationships:
         column: conversation_id
         table:
           name: messages
-          schema: public
+          schema: safetrust
 select_permissions:
   - role: safetrust
     permission:

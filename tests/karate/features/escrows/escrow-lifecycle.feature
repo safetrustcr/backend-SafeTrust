@@ -46,8 +46,8 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     function() {
       var ids = "('LIFECYCLE_TEST_CONTRACT_001','DISPUTE_TEST_CONTRACT_001','TIMING_TEST_001')";
       // Cascades escrow_milestones; also drop webhook idempotency rows for these contracts.
-      db.execute("DELETE FROM public.trustless_work_webhook_events WHERE contract_id IN " + ids);
-      db.execute("DELETE FROM public.trustless_work_escrows WHERE contract_id IN " + ids);
+      db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id IN " + ids);
+      db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE contract_id IN " + ids);
     }
     """
     # Failure-safe: remove this feature's fixtures even if a later scenario fails.
@@ -78,7 +78,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     When method POST
     Then status 200
     And match response.received == true
-    * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero, amount FROM public.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
+    * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero, amount FROM safetrust.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match rows[0].status == 'created'
     And match rows[0].balance_is_zero == '1'
     And match rows[0].amount == '1200.0000000'
@@ -94,7 +94,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     When method POST
     Then status 200
     And match response.received == true
-    * def rows = db.query("SELECT status, balance FROM public.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
+    * def rows = db.query("SELECT status, balance FROM safetrust.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match rows[0].status == 'funded'
     And match rows[0].balance == '1200.0000000'
 
@@ -104,7 +104,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     # before the Hasura status filter runs. A second identical fund callback would
     # return 200 { received: true } without testing the status guard. Clear the
     # processed escrow.funded event so this request exercises the mutation path.
-    * db.execute("DELETE FROM public.trustless_work_webhook_events WHERE contract_id = '" + lifecycleContractId + "' AND event_type = 'escrow.funded'")
+    * db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id = '" + lifecycleContractId + "' AND event_type = 'escrow.funded'")
     * def body = { "contractId": "#(lifecycleContractId)", "signer": "#(approver)", "amount": 1200.00 }
     * def bodyStr = JSON.stringify(body)
     Given path '/api/escrows/fund'
@@ -116,14 +116,14 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     Then status 404
     And match response.error contains 'Escrow not found'
     # Guard must not mutate funded state / balance
-    * def rows = db.query("SELECT status, balance FROM public.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
+    * def rows = db.query("SELECT status, balance FROM safetrust.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match rows[0].status == 'funded'
     And match rows[0].balance == '1200.0000000'
 
   # ── Step 3: Approve milestone — O(2) DB writes: milestone + escrow ────────
   Scenario: Step 3 — approve-milestone updates milestone and advances escrow to milestone_approved
-    * def milestoneEscrowId = db.query("SELECT id FROM public.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")[0].id
-    * db.execute("INSERT INTO public.escrow_milestones (escrow_id, milestone_id, description, amount, status, tenant_id) VALUES ('" + milestoneEscrowId + "', 'check_in', 'Test milestone', 1200.0, 'pending', 'safetrust') ON CONFLICT (escrow_id, milestone_id) DO NOTHING")
+    * def milestoneEscrowId = db.query("SELECT id FROM safetrust.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")[0].id
+    * db.execute("INSERT INTO safetrust.escrow_milestones (escrow_id, milestone_id, description, amount, status, tenant_id) VALUES ('" + milestoneEscrowId + "', 'check_in', 'Test milestone', 1200.0, 'pending', 'safetrust') ON CONFLICT (escrow_id, milestone_id) DO NOTHING")
     * def body =
     """
     {
@@ -141,10 +141,10 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     When method POST
     Then status 200
     And match response.received == true
-    * def milestone = db.query("SELECT status, approved_by FROM public.escrow_milestones WHERE milestone_id = 'check_in' AND escrow_id = '" + milestoneEscrowId + "'")
+    * def milestone = db.query("SELECT status, approved_by FROM safetrust.escrow_milestones WHERE milestone_id = 'check_in' AND escrow_id = '" + milestoneEscrowId + "'")
     And match milestone[0].status == 'approved'
     And match milestone[0].approved_by == approver
-    * def escrow = db.query("SELECT status, balance FROM public.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
+    * def escrow = db.query("SELECT status, balance FROM safetrust.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match escrow[0].status == 'milestone_approved'
     # Approval must not zero / alter funded balance
     And match escrow[0].balance == '1200.0000000'
@@ -160,12 +160,12 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     When method POST
     Then status 200
     And match response.received == true
-    * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero FROM public.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
+    * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero FROM safetrust.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match rows[0].status == 'completed'
     And match rows[0].balance_is_zero == '1'
     # Post-completion: re-fund must still be rejected (status guard holds).
     # Clear idempotency row so we hit the Hasura status filter, not the 200 duplicate path.
-    * db.execute("DELETE FROM public.trustless_work_webhook_events WHERE contract_id = '" + lifecycleContractId + "' AND event_type = 'escrow.funded'")
+    * db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id = '" + lifecycleContractId + "' AND event_type = 'escrow.funded'")
     * def fundAgain = { "contractId": "#(lifecycleContractId)", "signer": "#(approver)", "amount": 1200.00 }
     * def fundAgainStr = JSON.stringify(fundAgain)
     Given path '/api/escrows/fund'
@@ -180,7 +180,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     # Measures initialize → fund → approve-milestone → release-funds (true O(4)).
     # Issue draft skipped approve-milestone; that would only prove O(3) and would
     # not exercise the milestone_approved state at all.
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")
+    * db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")
     * def start = Java.type('java.lang.System').currentTimeMillis()
 
     # 1) Initialize
@@ -215,8 +215,8 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     Then status 200
 
     # 3) Approve milestone (seed row — initialize does not create milestones)
-    * def timingEscrowId = db.query("SELECT id FROM public.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")[0].id
-    * db.execute("INSERT INTO public.escrow_milestones (escrow_id, milestone_id, description, amount, status, tenant_id) VALUES ('" + timingEscrowId + "', 'check_in', 'Timing milestone', 500.0, 'pending', 'safetrust') ON CONFLICT (escrow_id, milestone_id) DO NOTHING")
+    * def timingEscrowId = db.query("SELECT id FROM safetrust.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")[0].id
+    * db.execute("INSERT INTO safetrust.escrow_milestones (escrow_id, milestone_id, description, amount, status, tenant_id) VALUES ('" + timingEscrowId + "', 'check_in', 'Timing milestone', 500.0, 'pending', 'safetrust') ON CONFLICT (escrow_id, milestone_id) DO NOTHING")
     * def approveBody =
     """
     {
@@ -247,16 +247,16 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     * def elapsed = Java.type('java.lang.System').currentTimeMillis() - start
     # O(4) Hasura-backed transitions: should complete < 10s under normal load
     And assert elapsed < 10000
-    * def finalRows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero FROM public.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")
+    * def finalRows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero FROM safetrust.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")
     And match finalRows[0].status == 'completed'
     And match finalRows[0].balance_is_zero == '1'
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")
-    * def leftover = db.query("SELECT count(*)::text AS c FROM public.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")
+    * db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")
+    * def leftover = db.query("SELECT count(*)::text AS c FROM safetrust.trustless_work_escrows WHERE contract_id = '" + timingContractId + "'")
     And match leftover[0].c == '0'
 
   # ── Dispute branch: initialize → fund → dispute → resolve ─────────────────
   Scenario: Dispute branch — fund then dispute then resolve transitions correctly
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE contract_id = '" + disputeContractId + "'")
+    * db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE contract_id = '" + disputeContractId + "'")
     # Initialize
     * def initBody =
     """
@@ -298,7 +298,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     And request disputeStr
     When method POST
     Then status 200
-    * def disputed = db.query("SELECT status, balance FROM public.trustless_work_escrows WHERE contract_id = '" + disputeContractId + "'")
+    * def disputed = db.query("SELECT status, balance FROM safetrust.trustless_work_escrows WHERE contract_id = '" + disputeContractId + "'")
     And match disputed[0].status == 'disputed'
     And match disputed[0].balance == '800.0000000'
 
@@ -313,13 +313,13 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     And request resolveStr
     When method POST
     Then status 200
-    * def resolved = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero FROM public.trustless_work_escrows WHERE contract_id = '" + disputeContractId + "'")
+    * def resolved = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero FROM safetrust.trustless_work_escrows WHERE contract_id = '" + disputeContractId + "'")
     And match resolved[0].status == 'resolved'
     And match resolved[0].balance_is_zero == '1'
 
     # Status guard: resolve again must 404 (no longer disputed).
     # Clear idempotency so we exercise status=_eq disputed, not the 200 duplicate path.
-    * db.execute("DELETE FROM public.trustless_work_webhook_events WHERE contract_id = '" + disputeContractId + "' AND event_type = 'escrow.resolved'")
+    * db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id = '" + disputeContractId + "' AND event_type = 'escrow.resolved'")
     Given path '/api/escrows/resolve-dispute'
     And header Content-Type = 'application/json'
     And header x-trustlesswork-signature = trustlessWorkSignature(resolveStr)

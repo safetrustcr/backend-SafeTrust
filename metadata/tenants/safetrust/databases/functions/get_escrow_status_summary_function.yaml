@@ -1,5 +1,5 @@
 function:
-  schema: public
+  schema: safetrust
   name: get_escrow_status_summary
 configuration:
   exposed_as: query
