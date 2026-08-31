@@ -177,27 +177,36 @@ migration. Renaming them would break the `!include` references in
 
 2. Migration `1779300000001_migrate_to_safetrust_schema` used
    `ALTER TABLE … SET SCHEMA safetrust` to move every table atomically.
-   The actual schema declaration inside each YAML file was updated:
+   The actual `schema` declaration inside each YAML file was updated to
+   reflect the new location:
 
    ```yaml
-   # public_users.yaml (filename unchanged)
+   # public_escrow_transactions.yaml  (filename unchanged)
    table:
-     name: users
-     schema: safetrust   # ← now points to the correct schema
+     name: escrow_transactions
+     schema: safetrust   # ← points to the correct schema after migration
    ```
 
-3. `tables.yaml` references files by their filesystem name:
+3. `tables.yaml` references files by their filesystem path:
 
    ```yaml
-   - "!include public_users.yaml"
+   - "!include public_escrow_transactions.yaml"
+   - "!include public_escrow_milestones.yaml"
+   - "!include public_trustless_work_escrows.yaml"
+   # … and so on for every public_*.yaml file
    ```
 
-   Renaming the files would require updating every `!include` line.
-   The `public_` prefix in the filename is therefore purely historical and
-   carries no semantic meaning today.
+   Renaming the files would require updating every `!include` line in
+   `tables.yaml` with no functional gain. The `public_` prefix is
+   therefore purely historical and carries no semantic meaning today.
 
-The `hotel_industry` tenant was designed after the schema migration, so its
-files use the correct `hotel_industry_*.yaml` naming convention from the start.
+4. The `hotel_industry` tenant was designed after the migration, so its files
+   use the correct `hotel_industry_*.yaml` naming convention from the start.
+   This inconsistency is intentional and will not be "fixed."
+
+**Practical rule:** when you add a new table to the `safetrust` tenant, name
+its metadata file `public_<table_name>.yaml` to stay consistent with the
+existing pattern, and set `schema: safetrust` inside the file.
 
 ---
 
@@ -207,7 +216,7 @@ Hasura event triggers call the webhook service over HTTP. To authenticate those
 calls, each event trigger injects the Hasura admin secret as a request header:
 
 ```yaml
-# example from public_escrow_transactions.yaml
+# from metadata/tenants/safetrust/databases/tables/public_escrow_transactions.yaml
 event_triggers:
   - name: on_escrow_created
     webhook: "{{WEBHOOK_URL}}/events/escrow-created"
@@ -220,22 +229,33 @@ The admin secret grants **unrestricted access to every GraphQL operation and
 Hasura metadata API**, bypassing all row-level security and permission rules.
 Anyone who holds it can read, write, or delete any row in any tenant.
 
-**Why it must never appear in frontend environment variables:**
+### Why `NEXT_PUBLIC_HASURA_ADMIN_SECRET` must never exist
 
-- Next.js (and any browser-executed JS framework) exposes any env var prefixed
-  with `NEXT_PUBLIC_` to the client. If `NEXT_PUBLIC_HASURA_ADMIN_SECRET` were
-  set, the secret would be embedded in the compiled JavaScript bundle and
-  visible to every visitor via browser DevTools.
-- A leaked admin secret gives an attacker full database access with no rate
-  limiting, no audit trail enforced by row-level security, and no JWT
-  validation.
+Next.js (and any browser-executed JavaScript framework) exposes any environment
+variable prefixed with `NEXT_PUBLIC_` directly to the client. That means the
+variable's value is embedded verbatim in the compiled JavaScript bundle and is
+visible to every visitor via browser DevTools → Sources, or by fetching the
+bundle directly.
 
-The frontend must only hold the **JWT secret** (for signing user tokens). The
-admin secret lives exclusively in:
+If `NEXT_PUBLIC_HASURA_ADMIN_SECRET` were set:
 
-- `.env` on developer machines (never committed — see `.gitignore`)
-- Docker Compose environment variables (server-side only)
-- CI/CD secrets (never printed in logs)
+- The secret would be readable in plain text by anyone who loads the site.
+- An attacker could use it to bypass every row-level security rule in Hasura.
+- They could read, insert, update, or delete any row in either tenant with no
+  rate limiting and no audit trail enforced by JWT claims.
+- The webhook service's event-trigger authentication would also be compromised.
+
+**The correct split:**
+
+| What | Where it lives | Why |
+|---|---|---|
+| Admin secret | `.env` (server-only), Docker Compose env, CI/CD secrets | Never sent to browsers |
+| JWT secret | Hasura config (`HASURA_GRAPHQL_JWT_SECRET`) | Used to verify tokens; also server-only |
+| User JWT | Issued by Firebase, stored in the browser | Scoped by role; cannot escalate privileges |
+
+The frontend authenticates end-users with Firebase JWTs. Hasura validates those
+tokens and enforces row-level rules. The admin secret never leaves the server
+boundary.
 
 ---
 
