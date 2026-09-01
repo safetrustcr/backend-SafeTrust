@@ -71,8 +71,8 @@ flowchart LR
 
 Moving from a shared `public` schema to dedicated tenant schemas resolves four primary architectural bottlenecks:
 
-1. **Database-Level Tenant Isolation**: Enforces clean boundaries between distinct product domains.
-2. **Elimination of GraphQL Name Collisions**: Disambiguates root query and mutation fields across tenants.
+1. **Database-Level Tenant Isolation**: Enforces clean boundaries between distinct product domains at the PostgreSQL schema level.
+2. **Multi-Tenant GraphQL Root Disambiguation Foundation**: Schema separation partitions tables by database source/schema, while explicit Hasura metadata configurations (`custom_name` or `custom_root_fields`) cleanly disambiguate root query and mutation fields for entities sharing identical names across tenants.
 3. **Scoped Row-Level Security (RLS) Foundation**: Provides an isolated schema namespace for configuring table-specific RLS policies.
 4. **Fine-Grained Privilege Management**: Enables precise PostgreSQL `GRANT USAGE ON SCHEMA` permissions for runtime roles.
 
@@ -81,7 +81,7 @@ flowchart TD
     OLD[public.* mixed schema]
 
     OLD --> P1[❌ Tenant isolation<br/>impossible at DB level]
-    OLD --> P2[❌ GraphQL collisions<br/>custom_name workarounds]
+    OLD --> P2[❌ GraphQL collisions<br/>on shared table names]
     OLD --> P3[❌ RLS cannot be scoped<br/>to a single tenant]
     OLD --> P4[❌ Broad ALL privileges on<br/>public tables and sequences]
 
@@ -92,14 +92,17 @@ flowchart TD
 
     FIX --> R1[✅ GRANT USAGE ON SCHEMA<br/>fine-grained access control]
     FIX --> R2[✅ RLS scoped to<br/>safetrust.* only]
-    FIX --> R3[⚠️ custom_name / custom_root_fields<br/>disambiguates cross-tenant roots]
+    FIX --> R3[✅ Explicit root-field mapping<br/>resolves GraphQL collisions]
     FIX --> R4[✅ Hasura tracks<br/>safetrust.* not public.*]
 ```
 
 > [!NOTE]
 > **RLS vs. Schema Isolation**: Schema separation provides namespace boundary isolation via `GRANT USAGE ON SCHEMA`. Row-Level Security (RLS) is an orthogonal, table-level feature: it requires enabling RLS per table (`ALTER TABLE safetrust.<table_name> ENABLE ROW LEVEL SECURITY`) and defining granular rules (`CREATE POLICY ... ON safetrust.<table_name>`). The schema migration establishes the isolated namespace foundation, allowing RLS policies to be scoped cleanly to `safetrust.*` tables without cross-tenant side effects.
 >
-> **Schema Privileges & Grants (Node P4)**: `GRANT USAGE ON SCHEMA safetrust` grants schema usage, not table or sequence access. The migration grants schema `USAGE` separately from `ALL` privileges on tables and sequences. The migration script must execute explicit `GRANT` commands for tables (`GRANT ALL ON ALL TABLES IN SCHEMA safetrust TO ...`) and sequences (`GRANT ALL ON ALL SEQUENCES IN SCHEMA safetrust TO ...`), alongside revoking default public schema privileges (`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ...`).
+> **Schema Privileges & Grants (Node P4)**: Privilege boundaries must distinguish between schema-level ACLs, existing object ACLs (tables and sequences), and default privileges for future objects:
+> - **Schema ACLs**: Revoke creation and usage on `public` (`REVOKE CREATE, USAGE ON SCHEMA public FROM PUBLIC; REVOKE CREATE, USAGE ON SCHEMA public FROM safetrust_user;`) and grant schema usage on `safetrust` (`GRANT USAGE ON SCHEMA safetrust TO safetrust_user;`).
+> - **Existing Object ACLs**: Revoke access to existing `public` objects (`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM safetrust_user; REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM safetrust_user;`) and grant access to existing `safetrust` objects (`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA safetrust TO safetrust_user; GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA safetrust TO safetrust_user;`).
+> - **Future Object Defaults**: Configure future object defaults explicitly for the migration role (`ALTER DEFAULT PRIVILEGES FOR ROLE safetrust_admin IN SCHEMA safetrust GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO safetrust_user; ALTER DEFAULT PRIVILEGES FOR ROLE safetrust_admin IN SCHEMA safetrust GRANT USAGE, SELECT ON SEQUENCES TO safetrust_user;`).
 >
 > **Root Field Mapping Limitation (Node R3)**: The metadata sets `custom_name: safetrust_reservations` and `custom_name: hotel_reservations` for the colliding `reservations` tables. When `custom_name` is set without `custom_root_fields`, Hasura auto-generates root operations prefixed by that name (e.g., `update_safetrust_reservations`, `update_safetrust_reservations_by_pk`). Webhook handlers and client mutations should either target these generated operation names or define explicit `custom_root_fields` mappings.
 
@@ -294,22 +297,29 @@ configuration:
 <a id="deployment-sequence"></a>
 ## 🚀 Deployment Sequence
 
-The deployment workflow applies the schema migration, updates Hasura metadata tracking, and executes a GraphQL verification smoke test with defined error paths.
+The deployment workflow applies the schema migration, updates Hasura metadata tracking, and executes a GraphQL verification smoke test with defined error recovery and rollback transitions.
 
 ```mermaid
 flowchart TD
     A([Start]) --> B[hasura migrate apply<br/>--version 1779300000001<br/>--type up]
     B --> C{Applied?}
     C -- Yes --> D[hasura metadata apply<br/>re-tracks safetrust.*]
-    C -- No --> E1[❌ Check migration logs<br/>Verify Hasura connectivity]
+    C -- No --> E1[❌ Inspect migration logs<br/>Check DB connectivity]
     D --> F{Metadata OK?}
     F -- Yes --> G[GraphQL smoke test<br/>safetrust_reservations limit 1]
-    F -- No --> E2[❌ Check YAML files<br/>Verify schema: safetrust]
+    F -- No --> E2[❌ Inspect metadata YAMLs<br/>Check schema: safetrust]
     G --> H{No GraphQL errors<br/>in response?}
     H -- Yes --> OK([✅ Migration complete])
-    H -- No --> E3[❌ Check Hasura tracking<br/>Verify schema & errors]
+    H -- No --> E3[❌ Inspect GraphQL errors<br/>Verify schema tracking]
+
+    E1 --> RB([Trigger Rollback Procedure])
+    E2 --> RETRY[Fix YAML config<br/>Retry metadata apply]
+    RETRY --> D
+    E2 -.->|Unrecoverable| RB
+    E3 --> RB
 
     style OK color:#00aa00
+    style RB color:#cc0000
     style E1 color:#cc0000
     style E2 color:#cc0000
     style E3 color:#cc0000
@@ -372,8 +382,12 @@ hasura metadata export \
   --endpoint http://localhost:8080 \
   --admin-secret myadminsecretkey
 
-# Copy exported metadata directory to a backup location
-cp -r metadata metadata_backup
+# Create snapshot backup (fail if metadata_backup already exists to avoid nested directory creation)
+if [ -e metadata_backup ]; then
+  echo "Error: metadata_backup already exists; aborting to prevent overwrite." >&2
+  exit 1
+fi
+cp -a metadata metadata_backup
 ```
 
 ### Rollback Procedure
@@ -387,8 +401,11 @@ hasura migrate apply \
   --version 1779300000001 \
   --type down
 
-# Step 2 — Restore pre-migration metadata snapshot
-cp -r metadata_backup/* metadata/
+# Step 2 — Restore pre-migration metadata snapshot cleanly
+rm -rf metadata
+cp -a metadata_backup metadata
+
+# Step 3 — Apply restored metadata
 hasura metadata apply \
   --endpoint http://localhost:8080 \
   --admin-secret myadminsecretkey
