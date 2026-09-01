@@ -13,7 +13,7 @@ This document provides a comprehensive technical breakdown of the schema migrati
 - [Non-Destructive Migration Mechanism](#non-destructive-migration-mechanism)
 - [Hasura Metadata YAML Configuration](#hasura-metadata-yaml-configuration)
 - [Security & Access Control Architecture](#security--access-control-architecture)
-- [Elimination of GraphQL Custom Name Workarounds](#elimination-of-graphql-custom-name-workarounds)
+- [GraphQL Disambiguation & Custom Root Field Architecture](#graphql-disambiguation--custom-root-field-architecture)
 - [Deployment Sequence](#deployment-sequence)
 - [Deployment Commands](#deployment-commands)
 - [Rollback Strategy & Pre-Migration Backup](#rollback-strategy--pre-migration-backup)
@@ -72,7 +72,7 @@ flowchart LR
 Moving from a shared `public` schema to dedicated tenant schemas resolves four primary architectural bottlenecks:
 
 1. **Database-Level Tenant Isolation**: Enforces clean boundaries between distinct product domains.
-2. **Elimination of GraphQL Name Collisions**: Avoids conflicting root query and mutation fields.
+2. **Elimination of GraphQL Name Collisions**: Disambiguates root query and mutation fields across tenants.
 3. **Scoped Row-Level Security (RLS) Foundation**: Provides an isolated schema namespace for configuring table-specific RLS policies.
 4. **Fine-Grained Privilege Management**: Enables precise PostgreSQL `GRANT USAGE ON SCHEMA` permissions for runtime roles.
 
@@ -92,18 +92,16 @@ flowchart TD
 
     FIX --> R1[✅ GRANT USAGE ON SCHEMA<br/>fine-grained access control]
     FIX --> R2[✅ RLS scoped to<br/>safetrust.* only]
-    FIX --> R3[⚠️ custom_name active without custom_root_fields<br/>webhook update_reservations mismatch]
+    FIX --> R3[⚠️ custom_name / custom_root_fields<br/>disambiguates cross-tenant roots]
     FIX --> R4[✅ Hasura tracks<br/>safetrust.* not public.*]
 ```
 
 > [!NOTE]
 > **RLS vs. Schema Isolation**: Schema separation provides namespace boundary isolation via `GRANT USAGE ON SCHEMA`. Row-Level Security (RLS) is an orthogonal, table-level feature: it requires enabling RLS per table (`ALTER TABLE safetrust.<table_name> ENABLE ROW LEVEL SECURITY`) and defining granular rules (`CREATE POLICY ... ON safetrust.<table_name>`). The schema migration establishes the isolated namespace foundation, allowing RLS policies to be scoped cleanly to `safetrust.*` tables without cross-tenant side effects.
-
-> [!NOTE]
+>
 > **Schema Privileges & Grants (Node P4)**: `GRANT USAGE ON SCHEMA safetrust` grants schema usage, not table or sequence access. The migration grants schema `USAGE` separately from `ALL` privileges on tables and sequences. The migration script must execute explicit `GRANT` commands for tables (`GRANT ALL ON ALL TABLES IN SCHEMA safetrust TO ...`) and sequences (`GRANT ALL ON ALL SEQUENCES IN SCHEMA safetrust TO ...`), alongside revoking default public schema privileges (`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ...`).
-
-> [!NOTE]
-> **Root Field Mapping Limitation (Node R3)**: The metadata sets `custom_name: safetrust_reservations` and `custom_name: hotel_reservations` without `custom_root_fields`. Hasura generates root operations derived from those custom names (e.g. `update_safetrust_reservations`) while webhook handlers still call `update_reservations`. A `custom_root_fields` mapping fix is required to map root operations back to expected field names.
+>
+> **Root Field Mapping Limitation (Node R3)**: The metadata sets `custom_name: safetrust_reservations` and `custom_name: hotel_reservations` for the colliding `reservations` tables. When `custom_name` is set without `custom_root_fields`, Hasura auto-generates root operations prefixed by that name (e.g., `update_safetrust_reservations`, `update_safetrust_reservations_by_pk`). Webhook handlers and client mutations should either target these generated operation names or define explicit `custom_root_fields` mappings.
 
 ---
 
@@ -248,9 +246,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA safetrust TO safetr
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA safetrust TO safetrust_user;
 
 -- 3. Deterministic Default Privileges for Future Migrations
-ALTER DEFAULT PRIVILEGES IN SCHEMA safetrust
+ALTER DEFAULT PRIVILEGES FOR ROLE safetrust_admin IN SCHEMA safetrust
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO safetrust_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA safetrust
+ALTER DEFAULT PRIVILEGES FOR ROLE safetrust_admin IN SCHEMA safetrust
   GRANT USAGE, SELECT ON SEQUENCES TO safetrust_user;
 ```
 
@@ -261,14 +259,35 @@ Because `safetrust_user` is granted `USAGE` strictly on `SCHEMA safetrust`, it h
 
 ---
 
-<a id="elimination-of-graphql-custom-name-workarounds"></a>
-## 🚫 Elimination of GraphQL Custom Name Workarounds
+<a id="graphql-disambiguation--custom-root-field-architecture"></a>
+## 🚫 GraphQL Disambiguation & Custom Root Field Architecture
 
-In a unified or multi-tenant GraphQL API where tables share the `public` schema, identical table names (e.g., `reservations` in SafeTrust vs `reservations` in Hotel Industry) result in field name collisions in the auto-generated GraphQL schema.
+When multiple database sources or schemas are exposed through a single unified Hasura endpoint, tables that share identical names across tenants (such as `reservations` in `safetrust` and `reservations` in `hotel_industry`) require explicit naming disambiguation in the Hasura metadata.
 
-### Prior Workarounds vs Schema Namespacing:
-- **Prior Workaround**: Developers had to manually configure `custom_name` or `custom_root_fields` in Hasura metadata for every colliding entity (e.g., aliasing `public.reservations` to `safetrust_reservations`).
-- **Post-Migration Solution**: By segregating tables into `safetrust` and `hotel_industry` database sources or schemas, Hasura natively disambiguates root fields and relationship trees without requiring manual `custom_name` overrides.
+### Custom Name & Root Field Mapping:
+- **Disambiguation via `custom_name`**: In `metadata/tenants/safetrust/databases/tables/public_reservations.yaml`, `custom_name: safetrust_reservations` is defined (and `hotel_reservations` in Hotel Industry).
+- **Generated GraphQL Root Operations**: By default, Hasura derives queries and mutations from the configured `custom_name`:
+  - Query: `safetrust_reservations`, `safetrust_reservations_by_pk`, `safetrust_reservations_aggregate`
+  - Mutation: `insert_safetrust_reservations`, `update_safetrust_reservations`, `update_safetrust_reservations_by_pk`, `delete_safetrust_reservations`
+- **Reconciling Webhook Handlers & Consumers**: Handlers and webhook mutation queries should use the generated `update_safetrust_reservations` / `update_safetrust_reservations_by_pk` names, or explicitly define `custom_root_fields` in the metadata table configuration:
+
+```yaml
+table:
+  name: reservations
+  schema: safetrust
+configuration:
+  custom_name: safetrust_reservations
+  custom_root_fields:
+    select: safetrust_reservations
+    select_by_pk: safetrust_reservations_by_pk
+    select_aggregate: safetrust_reservations_aggregate
+    insert: insert_safetrust_reservations
+    insert_one: insert_safetrust_reservations_one
+    update: update_safetrust_reservations
+    update_by_pk: update_safetrust_reservations_by_pk
+    delete: delete_safetrust_reservations
+    delete_by_pk: delete_safetrust_reservations_by_pk
+```
 
 ---
 
@@ -286,9 +305,9 @@ flowchart TD
     D --> F{Metadata OK?}
     F -- Yes --> G[GraphQL smoke test<br/>safetrust_reservations limit 1]
     F -- No --> E2[❌ Check YAML files<br/>Verify schema: safetrust]
-    G --> H{Returns data?}
+    G --> H{No GraphQL errors<br/>in response?}
     H -- Yes --> OK([✅ Migration complete])
-    H -- No --> E3[❌ Check Hasura tracking<br/>Verify re-track ran]
+    H -- No --> E3[❌ Check Hasura tracking<br/>Verify schema & errors]
 
     style OK color:#00aa00
     style E1 color:#cc0000
@@ -351,8 +370,10 @@ Prior to executing the migration, capture a pre-migration metadata snapshot:
 # Step 0 — Export pre-migration metadata snapshot
 hasura metadata export \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
-  --output-dir metadata_backup
+  --admin-secret myadminsecretkey
+
+# Copy exported metadata directory to a backup location
+cp -r metadata metadata_backup
 ```
 
 ### Rollback Procedure
@@ -367,10 +388,10 @@ hasura migrate apply \
   --type down
 
 # Step 2 — Restore pre-migration metadata snapshot
+cp -r metadata_backup/* metadata/
 hasura metadata apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
-  --project metadata_backup
+  --admin-secret myadminsecretkey
 ```
 
 ---
