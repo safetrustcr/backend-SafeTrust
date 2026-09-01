@@ -24,6 +24,7 @@
   - [Reset the database](#reset-the-database)
   - [Rollback migrations](#rollback-migrations)
 - [🏗️ Metadata Architecture](#️-metadata-architecture)
+- [📚 Documentation](#-documentation)
 - [🛠️ Manual Commands (optional)](#️-manual-commands-optional)
 - [🥋🔬 Karate Tests](#-karate-tests)
 - [🤝 Contributing](#-contributing)
@@ -248,6 +249,16 @@ PARALLEL_DEPLOY=true bin/deploy_init \
   safetrust hotel_industry safetrust hotel_industry safetrust
 # record: tests/results/deploy_init_timings_parallel_N5.json
 ```
+
+---
+
+## 📚 Documentation
+
+In-depth guides live in [`docs/`](docs/README.md).
+
+| Document | What it covers |
+|---|---|
+| [SafeTrust Schema Migration Strategy](docs/migrations/safetrust-schema-migration.md) | Why SafeTrust tables moved from `public` to the `safetrust` schema, plus the deployment and rollback sequences |
 
 ---
 
