@@ -15,7 +15,7 @@ This document provides a comprehensive technical breakdown of the schema migrati
 - [Security & Access Control Architecture](#security--access-control-architecture)
 - [GraphQL Disambiguation & Custom Root Field Architecture](#graphql-disambiguation--custom-root-field-architecture)
 - [Deployment Sequence](#deployment-sequence)
-- [Deployment Commands](#deployment-commands)
+- [Deployment Commands & bin/start Mapping](#deployment-commands--binstart-mapping)
 - [Rollback Strategy & Pre-Migration Backup](#rollback-strategy--pre-migration-backup)
 - [Summary of Preserved Components](#summary-of-preserved-components)
 
@@ -211,17 +211,17 @@ table:
   schema: safetrust     # ← new
 ```
 
-### What YAML Filenames Change vs. What Stays the Same:
-- **Table Definition Filenames (Unchanged)**:
-  - Table-definition files (e.g. `metadata/tenants/safetrust/databases/tables/public_trustless_work_escrows.yaml`, `public_users.yaml`, etc.) retain their canonical file names in the repository to maintain stable file paths and ensure backward-compatible includes in `tables.yaml`.
-  - The internal content of each file updates its `table.schema` field from `public` to `safetrust`.
-- **Index and Build Paths**:
-  - `metadata/tenants/safetrust/databases/tables/tables.yaml` continues to include the YAML files via `!include public_<table_name>.yaml`.
-  - During deployment, `metadata/build-metadata.sh` merges tenant configurations into `metadata/build/safetrust/databases/databases.yaml`, producing the final metadata payload that Hasura applies to track `safetrust.<table_name>`.
-- **Relationships & Permissions (Preserved)**:
-  - Relationship names (`object_relationships` and `array_relationships`) retain identical names and join fields.
-  - Permission rules (`select_permissions`, `insert_permissions`, `update_permissions`, `delete_permissions`) and filter definitions remain unchanged.
-  - Custom column descriptions and comment annotations are preserved.
+### What Changes vs. What Stays the Same
+
+| Item | Changes? | Notes |
+|---|---|---|
+| `schema:` field in table YAML | ✅ Changes | `public` → `safetrust` |
+| `schema:` inside relationship targets | ✅ Changes | Both sides of every foreign key relationship |
+| YAML filenames (`public_users.yaml`) | ❌ Unchanged | The `public_` prefix is a file naming convention, not a schema reference |
+| `tables.yaml` include list | ❌ Unchanged | Lists canonical file paths, which do not change |
+| Table names inside YAML | ❌ Unchanged | `name: users` remains `users` |
+| PostGIS view entries | ❌ Unchanged | `geography_columns`, `geometry_columns`, and `spatial_ref_sys` remain in `public` |
+| GraphQL field names | ❌ Unchanged | Field names remain identical after Hasura re-tracks under `safetrust.*` |
 
 > [!IMPORTANT]
 > The spatial tables `public_geography_columns`, `public_geometry_columns`, and `public_spatial_ref_sys` were NOT moved by migration `1779300000001` and remain on `schema: public`.
@@ -327,8 +327,8 @@ flowchart TD
 
 ---
 
-<a id="deployment-commands"></a>
-## 💻 Deployment Commands
+<a id="deployment-commands--binstart-mapping"></a>
+## 💻 Deployment Commands & bin/start Mapping
 
 Execute the following sequential commands during migration deployment:
 
@@ -352,6 +352,16 @@ curl -X POST http://localhost:8080/v1/graphql \
   -H "Content-Type: application/json" \
   -d '{"query": "query { safetrust_reservations(limit: 1) { id } }"}'
 ```
+
+### Mapping to `bin/start`
+
+`bin/start safetrust hotel_industry` performs this sequence as part of full-stack container initialization. The commands above represent the manual, isolated workflow for targeting this migration specifically on a running instance:
+
+| Step above | `bin/start` automated equivalent |
+|---|---|
+| Step 1 — `migrate apply --version 1779300000001` | `hasura migrate apply --database-name <tenant>` (applies all pending versions) |
+| Step 2 — `metadata apply` | `metadata/setup-tenant.sh <tenant>` (build + deploy), followed by metadata reload |
+| Step 3 — smoke test | Verification executed post container bring-up |
 
 ---
 
@@ -382,7 +392,7 @@ hasura metadata export \
   --endpoint http://localhost:8080 \
   --admin-secret myadminsecretkey
 
-# Create snapshot backup (fail if metadata_backup already exists to avoid nested directory creation)
+# Create snapshot backup (fail if metadata_backup already exists to avoid overwrite)
 if [ -e metadata_backup ]; then
   echo "Error: metadata_backup already exists; aborting to prevent overwrite." >&2
   exit 1
@@ -410,6 +420,8 @@ hasura metadata apply \
   --endpoint http://localhost:8080 \
   --admin-secret myadminsecretkey
 ```
+
+`down.sql` mirrors `up.sql` statement for statement: every table and function moves back with `SET SCHEMA public`, `search_path` is reset to `public`, and the now-empty `safetrust` schema is dropped. Because the down path operates purely on system catalog metadata, the rollback preserves all data intact.
 
 ---
 
