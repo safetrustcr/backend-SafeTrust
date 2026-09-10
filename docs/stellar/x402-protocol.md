@@ -44,14 +44,37 @@ sequenceDiagram
 
     AG->>BE: POST /api/escrows/initialize\nX-Payment: x402 <base64-auth>
 
+    BE->>BE: validateX402Payment(...)
     BE->>FAC: POST /verify\n{ payload, amount, network }
     FAC-->>BE: { isValid: true, payer: GAGENT... }
 
-    BE-->>AG: 200 OK\n{ contractId: CAZT... }
+    BE->>BE: spawn in-memory settlement task
+    BE-->>AG: 200 OK\nrequest accepted; settlement pending
 
-    BE->>FAC: POST /settle (async)\nnon-blocking background
-    FAC->>SC: settle USDC on-chain
+    BE->>FAC: POST /settle (async)
+    alt Settlement confirmed
+        FAC->>SC: settle USDC on-chain
+        FAC-->>BE: success
+        Note over BE,AG: Only now may the payment be treated as settled
+    else Settlement fails
+        FAC-->>BE: error
+        BE->>BE: log failure only
+        Note over BE,AG: Booking success is not confirmed
+    end
 ```
+
+The current `validateX402Payment` implementation returns after `/verify`
+and starts `/settle` in a fire-and-forget task. Consequently, the HTTP 200
+response means the request passed verification and was accepted for
+processing; it is not proof of settlement and must not be reported as a
+confirmed, paid booking.
+
+The background task is in-memory and currently only logs settlement
+failures. It has no durable retry queue, idempotency record, or settlement
+reconciliation. Before this flow is production-ready, persist a pending
+settlement keyed by a stable payment identifier, retry it idempotently after
+transient failures, reconcile facilitator or on-chain status, and expose
+booking success only after that record becomes settled.
 
 ## Stellar vs EVM difference
 
@@ -94,17 +117,18 @@ flowchart TD
 
 ## Human user protection
 
-`X402_ENABLED=false` is the default. When disabled:
+`X402_ENABLED=false` is the default. On the escrow initialization route:
 
-- All existing escrow endpoints behave identically
-- No `X-Payment` header is required or checked
-- The `x402-processor` Rust crate is never loaded
-- Zero impact on Freighter wallet flows
+- A request with any explicit x402 header (`X-Payment`,
+  `X-Payment-Protocol`, or `X-Payment-Required`) still enters the x402 flow.
+- A request without an explicit x402 header enters the TrustlessWork callback
+  flow and must pass its signature check.
 
-When `X402_ENABLED=true`, endpoints without a valid
-`X-Payment` header return `402 Payment Required`.
-Requests with a valid Firebase auth token are exempt —
-human users are never affected.
+When `X402_ENABLED=true`, a request bypasses x402 only when it includes
+`X-TrustlessWork-Signature` and no explicit x402 header. Without either, the
+route returns `402 Payment Required`; with an explicit x402 header, it validates
+that payment even if a TrustlessWork signature is also present. Firebase
+authentication does not create an exemption on this route.
 
 ## Rust crate wiring
 
@@ -119,8 +143,8 @@ flowchart LR
 ## Environment variables
 
 ```bash
-# Enable x402 payment requirement on escrow endpoints
-# Default: false — existing human user flows unaffected
+# Enable x402 payment requirement on the escrow initialization route
+# TrustlessWork callbacks can bypass it with their signature header
 X402_ENABLED=false
 
 # x402 facilitator endpoint

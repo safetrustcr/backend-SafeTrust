@@ -41,13 +41,13 @@ flowchart TD
     GU --> FE
     HO --> FE
     AI -->|X-Payment header| WH
-    FE --> FW
-    FE --> WH
-    FW -->|sign XDR| SC
+    FE -->|unsigned XDR| FW
+    FW -->|signed XDR| FE
+    FE -->|submit signed XDR| WH
     WH --> RC
     WH --> HG
-    WH --> TW
-    TW --> SC
+    WH -->|signed XDR| TW
+    TW -->|submit transaction| SC
     SC --> USDC
     HG --> PG
     PG --> ST
