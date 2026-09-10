@@ -43,10 +43,10 @@ flowchart TD
     AI -->|X-Payment header| WH
     FE -->|unsigned XDR| FW
     FW -->|signed XDR| FE
-    FE -->|submit signed XDR| WH
+    FE -->|create and submit XDR| TW
+    TW -->|HMAC-signed webhook callbacks| WH
     WH --> RC
     WH --> HG
-    WH -->|signed XDR| TW
     TW -->|submit transaction| SC
     SC --> USDC
     HG --> PG
@@ -54,58 +54,74 @@ flowchart TD
     PG --> HI
 ```
 
-## Two-phase XDR signing
+## Frontend-managed XDR submission
 
 Every escrow operation on Stellar requires two steps:
 
-1. **Backend returns unsigned XDR** — SafeTrust calls TrustlessWork
+1. **Frontend receives an unsigned XDR** — the frontend calls TrustlessWork,
    which builds the Soroban transaction but does not sign it
 2. **Frontend signs with Freighter** — the guest or host wallet
-   signs the XDR locally, then submits via `/helper/send-transaction`
+   signs the XDR locally, then the frontend submits it directly to
+   TrustlessWork via `/helper/send-transaction`
 
-This means SafeTrust never holds private keys.
-The platform is non-custodial by design.
+SafeTrust's backend does not create, sign, or submit XDR, and it does not
+expose `/api/escrows/send-transaction`. It receives the resulting escrow state
+through separate HMAC-signed TrustlessWork webhook callbacks. This means
+SafeTrust never holds private keys; the platform is non-custodial by design.
 
 ```mermaid
 sequenceDiagram
     participant FE as Frontend
-    participant BE as Webhook Backend
     participant TW as TrustlessWork API
     participant FW as Freighter Wallet
     participant SC as Soroban Contract
 
-    FE->>BE: POST /api/escrows/initialize
-    BE->>TW: POST /escrow/single-release/initialize-escrow
-    TW-->>BE: { unsignedXDR: "AAAA..." }
-    BE-->>FE: { unsignedXDR: "AAAA..." }
+    FE->>TW: POST /escrow/single-release/initialize-escrow
+    TW-->>FE: { unsignedXDR: "AAAA..." }
 
     FE->>FW: signTransaction(unsignedXDR)
     FW-->>FE: { signedXDR: "BBBB..." }
 
-    FE->>BE: POST /api/escrows/send-transaction
-    BE->>TW: POST /helper/send-transaction
+    FE->>TW: POST /helper/send-transaction (signedXDR)
     TW->>SC: submit to Stellar network
     SC-->>TW: { contractId: "CAZT..." }
-    TW-->>BE: { contractId: "CAZT..." }
-    BE-->>FE: { contractId: "CAZT..." }
+    TW-->>FE: { contractId: "CAZT..." }
+```
+
+```mermaid
+sequenceDiagram
+    participant TW as TrustlessWork API
+    participant WH as Webhook Backend
+    participant HG as Hasura GraphQL
+    participant PG as PostgreSQL
+
+    TW->>WH: POST /api/escrows/* (HMAC-signed callback)
+    WH->>WH: Verify signature and timestamp
+    WH->>HG: Persist escrow state / booking updates
+    HG->>PG: Execute mutation
+    PG-->>HG: Updated records
+    HG-->>WH: Success
+    WH-->>TW: 200 { received: true }
 ```
 
 ## Request flow for a booking
 
 ```mermaid
 flowchart TD
-    A([Guest clicks Book]) --> B[Frontend calls\nPOST /api/escrows/initialize]
-    B --> C[Backend calls TrustlessWork\nPOST /escrow/single-release/initialize-escrow]
+    A([Guest clicks Book]) --> B[Frontend starts escrow]
+    B --> C[Frontend calls TrustlessWork\nPOST /escrow/single-release/initialize-escrow]
     C --> D[TrustlessWork returns\nunsigned XDR]
-    D --> E[Backend returns\nunsigned XDR to frontend]
-    E --> F[Frontend passes XDR\nto Freighter wallet]
+    D --> F[Frontend passes XDR\nto Freighter wallet]
     F --> G[Freighter signs\nguest approves in browser]
-    G --> H[Frontend calls\nPOST /api/escrows/send-transaction]
-    H --> I[Backend submits\nsigned XDR to Stellar]
-    I --> J([Soroban contract deployed\nUSDC locked])
+    G --> H[Frontend calls TrustlessWork\nPOST /helper/send-transaction]
+    H --> J([Soroban contract deployed\nUSDC locked])
 
     style J color:#00aa00
 ```
+
+After TrustlessWork processes the transaction, it sends an HMAC-signed callback
+to the webhook backend. The backend verifies the callback and mirrors the
+escrow and booking state through Hasura; it never receives or submits XDR.
 
 ## Repository structure
 
