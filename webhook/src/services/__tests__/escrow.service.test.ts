@@ -9,8 +9,8 @@ jest.mock('../../lib/zk-verifier', () => ({
   verifyProofOfFunds: jest.fn(),
 }));
 
-// Mock amountToStroops from initialize.handler to avoid native addon chain
-jest.mock('../../routes/escrows/initialize.handler', () => ({
+// Mock amountToStroops from the shared lib to avoid any native addon chain
+jest.mock('../../lib/stellar-amounts', () => ({
   amountToStroops: jest.fn((amount: unknown) => {
     // Minimal real-logic passthrough for the most common test values
     if (amount === 100) return '1000000000';
@@ -93,6 +93,7 @@ describe('validateEscrowInitializationPayload', () => {
   });
 
   it('throws EscrowValidationError with 400 status for missing fields', () => {
+    expect.assertions(2);
     try {
       validateEscrowInitializationPayload({});
     } catch (err) {

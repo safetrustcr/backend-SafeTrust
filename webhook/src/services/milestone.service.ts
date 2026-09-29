@@ -99,6 +99,19 @@ export async function approveMilestoneAndUpdateReservation(
 ): Promise<void> {
   const approvedAt = new Date().toISOString();
 
+  // Resolve valid prior states from the Rust state machine before any DB
+  // write, so addon-loading or state-evaluation failures are surfaced early
+  // and never occur mid-transaction.
+  // The addon is lazy-loaded so module import works in test environments
+  // where the Rust binary has not been compiled.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
+    getValidPriorStates: (to: string, event: string) => string;
+  };
+  const validStates: string[] = JSON.parse(
+    getValidPriorStates('milestone_approved', 'milestone.approved') as string
+  );
+
   // 1 — Update escrow_milestones
   const mutationMilestone = `
     mutation ApproveMilestone(
@@ -132,18 +145,8 @@ export async function approveMilestoneAndUpdateReservation(
     throw new MilestoneNotFoundError('Milestone not found');
   }
 
-  // 2 — Update trustless_work_escrows using the Rust state machine to get
-  //     the authoritative set of valid prior states.
-  //     The addon is lazy-loaded so module import works in test environments
-  //     where the Rust binary has not been compiled.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
-    getValidPriorStates: (to: string, event: string) => string;
-  };
-  const validStates: string[] = JSON.parse(
-    getValidPriorStates('milestone_approved', 'milestone.approved') as string
-  );
-
+  // 2 — Update trustless_work_escrows using the valid prior states resolved
+  //     above (before any DB write).
   const mutationEscrow = `
     mutation ApproveEscrow($escrowId: uuid!, $approvedAt: timestamptz!, $validStates: [String!]!) {
       update_trustless_work_escrows(
