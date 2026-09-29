@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { badRequest, duplicate, ok, serverError, serviceUnavailable } from '../../utils/response'
 import { InitializeEscrowPayload } from '@safetrust/types';
 import {
   hasuraRequest,
@@ -72,7 +73,7 @@ export const initializeEscrowHandler = async (
 
   // 1 — Validate required fields
   if (!contract_id || !marker || !approver || !releaser || !amount || !escrow_type) {
-    return res.status(400).json({
+    return badRequest(res, {
       error: 'Missing required fields: contract_id, marker, approver, releaser, amount, escrow_type'
     });
   }
@@ -80,7 +81,7 @@ export const initializeEscrowHandler = async (
   // 2 — Validate escrow_type matches migration CHECK constraint
   const validTypes = ['single_release', 'multi_release'];
   if (!validTypes.includes(escrow_type)) {
-    return res.status(400).json({
+    return badRequest(res, {
       error: `escrow_type must be one of: ${validTypes.join(', ')}`
     });
   }
@@ -102,7 +103,7 @@ export const initializeEscrowHandler = async (
       typeof zk_balance_commitment === 'string' && zk_balance_commitment.length > 0;
 
     if (!hasCompleteBundle) {
-      return res.status(400).json({
+      return badRequest(res, {
         error: 'zk_proof, zk_verification_key, zk_threshold_stroops, and zk_balance_commitment must be supplied together'
       });
     }
@@ -110,7 +111,7 @@ export const initializeEscrowHandler = async (
     const expectedThreshold = amountToStroops(amount);
     const suppliedThreshold = normalizeU64(zk_threshold_stroops);
     if (!expectedThreshold || !suppliedThreshold || suppliedThreshold !== expectedThreshold) {
-      return res.status(400).json({ error: 'Invalid ZK proof of funds' });
+      return badRequest(res, { error: 'Invalid ZK proof of funds' });
     }
 
     try {
@@ -121,12 +122,12 @@ export const initializeEscrowHandler = async (
         zk_balance_commitment
       );
       if (!isValidProof) {
-        return res.status(400).json({ error: 'Invalid ZK proof of funds' });
+        return badRequest(res, { error: 'Invalid ZK proof of funds' });
       }
     } catch (error) {
       const err = error as Error;
       console.error('[escrow/initialize] ZK verifier unavailable:', err.message);
-      return res.status(503).json({ error: 'ZK proof verification is unavailable' });
+      return serviceUnavailable(res, { error: 'ZK proof verification is unavailable' });
     }
   }
 
@@ -151,7 +152,7 @@ export const initializeEscrowHandler = async (
 
     if (isDuplicate) {
       await markWebhookEventProcessed(eventId);
-      return res.status(200).json({ received: true });
+      return duplicate(res, eventId);
     }
 
     // 5 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
@@ -180,7 +181,7 @@ export const initializeEscrowHandler = async (
 
     const escrow = data.insert_trustless_work_escrows_one;
     if (!escrow) {
-      return res.status(500).json({ error: 'Failed to insert escrow record' });
+      return serverError(res, { error: 'Failed to insert escrow record' });
     }
 
     // 6 — Link escrow to reservation AFTER escrow is confirmed to exist
@@ -212,14 +213,14 @@ export const initializeEscrowHandler = async (
 
     console.log(`[escrow/initialize] ✅ Escrow persisted — contract_id: ${contract_id}, id: ${escrow.id}`);
     await markWebhookEventProcessed(eventId);
-    return res.status(200).json({ received: true });
+    return ok(res);
 
   } catch (error) {
     const err = error as Error & { details?: unknown };
     console.error('[escrow/initialize] ❌ Error:', err.details || err.message);
     if (err.details) {
-      return res.status(500).json({ error: 'Failed to persist escrow record', details: err.details });
+      return serverError(res, { error: 'Failed to persist escrow record', details: err.details });
     }
-    return res.status(500).json({ error: 'Internal server error', details: err.message });
+    return serverError(res, { error: 'Internal server error', details: err.message });
   }
 };

@@ -47,6 +47,7 @@ describe('approveMilestoneHandler', () => {
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({
+      success: false,
       error: 'Missing required fields: contractId, milestoneId, approver, flag',
     });
   });
@@ -66,6 +67,7 @@ describe('approveMilestoneHandler', () => {
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({
+      success: false,
       error: 'flag must be true to approve a milestone',
     });
   });
@@ -133,7 +135,7 @@ describe('approveMilestoneHandler', () => {
     expect(hasuraRequest).toHaveBeenCalledTimes(4);
     expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-1');
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith({ received: true });
+    expect(res.json).toHaveBeenCalledWith({ success: true });
   });
 
   it('returns 200 without re-processing duplicate milestone approvals', async () => {
@@ -157,6 +159,11 @@ describe('approveMilestoneHandler', () => {
     expect(hasuraRequest).not.toHaveBeenCalled();
     expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-duplicate');
     expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      duplicate: true,
+      eventId: 'event-duplicate',
+    });
   });
 
   it('returns 404 when the escrow is not found', async () => {
@@ -178,6 +185,7 @@ describe('approveMilestoneHandler', () => {
 
     expect(res.status).toHaveBeenCalledWith(404);
     expect(res.json).toHaveBeenCalledWith({
+      success: false,
       error: 'Escrow not found',
     });
     expect(markWebhookEventProcessed).not.toHaveBeenCalled();
@@ -206,6 +214,7 @@ describe('approveMilestoneHandler', () => {
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({
+      success: false,
       error: 'Failed to update milestone approval',
     });
     expect(markWebhookEventProcessed).not.toHaveBeenCalled();

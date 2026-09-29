@@ -14,7 +14,7 @@ Feature: POST /api/escrows/resolve-dispute — TrustlessWork dispute resolution 
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
+    And match response.success == true
     * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN 1 ELSE 0 END) AS balance_is_zero FROM safetrust.trustless_work_escrows WHERE contract_id = 'escrow-disputed-001'")
     And match rows[0].status == 'resolved'
     And match rows[0].balance_is_zero == '1'

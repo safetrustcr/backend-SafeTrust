@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
 import { ApproveMilestonePayload } from '@safetrust/types';
 import {
   hasuraRequest,
@@ -21,13 +22,13 @@ export async function approveMilestoneHandler(
   const { contractId, milestoneId, approver, flag } = req.body || {};
 
   if (!contractId || !milestoneId || !approver || flag === undefined) {
-    return res.status(400).json({
+    return badRequest(res, {
       error: 'Missing required fields: contractId, milestoneId, approver, flag',
     });
   }
 
   if (flag !== true) {
-    return res.status(400).json({
+    return badRequest(res, {
       error: 'flag must be true to approve a milestone',
     });
   }
@@ -43,7 +44,7 @@ export async function approveMilestoneHandler(
 
     if (isDuplicate) {
       await markWebhookEventProcessed(eventId);
-      return res.status(200).json({ received: true });
+      return duplicate(res, eventId);
     }
 
     // 1 — Look up escrow UUID by contractId
@@ -61,7 +62,7 @@ export async function approveMilestoneHandler(
     const escrowId = lookupData.trustless_work_escrows?.[0]?.id;
 
     if (!escrowId) {
-      return res.status(404).json({ error: 'Escrow not found' });
+      return notFound(res, { error: 'Escrow not found' });
     }
 
     // 2 — Update escrow_milestones
@@ -99,7 +100,7 @@ export async function approveMilestoneHandler(
     });
 
     if (!milestoneResult.update_escrow_milestones?.affected_rows) {
-      return res.status(404).json({ error: 'Milestone not found' });
+      return notFound(res, { error: 'Milestone not found' });
     }
 
     // 3 — Update trustless_work_escrows
@@ -135,7 +136,7 @@ export async function approveMilestoneHandler(
     });
 
     if (!escrowResult.update_trustless_work_escrows?.affected_rows) {
-      return res.status(404).json({ error: 'Escrow not found' });
+      return notFound(res, { error: 'Escrow not found' });
     }
 
     // 4 — Mirror status to public.reservations
@@ -162,11 +163,11 @@ export async function approveMilestoneHandler(
     console.log(
       `[escrow/approve-milestone] ✅ Milestone approved — contractId: ${contractId}, milestoneId: ${milestoneId}`
     );
-    return res.status(200).json({ received: true });
+    return ok(res);
 
   } catch (error) {
     const err = error as Error & { details?: unknown };
     console.error('[escrow/approve-milestone] ❌ failed:', err.details || err.message);
-    return res.status(500).json({ error: 'Failed to update milestone approval' });
+    return serverError(res, { error: 'Failed to update milestone approval' });
   }
 }
