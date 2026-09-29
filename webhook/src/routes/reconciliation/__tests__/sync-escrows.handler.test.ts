@@ -46,13 +46,15 @@ describe('syncEscrowsHandler', () => {
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
+      {
         success: true,
-        totalEscrows: 0,
-        sorobanEnabled: false,
-        sorobanDrift: 0,
-        sorobanCorrected: 0,
-      })
+        data: expect.objectContaining({
+          totalEscrows: 0,
+          sorobanEnabled: false,
+          sorobanDrift: 0,
+          sorobanCorrected: 0,
+        }),
+      }
     )
   })
 
@@ -87,14 +89,16 @@ describe('syncEscrowsHandler', () => {
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
+      {
         success: true,
-        totalEscrows: 1,
-        updated: 1,
-        sorobanEnabled: false,
-        sorobanDrift: 0,
-        sorobanCorrected: 0,
-      })
+        data: expect.objectContaining({
+          totalEscrows: 1,
+          updated: 1,
+          sorobanEnabled: false,
+          sorobanDrift: 0,
+          sorobanCorrected: 0,
+        }),
+      }
     )
   })
 

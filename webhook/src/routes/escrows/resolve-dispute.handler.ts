@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
 import { ResolveDisputePayload } from '@safetrust/types';
 import {
   hasuraRequest,
@@ -21,7 +22,7 @@ export const resolveDisputeHandler = async (
   const { contractId, resolver, resolutionNote } = req.body;
 
   if (!contractId || !resolver) {
-    return res.status(400).json({
+    return badRequest(res, {
       error: 'Missing required fields: contractId, resolver'
     });
   }
@@ -36,7 +37,7 @@ export const resolveDisputeHandler = async (
 
     if (isDuplicate) {
       await markWebhookEventProcessed(eventId);
-      return res.status(200).json({ received: true });
+      return duplicate(res, eventId);
     }
 
     // 2 — Update trustless_work_escrows
@@ -71,7 +72,7 @@ export const resolveDisputeHandler = async (
     const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {
-      return res.status(404).json({
+      return notFound(res, {
         error: `Escrow not found for contractId: ${contractId}`
       });
     }
@@ -121,14 +122,14 @@ export const resolveDisputeHandler = async (
     await markWebhookEventProcessed(eventId);
 
     console.log(`[escrow/resolve-dispute] ✅ Dispute resolved — contractId: ${contractId}, resolver: ${resolver}`);
-    return res.status(200).json({ received: true });
+    return ok(res);
 
   } catch (error) {
     const err = error as Error & { details?: unknown };
     console.error('[escrow/resolve-dispute] ❌ error:', err.details || err.message);
     if (err.details) {
-      return res.status(500).json({ error: 'Failed to update escrow status', details: err.details });
+      return serverError(res, { error: 'Failed to update escrow status', details: err.details });
     }
-    return res.status(500).json({ error: 'Internal server error', details: err.message });
+    return serverError(res, { error: 'Internal server error', details: err.message });
   }
 };

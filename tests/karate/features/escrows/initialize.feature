@@ -25,7 +25,7 @@ Feature: POST /api/escrows/initialize — TrustlessWork initialize callback
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
+    And match response.success == true
     * def rows = db.query("SELECT status, amount, escrow_type, asset_code FROM safetrust.trustless_work_escrows WHERE contract_id = 'STELLAR_CONTRACT_TEST_001'")
     And match rows[0].status == 'created'
     And assert rows[0].amount == '2500' || rows[0].amount == '2500.0000000'

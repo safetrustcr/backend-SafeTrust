@@ -7,6 +7,7 @@
  */
 
 import { Request, Response } from 'express'
+import { ok, serverError } from '../../utils/response'
 import {
   fetchEscrowContractIds,
   syncEscrowsWithIndexer,
@@ -70,11 +71,11 @@ export const syncEscrowsHandler = async (
       console.log(`   Errors            : ${summary.errors}`)
     }
 
-    return res.status(200).json(summary)
+    return ok(res, summary)
   } catch (fatalError) {
     const fErr = fatalError as Error
     console.error('[reconciliation] ❌ Fatal error:', fErr.message)
-    return res.status(500).json({
+    return serverError(res, {
       success: false,
       error: 'Reconciliation failed',
       details: fErr.message,

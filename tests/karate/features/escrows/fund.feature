@@ -17,7 +17,7 @@ Feature: POST /api/escrows/fund — TrustlessWork fund confirmation callback
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
+    And match response.success == true
     * def rows = db.query("SELECT status, balance FROM safetrust.trustless_work_escrows WHERE contract_id = 'escrow-created-001'")
     And match rows[0].status == 'funded'
     And match rows[0].balance == '2500.0000000'
@@ -31,7 +31,7 @@ Feature: POST /api/escrows/fund — TrustlessWork fund confirmation callback
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
+    And match response.success == true
     * def afterFirst = db.query("SELECT status, balance, updated_at FROM safetrust.trustless_work_escrows WHERE contract_id = 'escrow-created-001'")
     And match afterFirst[0].status == 'funded'
     And match afterFirst[0].balance == '2500.0000000'
@@ -41,7 +41,7 @@ Feature: POST /api/escrows/fund — TrustlessWork fund confirmation callback
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
+    And match response.success == true
     * def afterSecond = db.query("SELECT status, balance, updated_at FROM safetrust.trustless_work_escrows WHERE contract_id = 'escrow-created-001'")
     And match afterSecond[0].status == 'funded'
     And match afterSecond[0].balance == '2500.0000000'

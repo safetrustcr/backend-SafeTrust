@@ -77,7 +77,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
+    And match response.success == true
     * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero, amount FROM safetrust.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match rows[0].status == 'created'
     And match rows[0].balance_is_zero == '1'
@@ -93,7 +93,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
+    And match response.success == true
     * def rows = db.query("SELECT status, balance FROM safetrust.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match rows[0].status == 'funded'
     And match rows[0].balance == '1200.0000000'
@@ -102,7 +102,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
   Scenario: Step 2b — funding an already-funded escrow returns 404 (status guard)
     # IMPORTANT: webhook idempotency short-circuits on (contract_id, event_type)
     # before the Hasura status filter runs. A second identical fund callback would
-    # return 200 { received: true } without testing the status guard. Clear the
+    # return 200 { success: true } without testing the status guard. Clear the
     # processed escrow.funded event so this request exercises the mutation path.
     * db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id = '" + lifecycleContractId + "' AND event_type = 'escrow.funded'")
     * def body = { "contractId": "#(lifecycleContractId)", "signer": "#(approver)", "amount": 1200.00 }
@@ -140,7 +140,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
+    And match response.success == true
     * def milestone = db.query("SELECT status, approved_by FROM safetrust.escrow_milestones WHERE milestone_id = 'check_in' AND escrow_id = '" + milestoneEscrowId + "'")
     And match milestone[0].status == 'approved'
     And match milestone[0].approved_by == approver
@@ -159,7 +159,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
+    And match response.success == true
     * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero FROM safetrust.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match rows[0].status == 'completed'
     And match rows[0].balance_is_zero == '1'

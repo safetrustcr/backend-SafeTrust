@@ -16,7 +16,7 @@ Feature: POST /api/escrows/approve-milestone — TrustlessWork milestone approva
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
+    And match response.success == true
     * def milestone = db.query("SELECT status, approved_by FROM safetrust.escrow_milestones WHERE milestone_id = 'check_in'")
     And match milestone[0].status == 'approved'
     And match milestone[0].approved_by == 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z'

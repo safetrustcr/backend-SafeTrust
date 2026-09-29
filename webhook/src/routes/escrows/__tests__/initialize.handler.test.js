@@ -108,7 +108,7 @@ describe('initializeEscrowHandler ZK verification', () => {
     }), res);
 
     expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid ZK proof of funds' });
+    expect(res.json).toHaveBeenCalledWith({ success: false, error: 'Invalid ZK proof of funds' });
     expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
     expect(hasuraRequest).not.toHaveBeenCalled();
   });
@@ -124,7 +124,7 @@ describe('initializeEscrowHandler ZK verification', () => {
 
     expect(verifyProofOfFunds).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid ZK proof of funds' });
+    expect(res.json).toHaveBeenCalledWith({ success: false, error: 'Invalid ZK proof of funds' });
     expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
     expect(hasuraRequest).not.toHaveBeenCalled();
   });
