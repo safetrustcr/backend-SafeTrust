@@ -2,10 +2,15 @@ import { Request, Response } from 'express';
 import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
 import { DisputeEscrowPayload } from '@safetrust/types';
 import {
-  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} from '../../services/hasura';
+} from '../../repositories/webhook-event.repository';
+import {
+  disputeEscrow,
+} from '../../repositories/escrow.repository';
+import {
+  mirrorReservationStatus,
+} from '../../repositories/reservation.repository';
 
 // Compile-time SafeTrust escrow state machine (Neon native addon).
 // Replaces hardcoded status strings with the authoritative transition table.
@@ -47,59 +52,22 @@ export const disputeEscrowHandler = async (
     }
 
     // 2 — Update trustless_work_escrows
-    // Valid prior states are driven by the Rust state machine, enforcing the
-    // legal from-states for a dispute (funded | active | milestone_approved).
     const validStates: string[] = JSON.parse(
       getValidPriorStates('disputed', 'dispute.raised') as string
     );
 
-    const mutation = `
-      mutation DisputeEscrow($contractId: String!, $validStates: [String!]!) {
-        update_trustless_work_escrows(
-          where: {
-            contractId: { _eq: $contractId }
-            status: { _in: $validStates }
-          }
-          _set: {
-            status: "disputed"
-          }
-        ) {
-          returning { id contractId status }
-        }
-      }
-    `;
+    const updated = await disputeEscrow(contractId, validStates);
 
-    const data = await hasuraRequest<{
-      update_trustless_work_escrows?: {
-        returning: Array<{ id: string; contractId: string; status: string }>;
-      };
-    }>(mutation, { contractId, validStates });
-    const updated = data.update_trustless_work_escrows?.returning;
-
-    if (!updated || !updated.length) {
+    if (!updated) {
       return notFound(res, {
         error: `Escrow not found for contractId: ${contractId}`
       });
     }
 
-    const escrowId = updated[0].id;
+    const escrowId = updated.id;
 
     // 3 — Mirror status to public.reservations
-    const mirrorMutation = `
-      mutation MirrorDisputedToReservation($escrowId: uuid!) {
-        update_reservations(
-          where: { escrowId: { _eq: $escrowId } }
-          _set: {
-            status: "disputed"
-            updatedAt: "now()"
-          }
-        ) {
-          returning { id status }
-        }
-      }
-    `;
-
-    await hasuraRequest(mirrorMutation, { escrowId });
+    await mirrorReservationStatus(escrowId, 'disputed');
 
     await markWebhookEventProcessed(eventId);
 

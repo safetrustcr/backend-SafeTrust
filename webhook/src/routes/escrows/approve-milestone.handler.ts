@@ -2,10 +2,17 @@ import { Request, Response } from 'express';
 import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
 import { ApproveMilestonePayload } from '@safetrust/types';
 import {
-  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} from '../../services/hasura';
+} from '../../repositories/webhook-event.repository';
+import {
+  getEscrowByContractId,
+  approveMilestone,
+  approveEscrowStatus,
+} from '../../repositories/escrow.repository';
+import {
+  mirrorReservationStatus,
+} from '../../repositories/reservation.repository';
 
 // Compile-time SafeTrust escrow state machine (Neon native addon).
 // Replaces hardcoded status strings with the authoritative transition table.
@@ -48,115 +55,43 @@ export async function approveMilestoneHandler(
     }
 
     // 1 — Look up escrow UUID by contractId
-    const lookupQuery = `
-      query GetEscrowId($contractId: String!) {
-        trustless_work_escrows(where: { contractId: { _eq: $contractId } }) {
-          id
-        }
-      }
-    `;
-
-    const lookupData = await hasuraRequest<{
-      trustless_work_escrows?: Array<{ id: string }>;
-    }>(lookupQuery, { contractId });
-    const escrowId = lookupData.trustless_work_escrows?.[0]?.id;
+    const escrow = await getEscrowByContractId(contractId);
+    const escrowId = escrow?.id;
 
     if (!escrowId) {
       return notFound(res, { error: 'Escrow not found' });
     }
 
     // 2 — Update escrow_milestones
-    const mutationMilestone = `
-      mutation ApproveMilestone(
-        $escrowId: uuid!
-        $milestoneId: String!
-        $approver: String!
-        $approvedAt: timestamptz!
-      ) {
-        update_escrow_milestones(
-          where: {
-            escrowId: { _eq: $escrowId }
-            milestoneId: { _eq: $milestoneId }
-          }
-          _set: {
-            status: "approved"
-            approvedBy: $approver
-            approvedAt: $approvedAt
-            updatedAt: $approvedAt
-          }
-        ) {
-          affected_rows
-        }
-      }
-    `;
-
-    const milestoneResult = await hasuraRequest<{
-      update_escrow_milestones?: { affected_rows: number };
-    }>(mutationMilestone, {
+    const milestoneUpdated = await approveMilestone(
       escrowId,
       milestoneId,
       approver,
-      approvedAt,
-    });
+      approvedAt
+    );
 
-    if (!milestoneResult.update_escrow_milestones?.affected_rows) {
+    if (!milestoneUpdated) {
       return notFound(res, { error: 'Milestone not found' });
     }
 
     // 3 — Update trustless_work_escrows
-    // Valid prior states are driven by the Rust state machine, enforcing the
-    // legal from-states for milestone approval (active | funded).
     const validStates: string[] = JSON.parse(
       getValidPriorStates('milestone_approved', 'milestone.approved') as string
     );
 
-    const mutationEscrow = `
-      mutation ApproveEscrow($escrowId: uuid!, $approvedAt: timestamptz!, $validStates: [String!]!) {
-        update_trustless_work_escrows(
-          where: {
-            id: { _eq: $escrowId }
-            status: { _in: $validStates }
-          }
-          _set: {
-            status: "milestone_approved"
-            updatedAt: $approvedAt
-          }
-        ) {
-          affected_rows
-        }
-      }
-    `;
-
-    const escrowResult = await hasuraRequest<{
-      update_trustless_work_escrows?: { affected_rows: number };
-    }>(mutationEscrow, {
+    const escrowUpdated = await approveEscrowStatus(
       escrowId,
       approvedAt,
-      validStates,
-    });
+      validStates
+    );
 
-    if (!escrowResult.update_trustless_work_escrows?.affected_rows) {
+    if (!escrowUpdated) {
       return notFound(res, { error: 'Escrow not found' });
     }
 
     // 4 — Mirror status to public.reservations
     const reservationStatus = milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
-
-    const mirrorMutation = `
-      mutation MirrorMilestoneToReservation($escrowId: uuid!, $status: String!) {
-        update_reservations(
-          where: { escrowId: { _eq: $escrowId } }
-          _set: {
-            status: $status
-            updatedAt: "now()"
-          }
-        ) {
-          returning { id status }
-        }
-      }
-    `;
-
-    await hasuraRequest(mirrorMutation, { escrowId, status: reservationStatus });
+    await mirrorReservationStatus(escrowId, reservationStatus);
 
     await markWebhookEventProcessed(eventId);
 

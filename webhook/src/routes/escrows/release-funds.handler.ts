@@ -2,10 +2,15 @@ import { Request, Response } from 'express';
 import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
 import { ReleaseFundsPayload } from '@safetrust/types';
 import {
-  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} from '../../services/hasura';
+} from '../../repositories/webhook-event.repository';
+import {
+  releaseFunds,
+} from '../../repositories/escrow.repository';
+import {
+  mirrorReservationStatus,
+} from '../../repositories/reservation.repository';
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
@@ -38,51 +43,18 @@ export const releaseFundsHandler = async (
     }
 
     // 2 — Update trustless_work_escrows
-    const mutation = `
-      mutation ReleaseFunds($contractId: String!) {
-        update_trustless_work_escrows(
-          where: { contractId: { _eq: $contractId } }
-          _set: {
-            status: "completed"
-            balance: 0
-          }
-        ) {
-          returning { id contractId status balance }
-        }
-      }
-    `;
+    const updated = await releaseFunds(contractId);
 
-    const data = await hasuraRequest<{
-      update_trustless_work_escrows?: {
-        returning: Array<{ id: string; contractId: string; status: string; balance: number }>;
-      };
-    }>(mutation, { contractId });
-    const updated = data.update_trustless_work_escrows?.returning;
-
-    if (!updated || !updated.length) {
+    if (!updated) {
       return notFound(res, {
         error: `Escrow not found for contractId: ${contractId}`
       });
     }
 
-    const escrowId = updated[0].id;
+    const escrowId = updated.id;
 
     // 3 — Mirror status to public.reservations
-    const mirrorMutation = `
-      mutation MirrorCompletedToReservation($escrowId: uuid!) {
-        update_reservations(
-          where: { escrowId: { _eq: $escrowId } }
-          _set: {
-            status: "completed"
-            updatedAt: "now()"
-          }
-        ) {
-          returning { id status }
-        }
-      }
-    `;
-
-    await hasuraRequest(mirrorMutation, { escrowId });
+    await mirrorReservationStatus(escrowId, 'completed');
 
     // 4 — Notify hotel conversation (best-effort, never fail the response)
     await notifyHotelEscrowConversation({
