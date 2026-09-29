@@ -1,6 +1,6 @@
 import { InitializeEscrowPayload } from '@safetrust/types';
 import { hasuraRequest } from './hasura';
-import { amountToStroops } from '../routes/escrows/initialize.handler';
+import { amountToStroops } from '../lib/stellar-amounts';
 import { verifyProofOfFunds } from '../lib/zk-verifier';
 
 // ── Types ──────────────────────────────────────────────────────────────────────

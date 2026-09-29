@@ -13,32 +13,9 @@ import {
   ZkVerifierUnavailableError,
 } from '../../services/escrow.service';
 
-const STROOPS_PER_UNIT = 10_000_000n;
-const U64_MAX = 18_446_744_073_709_551_615n;
-
-/** Convert a positive decimal asset amount to an exact u64 stroop string. */
-export function amountToStroops(amount: unknown): string | null {
-  if (typeof amount !== 'string' && typeof amount !== 'number') return null;
-  if (typeof amount === 'number') {
-    const scaled = amount * Number(STROOPS_PER_UNIT);
-    if (!Number.isSafeInteger(scaled) || scaled <= 0) return null;
-    return BigInt(scaled).toString();
-  }
-
-  const match = /^(0|[1-9]\d*)(?:\.(\d+))?$/.exec(amount);
-  if (!match) return null;
-
-  const [, whole, fraction = ''] = match;
-  if (whole.length > 13) return null;
-  const excessFraction = fraction.slice(7);
-  if (excessFraction && !/^0+$/.test(excessFraction)) return null;
-
-  const fractionalStroops = (fraction.slice(0, 7) + '0000000').slice(0, 7);
-  const stroops = BigInt(whole) * STROOPS_PER_UNIT + BigInt(fractionalStroops);
-  if (stroops === 0n || stroops > U64_MAX) return null;
-
-  return stroops.toString();
-}
+// Re-export so existing consumers (tests, etc.) that import amountToStroops
+// from this module continue to work without changes.
+export { amountToStroops } from '../../lib/stellar-amounts';
 
 const EVENT_TYPE = 'escrow.initialized';
 

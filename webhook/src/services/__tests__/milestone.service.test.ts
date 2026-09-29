@@ -76,6 +76,7 @@ describe('validateApproveMilestonePayload', () => {
   });
 
   it('includes all field names in the missing fields error message', () => {
+    expect.assertions(4);
     try {
       validateApproveMilestonePayload(undefined, undefined, undefined, undefined);
     } catch (err) {
