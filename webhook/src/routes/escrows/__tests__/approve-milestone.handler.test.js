@@ -7,6 +7,22 @@ jest.mock('../../../services/hasura', () => ({
   markWebhookEventProcessed: jest.fn(),
 }));
 
+// milestone.service uses the native escrow-state-machine addon which is not
+// compiled in the test environment.  Mock the entire service so handler tests
+// remain focused on routing / HTTP logic only.
+jest.mock('../../../services/milestone.service', () => {
+  const { EscrowNotFoundError, MilestoneNotFoundError, MilestoneValidationError } =
+    jest.requireActual('../../../services/milestone.service');
+  return {
+    EscrowNotFoundError,
+    MilestoneNotFoundError,
+    MilestoneValidationError,
+    validateApproveMilestonePayload: jest.fn(),
+    lookupEscrowByContractId: jest.fn(),
+    approveMilestoneAndUpdateReservation: jest.fn(),
+  };
+});
+
 const {
   approveMilestoneHandler,
 } = require('../approve-milestone.handler');
@@ -16,6 +32,13 @@ const {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } = require('../../../services/hasura');
+const {
+  validateApproveMilestonePayload,
+  lookupEscrowByContractId,
+  approveMilestoneAndUpdateReservation,
+  EscrowNotFoundError,
+  MilestoneNotFoundError,
+} = require('../../../services/milestone.service');
 
 function makeResponse() {
   return {
@@ -33,6 +56,9 @@ describe('approveMilestoneHandler', () => {
     process.env.HASURA_GRAPHQL_ENDPOINT = 'http://graphql-engine-test:8080';
     logAndCheckWebhookEvent.mockResolvedValue({ isDuplicate: false, eventId: 'event-1' });
     markWebhookEventProcessed.mockResolvedValue(undefined);
+    validateApproveMilestonePayload.mockReturnValue(undefined);
+    lookupEscrowByContractId.mockResolvedValue({ escrowId: 'escrow-1' });
+    approveMilestoneAndUpdateReservation.mockResolvedValue(undefined);
   });
 
   afterAll(() => {
@@ -40,6 +66,14 @@ describe('approveMilestoneHandler', () => {
   });
 
   it('returns 400 when required fields are missing', async () => {
+    validateApproveMilestonePayload.mockImplementation(() => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { MilestoneValidationError } = require('../../../services/milestone.service');
+      throw new MilestoneValidationError(
+        'Missing required fields: contractId, milestoneId, approver, flag'
+      );
+    });
+
     const req = { body: { contractId: 'contract-1' } };
     const res = makeResponse();
 
@@ -53,6 +87,12 @@ describe('approveMilestoneHandler', () => {
   });
 
   it('returns 400 when flag is not true', async () => {
+    validateApproveMilestonePayload.mockImplementation(() => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { MilestoneValidationError } = require('../../../services/milestone.service');
+      throw new MilestoneValidationError('flag must be true to approve a milestone');
+    });
+
     const req = {
       body: {
         contractId: 'contract-1',
@@ -73,19 +113,6 @@ describe('approveMilestoneHandler', () => {
   });
 
   it('uses milestone-specific idempotency keys', async () => {
-    hasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_reservations: { returning: [] },
-    });
-
     const req = {
       body: {
         contractId: 'contract-1',
@@ -106,20 +133,7 @@ describe('approveMilestoneHandler', () => {
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
-  it('updates Hasura and returns 200 when both updates succeed', async () => {
-    hasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_reservations: { returning: [] },
-    });
-
+  it('calls service and returns 200 when both updates succeed', async () => {
     const req = {
       body: {
         contractId: 'contract-1',
@@ -132,7 +146,10 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res);
 
-    expect(hasuraRequest).toHaveBeenCalledTimes(4);
+    expect(lookupEscrowByContractId).toHaveBeenCalledWith('contract-1');
+    expect(approveMilestoneAndUpdateReservation).toHaveBeenCalledWith(
+      'escrow-1', 'check_in', 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z'
+    );
     expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-1');
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ success: true });
@@ -156,7 +173,7 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res);
 
-    expect(hasuraRequest).not.toHaveBeenCalled();
+    expect(lookupEscrowByContractId).not.toHaveBeenCalled();
     expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-duplicate');
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
@@ -167,9 +184,7 @@ describe('approveMilestoneHandler', () => {
   });
 
   it('returns 404 when the escrow is not found', async () => {
-    hasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [],
-    });
+    lookupEscrowByContractId.mockRejectedValueOnce(new EscrowNotFoundError('Escrow not found'));
 
     const req = {
       body: {
@@ -191,14 +206,11 @@ describe('approveMilestoneHandler', () => {
     expect(markWebhookEventProcessed).not.toHaveBeenCalled();
   });
 
-  it('returns 500 when Hasura responds with GraphQL errors during mutation', async () => {
-    hasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
+  it('returns 500 when the service throws an unexpected error', async () => {
+    const error = Object.assign(new Error('Hasura request failed'), {
+      details: [{ message: 'permission denied' }],
     });
-
-    const error = new Error('Hasura request failed');
-    error.details = [{ message: 'permission denied' }];
-    hasuraRequest.mockRejectedValueOnce(error);
+    lookupEscrowByContractId.mockRejectedValueOnce(error);
 
     const req = {
       body: {
