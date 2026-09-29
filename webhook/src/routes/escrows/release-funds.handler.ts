@@ -8,8 +8,9 @@ import {
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
+import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
-const EVENT_TYPE = 'escrow.completed';
+const EVENT_TYPE = EscrowEventType.FundsReleased;
 
 export const releaseFundsHandler = async (
   req: Request<{}, {}, ReleaseFundsPayload>,
@@ -38,11 +39,11 @@ export const releaseFundsHandler = async (
 
     // 2 — Update trustless_work_escrows
     const mutation = `
-      mutation ReleaseFunds($contractId: String!) {
+      mutation ReleaseFunds($contractId: String!, $status: String!) {
         update_trustless_work_escrows(
           where: { contractId: { _eq: $contractId } }
           _set: {
-            status: "completed"
+            status: $status
             balance: 0
           }
         ) {
@@ -55,7 +56,7 @@ export const releaseFundsHandler = async (
       update_trustless_work_escrows?: {
         returning: Array<{ id: string; contractId: string; status: string; balance: number }>;
       };
-    }>(mutation, { contractId });
+    }>(mutation, { contractId, status: EscrowStatus.Completed });
     const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {
@@ -68,11 +69,11 @@ export const releaseFundsHandler = async (
 
     // 3 — Mirror status to public.reservations
     const mirrorMutation = `
-      mutation MirrorCompletedToReservation($escrowId: uuid!) {
+      mutation MirrorCompletedToReservation($escrowId: uuid!, $status: String!) {
         update_reservations(
           where: { escrowId: { _eq: $escrowId } }
           _set: {
-            status: "completed"
+            status: $status
             updatedAt: "now()"
           }
         ) {
@@ -81,7 +82,7 @@ export const releaseFundsHandler = async (
       }
     `;
 
-    await hasuraRequest(mirrorMutation, { escrowId });
+    await hasuraRequest(mirrorMutation, { escrowId, status: EscrowStatus.Completed });
 
     // 4 — Notify hotel conversation (best-effort, never fail the response)
     await notifyHotelEscrowConversation({
