@@ -33,6 +33,7 @@ services:
         startup, http-log, webhook-log, websocket-log, query-log
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}
       HASURA_GRAPHQL_JWT_SECRET: ${HASURA_GRAPHQL_JWT_SECRET}
+      HASURA_GRAPHQL_UNAUTHORIZED_ROLE: ${HASURA_GRAPHQL_UNAUTHORIZED_ROLE:-anonymous}
       WEBHOOK_URL: ${WEBHOOK_URL:-http://safetrust-webhook:3000}
       HASURA_EVENT_SECRET: ${HASURA_EVENT_SECRET}
     depends_on:
