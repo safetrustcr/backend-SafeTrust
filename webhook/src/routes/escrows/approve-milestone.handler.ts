@@ -26,10 +26,10 @@ export async function approveMilestoneHandler(
     validateApproveMilestonePayload(contractId, milestoneId, approver, flag);
   } catch (err) {
     if (err instanceof MilestoneValidationError) {
-      return res.status(err.statusCode).json({ error: err.message });
+      return res.status(err.statusCode).json({ success: false, error: err.message });
     }
     const error = err as Error;
-    return res.status(400).json({ error: error.message });
+    return res.status(400).json({ success: false, error: error.message });
   }
 
   try {
@@ -42,7 +42,11 @@ export async function approveMilestoneHandler(
 
     if (isDuplicate) {
       await markWebhookEventProcessed(eventId);
-      return res.status(200).json({ received: true });
+      return res.status(200).json({
+        success: true,
+        duplicate: true,
+        eventId,
+      });
     }
 
     // 3 — Look up escrow UUID by contractId
@@ -56,14 +60,17 @@ export async function approveMilestoneHandler(
     console.log(
       `[escrow/approve-milestone] ✅ Milestone approved — contractId: ${contractId}, milestoneId: ${milestoneId}`
     );
-    return res.status(200).json({ received: true });
+    return res.status(200).json({ success: true, received: true });
 
   } catch (err) {
     if (err instanceof EscrowNotFoundError || err instanceof MilestoneNotFoundError) {
-      return res.status(err.statusCode).json({ error: err.message });
+      return res.status(err.statusCode).json({ success: false, error: err.message });
     }
     const error = err as Error & { details?: unknown };
     console.error('[escrow/approve-milestone] ❌ failed:', error.details || error.message);
-    return res.status(500).json({ error: 'Failed to update milestone approval' });
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to update milestone approval',
+    });
   }
 }
