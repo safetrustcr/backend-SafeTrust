@@ -13,8 +13,8 @@ export async function authMiddleware(
 ): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) {
-    req.user = { uid: "anonymous", role: "anonymous" };
-    return next();
+    res.status(401).json({ error: "Unauthorized", message: "Missing or malformed Authorization header" });
+    return;
   }
 
   const idToken = authHeader.split("Bearer ")[1];
