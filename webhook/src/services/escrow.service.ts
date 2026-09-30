@@ -117,7 +117,7 @@ export function validateEscrowInitializationPayload(
   }
 
   // 2 — Runtime type validation
-  if (typeof amount !== 'number' || typeof escrow_type !== 'string') {
+  if (typeof amount !== 'number' || amount <= 0 || typeof escrow_type !== 'string') {
     throw new EscrowValidationError(
       'amount must be a number and escrow_type must be a string'
     );

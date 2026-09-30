@@ -102,6 +102,12 @@ describe('validateEscrowInitializationPayload', () => {
     }
   });
 
+  it('rejects a zero escrow amount', () => {
+    expect(() =>
+      validateEscrowInitializationPayload(validBody({ amount: 0 }))
+    ).toThrow(EscrowValidationError);
+  });
+
   it('throws EscrowValidationError for an invalid escrow_type', () => {
     expect(() =>
       validateEscrowInitializationPayload(validBody({ escrow_type: 'invalid' }))
