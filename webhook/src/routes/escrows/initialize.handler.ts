@@ -26,7 +26,7 @@ export const initializeEscrowHandler = async (
       return res.status(503).json({ error: err.message });
     }
     if (err instanceof EscrowValidationError) {
-      return res.status(err.statusCode).json({ error: err.message });
+      return res.status(err.statusCode).json({ success: false, error: err.message });
     }
     const error = err as Error;
     return res.status(400).json({ error: error.message });

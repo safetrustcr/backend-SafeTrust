@@ -11,12 +11,10 @@ jest.mock('../../../services/hasura', () => ({
 // compiled in the test environment.  Mock the entire service so handler tests
 // remain focused on routing / HTTP logic only.
 jest.mock('../../../services/milestone.service', () => {
-  const { EscrowNotFoundError, MilestoneNotFoundError, MilestoneValidationError } =
-    jest.requireActual('../../../services/milestone.service');
+  const actual = jest.requireActual('../../../services/milestone.service');
+
   return {
-    EscrowNotFoundError,
-    MilestoneNotFoundError,
-    MilestoneValidationError,
+    ...actual,
     validateApproveMilestonePayload: jest.fn(),
     lookupEscrowByContractId: jest.fn(),
     approveMilestoneAndUpdateReservation: jest.fn(),
