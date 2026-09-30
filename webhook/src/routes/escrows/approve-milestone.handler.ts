@@ -1,19 +1,12 @@
 import { Request, Response } from 'express';
 import { ApproveMilestonePayload } from '@safetrust/types';
 import {
-  logAndCheckWebhookEvent,
-  markWebhookEventProcessed,
-} from '../../services/hasura';
-import {
   validateApproveMilestonePayload,
-  lookupEscrowByContractId,
-  approveMilestoneAndUpdateReservation,
+  approveMilestone,
   MilestoneValidationError,
   EscrowNotFoundError,
   MilestoneNotFoundError,
 } from '../../services/milestone.service';
-
-const EVENT_TYPE = 'milestone.approved';
 
 export async function approveMilestoneHandler(
   req: Request<{}, {}, ApproveMilestonePayload>,
@@ -33,15 +26,15 @@ export async function approveMilestoneHandler(
   }
 
   try {
-    // 2 — Idempotency check
-    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    // 2 — Process idempotency, milestone approval, and reservation update
+    const { isDuplicate, eventId } = await approveMilestone(
       contractId,
-      `${EVENT_TYPE}:${milestoneId}`,
+      milestoneId,
+      approver,
       req.body as unknown as Record<string, unknown>
     );
 
     if (isDuplicate) {
-      await markWebhookEventProcessed(eventId);
       return res.status(200).json({
         success: true,
         duplicate: true,
@@ -49,18 +42,10 @@ export async function approveMilestoneHandler(
       });
     }
 
-    // 3 — Look up escrow UUID by contractId
-    const { escrowId } = await lookupEscrowByContractId(contractId);
-
-    // 4 — Apply milestone approval and mirror to reservations
-    await approveMilestoneAndUpdateReservation(escrowId, milestoneId, approver);
-
-    await markWebhookEventProcessed(eventId);
-
     console.log(
       `[escrow/approve-milestone] ✅ Milestone approved — contractId: ${contractId}, milestoneId: ${milestoneId}`
     );
-    return res.status(200).json({ success: true, received: true });
+    return res.status(200).json({ success: true });
 
   } catch (err) {
     if (err instanceof EscrowNotFoundError || err instanceof MilestoneNotFoundError) {

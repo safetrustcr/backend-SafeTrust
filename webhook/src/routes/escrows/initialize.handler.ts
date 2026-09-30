@@ -2,13 +2,8 @@ import { Request, Response } from 'express';
 import { badRequest, duplicate, ok, serverError, serviceUnavailable } from '../../utils/response'
 import { InitializeEscrowPayload } from '@safetrust/types';
 import {
-  logAndCheckWebhookEvent,
-  markWebhookEventProcessed,
-} from '../../services/hasura';
-import {
   validateEscrowInitializationPayload,
-  persistEscrow,
-  linkReservationToEscrow,
+  initializeEscrow,
   EscrowValidationError,
   ZkVerifierUnavailableError,
 } from '../../services/escrow.service';
@@ -16,8 +11,6 @@ import {
 // Re-export so existing consumers (tests, etc.) that import amountToStroops
 // from this module continue to work without changes.
 export { amountToStroops } from '../../lib/stellar-amounts';
-
-const EVENT_TYPE = 'escrow.initialized';
 
 export const initializeEscrowHandler = async (
   req: Request<{}, {}, InitializeEscrowPayload>,
@@ -40,31 +33,20 @@ export const initializeEscrowHandler = async (
   }
 
   try {
-    // 2 — Idempotency check
-    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
-      payload.contract_id,
-      EVENT_TYPE,
+    // 2 — Process idempotency, persistence, and reservation linking
+    const result = await initializeEscrow(
+      payload,
       req.body as unknown as Record<string, unknown>
     );
 
-    if (isDuplicate) {
-      await markWebhookEventProcessed(eventId);
-      return duplicate(res, eventId);
+    if (result.isDuplicate) {
+      return duplicate(res, result.eventId);
     }
 
-    // 3 — Persist escrow to DB
-    const escrow = await persistEscrow(payload);
-
-    // 4 — Optionally link to reservation
-    const reservationId = payload.booking_metadata?.reservation_id;
-    if (reservationId) {
-      await linkReservationToEscrow(reservationId, escrow.id);
-    }
-
+    const escrow = result.escrow!;
     console.log(
       `[escrow/initialize] ✅ Escrow persisted — contract_id: ${payload.contract_id}, id: ${escrow.id}`
     );
-    await markWebhookEventProcessed(eventId);
     return ok(res);
 
   } catch (error) {

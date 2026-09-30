@@ -1,4 +1,4 @@
-import { hasuraRequest } from './hasura';
+import { hasuraRequest, logAndCheckWebhookEvent, markWebhookEventProcessed } from './hasura';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -190,4 +190,34 @@ export async function approveMilestoneAndUpdateReservation(
   `;
 
   await hasuraRequest(mirrorMutation, { escrowId, status: reservationStatus });
+}
+
+
+/**
+ * Processes a milestone approval webhook with idempotency protection.
+ */
+export async function approveMilestone(
+  contractId: string,
+  milestoneId: string,
+  approver: string,
+  rawPayload: Record<string, unknown>
+): Promise<{ isDuplicate: boolean; eventId: string }> {
+  const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    contractId,
+    `milestone.approved:${milestoneId}`,
+    rawPayload
+  );
+
+  if (isDuplicate) {
+    await markWebhookEventProcessed(eventId);
+    return { isDuplicate: true, eventId };
+  }
+
+  const service = require('./milestone.service') as typeof import('./milestone.service');
+  const { escrowId } = await service.lookupEscrowByContractId(contractId);
+  await service.approveMilestoneAndUpdateReservation(escrowId, milestoneId, approver);
+
+  await markWebhookEventProcessed(eventId);
+
+  return { isDuplicate: false, eventId };
 }

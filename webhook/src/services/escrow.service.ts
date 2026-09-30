@@ -1,5 +1,5 @@
 import { InitializeEscrowPayload } from '@safetrust/types';
-import { hasuraRequest } from './hasura';
+import { hasuraRequest, logAndCheckWebhookEvent, markWebhookEventProcessed } from './hasura';
 import { amountToStroops } from '../lib/stellar-amounts';
 import { verifyProofOfFunds } from '../lib/zk-verifier';
 
@@ -270,4 +270,35 @@ export async function linkReservationToEscrow(
   console.log(
     `[escrow.service] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrowId}`
   );
+}
+
+
+/**
+ * Processes an escrow initialization webhook with idempotency protection.
+ */
+export async function initializeEscrow(
+  payload: EscrowInitPayload,
+  rawPayload: Record<string, unknown>
+): Promise<{ isDuplicate: boolean; eventId: string; escrow?: TrustlessWorkEscrow }> {
+  const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    payload.contract_id,
+    'escrow.initialized',
+    rawPayload
+  );
+
+  if (isDuplicate) {
+    await markWebhookEventProcessed(eventId);
+    return { isDuplicate: true, eventId };
+  }
+
+  const escrow = await persistEscrow(payload);
+
+  const reservationId = payload.booking_metadata?.reservation_id;
+  if (reservationId) {
+    await linkReservationToEscrow(reservationId, escrow.id);
+  }
+
+  await markWebhookEventProcessed(eventId);
+
+  return { isDuplicate: false, eventId, escrow };
 }
