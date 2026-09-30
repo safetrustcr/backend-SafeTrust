@@ -100,22 +100,37 @@ export function validateEscrowInitializationPayload(
     zk_threshold_stroops,
     zk_balance_commitment,
   } = (body as InitializeEscrowPayload) ?? {};
-
+  
   // 1 — Required fields
-  if (!contract_id || !marker || !approver || !releaser || !amount || !escrow_type) {
+  if (
+    !contract_id ||
+    !marker ||
+    !approver ||
+    !releaser ||
+    amount === undefined ||
+    amount === null ||
+    !escrow_type
+  ) {
     throw new EscrowValidationError(
       'Missing required fields: contract_id, marker, approver, releaser, amount, escrow_type'
     );
   }
 
-  // 2 — Escrow type whitelist (matches DB CHECK constraint)
+  // 2 — Runtime type validation
+  if (typeof amount !== 'number' || typeof escrow_type !== 'string') {
+    throw new EscrowValidationError(
+      'amount must be a number and escrow_type must be a string'
+    );
+  }
+
+  // 3 — Escrow type whitelist (matches DB CHECK constraint)
   const validTypes = ['single_release', 'multi_release'];
   if (!validTypes.includes(escrow_type)) {
     throw new EscrowValidationError(
       `escrow_type must be one of: ${validTypes.join(', ')}`
     );
   }
-
+  
   // 3 — Optional ZK proof bundle: must be all-or-nothing; validates threshold
   const zkValues = [zk_proof, zk_verification_key, zk_threshold_stroops, zk_balance_commitment];
   const hasZkBundle = zkValues.some((v) => v !== undefined && v !== null);
