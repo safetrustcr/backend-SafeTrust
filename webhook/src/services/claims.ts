@@ -7,16 +7,17 @@ export async function syncClaims(uid: string): Promise<void> {
   const client = await pool.connect();
   try {
     const res = await client.query(
-      "SELECT role FROM public.user_roles WHERE user_id = $1 ORDER BY role DESC",
+      "SELECT r.name AS role FROM safetrust.user_roles ur JOIN safetrust.roles r ON r.id = ur.role_id WHERE ur.user_id = $1 ORDER BY r.name DESC",
       [uid]
     );
     const roles = res.rows.map((row) => row.role);
     const highestRole = PRECEDENCE.find((role) => roles.includes(role)) || "guest";
+    const allowedRoles = roles.includes("guest") ? roles : [...roles, "guest"];
 
     await getAuth().setCustomUserClaims(uid, {
       "https://hasura.io/jwt/claims": {
         "x-hasura-default-role": highestRole,
-        "x-hasura-allowed-roles": roles,
+        "x-hasura-allowed-roles": allowedRoles,
         "x-hasura-user-id": uid,
       },
     });
@@ -29,7 +30,7 @@ export async function getHighestRole(uid: string): Promise<string> {
   const client = await pool.connect();
   try {
     const res = await client.query(
-      "SELECT role FROM public.user_roles WHERE user_id = $1",
+      "SELECT r.name AS role FROM safetrust.user_roles ur JOIN safetrust.roles r ON r.id = ur.role_id WHERE ur.user_id = $1",
       [uid]
     );
     const roles = res.rows.map((row) => row.role);

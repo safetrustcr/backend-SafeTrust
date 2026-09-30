@@ -18,20 +18,28 @@ export async function authMiddleware(
   }
 
   const idToken = authHeader.split("Bearer ")[1];
+  let uid: string;
   try {
     const decodedToken = await getAuth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
+    uid = decodedToken.uid;
+  } catch (error) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  try {
     const role = await getHighestRole(uid);
     req.user = { uid, role };
     next();
   } catch (error) {
-    res.status(401).json({ error: "Unauthorized" });
+    res.status(500).json({ error: "Internal Server Error", message: "Failed to resolve user role" });
+    return;
   }
 }
 
 export function roleChecker(allowedRoles: string[]) {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
-    const userRole = req.user?.role || "anonymous";
+    const userRole = req.user?.role || "guest";
     if (allowedRoles.includes(userRole)) {
       next();
     } else {

@@ -1,6 +1,6 @@
 table:
   name: apartments
-  schema: public
+  schema: safetrust
 select_permissions:
   - role: guest
     permission:

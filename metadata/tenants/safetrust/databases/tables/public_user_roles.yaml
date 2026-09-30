@@ -1,6 +1,6 @@
 table:
   name: user_roles
-  schema: public
+  schema: safetrust
 select_permissions:
   - role: guest
     permission:
