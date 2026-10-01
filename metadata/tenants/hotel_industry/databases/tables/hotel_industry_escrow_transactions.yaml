@@ -43,7 +43,3 @@ select_permissions:
           - reservation:
               host_id:
                 _eq: X-Hasura-User-Id
-  - role: admin
-    permission:
-      columns: "*"
-      filter: {}
