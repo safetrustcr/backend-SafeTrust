@@ -53,9 +53,9 @@ export async function syncHasuraClaims(uid: string): Promise<SyncClaimsResult> {
   const claims = {
     'https://hasura.io/jwt/claims': {
       'x-hasura-default-role': effectiveDefault,
-      'whatsura-allowed-roles': allowed,
+      'x-hasura-allowed-roles': allowed,
       'x-hasura-user-id': uid,
-      'whatsura-tenant-id': 'safetrust',
+      'x-hasura-tenant-id': 'safetrust',
     },
   }
 
