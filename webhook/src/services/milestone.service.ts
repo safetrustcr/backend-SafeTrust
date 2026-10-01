@@ -129,7 +129,7 @@ export async function approveMilestoneAndUpdateReservation(
     const milestoneResult = await client.query(
       `
         SELECT id
-        FROM public.escrow_milestones
+        FROM safetrust.escrow_milestones
         WHERE escrow_id = $1
           AND milestone_id = $2
         FOR UPDATE
@@ -144,7 +144,7 @@ export async function approveMilestoneAndUpdateReservation(
     const escrowResult = await client.query(
       `
         SELECT id, status
-        FROM public.trustless_work_escrows
+        FROM safetrust.trustless_work_escrows
         WHERE id = $1
         FOR UPDATE
       `,
@@ -165,7 +165,7 @@ export async function approveMilestoneAndUpdateReservation(
 
     await client.query(
       `
-        UPDATE public.escrow_milestones
+        UPDATE safetrust.escrow_milestones
         SET
           status = 'approved',
           approved_by = $1,
@@ -179,7 +179,7 @@ export async function approveMilestoneAndUpdateReservation(
 
     await client.query(
       `
-        UPDATE public.trustless_work_escrows
+        UPDATE safetrust.trustless_work_escrows
         SET
           status = 'milestone_approved',
           updated_at = $1
@@ -190,7 +190,7 @@ export async function approveMilestoneAndUpdateReservation(
 
     await client.query(
       `
-        UPDATE public.reservations
+        UPDATE safetrust.reservations
         SET
           status = $1,
           updated_at = $2

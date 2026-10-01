@@ -3,6 +3,8 @@
 // Mock hasura service and zk-verifier before imports
 jest.mock('../../services/hasura', () => ({
   hasuraRequest: jest.fn(),
+  logAndCheckWebhookEvent: jest.fn(),
+  markWebhookEventProcessed: jest.fn(),
 }));
 
 jest.mock('../../lib/zk-verifier', () => ({
@@ -21,16 +23,25 @@ jest.mock('../../lib/stellar-amounts', () => ({
 
 import {
   validateEscrowInitializationPayload,
+  initializeEscrow,
   persistEscrow,
   linkReservationToEscrow,
   EscrowValidationError,
   ZkVerifierUnavailableError,
   EscrowInitPayload,
 } from '../../services/escrow.service';
-import { hasuraRequest } from '../../services/hasura';
+import {
+  hasuraRequest,
+  logAndCheckWebhookEvent,
+  markWebhookEventProcessed,
+} from '../../services/hasura';
 import { verifyProofOfFunds } from '../../lib/zk-verifier';
 
 const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>;
+const mockedLogAndCheckWebhookEvent =
+  logAndCheckWebhookEvent as jest.MockedFunction<typeof logAndCheckWebhookEvent>;
+const mockedMarkWebhookEventProcessed =
+  markWebhookEventProcessed as jest.MockedFunction<typeof markWebhookEventProcessed>;
 const mockedVerifyProof = verifyProofOfFunds as jest.MockedFunction<typeof verifyProofOfFunds>;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -197,6 +208,89 @@ describe('validateEscrowInitializationPayload', () => {
       '1000000000',
       'ab'.repeat(32)
     );
+  });
+});
+
+
+// ── initializeEscrow ──────────────────────────────────────────────────────────
+
+describe('initializeEscrow', () => {
+  const escrowResponse = {
+    id: 'escrow-uuid-1',
+    contractId: 'contract-1',
+    status: 'created',
+    createdAt: '2026-01-01T00:00:00Z',
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedMarkWebhookEventProcessed.mockResolvedValue(undefined);
+  });
+
+  it('returns duplicate without persisting the escrow', async () => {
+    mockedLogAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: true,
+      eventId: 'event-duplicate',
+    });
+
+    const result = await initializeEscrow(validPayload(), validBody());
+
+    expect(result).toEqual({
+      isDuplicate: true,
+      eventId: 'event-duplicate',
+    });
+    expect(mockedHasuraRequest).not.toHaveBeenCalled();
+    expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith(
+      'event-duplicate'
+    );
+  });
+
+  it('persists, links reservation, and marks the event processed', async () => {
+    mockedLogAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: false,
+      eventId: 'event-1',
+    });
+    mockedHasuraRequest
+      .mockResolvedValueOnce({
+        insert_trustless_work_escrows_one: escrowResponse,
+      })
+      .mockResolvedValueOnce({
+        update_reservations_by_pk: {
+          id: 'res-1',
+          status: 'escrow_created',
+          escrow_id: 'escrow-uuid-1',
+        },
+      });
+
+    const payload = validPayload({
+      booking_metadata: { reservation_id: 'res-1' },
+    });
+
+    const result = await initializeEscrow(payload, validBody());
+
+    expect(result).toEqual({
+      isDuplicate: false,
+      eventId: 'event-1',
+      escrow: escrowResponse,
+    });
+    expect(mockedHasuraRequest).toHaveBeenCalledTimes(2);
+    expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-1');
+  });
+
+  it('does not mark the event processed when escrow persistence fails', async () => {
+    mockedLogAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: false,
+      eventId: 'event-failure',
+    });
+    mockedHasuraRequest.mockRejectedValue(
+      new Error('Hasura request failed')
+    );
+
+    await expect(
+      initializeEscrow(validPayload(), validBody())
+    ).rejects.toThrow('Hasura request failed');
+
+    expect(mockedMarkWebhookEventProcessed).not.toHaveBeenCalled();
   });
 });
 

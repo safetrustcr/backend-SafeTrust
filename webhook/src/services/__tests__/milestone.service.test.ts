@@ -209,7 +209,7 @@ describe('approveMilestoneAndUpdateReservation', () => {
 
     expect(mockedClient.query).toHaveBeenLastCalledWith('ROLLBACK');
     expect(mockedClient.query).not.toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE public.escrow_milestones')
+      expect.stringContaining('UPDATE safetrust.escrow_milestones')
     );
     expect(mockedClient.release).toHaveBeenCalledTimes(1);
   });
@@ -244,7 +244,7 @@ describe('approveMilestoneAndUpdateReservation', () => {
     const reservationUpdate = mockedClient.query.mock.calls[5][0] as string;
     const reservationParams = mockedClient.query.mock.calls[5][1] as unknown[];
 
-    expect(reservationUpdate).toContain('UPDATE public.reservations');
+    expect(reservationUpdate).toContain('UPDATE safetrust.reservations');
     expect(reservationParams[0]).toBe('checked_in');
   });
 
@@ -284,7 +284,7 @@ describe('approveMilestoneAndUpdateReservation', () => {
     const milestoneUpdate = mockedClient.query.mock.calls[3][0] as string;
     const milestoneParams = mockedClient.query.mock.calls[3][1] as unknown[];
 
-    expect(milestoneUpdate).toContain('UPDATE public.escrow_milestones');
+    expect(milestoneUpdate).toContain('UPDATE safetrust.escrow_milestones');
     expect(milestoneParams[0]).toBe('GAPPROVER');
     expect(typeof milestoneParams[1]).toBe('string');
     expect(milestoneParams[2]).toBe('escrow-uuid-abc');
@@ -304,7 +304,7 @@ describe('approveMilestoneAndUpdateReservation', () => {
     await approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC');
 
     const escrowSelect = mockedClient.query.mock.calls[2][0] as string;
-    expect(escrowSelect).toContain('FROM public.trustless_work_escrows');
+    expect(escrowSelect).toContain('FROM safetrust.trustless_work_escrows');
   });
 
   it('rolls back and propagates database errors', async () => {
