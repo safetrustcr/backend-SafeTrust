@@ -9,12 +9,12 @@ export async function linkEscrowToReservation(
       update_reservations_by_pk(
         pk_columns: { id: $reservationId }
         _set: {
-          escrow_id: $escrowId,
+          escrowId: $escrowId,
           status: "escrow_created",
           updatedAt: "now()"
         }
       ) {
-        id status escrow_id
+        id status escrowId
       }
     }
   `

@@ -21,7 +21,7 @@ describe('reservation.repository', () => {
         update_reservations_by_pk: {
           id: 'res-1',
           status: 'escrow_created',
-          escrow_id: 'escrow-1',
+          escrowId: 'escrow-1',
         },
       })
 
