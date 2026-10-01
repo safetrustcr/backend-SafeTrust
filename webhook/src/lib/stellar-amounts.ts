@@ -21,9 +21,10 @@ export function amountToStroops(amount: unknown): string | null {
   if (typeof amount !== 'string' && typeof amount !== 'number') return null;
 
   if (typeof amount === 'number') {
-    const scaled = amount * Number(STROOPS_PER_UNIT);
-    if (!Number.isSafeInteger(scaled) || scaled <= 0) return null;
-    return BigInt(scaled).toString();
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    const str = amount.toString();
+    if (/e/i.test(str)) return null;
+    return amountToStroops(str);
   }
 
   const match = /^(0|[1-9]\d*)(?:\.(\d+))?$/.exec(amount);
