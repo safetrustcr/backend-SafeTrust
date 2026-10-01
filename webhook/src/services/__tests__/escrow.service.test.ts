@@ -232,6 +232,14 @@ describe('persistEscrow', () => {
         }),
       })
     );
+
+    const mutation = mockedHasuraRequest.mock.calls[0][0] as string;
+    expect(mutation).toContain('on_conflict');
+    expect(mutation).toContain(
+      'constraint: trustless_work_escrows_contract_id_key'
+    );
+    expect(mutation).toContain('update_columns: [contractId]');
+
     expect(result).toEqual(escrowResponse);
   });
 

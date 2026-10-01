@@ -200,7 +200,13 @@ export async function persistEscrow(
 ): Promise<TrustlessWorkEscrow> {
   const mutation = `
     mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
-      insert_trustless_work_escrows_one(object: $object) {
+      insert_trustless_work_escrows_one(
+        object: $object
+        on_conflict: {
+          constraint: trustless_work_escrows_contract_id_key
+          update_columns: [contractId]
+        }
+      ) {
         id
         contractId
         status
