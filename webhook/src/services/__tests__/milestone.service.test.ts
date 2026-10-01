@@ -5,6 +5,15 @@ jest.mock('../../services/hasura', () => ({
   hasuraRequest: jest.fn(),
 }));
 
+const mockedClient = {
+  query: jest.fn(),
+  release: jest.fn(),
+};
+
+jest.mock('../../services/db', () => ({
+  connect: jest.fn(async () => mockedClient),
+}));
+
 // Mock the native escrow-state-machine Neon addon — it requires a compiled
 // Rust binary which is not present in the unit-test environment.
 // The mock returns the same JSON string the real addon would return for
@@ -22,6 +31,7 @@ import {
   approveMilestoneAndUpdateReservation,
   MilestoneValidationError,
   EscrowNotFoundError,
+  EscrowStateConflictError,
   MilestoneNotFoundError,
 } from '../../services/milestone.service';
 import { hasuraRequest } from '../../services/hasura';
@@ -148,136 +158,170 @@ describe('lookupEscrowByContractId', () => {
 describe('approveMilestoneAndUpdateReservation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedClient.query.mockReset();
+    mockedClient.release.mockReset();
   });
 
-  it('runs 3 hasuraRequest calls and resolves on full success', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    });
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    });
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_reservations: { returning: [{ id: 'res-1', status: 'checked_in' }] },
-    });
+  it('commits all database changes on full success', async () => {
+    mockedClient.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1' }] }) // milestone
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'escrow-1', status: 'active' }] }) // escrow
+      .mockResolvedValueOnce({ rowCount: 1 }) // milestone update
+      .mockResolvedValueOnce({ rowCount: 1 }) // escrow update
+      .mockResolvedValueOnce({ rowCount: 1 }) // reservation update
+      .mockResolvedValueOnce({}); // COMMIT
 
     await expect(
       approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC')
     ).resolves.toBeUndefined();
 
-    expect(mockedHasuraRequest).toHaveBeenCalledTimes(3);
+    expect(mockedClient.query).toHaveBeenCalledWith('BEGIN');
+    expect(mockedClient.query).toHaveBeenLastCalledWith('COMMIT');
+    expect(mockedClient.query).not.toHaveBeenCalledWith('ROLLBACK');
+    expect(mockedClient.release).toHaveBeenCalledTimes(1);
   });
 
-  it('throws MilestoneNotFoundError (404) when milestone row is not found', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 0 },
-    });
-
-    let caught: unknown;
-    try {
-      await approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(MilestoneNotFoundError);
-    expect((caught as MilestoneNotFoundError).statusCode).toBe(404);
-    // Must not proceed to escrow or reservation mutations
-    expect(mockedHasuraRequest).toHaveBeenCalledTimes(1);
-  });
-
-  it('throws EscrowNotFoundError (404) when escrow is in an invalid prior state', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    });
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 0 },
-    });
-
-    let caught: unknown;
-    try {
-      await approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(EscrowNotFoundError);
-    expect((caught as EscrowNotFoundError).statusCode).toBe(404);
-    expect(mockedHasuraRequest).toHaveBeenCalledTimes(2);
-  });
-
-  it('uses "checked_in" reservation status for check_in milestoneId', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    });
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    });
-    mockedHasuraRequest.mockResolvedValueOnce({});
-
-    await approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC');
-
-    const mirrorCall = mockedHasuraRequest.mock.calls[2][1] as any;
-    expect(mirrorCall.status).toBe('checked_in');
-  });
-
-  it('uses "checked_out" reservation status for check_out milestoneId', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    });
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    });
-    mockedHasuraRequest.mockResolvedValueOnce({});
-
-    await approveMilestoneAndUpdateReservation('escrow-1', 'check_out', 'GABC');
-
-    const mirrorCall = mockedHasuraRequest.mock.calls[2][1] as any;
-    expect(mirrorCall.status).toBe('checked_out');
-  });
-
-  it('passes milestone mutation the correct field values', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    });
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    });
-    mockedHasuraRequest.mockResolvedValueOnce({});
-
-    await approveMilestoneAndUpdateReservation('escrow-uuid-abc', 'check_in', 'GAPPROVER');
-
-    const milestoneCallVars = mockedHasuraRequest.mock.calls[0][1] as any;
-    expect(milestoneCallVars.escrowId).toBe('escrow-uuid-abc');
-    expect(milestoneCallVars.milestoneId).toBe('check_in');
-    expect(milestoneCallVars.approver).toBe('GAPPROVER');
-    expect(typeof milestoneCallVars.approvedAt).toBe('string');
-  });
-
-  it('passes valid prior states from the real state machine to the escrow mutation', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    });
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    });
-    mockedHasuraRequest.mockResolvedValueOnce({});
-
-    await approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC');
-
-    const escrowCallVars = mockedHasuraRequest.mock.calls[1][1] as any;
-    expect(Array.isArray(escrowCallVars.validStates)).toBe(true);
-    expect(escrowCallVars.validStates.length).toBeGreaterThan(0);
-    // The mock returns the states the real machine would produce for milestone_approved
-    expect(escrowCallVars.validStates).toEqual(['active', 'funded']);
-  });
-
-  it('propagates a Hasura error from the milestone mutation', async () => {
-    const err = Object.assign(new Error('Hasura request failed'), {
-      details: [{ message: 'permission denied' }],
-    });
-    mockedHasuraRequest.mockRejectedValueOnce(err);
+  it('throws MilestoneNotFoundError (404) and rolls back when milestone is missing', async () => {
+    mockedClient.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // milestone
+      .mockResolvedValueOnce({}); // ROLLBACK
 
     await expect(
       approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC')
-    ).rejects.toThrow('Hasura request failed');
+    ).rejects.toBeInstanceOf(MilestoneNotFoundError);
+
+    expect(mockedClient.query).toHaveBeenLastCalledWith('ROLLBACK');
+    expect(mockedClient.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws EscrowStateConflictError (409) and rolls back when escrow is in an invalid prior state', async () => {
+    mockedClient.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1' }] }) // milestone
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'escrow-1', status: 'completed' }] }) // escrow
+      .mockResolvedValueOnce({}); // ROLLBACK
+
+    await expect(
+      approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC')
+    ).rejects.toBeInstanceOf(EscrowStateConflictError);
+
+    expect(mockedClient.query).toHaveBeenLastCalledWith('ROLLBACK');
+    expect(mockedClient.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE public.escrow_milestones')
+    );
+    expect(mockedClient.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws EscrowNotFoundError (404) and rolls back when escrow is missing', async () => {
+    mockedClient.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1' }] }) // milestone
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // escrow
+      .mockResolvedValueOnce({}); // ROLLBACK
+
+    await expect(
+      approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC')
+    ).rejects.toBeInstanceOf(EscrowNotFoundError);
+
+    expect(mockedClient.query).toHaveBeenLastCalledWith('ROLLBACK');
+    expect(mockedClient.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses "checked_in" reservation status for check_in milestoneId', async () => {
+    mockedClient.query
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'escrow-1', status: 'active' }] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    await approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC');
+
+    const reservationUpdate = mockedClient.query.mock.calls[5][0] as string;
+    const reservationParams = mockedClient.query.mock.calls[5][1] as unknown[];
+
+    expect(reservationUpdate).toContain('UPDATE public.reservations');
+    expect(reservationParams[0]).toBe('checked_in');
+  });
+
+  it('uses "checked_out" reservation status for check_out milestoneId', async () => {
+    mockedClient.query
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'escrow-1', status: 'active' }] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    await approveMilestoneAndUpdateReservation('escrow-1', 'check_out', 'GABC');
+
+    const reservationParams = mockedClient.query.mock.calls[5][1] as unknown[];
+
+    expect(reservationParams[0]).toBe('checked_out');
+  });
+
+  it('passes milestone update the correct field values', async () => {
+    mockedClient.query
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'escrow-1', status: 'funded' }] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    await approveMilestoneAndUpdateReservation(
+      'escrow-uuid-abc',
+      'check_in',
+      'GAPPROVER'
+    );
+
+    const milestoneUpdate = mockedClient.query.mock.calls[3][0] as string;
+    const milestoneParams = mockedClient.query.mock.calls[3][1] as unknown[];
+
+    expect(milestoneUpdate).toContain('UPDATE public.escrow_milestones');
+    expect(milestoneParams[0]).toBe('GAPPROVER');
+    expect(typeof milestoneParams[1]).toBe('string');
+    expect(milestoneParams[2]).toBe('escrow-uuid-abc');
+    expect(milestoneParams[3]).toBe('check_in');
+  });
+
+  it('uses valid prior states from the real state machine', async () => {
+    mockedClient.query
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'escrow-1', status: 'active' }] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    await approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC');
+
+    const escrowSelect = mockedClient.query.mock.calls[2][0] as string;
+    expect(escrowSelect).toContain('FROM public.trustless_work_escrows');
+  });
+
+  it('rolls back and propagates database errors', async () => {
+    const err = new Error('database request failed');
+
+    mockedClient.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'escrow-1', status: 'active' }] })
+      .mockRejectedValueOnce(err) // milestone update
+      .mockResolvedValueOnce({}); // ROLLBACK
+
+    await expect(
+      approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC')
+    ).rejects.toThrow('database request failed');
+
+    expect(mockedClient.query).toHaveBeenLastCalledWith('ROLLBACK');
+    expect(mockedClient.release).toHaveBeenCalledTimes(1);
   });
 });

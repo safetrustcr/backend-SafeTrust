@@ -1,4 +1,5 @@
 import { hasuraRequest, logAndCheckWebhookEvent, markWebhookEventProcessed } from './hasura';
+import { connect } from './db';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -23,6 +24,14 @@ export class EscrowNotFoundError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'EscrowNotFoundError';
+  }
+}
+
+export class EscrowStateConflictError extends Error {
+  readonly statusCode = 409;
+  constructor(message: string) {
+    super(message);
+    this.name = 'EscrowStateConflictError';
   }
 }
 
@@ -85,12 +94,13 @@ export async function lookupEscrowByContractId(
 }
 
 /**
- * Approve a milestone on the given escrow, then update the escrow status and
- * mirror the result to the reservations table — all in three sequential Hasura
- * mutations.
+ * Approve a milestone, update the escrow status, and mirror the result to
+ * the reservations table in a single PostgreSQL transaction.
  *
  * Throws MilestoneNotFoundError (404) if the milestone row does not exist.
- * Throws EscrowNotFoundError (404) if the escrow is not in a valid prior state.
+ * Throws EscrowNotFoundError (404) if the escrow does not exist.
+ * Throws EscrowStateConflictError (409) if the escrow exists but is not in
+ * a valid prior state.
  */
 export async function approveMilestoneAndUpdateReservation(
   escrowId: string,
@@ -99,11 +109,7 @@ export async function approveMilestoneAndUpdateReservation(
 ): Promise<void> {
   const approvedAt = new Date().toISOString();
 
-  // Resolve valid prior states from the Rust state machine before any DB
-  // write, so addon-loading or state-evaluation failures are surfaced early
-  // and never occur mid-transaction.
-  // The addon is lazy-loaded so module import works in test environments
-  // where the Rust binary has not been compiled.
+  // Resolve valid prior states before any DB write.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
     getValidPriorStates: (to: string, event: string) => string;
@@ -112,86 +118,103 @@ export async function approveMilestoneAndUpdateReservation(
     getValidPriorStates('milestone_approved', 'milestone.approved') as string
   );
 
-  // 1 — Update escrow_milestones
-  const mutationMilestone = `
-    mutation ApproveMilestone(
-      $escrowId: uuid!
-      $milestoneId: String!
-      $approver: String!
-      $approvedAt: timestamptz!
-    ) {
-      update_escrow_milestones(
-        where: {
-          escrowId: { _eq: $escrowId }
-          milestoneId: { _eq: $milestoneId }
-        }
-        _set: {
-          status: "approved"
-          approvedBy: $approver
-          approvedAt: $approvedAt
-          updatedAt: $approvedAt
-        }
-      ) {
-        affected_rows
-      }
+  const reservationStatus =
+    milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
+
+  const client = await connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const milestoneResult = await client.query(
+      `
+        SELECT id
+        FROM public.escrow_milestones
+        WHERE escrow_id = $1
+          AND milestone_id = $2
+        FOR UPDATE
+      `,
+      [escrowId, milestoneId]
+    );
+
+    if (milestoneResult.rowCount === 0) {
+      throw new MilestoneNotFoundError('Milestone not found');
     }
-  `;
 
-  const milestoneResult = await hasuraRequest<{
-    update_escrow_milestones?: { affected_rows: number };
-  }>(mutationMilestone, { escrowId, milestoneId, approver, approvedAt });
+    const escrowResult = await client.query(
+      `
+        SELECT id, status
+        FROM public.trustless_work_escrows
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [escrowId]
+    );
 
-  if (!milestoneResult.update_escrow_milestones?.affected_rows) {
-    throw new MilestoneNotFoundError('Milestone not found');
+    if (escrowResult.rowCount === 0) {
+      throw new EscrowNotFoundError('Escrow not found');
+    }
+
+    const escrowStatus = escrowResult.rows[0].status as string;
+
+    if (!validStates.includes(escrowStatus)) {
+      throw new EscrowStateConflictError(
+        'Escrow is not in a valid state for milestone approval'
+      );
+    }
+
+    await client.query(
+      `
+        UPDATE public.escrow_milestones
+        SET
+          status = 'approved',
+          approved_by = $1,
+          approved_at = $2,
+          updated_at = $2
+        WHERE escrow_id = $3
+          AND milestone_id = $4
+      `,
+      [approver, approvedAt, escrowId, milestoneId]
+    );
+
+    await client.query(
+      `
+        UPDATE public.trustless_work_escrows
+        SET
+          status = 'milestone_approved',
+          updated_at = $1
+        WHERE id = $2
+      `,
+      [approvedAt, escrowId]
+    );
+
+    await client.query(
+      `
+        UPDATE public.reservations
+        SET
+          status = $1,
+          updated_at = $2
+        WHERE escrow_id = $3
+      `,
+      [reservationStatus, approvedAt, escrowId]
+    );
+
+    await client.query('COMMIT');
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error(
+        '[milestone.service] Failed to rollback milestone approval transaction:',
+        rollbackError
+      );
+    }
+
+    throw error;
+  } finally {
+    client.release();
   }
-
-  // 2 — Update trustless_work_escrows using the valid prior states resolved
-  //     above (before any DB write).
-  const mutationEscrow = `
-    mutation ApproveEscrow($escrowId: uuid!, $approvedAt: timestamptz!, $validStates: [String!]!) {
-      update_trustless_work_escrows(
-        where: {
-          id: { _eq: $escrowId }
-          status: { _in: $validStates }
-        }
-        _set: {
-          status: "milestone_approved"
-          updatedAt: $approvedAt
-        }
-      ) {
-        affected_rows
-      }
-    }
-  `;
-
-  const escrowResult = await hasuraRequest<{
-    update_trustless_work_escrows?: { affected_rows: number };
-  }>(mutationEscrow, { escrowId, approvedAt, validStates });
-
-  if (!escrowResult.update_trustless_work_escrows?.affected_rows) {
-    throw new EscrowNotFoundError('Escrow not found');
-  }
-
-  // 3 — Mirror the milestone result to public.reservations
-  const reservationStatus = milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
-
-  const mirrorMutation = `
-    mutation MirrorMilestoneToReservation($escrowId: uuid!, $status: String!) {
-      update_reservations(
-        where: { escrowId: { _eq: $escrowId } }
-        _set: {
-          status: $status
-          updatedAt: "now()"
-        }
-      ) {
-        returning { id status }
-      }
-    }
-  `;
-
-  await hasuraRequest(mirrorMutation, { escrowId, status: reservationStatus });
 }
-
 
 /**
  * Processes a milestone approval webhook with idempotency protection.
