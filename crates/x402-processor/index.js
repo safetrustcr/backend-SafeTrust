@@ -72,11 +72,11 @@ try {
       }
 
       return JSON.stringify({
-        is_valid: true,
+        is_valid: false,
         payer_address: payment.payer_address || payment.payerAddress || payment.pay_to || null,
         amount_usdc: payment.amount,
         network: payment.network,
-        invalid_reason: null,
+        invalid_reason: 'Payment verification unavailable',
       });
     } catch (e) {
       return JSON.stringify({
