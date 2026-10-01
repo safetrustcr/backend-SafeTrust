@@ -14,8 +14,9 @@ import {
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
+import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
-const EVENT_TYPE = 'escrow.completed';
+const EVENT_TYPE = EscrowEventType.FundsReleased;
 
 export const releaseFundsHandler = async (
   req: Request<{}, {}, ReleaseFundsPayload>,

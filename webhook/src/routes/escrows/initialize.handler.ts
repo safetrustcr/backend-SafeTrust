@@ -12,8 +12,9 @@ import {
   linkEscrowToReservation,
 } from '../../repositories/reservation.repository';
 import { verifyProofOfFunds } from '../../lib/zk-verifier';
+import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
-const EVENT_TYPE = 'escrow.initialized';
+const EVENT_TYPE = EscrowEventType.Initialized;
 const STROOPS_PER_UNIT = 10_000_000n;
 const U64_MAX = 18_446_744_073_709_551_615n;
 
@@ -157,7 +158,7 @@ export const initializeEscrowHandler = async (
       releaser,
       resolver: resolver || null,
       escrowType: escrow_type,
-      status: 'created',
+      status: EscrowStatus.Created,
       assetCode: asset_code || 'USDC',
       assetIssuer: asset_issuer || null,
       amount,

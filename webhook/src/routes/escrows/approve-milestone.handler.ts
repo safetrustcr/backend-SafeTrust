@@ -13,6 +13,11 @@ import {
 import {
   mirrorReservationStatus,
 } from '../../repositories/reservation.repository';
+import {
+  EscrowEventType,
+  EscrowStatus,
+  MilestoneStatus,
+} from '../../types/escrow.types';
 
 // Compile-time SafeTrust escrow state machine (Neon native addon).
 // Replaces hardcoded status strings with the authoritative transition table.
@@ -20,7 +25,7 @@ const { getValidPriorStates } = require('../../../../crates/escrow-state-machine
   getValidPriorStates: (to: string, event: string) => string
 }
 
-const EVENT_TYPE = 'milestone.approved';
+const EVENT_TYPE = EscrowEventType.MilestoneApproved;
 
 export async function approveMilestoneHandler(
   req: Request<{}, {}, ApproveMilestonePayload>,
@@ -76,7 +81,7 @@ export async function approveMilestoneHandler(
 
     // 3 — Update trustless_work_escrows
     const validStates: string[] = JSON.parse(
-      getValidPriorStates('milestone_approved', 'milestone.approved') as string
+      getValidPriorStates(EscrowStatus.MilestoneApproved, EscrowEventType.MilestoneApproved) as string
     );
 
     const escrowUpdated = await approveEscrowStatus(
@@ -90,7 +95,7 @@ export async function approveMilestoneHandler(
     }
 
     // 4 — Mirror status to public.reservations
-    const reservationStatus = milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
+    const reservationStatus = milestoneId === MilestoneStatus.CheckIn ? 'checked_in' : 'checked_out';
     await mirrorReservationStatus(escrowId, reservationStatus);
 
     await markWebhookEventProcessed(eventId);
