@@ -6,6 +6,11 @@ import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../../services/hasura';
+import {
+  EscrowEventType,
+  EscrowStatus,
+  MilestoneStatus,
+} from '../../types/escrow.types';
 
 // Compile-time SafeTrust escrow state machine (Neon native addon).
 // Replaces hardcoded status strings with the authoritative transition table.
@@ -13,7 +18,7 @@ const { getValidPriorStates } = require('../../../../crates/escrow-state-machine
   getValidPriorStates: (to: string, event: string) => string
 }
 
-const EVENT_TYPE = 'milestone.approved';
+const EVENT_TYPE = EscrowEventType.MilestoneApproved;
 
 export async function approveMilestoneHandler(
   req: Request<{}, {}, ApproveMilestonePayload>,
@@ -107,18 +112,18 @@ export async function approveMilestoneHandler(
     // Valid prior states are driven by the Rust state machine, enforcing the
     // legal from-states for milestone approval (active | funded).
     const validStates: string[] = JSON.parse(
-      getValidPriorStates('milestone_approved', 'milestone.approved') as string
+      getValidPriorStates(EscrowStatus.MilestoneApproved, EscrowEventType.MilestoneApproved) as string
     );
 
     const mutationEscrow = `
-      mutation ApproveEscrow($escrowId: uuid!, $approvedAt: timestamptz!, $validStates: [String!]!) {
+      mutation ApproveEscrow($escrowId: uuid!, $approvedAt: timestamptz!, $validStates: [String!]!, $status: String!) {
         update_trustless_work_escrows(
           where: {
             id: { _eq: $escrowId }
             status: { _in: $validStates }
           }
           _set: {
-            status: "milestone_approved"
+            status: $status
             updatedAt: $approvedAt
           }
         ) {
@@ -133,6 +138,7 @@ export async function approveMilestoneHandler(
       escrowId,
       approvedAt,
       validStates,
+      status: EscrowStatus.MilestoneApproved,
     });
 
     if (!escrowResult.update_trustless_work_escrows?.affected_rows) {
@@ -140,7 +146,7 @@ export async function approveMilestoneHandler(
     }
 
     // 4 — Mirror status to public.reservations
-    const reservationStatus = milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
+    const reservationStatus = milestoneId === MilestoneStatus.CheckIn ? 'checked_in' : 'checked_out';
 
     const mirrorMutation = `
       mutation MirrorMilestoneToReservation($escrowId: uuid!, $status: String!) {

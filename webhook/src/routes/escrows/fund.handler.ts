@@ -9,6 +9,7 @@ import {
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
+import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
 // Compile-time SafeTrust escrow state machine (Neon native addon).
 // Replaces hardcoded status arrays with the authoritative transition table.
@@ -16,7 +17,7 @@ const { getValidPriorStates } = require('../../../../crates/escrow-state-machine
   getValidPriorStates: (to: string, event: string) => string
 }
 
-const EVENT_TYPE = 'escrow.funded';
+const EVENT_TYPE = EscrowEventType.Funded;
 
 export const fundEscrowHandler = async (
   req: Request<{}, {}, FundEscrowPayload>,
@@ -54,18 +55,18 @@ export const fundEscrowHandler = async (
     // Valid prior states are driven by the Rust state machine, replacing the
     // previously hardcoded _in: ["created", "pending_funding"].
     const validStates: string[] = JSON.parse(
-      getValidPriorStates('funded', 'escrow.funded') as string
+      getValidPriorStates(EscrowStatus.Funded, EscrowEventType.Funded) as string
     );
 
     const mutation = `
-      mutation FundEscrow($contractId: String!, $amount: numeric!, $validStates: [String!]!) {
+      mutation FundEscrow($contractId: String!, $amount: numeric!, $validStates: [String!]!, $status: String!) {
         update_trustless_work_escrows(
           where: {
             contractId: { _eq: $contractId }
             status: { _in: $validStates }
           }
           _set: {
-            status: "funded"
+            status: $status
             balance: $amount
           }
         ) {
@@ -83,7 +84,7 @@ export const fundEscrowHandler = async (
       update_trustless_work_escrows?: {
         returning: Array<{ id: string; contractId: string; status: string; balance: number }>;
       };
-    }>(mutation, { contractId, amount, validStates });
+    }>(mutation, { contractId, amount, validStates, status: EscrowStatus.Funded });
     const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {
@@ -96,11 +97,11 @@ export const fundEscrowHandler = async (
 
     // 4 — Mirror status to public.reservations
     const mirrorMutation = `
-      mutation MirrorFundedToReservation($escrowId: uuid!) {
+      mutation MirrorFundedToReservation($escrowId: uuid!, $status: String!) {
         update_reservations(
           where: { escrowId: { _eq: $escrowId } }
           _set: {
-            status: "funded"
+            status: $status
             updatedAt: "now()"
           }
         ) {
@@ -109,7 +110,7 @@ export const fundEscrowHandler = async (
       }
     `;
 
-    await hasuraRequest(mirrorMutation, { escrowId });
+    await hasuraRequest(mirrorMutation, { escrowId, status: EscrowStatus.Funded });
 
     // 5 — Notify hotel conversation (best-effort, never fail the response)
     await notifyHotelEscrowConversation({
