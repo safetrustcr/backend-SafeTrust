@@ -23,7 +23,7 @@ async function getUsersIdColumnType(): Promise<string | undefined> {
      FROM information_schema.columns
      WHERE table_schema = 'public'
        AND table_name = 'users'
-       AND column_name = 'ig`'
+       AND column_name = 'id'
   )
 
   cachedUsersIdDataType = result.rows[0]?.data_type
