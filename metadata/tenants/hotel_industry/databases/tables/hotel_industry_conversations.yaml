@@ -25,8 +25,6 @@ select_permissions:
         - created_at
       filter:
         _and:
-          - tenant_id:
-              _eq: X-Hasura-Tenant-Id
           - _or:
               - guest_id:
                   _eq: X-Hasura-User-Id
