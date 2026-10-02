@@ -3,26 +3,51 @@
 import { Request, Response } from 'express'
 import { approveMilestoneHandler } from '../approve-milestone.handler'
 import {
-  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-  getHasuraEndpoint,
-} from '../../../services/hasura'
+} from '../../../repositories/webhook-event.repository'
+import {
+  getEscrowByContractId,
+  approveMilestone,
+  approveEscrowStatus,
+} from '../../../repositories/escrow.repository'
+import {
+  mirrorReservationStatus,
+} from '../../../repositories/reservation.repository'
 import type { ApproveMilestonePayload } from '@safetrust/types'
 
-jest.mock('../../../services/hasura', () => ({
-  getHasuraEndpoint: jest.requireActual('../../../services/hasura').getHasuraEndpoint,
-  hasuraRequest: jest.fn(),
+jest.mock('../../../repositories/webhook-event.repository', () => ({
   logAndCheckWebhookEvent: jest.fn(),
   markWebhookEventProcessed: jest.fn(),
 }))
 
-const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>
+jest.mock('../../../repositories/escrow.repository', () => ({
+  getEscrowByContractId: jest.fn(),
+  approveMilestone: jest.fn(),
+  approveEscrowStatus: jest.fn(),
+}))
+
+jest.mock('../../../repositories/reservation.repository', () => ({
+  mirrorReservationStatus: jest.fn(),
+}))
+
 const mockedLogAndCheck = logAndCheckWebhookEvent as jest.MockedFunction<
   typeof logAndCheckWebhookEvent
 >
 const mockedMarkProcessed = markWebhookEventProcessed as jest.MockedFunction<
   typeof markWebhookEventProcessed
+>
+const mockedGetEscrow = getEscrowByContractId as jest.MockedFunction<
+  typeof getEscrowByContractId
+>
+const mockedApproveMilestone = approveMilestone as jest.MockedFunction<
+  typeof approveMilestone
+>
+const mockedApproveEscrowStatus = approveEscrowStatus as jest.MockedFunction<
+  typeof approveEscrowStatus
+>
+const mockedMirrorReservationStatus = mirrorReservationStatus as jest.MockedFunction<
+  typeof mirrorReservationStatus
 >
 
 function makeResponse(): Response {
@@ -83,16 +108,10 @@ describe('approveMilestoneHandler', () => {
   })
 
   it('uses milestone-specific idempotency keys', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({})
+    mockedGetEscrow.mockResolvedValueOnce({ id: 'escrow-1', contractId: 'contract-1', status: 'funded' })
+    mockedApproveMilestone.mockResolvedValueOnce(true)
+    mockedApproveEscrowStatus.mockResolvedValueOnce(true)
+    mockedMirrorReservationStatus.mockResolvedValueOnce(undefined)
 
     const req = makeRequest({
       contractId: 'contract-1',
@@ -112,17 +131,11 @@ describe('approveMilestoneHandler', () => {
     expect(res.status).toHaveBeenCalledWith(200)
   })
 
-  it('updates Hasura and returns 200 when both updates succeed', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({})
+  it('updates repositories and returns 200 when both updates succeed', async () => {
+    mockedGetEscrow.mockResolvedValueOnce({ id: 'escrow-1', contractId: 'contract-1', status: 'funded' })
+    mockedApproveMilestone.mockResolvedValueOnce(true)
+    mockedApproveEscrowStatus.mockResolvedValueOnce(true)
+    mockedMirrorReservationStatus.mockResolvedValueOnce(undefined)
 
     const req = makeRequest({
       contractId: 'contract-1',
@@ -134,7 +147,10 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res)
 
-    expect(mockedHasuraRequest).toHaveBeenCalledTimes(4)
+    expect(mockedGetEscrow).toHaveBeenCalledWith('contract-1')
+    expect(mockedApproveMilestone).toHaveBeenCalledWith('escrow-1', 'check_in', 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z', expect.any(String))
+    expect(mockedApproveEscrowStatus).toHaveBeenCalledWith('escrow-1', expect.any(String), expect.any(Array))
+    expect(mockedMirrorReservationStatus).toHaveBeenCalledWith('escrow-1', 'checked_in')
     expect(mockedMarkProcessed).toHaveBeenCalledWith('event-1')
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({ success: true })
@@ -156,7 +172,7 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res)
 
-    expect(mockedHasuraRequest).not.toHaveBeenCalled()
+    expect(mockedGetEscrow).not.toHaveBeenCalled()
     expect(mockedMarkProcessed).toHaveBeenCalledWith('event-duplicate')
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({
@@ -167,9 +183,7 @@ describe('approveMilestoneHandler', () => {
   })
 
   it('returns 404 when the escrow is not found', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [],
-    })
+    mockedGetEscrow.mockResolvedValueOnce(null)
 
     const req = makeRequest({
       contractId: 'missing-contract',
@@ -189,15 +203,8 @@ describe('approveMilestoneHandler', () => {
     expect(mockedMarkProcessed).not.toHaveBeenCalled()
   })
 
-  it('returns 500 when Hasura responds with GraphQL errors during mutation', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
-    })
-
-    const error = Object.assign(new Error('Hasura request failed'), {
-      details: [{ message: 'permission denied' }],
-    })
-    mockedHasuraRequest.mockRejectedValueOnce(error)
+  it('returns 500 when repository throws an error', async () => {
+    mockedGetEscrow.mockRejectedValueOnce(new Error('DB failure'))
 
     const req = makeRequest({
       contractId: 'contract-1',
@@ -215,18 +222,5 @@ describe('approveMilestoneHandler', () => {
       error: 'Failed to update milestone approval',
     })
     expect(mockedMarkProcessed).not.toHaveBeenCalled()
-  })
-})
-
-describe('getHasuraEndpoint', () => {
-  const originalEnv = { ...process.env }
-
-  afterAll(() => {
-    process.env = originalEnv
-  })
-
-  it('appends /v1/graphql when the env value is the base Hasura URL', () => {
-    process.env.HASURA_GRAPHQL_ENDPOINT = 'http://localhost:8080'
-    expect(getHasuraEndpoint()).toBe('http://localhost:8080/v1/graphql')
   })
 })

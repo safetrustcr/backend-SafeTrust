@@ -1,9 +1,16 @@
 'use strict';
 
-jest.mock('../../../services/hasura', () => ({
-  hasuraRequest: jest.fn(),
+jest.mock('../../../repositories/webhook-event.repository', () => ({
   logAndCheckWebhookEvent: jest.fn(),
   markWebhookEventProcessed: jest.fn(),
+}));
+
+jest.mock('../../../repositories/escrow.repository', () => ({
+  createEscrow: jest.fn(),
+}));
+
+jest.mock('../../../repositories/reservation.repository', () => ({
+  linkEscrowToReservation: jest.fn(),
 }));
 
 jest.mock('../../../lib/zk-verifier', () => ({
@@ -12,10 +19,12 @@ jest.mock('../../../lib/zk-verifier', () => ({
 
 const { initializeEscrowHandler, amountToStroops } = require('../initialize.handler');
 const {
-  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} = require('../../../services/hasura');
+} = require('../../../repositories/webhook-event.repository');
+const {
+  createEscrow,
+} = require('../../../repositories/escrow.repository');
 const { verifyProofOfFunds } = require('../../../lib/zk-verifier');
 
 function makeRequest(overrides = {}) {
@@ -47,13 +56,11 @@ describe('initializeEscrowHandler ZK verification', () => {
       isDuplicate: false,
       eventId: 'event-1',
     });
-    hasuraRequest.mockResolvedValue({
-      insert_trustless_work_escrows_one: {
-        id: 'escrow-1',
-        contractId: 'contract-1',
-        status: 'created',
-        createdAt: '2026-08-24T00:00:00Z',
-      },
+    createEscrow.mockResolvedValue({
+      id: 'escrow-1',
+      contractId: 'contract-1',
+      status: 'created',
+      createdAt: '2026-08-24T00:00:00Z',
     });
     markWebhookEventProcessed.mockResolvedValue(undefined);
   });
@@ -83,7 +90,7 @@ describe('initializeEscrowHandler ZK verification', () => {
       'ab'.repeat(32)
     );
     expect(logAndCheckWebhookEvent).toHaveBeenCalledTimes(1);
-    expect(hasuraRequest).toHaveBeenCalledTimes(1);
+    expect(createEscrow).toHaveBeenCalledTimes(1);
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
@@ -94,7 +101,7 @@ describe('initializeEscrowHandler ZK verification', () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(verifyProofOfFunds).not.toHaveBeenCalled();
     expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
-    expect(hasuraRequest).not.toHaveBeenCalled();
+    expect(createEscrow).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid proof without side effects', async () => {
@@ -110,7 +117,7 @@ describe('initializeEscrowHandler ZK verification', () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({ success: false, error: 'Invalid ZK proof of funds' });
     expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
-    expect(hasuraRequest).not.toHaveBeenCalled();
+    expect(createEscrow).not.toHaveBeenCalled();
   });
 
   it('rejects a valid proof whose threshold does not match the escrow amount', async () => {
@@ -126,7 +133,7 @@ describe('initializeEscrowHandler ZK verification', () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({ success: false, error: 'Invalid ZK proof of funds' });
     expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
-    expect(hasuraRequest).not.toHaveBeenCalled();
+    expect(createEscrow).not.toHaveBeenCalled();
   });
 
   it('fails closed when the native verifier is unavailable', async () => {
@@ -143,7 +150,7 @@ describe('initializeEscrowHandler ZK verification', () => {
 
     expect(res.status).toHaveBeenCalledWith(503);
     expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
-    expect(hasuraRequest).not.toHaveBeenCalled();
+    expect(createEscrow).not.toHaveBeenCalled();
   });
 });
 

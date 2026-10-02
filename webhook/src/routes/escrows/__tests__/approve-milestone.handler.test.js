@@ -1,20 +1,37 @@
 'use strict';
 
-jest.mock('../../../services/hasura', () => ({
-  getHasuraEndpoint: jest.requireActual('../../../services/hasura').getHasuraEndpoint,
-  hasuraRequest: jest.fn(),
+jest.mock('../../../repositories/webhook-event.repository', () => ({
   logAndCheckWebhookEvent: jest.fn(),
   markWebhookEventProcessed: jest.fn(),
+}));
+
+jest.mock('../../../repositories/escrow.repository', () => ({
+  getEscrowByContractId: jest.fn(),
+  approveMilestone: jest.fn(),
+  approveEscrowStatus: jest.fn(),
+}));
+
+jest.mock('../../../repositories/reservation.repository', () => ({
+  mirrorReservationStatus: jest.fn(),
 }));
 
 const {
   approveMilestoneHandler,
 } = require('../approve-milestone.handler');
 const {
-  getHasuraEndpoint,
-  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
+} = require('../../../repositories/webhook-event.repository');
+const {
+  getEscrowByContractId,
+  approveMilestone,
+  approveEscrowStatus,
+} = require('../../../repositories/escrow.repository');
+const {
+  mirrorReservationStatus,
+} = require('../../../repositories/reservation.repository');
+const {
+  getHasuraEndpoint,
 } = require('../../../services/hasura');
 
 function makeResponse() {
@@ -73,18 +90,10 @@ describe('approveMilestoneHandler', () => {
   });
 
   it('uses milestone-specific idempotency keys', async () => {
-    hasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_reservations: { returning: [] },
-    });
+    getEscrowByContractId.mockResolvedValueOnce({ id: 'escrow-1' });
+    approveMilestone.mockResolvedValueOnce(true);
+    approveEscrowStatus.mockResolvedValueOnce(true);
+    mirrorReservationStatus.mockResolvedValueOnce(undefined);
 
     const req = {
       body: {
@@ -106,19 +115,11 @@ describe('approveMilestoneHandler', () => {
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
-  it('updates Hasura and returns 200 when both updates succeed', async () => {
-    hasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    });
-    hasuraRequest.mockResolvedValueOnce({
-      update_reservations: { returning: [] },
-    });
+  it('updates repositories and returns 200 when both updates succeed', async () => {
+    getEscrowByContractId.mockResolvedValueOnce({ id: 'escrow-1' });
+    approveMilestone.mockResolvedValueOnce(true);
+    approveEscrowStatus.mockResolvedValueOnce(true);
+    mirrorReservationStatus.mockResolvedValueOnce(undefined);
 
     const req = {
       body: {
@@ -132,7 +133,10 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res);
 
-    expect(hasuraRequest).toHaveBeenCalledTimes(4);
+    expect(getEscrowByContractId).toHaveBeenCalledWith('contract-1');
+    expect(approveMilestone).toHaveBeenCalledWith('escrow-1', 'check_in', 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z', expect.any(String));
+    expect(approveEscrowStatus).toHaveBeenCalledWith('escrow-1', expect.any(String), expect.any(Array));
+    expect(mirrorReservationStatus).toHaveBeenCalledWith('escrow-1', 'checked_in');
     expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-1');
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ success: true });
@@ -156,7 +160,7 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res);
 
-    expect(hasuraRequest).not.toHaveBeenCalled();
+    expect(getEscrowByContractId).not.toHaveBeenCalled();
     expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-duplicate');
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
@@ -167,9 +171,7 @@ describe('approveMilestoneHandler', () => {
   });
 
   it('returns 404 when the escrow is not found', async () => {
-    hasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [],
-    });
+    getEscrowByContractId.mockResolvedValueOnce(null);
 
     const req = {
       body: {
@@ -191,14 +193,8 @@ describe('approveMilestoneHandler', () => {
     expect(markWebhookEventProcessed).not.toHaveBeenCalled();
   });
 
-  it('returns 500 when Hasura responds with GraphQL errors during mutation', async () => {
-    hasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
-    });
-
-    const error = new Error('Hasura request failed');
-    error.details = [{ message: 'permission denied' }];
-    hasuraRequest.mockRejectedValueOnce(error);
+  it('returns 500 when repository throws an error', async () => {
+    getEscrowByContractId.mockRejectedValueOnce(new Error('DB failure'));
 
     const req = {
       body: {

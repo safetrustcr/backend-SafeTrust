@@ -2,10 +2,16 @@ import { Request, Response } from 'express';
 import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
 import { ResolveDisputePayload } from '@safetrust/types';
 import {
-  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} from '../../services/hasura';
+} from '../../repositories/webhook-event.repository';
+import {
+  resolveDispute,
+  appendResolutionNote,
+} from '../../repositories/escrow.repository';
+import {
+  mirrorReservationStatus,
+} from '../../repositories/reservation.repository';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
 // Compile-time SafeTrust escrow state machine (Neon native addon).
@@ -42,81 +48,29 @@ export const resolveDisputeHandler = async (
     }
 
     // 2 — Update trustless_work_escrows
-    // Valid prior states are driven by the Rust state machine, replacing the
-    // previously hardcoded status: { _eq: "disputed" } guard.
     const validStates: string[] = JSON.parse(
       getValidPriorStates(EscrowStatus.Resolved, EscrowEventType.DisputeResolved) as string
     );
 
-    const mutation = `
-      mutation ResolveDispute($contractId: String!, $validStates: [String!]!, $status: String!) {
-        update_trustless_work_escrows(
-          where: {
-            contractId: { _eq: $contractId }
-            status: { _in: $validStates }
-          }
-          _set: {
-            status: $status
-            balance: 0
-          }
-        ) {
-          returning { id contractId status balance }
-        }
-      }
-    `;
+    const updated = await resolveDispute(contractId, validStates);
 
-    const data = await hasuraRequest<{
-      update_trustless_work_escrows?: {
-        returning: Array<{ id: string; contractId: string; status: string; balance: number }>;
-      };
-    }>(mutation, { contractId, validStates, status: EscrowStatus.Resolved });
-    const updated = data.update_trustless_work_escrows?.returning;
-
-    if (!updated || !updated.length) {
+    if (!updated) {
       return notFound(res, {
         error: `Escrow not found for contractId: ${contractId}`
       });
     }
 
-    const escrowId = updated[0].id;
+    const escrowId = updated.id;
 
     // 3 — Mirror status to public.reservations
-    const mirrorMutation = `
-      mutation MirrorResolvedToReservation($escrowId: uuid!, $status: String!) {
-        update_reservations(
-          where: { escrowId: { _eq: $escrowId } }
-          _set: {
-            status: $status
-            updatedAt: "now()"
-          }
-        ) {
-          returning { id status }
-        }
-      }
-    `;
-
-    await hasuraRequest(mirrorMutation, { escrowId, status: EscrowStatus.Resolved });
+    await mirrorReservationStatus(escrowId, 'resolved');
 
     // 4 — Store resolution note in escrow_metadata if provided
     if (resolutionNote) {
-      const metadataMutation = `
-        mutation AppendResolutionNote($contractId: String!, $note: jsonb!) {
-          update_trustless_work_escrows(
-            where: { contractId: { _eq: $contractId } }
-            _append: { escrowMetadata: $note }
-          ) {
-            affected_rows
-          }
-        }
-      `;
-
-      await hasuraRequest(metadataMutation, {
-        contractId,
-        note: {
-          resolver,
-          resolutionNote,
-          resolvedAt: new Date().toISOString(),
-        },
+      await appendResolutionNote(contractId, {
+        resolver,
+        resolutionNote,
+        resolvedAt: new Date().toISOString(),
       });
     }
 

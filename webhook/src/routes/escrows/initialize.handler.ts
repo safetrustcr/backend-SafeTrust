@@ -2,10 +2,15 @@ import { Request, Response } from 'express';
 import { badRequest, duplicate, ok, serverError, serviceUnavailable } from '../../utils/response'
 import { InitializeEscrowPayload } from '@safetrust/types';
 import {
-  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} from '../../services/hasura';
+} from '../../repositories/webhook-event.repository';
+import {
+  createEscrow,
+} from '../../repositories/escrow.repository';
+import {
+  linkEscrowToReservation,
+} from '../../repositories/reservation.repository';
 import { verifyProofOfFunds } from '../../lib/zk-verifier';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
@@ -132,17 +137,6 @@ export const initializeEscrowHandler = async (
     }
   }
 
-  const mutation = `
-    mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
-      insert_trustless_work_escrows_one(object: $object) {
-        id
-        contractId
-        status
-        createdAt
-      }
-    }
-  `;
-
   try {
     // 4 — Idempotency check
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
@@ -156,59 +150,36 @@ export const initializeEscrowHandler = async (
       return duplicate(res, eventId);
     }
 
-    // 5 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
-    const data = await hasuraRequest<{ insert_trustless_work_escrows_one?: { id: string } }>(mutation, {
-      object: {
-        contractId: contract_id,
-        marker,
-        approver,
-        releaser,
-        resolver: resolver || null,
-        escrowType: escrow_type,
-        status: EscrowStatus.Created,
-        assetCode: asset_code || 'USDC',
-        assetIssuer: asset_issuer || null,
-        amount,
-        balance: 0,
-        bookingId: booking_id || null,
-        roomId: room_id || null,
-        hotelId: hotel_id || null,
-        guestId: guest_id || null,
-        tenantId: 'safetrust',
-        escrowMetadata: req.body,
-        bookingMetadata: booking_metadata || null,
-      }
+    // 5 — Persist to public.trustless_work_escrows via repository
+    const escrow = await createEscrow({
+      contractId: contract_id,
+      marker,
+      approver,
+      releaser,
+      resolver: resolver || null,
+      escrowType: escrow_type,
+      status: EscrowStatus.Created,
+      assetCode: asset_code || 'USDC',
+      assetIssuer: asset_issuer || null,
+      amount,
+      balance: 0,
+      bookingId: booking_id || null,
+      roomId: room_id || null,
+      hotelId: hotel_id || null,
+      guestId: guest_id || null,
+      tenantId: 'safetrust',
+      escrowMetadata: req.body,
+      bookingMetadata: booking_metadata || null,
     });
 
-    const escrow = data.insert_trustless_work_escrows_one;
     if (!escrow) {
       return serverError(res, { error: 'Failed to insert escrow record' });
     }
 
     // 6 — Link escrow to reservation AFTER escrow is confirmed to exist
-    // booking_metadata.reservation_id is set by the frontend when BOOK was clicked
     const reservationId = booking_metadata?.reservation_id;
     if (reservationId) {
-      const linkMutation = `
-        mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!) {
-          update_reservations_by_pk(
-            pk_columns: { id: $reservationId }
-            _set: {
-              escrow_id: $escrowId,
-              status: "escrow_created",
-              updatedAt: "now()"
-            }
-          ) {
-            id status escrow_id
-          }
-        }
-      `;
-
-      await hasuraRequest(linkMutation, {
-        reservationId,
-        escrowId: escrow.id
-      });
-
+      await linkEscrowToReservation(reservationId, escrow.id);
       console.log(`[escrow/initialize] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrow.id}`);
     }
 

@@ -3,8 +3,15 @@ import express from 'express'
 
 jest.mock('../../../services/hasura', () => ({
   hasuraRequest: jest.fn().mockResolvedValue({}),
+}))
+
+jest.mock('../../../repositories/webhook-event.repository', () => ({
   logAndCheckWebhookEvent: jest.fn().mockResolvedValue({ isDuplicate: false, eventId: 'event-1' }),
   markWebhookEventProcessed: jest.fn().mockResolvedValue(true),
+}))
+
+jest.mock('../../../repositories/escrow.repository', () => ({
+  createEscrow: jest.fn().mockResolvedValue({ id: 'escrow-1' }),
 }))
 
 jest.mock('../../../middleware/trustlesswork-signature.middleware', () => ({
