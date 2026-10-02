@@ -132,7 +132,7 @@ export async function approveMilestoneAndUpdateReservation(
 
     const milestoneResult = await client.query(
       `
-        SELECT id
+        SELECT id, status
         FROM safetrust.escrow_milestones
         WHERE escrow_id = $1
           AND milestone_id = $2
@@ -161,7 +161,10 @@ export async function approveMilestoneAndUpdateReservation(
 
     const escrowStatus = escrowResult.rows[0].status as string;
 
-    if (escrowStatus === 'milestone_approved') {
+    if (
+      escrowStatus === 'milestone_approved' &&
+      milestoneResult.rows[0].status === 'approved'
+    ) {
       await client.query('COMMIT');
       return;
     }

@@ -19,7 +19,7 @@ export interface EscrowInitPayload {
   approver: string;
   releaser: string;
   resolver: string | null;
-  amount: number;
+  amount: number | string;
   escrow_type: string;
   asset_code: string;
   asset_issuer: string | null;

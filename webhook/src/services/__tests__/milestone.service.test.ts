@@ -217,7 +217,7 @@ describe('approveMilestoneAndUpdateReservation', () => {
   it('is idempotent when the milestone is already approved and escrow is already milestone_approved', async () => {
     mockedClient.query
       .mockResolvedValueOnce({}) // BEGIN
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1' }] }) // milestone
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1', status: 'approved' }] }) // milestone
       .mockResolvedValueOnce({
         rowCount: 1,
         rows: [{ id: 'escrow-1', status: 'milestone_approved' }],
