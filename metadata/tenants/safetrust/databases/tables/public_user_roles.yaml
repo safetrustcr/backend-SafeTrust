@@ -6,7 +6,7 @@ select_permissions:
     permission:
       columns:
         - user_id
-        - role
+        - role_id
         - created_at
       filter:
         user_id:
@@ -15,7 +15,7 @@ select_permissions:
     permission:
       columns:
         - user_id
-        - role
+        - role_id
         - created_at
       filter:
         user_id:
@@ -24,7 +24,7 @@ select_permissions:
     permission:
       columns:
         - user_id
-        - role
+        - role_id
         - created_at
       filter: {}
 insert_permissions:
@@ -33,7 +33,7 @@ insert_permissions:
       check: {}
       columns:
         - user_id
-        - role
+        - role_id
 delete_permissions:
   - role: admin
     permission:
