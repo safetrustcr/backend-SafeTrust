@@ -214,6 +214,35 @@ describe('approveMilestoneAndUpdateReservation', () => {
     expect(mockedClient.release).toHaveBeenCalledTimes(1);
   });
 
+  it('is idempotent when the milestone is already approved and escrow is already milestone_approved', async () => {
+    mockedClient.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1' }] }) // milestone
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: 'escrow-1', status: 'milestone_approved' }],
+      }) // escrow
+      .mockResolvedValueOnce({}) // COMMIT
+      ;
+
+    await expect(
+      approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC')
+    ).resolves.toBeUndefined();
+
+    expect(mockedClient.query).toHaveBeenLastCalledWith('COMMIT');
+    expect(mockedClient.query).not.toHaveBeenCalledWith('ROLLBACK');
+    expect(mockedClient.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE safetrust.escrow_milestones')
+    );
+    expect(mockedClient.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE safetrust.trustless_work_escrows')
+    );
+    expect(mockedClient.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE safetrust.reservations')
+    );
+    expect(mockedClient.release).toHaveBeenCalledTimes(1);
+  });
+
   it('throws EscrowNotFoundError (404) and rolls back when escrow is missing', async () => {
     mockedClient.query
       .mockResolvedValueOnce({}) // BEGIN

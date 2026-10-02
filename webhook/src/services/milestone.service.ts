@@ -1,4 +1,8 @@
-import { hasuraRequest, logAndCheckWebhookEvent, markWebhookEventProcessed } from './hasura';
+import { hasuraRequest } from './hasura';
+import {
+  logAndCheckWebhookEvent,
+  markWebhookEventProcessed,
+} from '../repositories/webhook-event.repository';
 import { connect } from './db';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -156,6 +160,11 @@ export async function approveMilestoneAndUpdateReservation(
     }
 
     const escrowStatus = escrowResult.rows[0].status as string;
+
+    if (escrowStatus === 'milestone_approved') {
+      await client.query('COMMIT');
+      return;
+    }
 
     if (!validStates.includes(escrowStatus)) {
       throw new EscrowStateConflictError(

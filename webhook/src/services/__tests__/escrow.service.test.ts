@@ -3,6 +3,9 @@
 // Mock hasura service and zk-verifier before imports
 jest.mock('../../services/hasura', () => ({
   hasuraRequest: jest.fn(),
+}));
+
+jest.mock('../../repositories/webhook-event.repository', () => ({
   logAndCheckWebhookEvent: jest.fn(),
   markWebhookEventProcessed: jest.fn(),
 }));
@@ -30,11 +33,11 @@ import {
   ZkVerifierUnavailableError,
   EscrowInitPayload,
 } from '../../services/escrow.service';
+import { hasuraRequest } from '../../services/hasura';
 import {
-  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} from '../../services/hasura';
+} from '../../repositories/webhook-event.repository';
 import { verifyProofOfFunds } from '../../lib/zk-verifier';
 
 const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>;
