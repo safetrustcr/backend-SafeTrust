@@ -2,12 +2,13 @@ import { Request, Response, NextFunction } from "express";
 import { getAuth } from "firebase-admin/auth";
 import { getHighestRole } from "../services/claims";
 
-export interface AuthRequest extends Request {
-  user?: { uid: string; role: string };
+export interface AuthenticatedRequest extends Request {
+  user?: { uid: string; email?: string; role: string; [key: string]: any };
 }
+export type AuthRequest = AuthenticatedRequest;
 
 export async function authMiddleware(
-  req: AuthRequest,
+  req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ): Promise<void> {
