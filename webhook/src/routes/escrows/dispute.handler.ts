@@ -6,6 +6,7 @@ import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../../services/hasura';
+import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
 // Compile-time SafeTrust escrow state machine (Neon native addon).
 // Replaces hardcoded status strings with the authoritative transition table.
@@ -13,7 +14,7 @@ const { getValidPriorStates } = require('../../../../crates/escrow-state-machine
   getValidPriorStates: (to: string, event: string) => string
 }
 
-const EVENT_TYPE = 'escrow.disputed';
+const EVENT_TYPE = EscrowEventType.DisputeOpened;
 
 export const disputeEscrowHandler = async (
   req: Request<{}, {}, DisputeEscrowPayload>,
@@ -50,18 +51,18 @@ export const disputeEscrowHandler = async (
     // Valid prior states are driven by the Rust state machine, enforcing the
     // legal from-states for a dispute (funded | active | milestone_approved).
     const validStates: string[] = JSON.parse(
-      getValidPriorStates('disputed', 'dispute.raised') as string
+      getValidPriorStates(EscrowStatus.Disputed, EscrowEventType.DisputeOpened) as string
     );
 
     const mutation = `
-      mutation DisputeEscrow($contractId: String!, $validStates: [String!]!) {
+      mutation DisputeEscrow($contractId: String!, $validStates: [String!]!, $status: String!) {
         update_trustless_work_escrows(
           where: {
             contractId: { _eq: $contractId }
             status: { _in: $validStates }
           }
           _set: {
-            status: "disputed"
+            status: $status
           }
         ) {
           returning { id contractId status }
@@ -73,7 +74,7 @@ export const disputeEscrowHandler = async (
       update_trustless_work_escrows?: {
         returning: Array<{ id: string; contractId: string; status: string }>;
       };
-    }>(mutation, { contractId, validStates });
+    }>(mutation, { contractId, validStates, status: EscrowStatus.Disputed });
     const updated = data.update_trustless_work_escrows?.returning;
 
     if (!updated || !updated.length) {
@@ -86,11 +87,11 @@ export const disputeEscrowHandler = async (
 
     // 3 — Mirror status to public.reservations
     const mirrorMutation = `
-      mutation MirrorDisputedToReservation($escrowId: uuid!) {
+      mutation MirrorDisputedToReservation($escrowId: uuid!, $status: String!) {
         update_reservations(
           where: { escrowId: { _eq: $escrowId } }
           _set: {
-            status: "disputed"
+            status: $status
             updatedAt: "now()"
           }
         ) {
@@ -99,7 +100,7 @@ export const disputeEscrowHandler = async (
       }
     `;
 
-    await hasuraRequest(mirrorMutation, { escrowId });
+    await hasuraRequest(mirrorMutation, { escrowId, status: EscrowStatus.Disputed });
 
     await markWebhookEventProcessed(eventId);
 

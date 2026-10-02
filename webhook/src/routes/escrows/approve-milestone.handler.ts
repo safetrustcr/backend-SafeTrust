@@ -1,61 +1,66 @@
 import { Request, Response } from 'express';
+import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response';
 import { ApproveMilestonePayload } from '@safetrust/types';
 import {
-  validateApproveMilestonePayload,
   approveMilestone,
-  MilestoneValidationError,
+  EscrowStateConflictError,
   EscrowNotFoundError,
   MilestoneNotFoundError,
 } from '../../services/milestone.service';
-
 export async function approveMilestoneHandler(
   req: Request<{}, {}, ApproveMilestonePayload>,
   res: Response
 ): Promise<Response> {
   const { contractId, milestoneId, approver, flag } = req.body || {};
 
-  // 1 — Validate payload fields
-  try {
-    validateApproveMilestonePayload(contractId, milestoneId, approver, flag);
-  } catch (err) {
-    if (err instanceof MilestoneValidationError) {
-      return res.status(err.statusCode).json({ success: false, error: err.message });
-    }
-    const error = err as Error;
-    return res.status(400).json({ success: false, error: error.message });
+  if (!contractId || !milestoneId || !approver || flag === undefined) {
+    return badRequest(res, {
+      error: 'Missing required fields: contractId, milestoneId, approver, flag',
+    });
+  }
+
+  if (flag !== true) {
+    return badRequest(res, {
+      error: 'flag must be true to approve a milestone',
+    });
   }
 
   try {
-    // 2 — Process idempotency, milestone approval, and reservation update
-    const { isDuplicate, eventId } = await approveMilestone(
+    const result = await approveMilestone(
+
       contractId,
       milestoneId,
       approver,
       req.body as unknown as Record<string, unknown>
     );
 
-    if (isDuplicate) {
-      return res.status(200).json({
-        success: true,
-        duplicate: true,
-        eventId,
-      });
+    if (result.isDuplicate) {
+      return duplicate(res, result.eventId);
     }
 
     console.log(
       `[escrow/approve-milestone] ✅ Milestone approved — contractId: ${contractId}, milestoneId: ${milestoneId}`
     );
-    return res.status(200).json({ success: true });
+    return ok(res);
 
-  } catch (err) {
-    if (err instanceof EscrowNotFoundError || err instanceof MilestoneNotFoundError) {
-      return res.status(err.statusCode).json({ success: false, error: err.message });
+  } catch (error) {
+    const err = error as Error & { details?: unknown };
+
+    if (err instanceof EscrowStateConflictError) {
+      return conflict(res, { error: err.message });
     }
-    const error = err as Error & { details?: unknown };
-    console.error('[escrow/approve-milestone] ❌ failed:', error.details || error.message);
-    return res.status(500).json({
-      success: false,
-      error: 'Failed to update milestone approval',
-    });
+
+    if (
+      err instanceof EscrowNotFoundError ||
+      err instanceof MilestoneNotFoundError
+    ) {
+      return notFound(res, { error: err.message });
+    }
+
+    console.error(
+      '[escrow/approve-milestone] ❌ failed:',
+      err.details || err.message
+    );
+    return serverError(res, { error: 'Failed to update milestone approval' });
   }
 }
