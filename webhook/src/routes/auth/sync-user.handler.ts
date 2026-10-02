@@ -1,5 +1,6 @@
 import { Response } from 'express'
 import { query } from '../../services/db'
+import { syncHasuraClaims } from '../../services/claims'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 
 interface UserRow {
@@ -22,7 +23,7 @@ async function getUsersIdColumnType(): Promise<string | undefined> {
      FROM information_schema.columns
      WHERE table_schema = 'public'
        AND table_name = 'users'
-       AND column_name = 'id'`
+       AND column_name = 'id'
   )
 
   cachedUsersIdDataType = result.rows[0]?.data_type
@@ -63,6 +64,8 @@ export const syncUserHandler = async (
     const result = await query<UserRow>(text, values)
     const user = result.rows[0]
 
+    await syncHasuraClaims(uid)
+
     console.log(`[sync-user] user synced - uid: ${user.firebase_uid}`)
     return res.status(200).json({
       user: {
@@ -71,6 +74,7 @@ export const syncUserHandler = async (
         role,
         last_seen: user.last_seen ?? user.updated_at,
       },
+      claimsUpdated: true,
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)

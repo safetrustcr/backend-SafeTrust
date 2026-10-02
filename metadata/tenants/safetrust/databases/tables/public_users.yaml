@@ -61,38 +61,8 @@ select_permissions:
       filter:
         id:
           _eq: X-Hasura-User-Id
-  - role: tenant
-    permission:
-      columns:
-        - id
-        - firebase_uid
-        - email
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
-        - last_seen
-      filter:
-        id:
-          _eq: X-Hasura-User-Id
-  - role: landlord
-    permission:
-      columns:
-        - id
-        - firebase_uid
-        - email
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
-        - last_seen
-      filter:
-        id:
-          _eq: X-Hasura-User-Id
 update_permissions:
-  - role: tenant
+  - role: guest
     permission:
       columns:
         - first_name
@@ -106,7 +76,7 @@ update_permissions:
       check:
         id:
           _eq: X-Hasura-User-Id
-  - role: landlord
+  - role: host
     permission:
       columns:
         - first_name

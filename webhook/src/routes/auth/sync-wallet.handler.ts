@@ -1,5 +1,6 @@
 import { Response } from 'express'
 import { query } from '../../services/db'
+import { syncHasuraClaims } from '../../services/claims'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import type {
   ChainType,
@@ -69,6 +70,8 @@ export async function syncWalletHandler(
   try {
     const result = await query<WalletRow>(UPSERT_WALLET, [uid, wallet_address, chain_type, is_primary])
     const wallet = result.rows[0]
+
+    await syncHasuraClaims(uid)
 
     console.log(`[auth/sync-wallet] uid=${uid} wallet=${wallet_address}`)
     const response: SyncWalletResponse = { success: true, wallet_address: wallet.wallet_address }
