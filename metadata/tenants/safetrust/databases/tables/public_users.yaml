@@ -1,122 +1,55 @@
 table:
   name: users
   schema: safetrust
-array_relationships:
-  - name: user_roles
-    using:
-      foreign_key_constraint_on:
-        column: user_id
-        table:
-          name: user_roles
-          schema: safetrust
-  - name: user_wallets
-    using:
-      foreign_key_constraint_on:
-        column: user_id
-        table:
-          name: user_wallets
-          schema: safetrust
 select_permissions:
-  - role: admin
-    permission:
-      columns:
-        - id
-        - firebase_uid
-        - email
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
-        - last_seen
-      filter: {}
-      allow_aggregations: true
-  - role: host
-    permission:
-      columns:
-        - id
-        - firebase_uid
-        - email
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
-        - last_seen
-      filter:
-        id:
-          _eq: X-Hasura-User-Id
   - role: guest
     permission:
       columns:
         - id
-        - firebase_uid
         - email
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
-        - last_seen
+        - display_name
+        - avatar_url
+        - created_at
+        - updated_at
       filter:
         id:
-          _eq: X-Hasura-User-Id
-  - role: tenant
+          _eq: x-hasura-user-id
+  - role: host
     permission:
       columns:
         - id
-        - firebase_uid
         - email
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
-        - last_seen
-      filter:
-        id:
-          _eq: X-Hasura-User-Id
-  - role: landlord
+        - display_name
+        - avatar_url
+        - created_at
+        - updated_at
+        - is_host
+      filter: {}
+  - role: admin
     permission:
       columns:
         - id
-        - firebase_uid
         - email
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
-        - last_seen
-      filter:
-        id:
-          _eq: X-Hasura-User-Id
+        - display_name
+        - avatar_url
+        - created_at
+        - updated_at
+        - is_host
+      filter: {}
 update_permissions:
-  - role: tenant
+  - role: host
     permission:
       columns:
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
+        - display_name
+        - avatar_url
       filter:
         id:
-          _eq: X-Hasura-User-Id
-      check:
-        id:
-          _eq: X-Hasura-User-Id
-  - role: landlord
+          _eq: x-hasura-user-id
+  - role: admin
     permission:
       columns:
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
-      filter:
-        id:
-          _eq: X-Hasura-User-Id
-      check:
-        id:
-          _eq: X-Hasura-User-Id
+        - email
+        - display_name
+        - avatar_url
+        - is_host
+      filter: {}
