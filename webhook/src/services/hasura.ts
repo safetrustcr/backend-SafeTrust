@@ -73,4 +73,4 @@ export async function hasuraRequest<T = Record<string, unknown>>(
 export default {
   getHasuraEndpoint,
   hasuraRequest,
-}
+}

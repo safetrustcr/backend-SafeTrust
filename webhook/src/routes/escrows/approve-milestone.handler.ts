@@ -1,32 +1,12 @@
 import { Request, Response } from 'express';
-import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
+import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response';
 import { ApproveMilestonePayload } from '@safetrust/types';
 import {
-  logAndCheckWebhookEvent,
-  markWebhookEventProcessed,
-} from '../../repositories/webhook-event.repository';
-import {
-  getEscrowByContractId,
   approveMilestone,
-  approveEscrowStatus,
-} from '../../repositories/escrow.repository';
-import {
-  mirrorReservationStatus,
-} from '../../repositories/reservation.repository';
-import {
-  EscrowEventType,
-  EscrowStatus,
-  MilestoneStatus,
-} from '../../types/escrow.types';
-
-// Compile-time SafeTrust escrow state machine (Neon native addon).
-// Replaces hardcoded status strings with the authoritative transition table.
-const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
-  getValidPriorStates: (to: string, event: string) => string
-}
-
-const EVENT_TYPE = EscrowEventType.MilestoneApproved;
-
+  EscrowStateConflictError,
+  EscrowNotFoundError,
+  MilestoneNotFoundError,
+} from '../../services/milestone.service';
 export async function approveMilestoneHandler(
   req: Request<{}, {}, ApproveMilestonePayload>,
   res: Response
@@ -45,60 +25,18 @@ export async function approveMilestoneHandler(
     });
   }
 
-  const approvedAt = new Date().toISOString();
-
   try {
-    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    const result = await approveMilestone(
+
       contractId,
-      `${EVENT_TYPE}:${milestoneId}`,
+      milestoneId,
+      approver,
       req.body as unknown as Record<string, unknown>
     );
 
-    if (isDuplicate) {
-      await markWebhookEventProcessed(eventId);
-      return duplicate(res, eventId);
+    if (result.isDuplicate) {
+      return duplicate(res, result.eventId);
     }
-
-    // 1 — Look up escrow UUID by contractId
-    const escrow = await getEscrowByContractId(contractId);
-    const escrowId = escrow?.id;
-
-    if (!escrowId) {
-      return notFound(res, { error: 'Escrow not found' });
-    }
-
-    // 2 — Update escrow_milestones
-    const milestoneUpdated = await approveMilestone(
-      escrowId,
-      milestoneId,
-      approver,
-      approvedAt
-    );
-
-    if (!milestoneUpdated) {
-      return notFound(res, { error: 'Milestone not found' });
-    }
-
-    // 3 — Update trustless_work_escrows
-    const validStates: string[] = JSON.parse(
-      getValidPriorStates(EscrowStatus.MilestoneApproved, EscrowEventType.MilestoneApproved) as string
-    );
-
-    const escrowUpdated = await approveEscrowStatus(
-      escrowId,
-      approvedAt,
-      validStates
-    );
-
-    if (!escrowUpdated) {
-      return notFound(res, { error: 'Escrow not found' });
-    }
-
-    // 4 — Mirror status to public.reservations
-    const reservationStatus = milestoneId === MilestoneStatus.CheckIn ? 'checked_in' : 'checked_out';
-    await mirrorReservationStatus(escrowId, reservationStatus);
-
-    await markWebhookEventProcessed(eventId);
 
     console.log(
       `[escrow/approve-milestone] ✅ Milestone approved — contractId: ${contractId}, milestoneId: ${milestoneId}`
@@ -107,7 +45,22 @@ export async function approveMilestoneHandler(
 
   } catch (error) {
     const err = error as Error & { details?: unknown };
-    console.error('[escrow/approve-milestone] ❌ failed:', err.details || err.message);
+
+    if (err instanceof EscrowStateConflictError) {
+      return conflict(res, { error: err.message });
+    }
+
+    if (
+      err instanceof EscrowNotFoundError ||
+      err instanceof MilestoneNotFoundError
+    ) {
+      return notFound(res, { error: err.message });
+    }
+
+    console.error(
+      '[escrow/approve-milestone] ❌ failed:',
+      err.details || err.message
+    );
     return serverError(res, { error: 'Failed to update milestone approval' });
   }
 }
