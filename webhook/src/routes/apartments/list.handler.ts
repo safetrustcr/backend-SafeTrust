@@ -177,7 +177,7 @@ export const listApartments = async (
  * Create apartment listing for authenticated owner
  */
 export const createApartment = async (
-  req: Request,
+  req: AuthenticatedRequest,
   res: Response<ApartmentResponse>
 ): Promise<Response<ApartmentResponse>> => {
   const ownerId = req.user?.uid

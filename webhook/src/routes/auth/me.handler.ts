@@ -11,7 +11,7 @@ export const meHandler = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<Response> => {
-  const { uid, email } = req.user
+  const { uid, email } = req.user!
 
   try {
     const result = await query<RoleRow>(

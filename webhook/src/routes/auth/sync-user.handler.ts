@@ -33,7 +33,7 @@ export const syncUserHandler = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<Response> => {
-  const { uid, email, role } = req.user
+  const { uid, email, role } = req.user!
 
   try {
     const idColumnType = await getUsersIdColumnType()
