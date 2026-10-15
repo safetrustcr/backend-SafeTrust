@@ -245,7 +245,7 @@ Reports are generated at:
 - `docker-compose-test.yml`
 - `Dockerfile.test`
 
-> 📍`bin/test` runs `docker compose -f docker-compose-test.yml run --rm --build karate` internally.
+> 📍`bin/test` uses an isolated `safetrust-test` Compose project and excludes the `@timing` benchmark, which requires a separate `bin/start safetrust` timing report. It runs `docker compose -p safetrust-test -f docker-compose-test.yml run --rm --build karate` internally.
 
 ## 🤝 Contributing
 

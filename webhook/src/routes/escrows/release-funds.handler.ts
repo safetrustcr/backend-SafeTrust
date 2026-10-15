@@ -54,7 +54,7 @@ export const releaseFundsHandler = async (
 
     const escrowId = updated.id;
 
-    // 3 — Mirror status to public.reservations
+    // 3 — Mirror status to safetrust.reservations
     await mirrorReservationStatus(escrowId, 'completed');
 
     // 4 — Notify hotel conversation (best-effort, never fail the response)

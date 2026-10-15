@@ -67,7 +67,7 @@ export const disputeEscrowHandler = async (
 
     const escrowId = updated.id;
 
-    // 3 — Mirror status to public.reservations
+    // 3 — Mirror status to safetrust.reservations
     await mirrorReservationStatus(escrowId, 'disputed');
 
     await markWebhookEventProcessed(eventId);

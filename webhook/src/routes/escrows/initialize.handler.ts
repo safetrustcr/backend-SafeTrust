@@ -150,7 +150,7 @@ export const initializeEscrowHandler = async (
       return duplicate(res, eventId);
     }
 
-    // 5 — Persist to public.trustless_work_escrows via repository
+    // 5 — Persist to safetrust.trustless_work_escrows via repository
     const escrow = await createEscrow({
       contractId: contract_id,
       marker,

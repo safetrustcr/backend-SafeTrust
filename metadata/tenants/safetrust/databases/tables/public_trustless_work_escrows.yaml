@@ -1,0 +1,22 @@
+table:
+  schema: safetrust
+  name: trustless_work_escrows
+configuration:
+  custom_name: trustless_work_escrows
+  custom_column_names:
+    contract_id: contractId
+    escrow_type: escrowType
+    asset_code: assetCode
+    asset_issuer: assetIssuer
+    booking_id: bookingId
+    room_id: roomId
+    hotel_id: hotelId
+    guest_id: guestId
+    check_in_date: checkInDate
+    check_out_date: checkOutDate
+    booking_created_at: bookingCreatedAt
+    escrow_metadata: escrowMetadata
+    booking_metadata: bookingMetadata
+    created_at: createdAt
+    updated_at: updatedAt
+    tenant_id: tenantId

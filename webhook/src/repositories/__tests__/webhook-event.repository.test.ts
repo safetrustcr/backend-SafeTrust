@@ -90,7 +90,7 @@ describe('webhook-event.repository', () => {
 
       expect(pool.query).toHaveBeenCalledTimes(1)
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE public.trustless_work_webhook_events'),
+        expect.stringContaining('UPDATE safetrust.trustless_work_webhook_events'),
         ['evt-100', expect.any(Date)]
       )
     })

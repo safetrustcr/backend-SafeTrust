@@ -113,7 +113,7 @@ export function setSorobanReconcilerAddon(addon: {
 // ─── Extracted Functions ──────────────────────────────────────────────────────
 
 /**
- * Step 1: Fetches all known contract IDs for a given tenant from public.trustless_work_escrows.
+ * Step 1: Fetches all known contract IDs for a given tenant from safetrust.trustless_work_escrows.
  *
  * @param tenantId - Tenant identifier (defaults to 'safetrust')
  * @returns Array of contract IDs
@@ -123,7 +123,7 @@ export async function fetchEscrowContractIds(
 ): Promise<string[]> {
   const { rows } = await db.query<{ contract_id: string }>(
     `SELECT contract_id
-       FROM public.trustless_work_escrows
+       FROM safetrust.trustless_work_escrows
       WHERE tenant_id = $1`,
     [tenantId]
   )
@@ -279,7 +279,7 @@ export async function validateSorobanDrift(
 
   const { rows: currentRows } = await db.query<EscrowDbRow>(
     `SELECT contract_id, id, status, balance, marker, approver
-       FROM public.trustless_work_escrows
+       FROM safetrust.trustless_work_escrows
       WHERE tenant_id = 'safetrust'`
   )
   const dbStateMap = Object.fromEntries(

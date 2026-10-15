@@ -56,7 +56,7 @@ export const fundEscrowHandler = async (
       return duplicate(res, eventId);
     }
 
-    // 3 — Update public.trustless_work_escrows
+    // 3 — Update safetrust.trustless_work_escrows
     const validStates: string[] = JSON.parse(
       getValidPriorStates(EscrowStatus.Funded, EscrowEventType.Funded) as string
     );
@@ -71,7 +71,7 @@ export const fundEscrowHandler = async (
 
     const escrowId = updated.id;
 
-    // 4 — Mirror status to public.reservations
+    // 4 — Mirror status to safetrust.reservations
     await mirrorReservationStatus(escrowId, 'funded');
 
     // 5 — Notify hotel conversation (best-effort, never fail the response)

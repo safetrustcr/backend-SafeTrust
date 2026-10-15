@@ -319,7 +319,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
 
     # Status guard: resolve again must 404 (no longer disputed).
     # Clear idempotency so we exercise status=_eq disputed, not the 200 duplicate path.
-    * db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id = '" + disputeContractId + "' AND event_type = 'escrow.resolved'")
+    * db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id = '" + disputeContractId + "' AND event_type = 'dispute.resolved'")
     Given path '/api/escrows/resolve-dispute'
     And header Content-Type = 'application/json'
     And header x-trustlesswork-signature = trustlessWorkSignature(resolveStr)

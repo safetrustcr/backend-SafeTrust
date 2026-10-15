@@ -262,7 +262,7 @@ export function __resetBulkUpsertForTests(): void {
  *   asset_issuer, resolver
  */
 const UPSERT_ESCROW_SQL = `
-  INSERT INTO public.trustless_work_escrows (
+  INSERT INTO safetrust.trustless_work_escrows (
     contract_id,
     status,
     amount,
@@ -284,12 +284,12 @@ const UPSERT_ESCROW_SQL = `
     releaser   = EXCLUDED.releaser,
     updated_at = NOW()
   WHERE (
-    public.trustless_work_escrows.status,
-    public.trustless_work_escrows.amount,
-    public.trustless_work_escrows.balance,
-    public.trustless_work_escrows.marker,
-    public.trustless_work_escrows.approver,
-    public.trustless_work_escrows.releaser
+    safetrust.trustless_work_escrows.status,
+    safetrust.trustless_work_escrows.amount,
+    safetrust.trustless_work_escrows.balance,
+    safetrust.trustless_work_escrows.marker,
+    safetrust.trustless_work_escrows.approver,
+    safetrust.trustless_work_escrows.releaser
   ) IS DISTINCT FROM (
     EXCLUDED.status,
     EXCLUDED.amount,
@@ -402,7 +402,7 @@ export async function fetchEscrowsByContractIds(contractIds: string[]): Promise<
 }
 
 /**
- * Upsert an array of escrow objects into public.trustless_work_escrows.
+ * Upsert an array of escrow objects into safetrust.trustless_work_escrows.
  *
  * Escrows whose indexed fields have not changed are skipped (IS DISTINCT FROM).
  * Each escrow is processed independently so one bad record does not abort the
@@ -682,7 +682,7 @@ export async function findStaleEscrows(staleDays = 7): Promise<string[]> {
 
   const { rows } = await db.query<{ contract_id: string }>(
     `SELECT contract_id
-       FROM public.trustless_work_escrows
+       FROM safetrust.trustless_work_escrows
       WHERE tenant_id = 'safetrust'
         AND status NOT IN ('completed', 'resolved', 'cancelled')
         AND updated_at < NOW() - ($1 * INTERVAL '1 day')

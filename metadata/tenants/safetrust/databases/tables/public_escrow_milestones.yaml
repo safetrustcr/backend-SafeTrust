@@ -1,0 +1,16 @@
+table:
+  schema: safetrust
+  name: escrow_milestones
+configuration:
+  custom_name: escrow_milestones
+  custom_column_names:
+    escrow_id: escrowId
+    milestone_id: milestoneId
+    due_date: dueDate
+    approved_at: approvedAt
+    approved_by: approvedBy
+    released_at: releasedAt
+    released_by: releasedBy
+    created_at: createdAt
+    updated_at: updatedAt
+    tenant_id: tenantId

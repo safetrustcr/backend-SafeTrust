@@ -16,8 +16,8 @@ export const meHandler = async (
   try {
     const result = await query<RoleRow>(
       `SELECT r.name
-       FROM public.user_roles ur
-       JOIN public.roles r ON r.id = ur.role_id
+       FROM safetrust.user_roles ur
+       JOIN safetrust.roles r ON r.id = ur.role_id
        WHERE ur.user_id = $1`,
       [uid]
     )

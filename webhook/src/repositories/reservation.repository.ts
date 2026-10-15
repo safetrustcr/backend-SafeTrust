@@ -6,7 +6,7 @@ export async function linkEscrowToReservation(
 ): Promise<void> {
   const mutation = `
     mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!) {
-      update_reservations_by_pk(
+      update_reservations_by_pk: update_safetrust_reservations_by_pk(
         pk_columns: { id: $reservationId }
         _set: {
           escrowId: $escrowId,
@@ -31,7 +31,7 @@ export async function mirrorReservationStatus(
 ): Promise<void> {
   const mutation = `
     mutation MirrorStatusToReservation($escrowId: uuid!, $status: String!) {
-      update_reservations(
+      update_reservations: update_safetrust_reservations(
         where: { escrowId: { _eq: $escrowId } }
         _set: {
           status: $status

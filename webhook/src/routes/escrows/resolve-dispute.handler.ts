@@ -62,7 +62,7 @@ export const resolveDisputeHandler = async (
 
     const escrowId = updated.id;
 
-    // 3 — Mirror status to public.reservations
+    // 3 — Mirror status to safetrust.reservations
     await mirrorReservationStatus(escrowId, 'resolved');
 
     // 4 — Store resolution note in escrow_metadata if provided

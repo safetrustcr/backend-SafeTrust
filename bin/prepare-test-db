@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+ENDPOINT="${HASURA_GRAPHQL_ENDPOINT:-http://graphql-engine-test:8080}"
+ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:?Hasura admin secret is required}"
+for ((attempt=0; ; attempt++)); do
+  if curl -fsS --connect-timeout 5 --max-time 5 "$ENDPOINT/healthz" >/dev/null; then
+    break
+  fi
+  if ((attempt >= 60)); then
+    echo '[migrate-test] Hasura health check timed out' >&2
+    exit 1
+  fi
+  sleep 2
+done
+for tenant in safetrust hotel_industry; do
+  payload=$(jq -cn --arg name "$tenant" '{type:"pg_add_source",args:{name:$name,replace_configuration:true,configuration:{connection_info:{database_url:{from_env:"PG_DATABASE_URL"},isolation_level:"read-committed"}}}}')
+  curl -fsS -X POST "$ENDPOINT/v1/metadata" \
+    -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+    -H 'Content-Type: application/json' -d "$payload" >/dev/null
+  echo "[migrate-test] Migrating tenant: $tenant"
+  hasura migrate apply --database-name "$tenant" --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
+done
+metadata/setup-tenant.sh safetrust hotel_industry --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
