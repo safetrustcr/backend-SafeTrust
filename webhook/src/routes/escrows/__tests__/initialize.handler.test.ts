@@ -1,3 +1,4 @@
+export {};
 'use strict';
 
 jest.mock('../../../repositories/webhook-event.repository', () => ({

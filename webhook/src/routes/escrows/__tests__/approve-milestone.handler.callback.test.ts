@@ -1,21 +1,22 @@
+export {};
 'use strict';
 
 jest.mock('../../../services/milestone.service', () => ({
   approveMilestone: jest.fn(),
   EscrowStateConflictError: class EscrowStateConflictError extends Error {
-    constructor(message) {
+    constructor(message: string) {
       super(message);
       this.name = 'EscrowStateConflictError';
     }
   },
   EscrowNotFoundError: class EscrowNotFoundError extends Error {
-    constructor(message) {
+    constructor(message: string) {
       super(message);
       this.name = 'EscrowNotFoundError';
     }
   },
   MilestoneNotFoundError: class MilestoneNotFoundError extends Error {
-    constructor(message) {
+    constructor(message: string) {
       super(message);
       this.name = 'MilestoneNotFoundError';
     }

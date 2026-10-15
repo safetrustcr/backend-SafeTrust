@@ -9,6 +9,7 @@
     "bb.exe",
     "index.node",
     "index.d.ts",
-    "install-bb.js"
+    "install-bb.js",
+    "install-bb.ts"
   ]
 }

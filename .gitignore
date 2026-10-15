@@ -88,3 +88,7 @@ Thumbs.db
 *.tar.xz
 *.tar.zst
 crates/target/
+
+# JavaScript generated from TypeScript tooling and Karate sources
+/crates/**/*.js
+/tests/karate/src/test/resources/**/*.js

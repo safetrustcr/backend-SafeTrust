@@ -1,9 +1,10 @@
+export {};
 'use strict';
 
 /**
- * @file src/lib/__tests__/reconciliation.test.js
+ * @file src/lib/__tests__/reconciliation.test.ts
  *
- * Unit tests for src/lib/reconciliation.js
+ * Unit tests for src/lib/reconciliation.ts
  *
  * Strategy
  * ─────────
@@ -55,7 +56,7 @@ function makeEscrow(overrides = {}) {
 /**
  * Make `https.request` return a fake response with the given body/statusCode.
  */
-function mockHttpResponse(body, statusCode = 200) {
+function mockHttpResponse(body: unknown, statusCode = 200) {
   const { EventEmitter } = require('events');
 
   const fakeRes = new EventEmitter();
@@ -73,7 +74,7 @@ function mockHttpResponse(body, statusCode = 200) {
     });
   });
 
-  https.request.mockImplementation((_opts, cb) => {
+  https.request.mockImplementation((_opts: unknown, cb: (response: unknown) => void) => {
     cb(fakeRes);
     return fakeReq;
   });

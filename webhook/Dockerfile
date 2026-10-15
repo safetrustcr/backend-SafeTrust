@@ -20,6 +20,7 @@ RUN cd webhook && npm ci
 # 2. Rust workspace: root manifest + lockfile + all member crates at /app so
 #    `cargo build --workspace --manifest-path ../crates/Cargo.toml` resolves from webhook.
 COPY crates/ ./crates/
+COPY tsconfig.crates.json ./
 
 # 3. TypeScript sources + config.
 COPY webhook/tsconfig.json ./webhook/

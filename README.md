@@ -241,11 +241,35 @@ Reports are generated at:
 
 **Config files:**
 
-- `tests/karate/src/test/resources/karate-config.js`
+- `tests/karate/src/test/resources/karate-config.ts` (compiled to the JavaScript Karate loads)
 - `docker-compose-test.yml`
 - `Dockerfile.test`
 
 > 📍`bin/test` uses an isolated `safetrust-test` Compose project and excludes the `@timing` benchmark, which requires a separate `bin/start safetrust` timing report. It runs `docker compose -p safetrust-test -f docker-compose-test.yml run --rm --build karate` internally.
+
+## TypeScript sources and builds
+
+Webhook runtime code and tests live in `webhook/src/**/*.ts`. Production builds
+exclude test files; `type-check` checks both runtime and test sources in strict mode.
+
+```bash
+npm --prefix webhook ci
+npm --prefix webhook run type-check
+npm --prefix webhook test
+npm --prefix webhook run build
+```
+
+Native-addon helpers, fallback loaders, benchmarks, and examples use TypeScript
+sources under `crates/`. Run `npm --prefix webhook run build:tooling` before invoking
+their JavaScript entry points directly. `build:rust` and `test` do this automatically.
+The adjacent `.js` files are generated compatibility outputs; edit the `.ts` sources.
+
+Karate configuration and token helpers are also authored in TypeScript. The test
+image compiles them automatically. For a local Java runner, first run
+`npm --prefix webhook run build:karate` to generate Karate's required `.js` files.
+Karate expects a function expression, so its compiler configuration omits a leading
+strict-mode directive while retaining strict TypeScript checks. Runtime payload
+validation and native-verifier fail-closed checks remain necessary.
 
 ## 🤝 Contributing
 

@@ -1,7 +1,9 @@
+export {};
+type BulkUpsertArgs = Parameters<typeof import('../../../../crates/pg-bulk-upsert').bulkUpsertEscrows>;
 'use strict';
 
 /**
- * @file src/lib/__tests__/reconciliation-bulk.test.js
+ * @file src/lib/__tests__/reconciliation-bulk.test.ts
  *
  * Unit tests for the Rust bulk-upsert integration:
  *   • upsertEscrows  — original per-row path (counts + isolation)
@@ -84,7 +86,7 @@ describe('upsertEscrows', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 describe('upsertEscrowsBulk', () => {
   it('maps escrow fields to the addon row shape with matching defaults', async () => {
-    const bulkUpsertEscrows = jest.fn(async () =>
+    const bulkUpsertEscrows = jest.fn(async (..._args: BulkUpsertArgs) =>
       JSON.stringify({ rows_affected: 1, unchanged: 0, duration_ms: 3 })
     );
     __setBulkUpsertForTests({ bulkUpsertEscrows });
@@ -112,7 +114,7 @@ describe('upsertEscrowsBulk', () => {
   });
 
   it('returns rows_affected as updated and the addon unchanged count', async () => {
-    const bulkUpsertEscrows = jest.fn(async () =>
+    const bulkUpsertEscrows = jest.fn(async (..._args: BulkUpsertArgs) =>
       JSON.stringify({ rows_affected: 3, unchanged: 2, duration_ms: 5 })
     );
     __setBulkUpsertForTests({ bulkUpsertEscrows });
@@ -123,7 +125,7 @@ describe('upsertEscrowsBulk', () => {
   });
 
   it('filters records missing contractId and counts them as skipped', async () => {
-    const bulkUpsertEscrows = jest.fn(async () =>
+    const bulkUpsertEscrows = jest.fn(async (..._args: BulkUpsertArgs) =>
       JSON.stringify({ rows_affected: 1, unchanged: 0, duration_ms: 2 })
     );
     __setBulkUpsertForTests({ bulkUpsertEscrows });
@@ -165,7 +167,7 @@ describe('upsertEscrowBatch', () => {
 
   it('uses the bulk path when the flag is on and the addon loads', async () => {
     process.env.RUST_BULK_UPSERT_ENABLED = 'true';
-    const bulkUpsertEscrows = jest.fn(async () =>
+    const bulkUpsertEscrows = jest.fn(async (..._args: BulkUpsertArgs) =>
       JSON.stringify({ rows_affected: 1, unchanged: 0, duration_ms: 4 })
     );
     __setBulkUpsertForTests({ bulkUpsertEscrows });
@@ -178,7 +180,7 @@ describe('upsertEscrowBatch', () => {
 
   it('falls back to row-by-row when the bulk statement throws', async () => {
     process.env.RUST_BULK_UPSERT_ENABLED = 'true';
-    const bulkUpsertEscrows = jest.fn(async () => {
+    const bulkUpsertEscrows = jest.fn(async (..._args: BulkUpsertArgs) => {
       throw new Error('Bulk upsert failed: connection refused');
     });
     __setBulkUpsertForTests({ bulkUpsertEscrows });
