@@ -1,0 +1,3 @@
+table:
+  name: find_nearby_hotels_result
+  schema: hotel_industry

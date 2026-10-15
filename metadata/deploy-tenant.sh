@@ -70,7 +70,7 @@ EOL
         -d '{"type": "export_metadata", "args": {}}')
 
     if echo "$sources_resp" | jq -e --arg n "$tenant_name" \
-        '(.metadata.sources? // []) | any(.name == $n)' >/dev/null 2>&1; then
+        '((.metadata // .).sources // []) | any(.name == $n)' >/dev/null 2>&1; then
         echo "Source $tenant_name already exists, skipping creation" >&2
     else
         echo "Source $tenant_name doesn't exist, creating it..." >&2
@@ -149,6 +149,16 @@ process_metadata_tables() {
         return 1
     }
 
+    # Skip objects already tracked so deployment can safely resume.
+    local existing_metadata
+    existing_metadata=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
+        -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+        -H "Content-Type: application/json" \
+        -d '{"type":"export_metadata","args":{}}') || return 1
+    tables_json=$(jq -cn --arg source "$tenant_name" \
+        --argjson metadata "$existing_metadata" --argjson desired "$tables_json" \
+        '[$metadata | (.metadata // .).sources[] | select(.name == $source) | .tables[]?.table] as $tracked | $desired | map(select(.table as $object | $tracked | index($object) | not))') || return 1
+
     if [ -z "$tables_json" ] || [ "$tables_json" = "[]" ] || [ "$tables_json" = "null" ]; then
         echo "⚠️  No trackable tables found for $tenant_name"
         return 0
@@ -156,7 +166,7 @@ process_metadata_tables() {
 
     local track_payload
     track_payload=$(jq -cn --arg source "$tenant_name" --argjson tables "$tables_json" \
-        '{type:"pg_track_tables", args:{source:$source, tables:$tables}}')
+        '{type:"pg_track_tables", args:{source:$source, tables:($tables | map(. + {source:$source}))}}')
 
     echo "🔎 Bulk-tracking tables for $tenant_name..."
     local track_response
@@ -176,7 +186,7 @@ process_metadata_tables() {
 
 # ─────────────────────────────────────────────────────────────────────────────
 # process_metadata_functions
-# Bulk-tracks all functions in a single pg_track_functions call per tenant.
+# Tracks functions using the supported pg_track_function command in a bulk call.
 # -----------------------------------------------------------------------------
 process_metadata_functions() {
     local tenant="$1"
@@ -207,10 +217,20 @@ process_metadata_functions() {
 
     local functions_json
     functions_json=$(yq -o json e '.' "${function_files[@]}" 2>/dev/null \
-        | jq -s 'map(select(type == "array") | .[]) | map(select((.name? // "") != "")) | map({ function: { name: .name, schema: (.schema // "public") }, configuration: ((.configuration // {}) + { exposed_as: (.configuration.exposed_as // "query") }) })') || {
+        | jq -s 'map(if type == "array" then .[] else . end) | map(select(type == "object")) | map({ function: (.function // {name: .name, schema: (.schema // "public")}), configuration: ((.configuration // {}) + { exposed_as: (.configuration.exposed_as // "query") }) }) | map(select((.function.name? // "") != ""))') || {
         echo "❌ Failed to read function metadata for $tenant_name" >&2
         return 1
     }
+
+    # Skip objects already tracked so deployment can safely resume.
+    local existing_metadata
+    existing_metadata=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
+        -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+        -H "Content-Type: application/json" \
+        -d '{"type":"export_metadata","args":{}}') || return 1
+    functions_json=$(jq -cn --arg source "$tenant_name" \
+        --argjson metadata "$existing_metadata" --argjson desired "$functions_json" \
+        '[$metadata | (.metadata // .).sources[] | select(.name == $source) | .functions[]?.function] as $tracked | $desired | map(select(.function as $object | $tracked | index($object) | not))') || return 1
 
     if [ -z "$functions_json" ] || [ "$functions_json" = "[]" ] || [ "$functions_json" = "null" ]; then
         echo "⚠️  No trackable functions found for $tenant_name"
@@ -219,7 +239,7 @@ process_metadata_functions() {
 
     local track_payload
     track_payload=$(jq -cn --arg source "$tenant_name" --argjson functions "$functions_json" \
-        '{type:"pg_track_functions", args:{source:$source, functions:$functions}}')
+        '{type:"bulk", args:($functions | map({type:"pg_track_function", args:(. + {source:$source})}))}')
 
     echo "🔎 Bulk-tracking functions for $tenant_name..."
     local track_response

@@ -34,7 +34,6 @@ services:
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}
       HASURA_GRAPHQL_JWT_SECRET: ${HASURA_GRAPHQL_JWT_SECRET}
       WEBHOOK_URL: ${WEBHOOK_URL:-http://safetrust-webhook:3000}
-      HASURA_EVENT_SECRET: ${HASURA_EVENT_SECRET}
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,7 +77,6 @@ services:
         http://graphql-engine:8080/v1/graphql
       TRUSTLESSWORK_API_URL: ${TRUSTLESSWORK_API_URL:-https://dev.api.trustlesswork.com}
       TRUSTLESSWORK_API_KEY: ${TRUSTLESSWORK_API_KEY}
-      TRUSTLESSWORK_WEBHOOK_SECRET: ${TRUSTLESSWORK_WEBHOOK_SECRET}
       STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
     depends_on:
       postgres:
