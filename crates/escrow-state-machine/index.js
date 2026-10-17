@@ -24,7 +24,7 @@ catch (err) {
         { from: ['milestone_approved'], to: 'completed', event: 'funds.released' },
         { from: ['funded', 'active', 'milestone_approved'], to: 'disputed', event: 'dispute.raised' },
         { from: ['disputed'], to: 'resolved', event: 'dispute.resolved' },
-        { from: ['created', 'pending_funding', 'funded'], to: 'cancelled', event: 'escrow.cancelled' },
+        { from: ['created', 'pending_funding', 'funded', 'disputed'], to: 'cancelled', event: 'escrow.cancelled' },
     ];
     function validateStatus(status) {
         if (!validStatuses.has(status)) {

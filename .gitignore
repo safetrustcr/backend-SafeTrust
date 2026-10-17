@@ -91,4 +91,7 @@ crates/target/
 
 # JavaScript generated from TypeScript tooling and Karate sources
 /crates/**/*.js
+# The verifier fallback is required at runtime when the native addon fails to
+# load, so its generated compatibility output is checked in with index.js.
+!/crates/webhook-verifier/fallback.js
 /tests/karate/src/test/resources/**/*.js

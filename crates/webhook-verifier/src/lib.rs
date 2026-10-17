@@ -10,35 +10,23 @@ const STRKEY_LEN: usize = 56;
 const STRKEY_DECODED_LEN: usize = 35; // version (1) + payload (32) + checksum (2)
 const STRKEY_VERSION_ED25519_PUBLIC: u8 = 0x30;
 
-/// Error raised when HMAC verification is asked to run with an empty key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VerifyError {
-    EmptySecret,
-}
-
-impl std::fmt::Display for VerifyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VerifyError::EmptySecret => write!(f, "HMAC secret must not be empty"),
-        }
-    }
-}
-
 /// Verify a TrustlessWork HMAC-SHA256 webhook signature.
 ///
-/// Returns `Ok(true)` if and only if `payload` signed with `secret` matches
+/// Returns `true` if and only if `payload` signed with `secret` matches
 /// `signature`. Uses constant-time comparison to prevent timing attacks.
-pub fn verify_hmac_sha256(
-    payload: &[u8],
-    signature: &str,
-    secret: &[u8],
-) -> Result<bool, VerifyError> {
-    if secret.is_empty() {
-        return Err(VerifyError::EmptySecret);
+///
+/// Fail-closed: an empty secret, a malformed signature, or any comparison
+/// error returns `false`. This function never throws across the Node-API
+/// boundary, so a verifier bug cannot turn into an authenticated request.
+pub fn verify_hmac_sha256(payload: &[u8], signature: &str, secret: &[u8]) -> bool {
+    if secret.is_empty() || signature.is_empty() {
+        return false;
     }
 
-    let mut mac =
-        HmacSha256::new_from_slice(secret).expect("HMAC-SHA256 accepts any non-empty key length");
+    let mut mac = match HmacSha256::new_from_slice(secret) {
+        Ok(mac) => mac,
+        Err(_) => return false,
+    };
     mac.update(payload);
 
     let expected = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
@@ -46,10 +34,8 @@ pub fn verify_hmac_sha256(
     // Lengths must match before the constant-time compare so we never
     // panic, and so a length mismatch cannot become a timing oracle on
     // the digest bytes themselves.
-    let result = expected.len() == signature.len()
-        && constant_time_eq(expected.as_bytes(), signature.as_bytes());
-
-    Ok(result)
+    expected.len() == signature.len()
+        && constant_time_eq(expected.as_bytes(), signature.as_bytes())
 }
 
 fn crc16_xmodem(data: &[u8]) -> u16 {
@@ -119,18 +105,42 @@ pub fn is_valid_stellar_address(address: &str) -> bool {
 }
 
 /// Verify a TrustlessWork HMAC-SHA256 webhook signature.
-/// `payload` is the exact request bytes (Buffer), not a UTF-8 string.
-/// Returns true if and only if `payload` signed with `secret` matches `signature`.
+///
+/// `payload` accepts a Buffer/TypedArray of exact request bytes or a string
+/// (encoded as UTF-8 exactly once). Both forms produce the same digest as the
+/// Node fallback. Any unsupported value returns `false`, never throws.
 fn verify_hmac_signature(mut cx: FunctionContext) -> JsResult<JsBoolean> {
-    let payload_buf = cx.argument::<JsBuffer>(0)?;
-    let signature = cx.argument::<JsString>(1)?.value(&mut cx);
-    let secret = cx.argument::<JsString>(2)?.value(&mut cx);
-    let payload = payload_buf.as_slice(&cx).to_vec();
+    let value = cx.argument::<JsValue>(0)?;
+    let payload = if value.is_a::<JsBuffer, _>(&mut cx) {
+        value
+            .downcast::<JsBuffer, _>(&mut cx)
+            .expect("is_a checked the Buffer type")
+            .as_slice(&cx)
+            .to_vec()
+    } else if value.is_a::<JsString, _>(&mut cx) {
+        value
+            .downcast::<JsString, _>(&mut cx)
+            .expect("is_a checked the String type")
+            .value(&mut cx)
+            .into_bytes()
+    } else {
+        return Ok(cx.boolean(false));
+    };
 
-    match verify_hmac_sha256(&payload, &signature, secret.as_bytes()) {
-        Ok(is_valid) => Ok(cx.boolean(is_valid)),
-        Err(VerifyError::EmptySecret) => cx.throw_error(VerifyError::EmptySecret.to_string()),
-    }
+    let signature = match cx.argument::<JsString>(1) {
+        Ok(value) => value.value(&mut cx),
+        Err(_) => return Ok(cx.boolean(false)),
+    };
+    let secret = match cx.argument::<JsString>(2) {
+        Ok(value) => value.value(&mut cx),
+        Err(_) => return Ok(cx.boolean(false)),
+    };
+
+    Ok(cx.boolean(verify_hmac_sha256(
+        &payload,
+        &signature,
+        secret.as_bytes(),
+    )))
 }
 
 /// Validate a Stellar address using strkey encoding rules.
@@ -192,7 +202,7 @@ mod tests {
         let payload = br#"{"contractId":"escrow-1","status":"funded"}"#;
         let secret = b"dev-secret";
         let signature = sign(payload, secret);
-        assert_eq!(verify_hmac_sha256(payload, &signature, secret), Ok(true));
+        assert!(verify_hmac_sha256(payload, &signature, secret));
     }
 
     #[test]
@@ -200,33 +210,28 @@ mod tests {
         let payload = b"body";
         let secret = b"dev-secret";
         let signature = sign(b"different-body", secret);
-        assert_eq!(verify_hmac_sha256(payload, &signature, secret), Ok(false));
+        assert!(!verify_hmac_sha256(payload, &signature, secret));
     }
 
     #[test]
     fn wrong_secret_returns_false() {
         let payload = b"body";
         let signature = sign(payload, b"dev-secret");
-        assert_eq!(
-            verify_hmac_sha256(payload, &signature, b"other-secret"),
-            Ok(false)
-        );
+        assert!(!verify_hmac_sha256(payload, &signature, b"other-secret"));
     }
 
     #[test]
-    fn empty_secret_is_an_error() {
-        assert_eq!(
-            verify_hmac_sha256(b"body", "sha256=abc", b""),
-            Err(VerifyError::EmptySecret)
-        );
+    fn empty_secret_fails_closed() {
+        assert!(!verify_hmac_sha256(b"body", "sha256=abc", b""));
     }
 
     #[test]
     fn malformed_signature_returns_false() {
-        assert_eq!(
-            verify_hmac_sha256(b"body", "not-a-valid-signature", b"dev-secret"),
-            Ok(false)
-        );
+        assert!(!verify_hmac_sha256(
+            b"body",
+            "not-a-valid-signature",
+            b"dev-secret"
+        ));
     }
 
     #[test]
@@ -234,7 +239,7 @@ mod tests {
         let payload = [0xff, 0xfe, 0x00, 0x80];
         let secret = b"dev-secret";
         let signature = sign(&payload, secret);
-        assert_eq!(verify_hmac_sha256(&payload, &signature, secret), Ok(true));
+        assert!(verify_hmac_sha256(&payload, &signature, secret));
     }
 
     #[test]

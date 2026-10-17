@@ -85,6 +85,10 @@ services:
       - POSTGRES_PASSWORD=${TEST_POSTGRES_PASSWORD:-postgrespassword}
       - USE_MOCK_DATA=true
       - TRUSTLESSWORK_WEBHOOK_SECRET=${TEST_WEBHOOK_SECRET:-dev-secret}
+      # The x402 Karate suite exercises the enabled payment gate. Settlement is
+      # still disabled so tests never call a facilitator /settle endpoint.
+      - X402_ENABLED=true
+      - X402_SETTLE_ENABLED=false
     depends_on:
       postgres_test:
         condition: service_healthy

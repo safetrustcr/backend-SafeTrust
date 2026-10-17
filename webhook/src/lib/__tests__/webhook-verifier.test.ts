@@ -33,10 +33,8 @@ describe('webhook-verifier native addon', () => {
     expect(verifyHmacSignature(PAYLOAD, 'not-a-valid-signature', SECRET)).toBe(false)
   })
 
-  it('verifyHmacSignature throws on an empty secret', () => {
-    expect(() => verifyHmacSignature(PAYLOAD, sign(SECRET, PAYLOAD), '')).toThrow(
-      /HMAC secret must not be empty/
-    )
+  it('verifyHmacSignature fails closed on an empty secret', () => {
+    expect(verifyHmacSignature(PAYLOAD, sign(SECRET, PAYLOAD), '')).toBe(false)
   })
 
   it('verifyHmacSignature hashes invalid UTF-8 payload bytes', () => {

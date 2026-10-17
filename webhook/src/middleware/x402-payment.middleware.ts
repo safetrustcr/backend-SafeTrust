@@ -44,6 +44,14 @@ declare global {
 export const requireX402Payment =
   (amountUsdc: number) =>
   (req: Request, res: Response, next: NextFunction): void => {
+    // Defense in depth: even if a route mounts this middleware by mistake, the
+    // quarantine flag must be explicit before any payment is evaluated. Fail
+    // closed rather than falling through to the eligibility handler.
+    if (process.env.X402_ENABLED !== 'true') {
+      res.status(503).json({ error: 'x402 payments are disabled' })
+      return
+    }
+
     const NETWORK = process.env.STELLAR_NETWORK ?? 'testnet'
     const FACILITATOR_URL =
       process.env.X402_FACILITATOR_URL ??

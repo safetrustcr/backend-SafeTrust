@@ -1,9 +1,70 @@
 use crate::types::SorobanEscrowState;
+#[cfg(feature = "unvalidated-reader")]
 use serde_json::json;
+#[cfg(feature = "unvalidated-reader")]
 use std::env;
 
-/// Query Soroban RPC endpoint for on-chain escrow state.
+/// Whether the unvalidated reader is compiled in.
+///
+/// The feature is off by default. Even a build that enables it refuses to run
+/// unless the operator also sets `SOROBAN_RECONCILER_ALLOW_UNVALIDATED=true`.
+#[cfg(feature = "unvalidated-reader")]
+fn reader_allowed() -> bool {
+    env::var("SOROBAN_RECONCILER_ALLOW_UNVALIDATED")
+        .map(|value| value == "true")
+        .unwrap_or(false)
+}
+
+#[cfg(not(feature = "unvalidated-reader"))]
+fn reader_allowed() -> bool {
+    false
+}
+
+/// Query Soroban RPC for on-chain escrow state.
+///
+/// **Quarantined.** The implementation below does not decode contract storage:
+/// it returns a hardcoded `ACTIVE` / `1_000_000_000` state for `mock_` and
+/// `test_` ids, and for every other id it only checks `getHealth` before
+/// returning the same hardcoded state. Treating that as chain truth would let
+/// reconciliation overwrite real database rows with fabricated values, so the
+/// reader is disabled by default.
+///
+/// A validated adapter must read the escrow contract's ledger entry (for
+/// example with `getLedgerEntries` plus contract-data decoding), pin the
+/// contract id and network, reject stale ledgers, and return an error instead
+/// of a default state when the entry is missing. Rebuilding it is tracked as a
+/// separate task; see `docs/architecture/crate-boundaries.md`.
 pub fn query_escrow_state(contract_id: &str, network: &str) -> Result<SorobanEscrowState, String> {
+    if !reader_allowed() {
+        return Err(
+            "soroban-reconciler: the Soroban reader is quarantined because it does not \
+             read contract storage. Rebuild it as a validated adapter before enabling it \
+             (requires the `unvalidated-reader` Cargo feature and \
+             SOROBAN_RECONCILER_ALLOW_UNVALIDATED=true)."
+                .to_string(),
+        );
+    }
+
+    #[cfg(feature = "unvalidated-reader")]
+    {
+        query_escrow_state_unvalidated(contract_id, network)
+    }
+
+    #[cfg(not(feature = "unvalidated-reader"))]
+    {
+        let _ = (contract_id, network);
+        unreachable!("reader_allowed() is always false without the unvalidated-reader feature")
+    }
+}
+
+/// The legacy, unvalidated reader. Never call this outside the opt-in path
+/// above; it is retained only so the follow-up adapter work has a reference
+/// implementation to replace.
+#[cfg(feature = "unvalidated-reader")]
+fn query_escrow_state_unvalidated(
+    contract_id: &str,
+    network: &str,
+) -> Result<SorobanEscrowState, String> {
     if contract_id.starts_with("mock_") || contract_id.starts_with("test_") {
         return Ok(SorobanEscrowState {
             contract_id: contract_id.to_string(),
@@ -49,6 +110,9 @@ pub fn query_escrow_state(contract_id: &str, network: &str) -> Result<SorobanEsc
                 approver: Some("approver_on_chain".to_string()),
             })
         }
-        Err(e) => Err(format!("Failed to connect to Soroban RPC at {}: {}", rpc_url, e)),
+        Err(e) => Err(format!(
+            "Failed to connect to Soroban RPC at {}: {}",
+            rpc_url, e
+        )),
     }
 }

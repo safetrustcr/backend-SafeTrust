@@ -22,8 +22,16 @@ const FROM_MILESTONE_APPROVED:    &[EscrowStatus] = &[EscrowStatus::MilestoneApp
 const FROM_FUNDED_ACTIVE_MILESTONE: &[EscrowStatus] =
     &[EscrowStatus::Funded, EscrowStatus::Active, EscrowStatus::MilestoneApproved];
 const FROM_DISPUTED:              &[EscrowStatus] = &[EscrowStatus::Disputed];
-const FROM_CREATED_PENDING_FUNDED: &[EscrowStatus] =
-    &[EscrowStatus::Created, EscrowStatus::PendingFunding, EscrowStatus::Funded];
+// A dispute has two legal terminal outcomes: `resolved` (funds split or
+// released) or `cancelled` (funds returned to the tenant). Both values are
+// permitted by the database `valid_escrow_status` CHECK constraint, so the
+// local state machine must permit both before an XDR is requested.
+const FROM_CANCELLABLE:           &[EscrowStatus] = &[
+    EscrowStatus::Created,
+    EscrowStatus::PendingFunding,
+    EscrowStatus::Funded,
+    EscrowStatus::Disputed,
+];
 
 /// The canonical SafeTrust escrow state machine.
 ///
@@ -89,10 +97,10 @@ pub fn transition_table() -> Vec<TransitionRule> {
                 reason: "Dispute resolved by arbitrator",
             }),
             Cancelled => rules.push(TransitionRule {
-                from:   FROM_CREATED_PENDING_FUNDED,
+                from:   FROM_CANCELLABLE,
                 to:     Cancelled,
                 event:  WebhookEvent::EscrowCancelled,
-                reason: "Booking cancelled before check-in",
+                reason: "Booking cancelled, or disputed funds returned to the tenant",
             }),
         }
     }
