@@ -48,10 +48,10 @@ sequenceDiagram
     BE->>FAC: POST /verify\n{ payload, amount, network }
     FAC-->>BE: { isValid: true, payer: GAGENT... }
 
-    BE->>BE: spawn in-memory settlement task
+    BE->>BE: spawn settlement task\nonly if X402_SETTLE_ENABLED=true
     BE-->>AG: 200 OK\nrequest accepted; settlement pending
 
-    BE->>FAC: POST /settle (async)
+    BE->>FAC: POST /settle (async, opt-in)
     alt Settlement confirmed
         FAC->>SC: settle USDC on-chain
         FAC-->>BE: success
@@ -63,18 +63,21 @@ sequenceDiagram
     end
 ```
 
-The current `validateX402Payment` implementation returns after `/verify`
-and starts `/settle` in a fire-and-forget task. Consequently, the HTTP 200
-response means the request passed verification and was accepted for
+The current `validateX402Payment` implementation returns after `/verify`.
+When `X402_SETTLE_ENABLED=true` it also starts `/settle` in a fire-and-forget
+task; with the default `false` it never calls `/settle`. Consequently, the HTTP
+200 response means the request passed verification and was accepted for
 processing; it is not proof of settlement and must not be reported as a
 confirmed, paid booking.
 
 The background task is in-memory and currently only logs settlement
 failures. It has no durable retry queue, idempotency record, or settlement
-reconciliation. Before this flow is production-ready, persist a pending
-settlement keyed by a stable payment identifier, retry it idempotently after
-transient failures, reconcile facilitator or on-chain status, and expose
-booking success only after that record becomes settled.
+reconciliation. It is therefore gated behind `X402_SETTLE_ENABLED=false` by
+default: `/verify` can succeed without `/settle` being called. Before this flow
+is production-ready, persist a pending settlement keyed by a stable payment
+identifier, retry it idempotently after transient failures, reconcile
+facilitator or on-chain status, and expose booking success only after that
+record becomes settled. Until then, a `200` is not proof of settlement.
 
 ## Stellar vs EVM difference
 
@@ -115,14 +118,16 @@ flowchart TD
 | OpenZeppelin | `channels.openzeppelin.com/x402` | Mainnet |
 | Coinbase | `x402.org/facilitator` | Testnet only |
 
-## Human user protection
+## Human user protection and quarantine
 
-`X402_ENABLED=false` is the default. On the escrow initialization route:
+`X402_ENABLED=false` is the default, and it is enforced as a hard boundary:
 
-- A request with any explicit x402 header (`X-Payment`,
-  `X-Payment-Protocol`, or `X-Payment-Required`) still enters the x402 flow.
-- A request without an explicit x402 header enters the TrustlessWork callback
-  flow and must pass its signature check.
+- With the flag off, **no x402 payment is evaluated** on the escrow
+  initialization route. A request carrying `X-Payment`,
+  `X-Payment-Protocol`, or `X-Payment-Required` is treated like any other
+  request and must pass the TrustlessWork HMAC check.
+- The x402 middleware also fails closed with `503` if it is mounted while the
+  flag is off, so a stale route cannot accidentally grant eligibility.
 
 When `X402_ENABLED=true`, a request bypasses x402 only when it includes
 `X-TrustlessWork-Signature` and no explicit x402 header. Without either, the
@@ -130,22 +135,31 @@ route returns `402 Payment Required`; with an explicit x402 header, it validates
 that payment even if a TrustlessWork signature is also present. Firebase
 authentication does not create an exemption on this route.
 
+This quarantine exists because findings **F2, F3, and F8** from the security
+review are unresolved. x402 must not be able to grant booking eligibility
+until they are closed. See [Crate Boundaries](../architecture/crate-boundaries.md).
+
 ## Rust crate wiring
 
 ```mermaid
 flowchart LR
-    IR[initialize.route.ts\nrequireX402Payment 0.10] --> MW[x402-payment.middleware.ts\nreads X-Payment header]
+    IR[initialize.route.ts\nX402_ENABLED=true only] --> MW[x402-payment.middleware.ts\nreads X-Payment header]
     MW --> PA[parser.rs\nparse header\nvalidate network]
-    PA --> FA[facilitator.rs\nPOST /verify\nasync POST /settle]
+    PA --> FA[facilitator.rs\nPOST /verify]
+    FA -->|X402_SETTLE_ENABLED=true| ST[async POST /settle]
     FA -->|HTTP| FAC[OpenZeppelin\nFacilitator]
 ```
 
 ## Environment variables
 
 ```bash
-# Enable x402 payment requirement on the escrow initialization route
-# TrustlessWork callbacks can bypass it with their signature header
+# Enable x402 payment requirement on the escrow initialization route.
+# false (default) is a hard quarantine: X-Payment headers are ignored there.
 X402_ENABLED=false
+
+# Trigger the fire-and-forget facilitator /settle call after /verify.
+# Keep false until F2/F3/F8 are resolved and settlement is durable.
+X402_SETTLE_ENABLED=false
 
 # x402 facilitator endpoint
 X402_FACILITATOR_URL=https://channels.openzeppelin.com/x402/testnet

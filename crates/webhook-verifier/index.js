@@ -1,76 +1,47 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+const fallback = __importStar(require("./fallback"));
 let bindings;
 'use strict';
-const crypto = require("node:crypto");
 try {
     bindings = require('./index.node');
 }
 catch (err) {
-    function crc16Xmodem(data) {
-        let crc = 0;
-        for (let i = 0; i < data.length; i++) {
-            crc ^= data[i] << 8;
-            for (let j = 0; j < 8; j++) {
-                if ((crc & 0x8000) !== 0) {
-                    crc = ((crc << 1) ^ 0x1021) & 0xffff;
-                }
-                else {
-                    crc = (crc << 1) & 0xffff;
-                }
-            }
-        }
-        return crc;
-    }
-    function verifyHmacSignature(payload, signature, secret) {
-        if (!secret || secret.length === 0) {
-            throw new Error('HMAC secret must not be empty');
-        }
-        const hmac = crypto.createHmac('sha256', secret);
-        hmac.update(payload);
-        const expected = 'sha256=' + hmac.digest('hex');
-        if (typeof signature !== 'string' || signature.length !== expected.length) {
-            return false;
-        }
-        try {
-            return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-        }
-        catch {
-            return signature === expected;
-        }
-    }
-    function validateStellarAddress(address) {
-        if (typeof address !== 'string' || address.length !== 56 || !address.startsWith('G')) {
-            return false;
-        }
-        const base32Alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-        let bits = 0;
-        let bitCount = 0;
-        const out = new Uint8Array(35);
-        let idx = 0;
-        for (let i = 0; i < address.length; i++) {
-            const val = base32Alphabet.indexOf(address[i]);
-            if (val === -1)
-                return false;
-            bits = (bits << 5) | val;
-            bitCount += 5;
-            if (bitCount >= 8) {
-                bitCount -= 8;
-                if (idx >= 35)
-                    return false;
-                out[idx++] = (bits >> bitCount) & 0xff;
-            }
-        }
-        if (idx !== 35)
-            return false;
-        if (out[0] !== 0x30)
-            return false; // ed25519 public key version byte
-        const checksum = crc16Xmodem(out.subarray(0, 33));
-        const expectedChecksum = out[33] | (out[34] << 8);
-        return checksum === expectedChecksum;
-    }
-    bindings = {
-        verifyHmacSignature,
-        validateStellarAddress,
-    };
+    // The fallback hashes the same raw bytes as the native addon and returns
+    // false on every error path. Keeping it in one module lets the parity test
+    // exercise both implementations with identical vectors.
+    bindings = fallback;
 }
 module.exports = bindings;

@@ -11,8 +11,10 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 ### 🏗️ Architecture
 | Document | Description |
 |---|---|
+| [Architecture Overview](architecture/overview.md) | System layers, the frontend-managed XDR flow, and webhook callbacks |
 | [Multi-Tenant Architecture](architecture/multi-tenant.md) | Two-tenant isolation model (`safetrust` and `hotel_industry`), schema routing, and RBAC rules |
 | [Rust Crates in SafeTrust](architecture/rust-crates.md) | High-assurance native extensions via Neon bindings for cryptography and blockchain operations |
+| [Crate Boundaries](architecture/crate-boundaries.md) | Consumers, exports, fallbacks, dispositions, and quarantine gates for all eight Rust crates |
 
 ### 🔐 Stellar & Escrow Flows
 | Document | Description |
@@ -34,16 +36,6 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 |---|---|
 | [bin/start Guide](infra/bin-start.md) | Container startup orchestration, database health checks, and tenant initialization |
 | [bin/deploy_init Guide](infra/deploy-init.md) | Sequential vs. parallel tenant deployment benchmarking protocol |
-
----
-
-## 🗺️ Documentation Roadmap
-
-The following pages are part of the docs roadmap and will be linked as they land:
-
-- **Architecture Overview** — full system diagram (planned)
-- **ZK Privacy Layer** — zero-knowledge circuits (planned)
-- **Wave Guide** — contribution waves (planned)
 
 ---
 
