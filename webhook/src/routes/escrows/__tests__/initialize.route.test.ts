@@ -16,7 +16,7 @@ jest.mock('../../../repositories/escrow.repository', () => ({
 
 jest.mock('../../../middleware/trustlesswork-signature.middleware', () => ({
   __esModule: true,
-  default: (_req: any, _res: any, next: any) => next(),
+  default: jest.fn((_req: any, _res: any, next: any) => next()),
 }))
 
 describe('initialize.route with x402 payment gate', () => {
@@ -31,7 +31,25 @@ describe('initialize.route with x402 payment gate', () => {
     process.env = originalEnv
   })
 
-  it('bypasses x402 middleware when X402_ENABLED is false (default)', async () => {
+  it('uses TrustlessWork signature verification when x402 is disabled and a signature header is present', async () => {
+    process.env.X402_ENABLED = 'false'
+    const router = require('../initialize.route').default
+    const signatureMiddleware =
+      require('../../../middleware/trustlesswork-signature.middleware').default
+
+    const app = express()
+    app.use(express.json())
+    app.use(router)
+
+    await request(app)
+      .post('/api/escrows/initialize')
+      .set('x-trustlesswork-signature', 'test-signature')
+      .send({ contract_id: 'test-123' })
+
+    expect(signatureMiddleware).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns 503 when x402 is disabled and no TrustlessWork signature is present', async () => {
     process.env.X402_ENABLED = 'false'
     const router = require('../initialize.route').default
 
@@ -39,14 +57,14 @@ describe('initialize.route with x402 payment gate', () => {
     app.use(express.json())
     app.use(router)
 
-    // Call without X-Payment header - should reach initializeEscrowHandler (which validates body)
+    // No payment or TrustlessWork signature must not reach the handler.
     const res = await request(app)
       .post('/api/escrows/initialize')
       .send({})
 
-    // Returns 400 from handler (missing fields) rather than 402 from middleware
-    expect(res.status).toBe(400)
-    expect(res.body.error).toContain('Missing required fields')
+    expect(res.status).toBe(503)
+    expect(res.body.error).toBe('Feature Unavailable')
+    expect(res.body.feature).toBe('x402')
   })
 
   it('enforces 402 payment when X402_ENABLED is true and X-Payment is missing', async () => {
