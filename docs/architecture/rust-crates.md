@@ -2,6 +2,11 @@
 
 SafeTrust uses a small set of Rust crates behind Neon bindings so that Node.js can call into high-assurance native code for the parts of the platform that need cryptographic correctness, parallel CPU work, and blockchain-precise parsing.
 
+> For the per-crate consumer list, fallback, deployment artifact, and
+> retain/quarantine decision, see [Crate Boundaries](./crate-boundaries.md).
+> `soroban-reconciler` and `x402-processor` are currently quarantined behind
+> default-off gates.
+
 ## Why Rust is used
 
 1. Security-critical cryptography
@@ -30,6 +35,7 @@ flowchart LR
         soroban["soroban-reconciler\nSoroban RPC client\ndrift detection"]
         x402["x402-processor\nX-Payment header parsing\nfacilitator verify"]
         zk["zk-verifier\nNoir UltraHonk\nproof verification"]
+        escrow["escrow-state-machine\ntransition table\nstatus enforcement"]
     end
 
     express --> ffi
@@ -40,11 +46,12 @@ flowchart LR
     ffi --> soroban
     ffi --> x402
     ffi --> zk
+    ffi --> escrow
 ```
 
 ## Crate responsibilities
 
-The Rust layer is organized around seven crates under the `crates/` tree. Each crate is exposed to the Node.js runtime through a Neon binding and is used only where the native implementation is materially safer or faster than a plain JavaScript version.
+The Rust layer is organized around eight crates under the `crates/` tree. Each crate is exposed to the Node.js runtime through a Neon binding and is used only where the native implementation is materially safer or faster than a plain JavaScript version.
 
 | Crate                | Purpose                       | Key dependency                    | Env gate                     |
 | -------------------- | ----------------------------- | --------------------------------- | ---------------------------- |
@@ -52,9 +59,10 @@ The Rust layer is organized around seven crates under the `crates/` tree. Each c
 | `stellar-utils`      | Stellar address validation    | `stellar-strkey`, `ed25519-dalek` | always on                    |
 | `chunk-processor`    | Parallel TrustlessWork HTTP   | `tokio`, `reqwest`, `futures`     | `RUST_CHUNKS_ENABLED`        |
 | `pg-bulk-upsert`     | UNNEST batch upsert           | `tokio-postgres`                  | `RUST_BULK_UPSERT_ENABLED`   |
-| `soroban-reconciler` | Soroban RPC drift detection   | `reqwest`, `stellar-xdr`          | `SOROBAN_VALIDATION_ENABLED` |
+| `soroban-reconciler` | Soroban RPC drift detection   | `ureq`, `serde`                   | `SOROBAN_VALIDATION_ENABLED` (reader also needs the `unvalidated-reader` feature; quarantined) |
 | `x402-processor`     | x402 payment header parsing   | `reqwest`, `base64`               | `X402_ENABLED`               |
-| `zk-verifier`        | Noir UltraHonk proof verify   | `acvm`                            | `ZK_ENABLED`                 |
+| `zk-verifier`        | Noir UltraHonk proof verify   | `barretenberg-rs`                 | always on; proof bundle optional |
+| `escrow-state-machine` | Escrow transition table    | `serde`, `neon`                   | always on                    |
 
 ## How they fit the platform
 
@@ -65,6 +73,7 @@ The Rust layer is organized around seven crates under the `crates/` tree. Each c
 - `soroban-reconciler` compares on-chain state and local state with Soroban RPC data, identifying drift or missed reconciliation events.
 - `x402-processor` handles x402 payment metadata and verifies the payment headers without forcing Node to parse binary or encoded protocol payloads in JS.
 - `zk-verifier` validates Noir proofs using a native proving runtime so the proof check remains deterministic and safe for trust-sensitive flows.
+- `escrow-state-machine` supplies the canonical status enum and transition table, so handlers reject illegal status changes before requesting an XDR.
 
 ## Summary
 

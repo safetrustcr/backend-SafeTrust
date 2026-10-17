@@ -65,6 +65,8 @@ mod tests {
         assert!(is_valid_transition(&S::MilestoneApproved, &S::Completed, &E::FundsReleased));
         assert!(is_valid_transition(&S::Funded, &S::Disputed, &E::DisputeRaised));
         assert!(is_valid_transition(&S::Disputed, &S::Resolved, &E::DisputeResolved));
+        // A dispute may end with funds returned to the tenant.
+        assert!(is_valid_transition(&S::Disputed, &S::Cancelled, &E::EscrowCancelled));
     }
 
     #[test]
@@ -75,6 +77,8 @@ mod tests {
         assert!(!is_valid_transition(&S::Funded, &S::Completed, &E::FundsReleased));
         // wrong event
         assert!(!is_valid_transition(&S::Funded, &S::Active, &E::EscrowInitialized));
+        // a completed escrow cannot be cancelled
+        assert!(!is_valid_transition(&S::Completed, &S::Cancelled, &E::EscrowCancelled));
     }
 
     #[test]

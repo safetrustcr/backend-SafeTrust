@@ -42,6 +42,7 @@ stateDiagram-v2
     milestone_approved --> disputed : dispute.raised<br/>POST /api/escrows/dispute
 
     disputed --> resolved : dispute.resolved<br/>POST /api/escrows/resolve-dispute
+    disputed --> cancelled : escrow.cancelled<br/>funds returned to tenant
 
     created --> cancelled : escrow.cancelled
     pending_funding --> cancelled : escrow.cancelled
@@ -150,6 +151,12 @@ All handlers live in `webhook/src/routes/escrows/` and respond `200 { received: 
 | `release-funds.handler.ts` | `POST /api/escrows/release-funds` | `escrow.completed` | `milestone_approved` | `completed` (balance → 0) |
 | `dispute.handler.ts` | `POST /api/escrows/dispute` | `escrow.disputed` | `funded`, `active`, `milestone_approved` | `disputed` |
 | `resolve-dispute.handler.ts` | `POST /api/escrows/resolve-dispute` | `escrow.resolved` | `disputed` | `resolved` |
+
+`disputed → cancelled` is also a legal transition (`escrow.cancelled`) when the
+resolver returns funds to the tenant. It is enforced by the same Rust table;
+the cancellation outcome is recorded through the contract/callback path rather
+than a dedicated route in this repository. See
+[Dispute & Resolve](./dispute-resolve.md).
 
 Each handler also mirrors the escrow status onto `public.reservations`. Milestone approval
 mirrors `check_in → checked_in` and `check_out → checked_out`, while the escrow itself moves
