@@ -21,6 +21,8 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Fund Escrow](stellar/fund-escrow.md) | Workflow and validation sequence for funding guest reservation escrows |
 | [Approve Milestone](stellar/approve-milestone.md) | Milestone verification and approval lifecycle for escrow funds |
 | [Release Funds](stellar/release-funds.md) | Payout release mechanisms and on-chain settlement execution |
+| [Dispute & Resolve](stellar/dispute-resolve.md) | Two-phase XDR dispute lifecycle, Soroban roles, status transitions, and indexer synchronization |
+| [x402 Protocol](stellar/x402-protocol.md) | Agentic payments on Stellar, currently quarantined from the eligibility path |
 
 ### 🐘 Database & Migrations
 | Document | Description |
@@ -40,8 +42,6 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 The following pages are part of the docs roadmap and will be linked as they land:
 
 - **Architecture Overview** — full system diagram (planned)
-- **Dispute & Resolve** — dispute flow diagram (planned)
-- **x402 Protocol** — AI agent payment flow (planned)
 - **ZK Privacy Layer** — zero-knowledge circuits (planned)
 - **Wave Guide** — contribution waves (planned)
 
