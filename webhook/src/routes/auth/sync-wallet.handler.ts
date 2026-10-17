@@ -65,7 +65,11 @@ export async function syncWalletHandler(
   if (typeof is_primary !== 'boolean') {
     return res.status(400).json({ error: 'is_primary must be a boolean' })
   }
-  if (chain_type === 'STELLAR') {
+  if (
+    chain_type === 'STELLAR' ||
+    isStellarAddress(wallet_address) ||
+    /^C[A-Z2-7]{55}$/.test(wallet_address)
+  ) {
     return res.status(400).json({
       error: 'WALLET_CHALLENGE_REQUIRED',
       message: 'Use /auth/wallet/challenge and /auth/wallet/verify to register a Stellar wallet',
