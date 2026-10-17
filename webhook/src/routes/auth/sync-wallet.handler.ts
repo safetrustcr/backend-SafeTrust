@@ -35,10 +35,10 @@ const UPSERT_WALLET = `
   VALUES ($1, $2, $3, $4)
   ON CONFLICT (wallet_address)
   DO UPDATE SET
-    user_id = EXCLUDED.user_id,
     chain_type = EXCLUDED.chain_type,
     is_primary = EXCLUDED.is_primary,
     updated_at = NOW()
+  WHERE safetrust.user_wallets.user_id = EXCLUDED.user_id
   RETURNING id, wallet_address, chain_type, is_primary
 `
 
@@ -65,10 +65,19 @@ export async function syncWalletHandler(
   if (typeof is_primary !== 'boolean') {
     return res.status(400).json({ error: 'is_primary must be a boolean' })
   }
+  if (chain_type === 'STELLAR') {
+    return res.status(400).json({
+      error: 'WALLET_CHALLENGE_REQUIRED',
+      message: 'Use /auth/wallet/challenge and /auth/wallet/verify to register a Stellar wallet',
+    })
+  }
 
   try {
     const result = await query<WalletRow>(UPSERT_WALLET, [uid, wallet_address, chain_type, is_primary])
     const wallet = result.rows[0]
+    if (!wallet) {
+      return res.status(409).json({ error: 'WALLET_ALREADY_REGISTERED' })
+    }
 
     console.log(`[auth/sync-wallet] uid=${uid} wallet=${wallet_address}`)
     const response: SyncWalletResponse = { success: true, wallet_address: wallet.wallet_address }
