@@ -3,8 +3,9 @@
 SafeTrust escrows are single-release or multi-release Soroban contracts
 managed through Trustless Work. A dispute does not move funds by itself: it
 freezes the escrow in `disputed`, then the on-chain **Releaser** address signs
-one of the two terminal outcomes — a resolution that splits/releases funds, or a
-cancellation that returns funds to the tenant.
+the terminal resolution that releases or splits the funds. Cancellation
+(`escrow.cancelled`) is a separate, pre-check-in transition — it is not a
+dispute outcome.
 
 This page documents that lifecycle, the two-phase XDR signing pattern, the
 database states, and the four Soroban roles. For the surrounding escrow flow,
@@ -38,16 +39,20 @@ sequenceDiagram
     TW-->>ST: unsigned XDR
     ST-->>T: return unsigned XDR
     T->>SC: sign + submit XDR (Freighter)
-    SC-->>ST: status → disputed
-    ST->>TW: indexer/update-from-txHash
-    Note over ST,TW: status synced to DB
+    T->>TW: indexer/update-from-txHash
+    TW-->>ST: dispute callback (HMAC-signed)
+    Note over ST: reconciliation job also pulls from the TW indexer
+    ST->>ST: persist status → disputed
 
     O->>ST: POST /escrows/resolve
     ST->>TW: resolve-dispute (unsigned XDR)
     TW-->>ST: unsigned XDR
     ST-->>O: return unsigned XDR
     O->>SC: sign + submit XDR (Freighter)
-    SC-->>ST: status → resolved
+    O->>TW: indexer/update-from-txHash
+    TW-->>ST: resolve-dispute callback (HMAC-signed)
+    Note over ST: reconciliation job also pulls from the TW indexer
+    ST->>ST: persist status → resolved
 ```
 
 ### How a dispute is raised
@@ -64,9 +69,10 @@ sequenceDiagram
 5. The tenant or owner signs in Freighter and submits the signed transaction to
    the Stellar network (through Trustless Work's send-transaction helper or a
    Soroban RPC client).
-6. The contract stores `disputed`. SafeTrust records the new state through its
-   callback handler and/or by asking Trustless Work's indexer to ingest the
-   submitted transaction hash.
+6. The submitter calls Trustless Work's `indexer/update-from-txHash` endpoint
+   with the transaction hash so the indexer records `disputed`. Soroban does
+   not call SafeTrust; the backend learns the result from the Trustless Work
+   callback and/or its reconciliation sync, then persists it.
 
 ### How a dispute is resolved
 
@@ -76,11 +82,12 @@ sequenceDiagram
    unsigned XDR.
 3. The unsigned XDR is returned to the caller. The **Releaser** wallet signs it;
    SafeTrust never holds that key.
-4. The signed transaction is submitted to Soroban. The contract releases the
-   disputed balance according to the resolution: funds to the owner, funds back
-   to the tenant, or a split.
-5. The `dispute.resolved` result is recorded as `resolved` (or `cancelled` when
-   the resolution returns everything to the tenant — see
+4. The signed transaction is submitted to Soroban. The contract releases or
+   splits the disputed balance according to the resolution.
+5. The submitter calls `indexer/update-from-txHash` so Trustless Work records
+   the outcome, and SafeTrust syncs it from the Trustless Work callback or the
+   reconciliation job. The result is persisted as `resolved`; a resolution is
+   never persisted as `cancelled` (see
    [resolve versus cancel](#6-resolve-dispute-versus-cancel)).
 
 > **Where the backend sits today.** "SafeTrust API" in the sequence is the
@@ -100,25 +107,25 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     A[funded] --> B[disputed]
-    B --> C{Resolver\ndecides}
-    C -->|release to owner| D[resolved]
-    C -->|return to tenant| E[cancelled]
-    D --> F[completed]
+    B --> C{Resolver decides}
+    C -->|release or split| D[resolved]
 ```
 
 | Transition | Event | Persisted status | Meaning |
 |---|---|---|---|
 | `funded` → `disputed` | `dispute.raised` | `disputed` | Funds remain locked; neither party can release them unilaterally. |
 | `disputed` → `resolved` | `dispute.resolved` | `resolved` | The Releaser signed a resolution that releases/splits the balance. |
-| `disputed` → `cancelled` | `escrow.cancelled` | `cancelled` | The Releaser signed a return of the balance to the tenant. |
 
 `active` and `milestone_approved` can also enter `disputed`; they are omitted
-from the diagram to keep the happy path readable.
+from the diagram to keep the happy path readable. `resolved` is terminal: it
+has no transition to `completed`. Cancellation is not a dispute outcome and is
+not reachable from `disputed`; it is a separate pre-check-in transition (see
+[resolve versus cancel](#6-resolve-dispute-versus-cancel)).
 
 ### Database constraint
 
-The `escrow_transactions.status` column is protected by the
-`valid_escrow_status` CHECK constraint:
+The `escrow_transactions.status` column has a `valid_escrow_status` CHECK
+constraint that lists the permitted values:
 
 ```sql
 CONSTRAINT valid_escrow_status CHECK (status IN (
@@ -127,26 +134,33 @@ CONSTRAINT valid_escrow_status CHECK (status IN (
 ))
 ```
 
-Both `disputed → resolved` and `disputed → cancelled` are therefore valid
-persisted transitions. The mirror table `trustless_work_escrows` has a
-separate CHECK constraint with the same name and nine lifecycle values
-(`created`, `pending_funding`, `funded`, `active`, `milestone_approved`,
-`completed`, `disputed`, `resolved`, `cancelled`).
+This constraint is a value allowlist: it restricts which status strings the
+column may hold. It cannot see the row's previous value, so it does not
+validate prior-state transitions and does not, by itself, authorize any
+transition. Transition legality belongs to the `escrow-state-machine` Rust
+crate (`transitions.rs` / `validator.rs`) and its JavaScript fallback in
+`crates/escrow-state-machine/index.ts`. `disputed → resolved` is legal because
+that rule exists in the transition table, not because both values appear in the
+CHECK.
 
-> **Why `resolved` and `completed` are both terminal.** `resolved` is the
-> dispute outcome stored on the escrow. `completed` is the normal
-> milestone-release outcome. A resolved escrow does not emit a second
-> `funds.released` transition; the `resolved → completed` edge in the diagram
-> denotes the settled end state used by reporting, not a second webhook
-> transition. The Rust table keeps `resolved` terminal.
+The mirror table `trustless_work_escrows` has a separate CHECK constraint with
+the same name and nine lifecycle values (`created`, `pending_funding`, `funded`,
+`active`, `milestone_approved`, `completed`, `disputed`, `resolved`,
+`cancelled`). It is likewise an allowlist only.
+
+> **`resolved` is terminal.** `resolved` is the dispute outcome stored on the
+> escrow; `completed` is the normal milestone-release outcome. A resolved
+> escrow does not emit `funds.released`, and the Rust table has no
+> `resolved → completed` rule.
 
 ### Local enforcement
 
 The `escrow-state-machine` Rust crate is the local authority before any XDR is
 requested. It defines the status enum, a single transition table, and
 `getValidPriorStates(to, event)`; the dispute and resolve handlers parse that
-JSON list and use it as the Hasura `_in` status filter. An illegal prior state
-produces zero affected rows and a `404` instead of a transaction.
+JSON list and use it as the Hasura `_in` status filter. The crate's `index.ts`
+provides a JavaScript fallback when the native addon is not built. An illegal
+prior state produces zero affected rows and a `404` instead of a transaction.
 
 ---
 
@@ -244,10 +258,14 @@ and update its Firebase/indexer record for the escrow.
 
 SafeTrust then synchronizes that external record into PostgreSQL:
 
-1. `indexer/update-from-txHash` updates the Trustless Work indexer/Firebase
-   state for the contract (the canonical off-chain mirror).
-2. SafeTrust's reconciliation job fetches escrows by contract id from the
-   Trustless Work indexer and upserts
+1. `indexer/update-from-txHash` has Trustless Work read the submitted
+   transaction and update its indexer/Firebase state for the contract (the
+   canonical off-chain mirror). Soroban sends nothing to SafeTrust directly.
+2. SafeTrust learns about the change either from the Trustless Work callback
+   (`POST /api/escrows/dispute` or `POST /api/escrows/resolve-dispute`, both
+   HMAC-verified in this repository) or from its reconciliation job
+   (`POST /reconciliation/sync-escrows`), which fetches escrow state through
+   `GET /helper/get-escrows-by-contract-ids` and upserts
    `safetrust.trustless_work_escrows` (`status`, `balance`, roles, amounts).
 3. The callback handlers record the business event in
    `trustless_work_webhook_events` and mirror the state onto
@@ -266,17 +284,19 @@ These are different operations and must not be used interchangeably.
 
 | | `resolve-dispute` | `cancel` |
 |---|---|---|
-| Trigger | A dispute is open (`disputed`). | A booking is cancelled before check-in, or the resolver returns the disputed funds to the tenant. |
+| Trigger | A dispute is open (`disputed`). | A booking is cancelled before check-in. |
 | Who signs | The Releaser/resolver address. | The authorized escrow party / Releaser, depending on the contract state. |
 | Funds | Split or released according to the resolution. | Returned to the tenant. |
 | Webhook event | `dispute.resolved` | `escrow.cancelled` |
 | Resulting status | `resolved` | `cancelled` |
-| Local prior states | `disputed` | `created`, `pending_funding`, `funded`, `disputed` |
-| DB constraint | `valid_escrow_status` allows `resolved`. | `valid_escrow_status` allows `cancelled`. |
+| Local prior states | `disputed` | `created`, `pending_funding`, `funded` |
+| DB constraint | `valid_escrow_status` permits the `resolved` value. | `valid_escrow_status` permits the `cancelled` value. |
 
-A partial refund or a split is a **resolution**, not a cancellation. A
-cancellation returns the balance to the tenant and ends the escrow without a
-`resolved` row. Both outcomes are terminal.
+A partial refund or a split is a **resolution**, not a cancellation.
+Cancellation occurs before check-in and is permitted only from `created`,
+`pending_funding`, or `funded`; it returns the balance to the tenant and ends
+the escrow without a `resolved` row. `disputed` is not a valid prior state for
+cancellation. Both `resolved` and `cancelled` are terminal.
 
 ---
 
@@ -305,5 +325,3 @@ cancellation returns the balance to the tenant and ends the escrow without a
   escrow eligibility path.
 - [Escrow lifecycle](./escrow-lifecycle.md) — the full state machine and
   handler mapping.
-- [Crate boundaries](../architecture/crate-boundaries.md) — ownership and
-  disposition of `escrow-state-machine` and the other native crates.
