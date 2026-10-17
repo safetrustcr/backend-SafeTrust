@@ -41,12 +41,14 @@ async function isSingleSignerAccount(address: string, network: string): Promise<
     thresholds?: { low_threshold?: number; med_threshold?: number; high_threshold?: number }
     signers?: Array<{ key?: string; weight?: number }>
   }
-  return account.thresholds?.low_threshold === 1
-    && account.thresholds.med_threshold === 1
-    && account.thresholds.high_threshold === 1
-    && account.signers?.length === 1
-    && account.signers[0].key === address
-    && account.signers[0].weight === 1
+  const signer = account.signers?.length === 1 ? account.signers[0] : undefined
+  const weight = signer?.weight ?? 0
+  const t = account.thresholds ?? {}
+  return signer?.key === address
+    && weight > 0
+    && (t.low_threshold ?? 0) <= weight
+    && (t.med_threshold ?? 0) <= weight
+    && (t.high_threshold ?? 0) <= weight
 }
 
 function challengeMessage(input: {
