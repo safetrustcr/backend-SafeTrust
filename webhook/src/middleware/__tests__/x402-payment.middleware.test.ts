@@ -20,7 +20,7 @@ describe('x402-payment.middleware', () => {
     next = jest.fn()
     delete process.env.STELLAR_NETWORK
     delete process.env.X402_FACILITATOR_URL
-    delete process.env.SAFETRUST_PLATFORM_WALLET
+    process.env.SAFETRUST_PLATFORM_WALLET = 'GTESTPLATFORMWALLET'
     process.env.X402_ENABLED = 'true'
   })
 
@@ -39,6 +39,46 @@ describe('x402-payment.middleware', () => {
       error: 'Feature Unavailable',
       feature: 'x402',
     }))
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 when the platform wallet is missing', () => {
+    const mockBuildRequirement = jest.fn()
+    setX402Addon({
+      validateX402Payment: jest.fn(),
+      buildPaymentRequirement: mockBuildRequirement,
+    })
+    delete process.env.SAFETRUST_PLATFORM_WALLET
+
+    requireX402Payment(0.10)(req as Request, res as Response, next as NextFunction)
+
+    expect(res.status).toHaveBeenCalledWith(503)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'Feature Unavailable',
+      feature: 'x402',
+      message: 'x402 platform wallet is not configured',
+    })
+    expect(mockBuildRequirement).not.toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 when the platform wallet contains only whitespace', () => {
+    const mockBuildRequirement = jest.fn()
+    setX402Addon({
+      validateX402Payment: jest.fn(),
+      buildPaymentRequirement: mockBuildRequirement,
+    })
+    process.env.SAFETRUST_PLATFORM_WALLET = '   '
+
+    requireX402Payment(0.10)(req as Request, res as Response, next as NextFunction)
+
+    expect(res.status).toHaveBeenCalledWith(503)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'Feature Unavailable',
+      feature: 'x402',
+      message: 'x402 platform wallet is not configured',
+    })
+    expect(mockBuildRequirement).not.toHaveBeenCalled()
     expect(next).not.toHaveBeenCalled()
   })
 
@@ -127,7 +167,7 @@ describe('x402-payment.middleware', () => {
         0.10,
         'stellar:testnet',
         'https://channels.openzeppelin.com/x402/testnet',
-        ''
+        'GTESTPLATFORMWALLET'
       )
       expect(res.status).toHaveBeenCalledWith(402)
       expect(res.json).toHaveBeenCalledWith(

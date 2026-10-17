@@ -79,7 +79,15 @@ export const requireX402Payment =
       (network === 'mainnet'
         ? 'https://channels.openzeppelin.com/x402'
         : 'https://channels.openzeppelin.com/x402/testnet')
-    const platformWallet = process.env.SAFETRUST_PLATFORM_WALLET ?? ''
+    const platformWallet = process.env.SAFETRUST_PLATFORM_WALLET?.trim() ?? ''
+    if (!platformWallet) {
+      res.status(503).json({
+        error: 'Feature Unavailable',
+        feature: 'x402',
+        message: 'x402 platform wallet is not configured',
+      })
+      return
+    }
     const paymentHeader = req.headers['x-payment'] as string | undefined
 
     try {
