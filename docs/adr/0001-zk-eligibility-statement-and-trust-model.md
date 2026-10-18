@@ -86,7 +86,11 @@ $$\mathcal{P}_{\text{eligible}}(W, \text{Asset}, \text{Threshold}, \text{Tenant}
 
 ### 3.1 Predicate Conditions
 
-1. **Ownership Binding**: The prover possesses the private key corresponding to the public Stellar account $W$ (`G...`). Control is established via a cryptographic signature over an application session challenge (SEP-10 or `/auth/wallet/challenge`).
+1. **Ownership & Transaction Authority Binding**:
+   - **Key Possession**: The prover proves possession of signing key $K$ corresponding to public key $W$ via a cryptographic signature over an application session challenge (SEP-10 or `/auth/wallet/challenge`).
+   - **Transaction Authority**: The current ledger state of account $W$ must be verified to confirm that key $K$'s signer weight meets or exceeds the threshold required for medium-security operations (payments and Soroban contract invocations):
+     $$\text{weight}(K) \ge \text{threshold}_{\text{med}}(W)$$
+     If the proving key has weight zero (e.g., master key disabled) or insufficient weight to authorize funding on its own without additional signers (multisig), the account cannot authorize funding with that key alone and evaluates to `False`.
 2. **Asset Identity & Whitelist**: The asset identity $\text{Asset}$ must match the canonical asset whitelisted for the network:
    - **Stellar Mainnet (Pubnet)**: `USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` (or its SEP-41 Soroban SAC contract equivalent `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`).
    - **Stellar Testnet**: `USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` (or configured testnet SAC address).
@@ -95,10 +99,13 @@ $$\mathcal{P}_{\text{eligible}}(W, \text{Asset}, \text{Threshold}, \text{Tenant}
    $$\text{Threshold}_{\text{stroops}} = \text{Amount} \times 10^7$$
    Amounts with sub-stroop precision ($>7$ fractional digits), non-numeric formats, zero, or exceeding $\text{uint64 max}$ ($18,446,744,073,709,551,615$) are rejected.
 4. **Available vs. Total Balance**:
-   Stellar accounts hold total balances, but portions may be locked by trustline liabilities or minimum account reserves:
-   $$B_{\text{available}}(W, \text{Asset}, \text{Snapshot}) = B_{\text{total}}(W, \text{Asset}) - \text{SellingLiabilities}(W, \text{Asset}) - \text{MinimumReserve}(W)$$
-   The predicate requires:
-   $$B_{\text{available}}(W, \text{Asset}, \text{Snapshot}) \ge \text{Threshold}_{\text{stroops}}$$
+   - **USDC Trustline / SAC Balance**: Stellar's account minimum reserve restricts native XLM and is **not** deducted from non-native assets. Spendable USDC is strictly the trustline (or SAC) balance minus selling liabilities (e.g., active sell offers on the DEX):
+     $$B_{\text{available}}(W, \text{USDC}, \text{Snapshot}) = B_{\text{total}}(W, \text{USDC}) - \text{SellingLiabilities}(W, \text{USDC})$$
+     The predicate requires:
+     $$B_{\text{available}}(W, \text{USDC}, \text{Snapshot}) \ge \text{Threshold}_{\text{stroops}}$$
+   - **Separate XLM Fee Reserve Requirement**: To ensure the account can submit and pay network fees for the subsequent XDR funding transaction, native XLM is verified independently against Stellar base reserves:
+     $$B_{\text{available}}(W, \text{XLM}, \text{Snapshot}) = B_{\text{total}}(W, \text{XLM}) - \text{SellingLiabilities}(W, \text{XLM}) - \text{MinimumReserve}(W) \ge \text{FeeReserve}$$
+     The XLM reserve is explicitly not subtracted from the USDC trustline calculation.
 5. **Freshness Window**:
    The balance snapshot was observed at ledger sequence $L_{\text{snapshot}}$ with timestamp $t_{\text{snapshot}}$ such that:
    $$t_{\text{current}} - t_{\text{snapshot}} \le \Delta t_{\text{max}} \quad (\Delta t_{\text{max}} = 300\text{ seconds / 60 ledgers})$$
@@ -179,7 +186,8 @@ An eligibility check (whether attested or ZK-proven) represents a **point-in-tim
 - **Assets**: Native Circle USDC on Stellar testnet and pubnet via the official Stellar Asset Contract (SAC).
 
 ### Explicitly Excluded / Unsupported
-- **Multisig Accounts**: Accounts with multiple signers or thresholds $> 1$ are excluded from automated single-signature proofs.
+- **Accounts Where Proving Key Lacks Transaction Authority**: Accounts where the proving key's signer weight is below the threshold required to authorize payments or Soroban contract invocations ($\text{weight}(K) < \text{threshold}_{\text{med}}$), including accounts where the master key has weight zero.
+- **Multisig Accounts**: Accounts requiring multiple distinct signers to reach $\text{threshold}_{\text{med}}$ are excluded from automated single-signature proofs.
 - **Smart Contract Accounts**: Soroban contract addresses (`C...`) that lack Ed25519 private keys.
 - **Volatile / Non-USDC Assets**: Native XLM, arbitrary stablecoins, unpegged hotel tokens, or custom cross-border assets.
 - **Frozen or Restricted Trustlines**: Accounts with revoked or authorized-to-maintain-liabilities-only trustline flags.
@@ -275,9 +283,9 @@ In Noir/Barretenberg UltraHonk, a proof is verified with respect to a verificati
    - *Environment*: `NODE_ENV=production`.
    - *Configuration*: `ZK_PROOF_OF_FUNDS_VK_SHA256` is empty or missing.
    - *Result*: Rejected (`500 Internal Server Error: ZK proof verifier is misconfigured`).
-8. **Negative Vector 8: Unsupported Account Type (Multisig)**
-   - *Account*: `threshold_low = 2`, multiple signers configured.
-   - *Result*: Rejected (`400 Bad Request: Multisig accounts not supported for automated eligibility`).
+8. **Negative Vector 8: Proving Key Lacks Transaction Authority (Weight Zero / Multisig)**
+   - *Account Configuration*: Prover holds key $K$ with valid challenge signature, but account ledger state has $\text{weight}(K) = 0$ (master key disabled) or $\text{weight}(K) < \text{threshold}_{\text{med}} = 20$ (multisig requiring additional cosigners).
+   - *Result*: Rejected (`400 Bad Request: Proving key lacks transaction authorization weight`).
 
 ---
 
