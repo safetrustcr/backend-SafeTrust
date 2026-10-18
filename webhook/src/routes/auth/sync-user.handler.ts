@@ -20,7 +20,7 @@ async function getUsersIdColumnType(): Promise<string | undefined> {
   const result = await query<{ data_type: string }>(
     `SELECT data_type
      FROM information_schema.columns
-     WHERE table_schema = 'public'
+     WHERE table_schema = 'safetrust'
        AND table_name = 'users'
        AND column_name = 'id'`
   )
@@ -33,7 +33,7 @@ export const syncUserHandler = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<Response> => {
-  const { uid, email, role } = req.user
+  const { uid, email, role } = req.user!
 
   try {
     const idColumnType = await getUsersIdColumnType()
@@ -42,7 +42,7 @@ export const syncUserHandler = async (
 
     if (idColumnType === 'uuid') {
       text = `
-        INSERT INTO public.users (firebase_uid, email)
+        INSERT INTO safetrust.users (firebase_uid, email)
         VALUES ($1, $2)
         ON CONFLICT (firebase_uid) WHERE firebase_uid IS NOT NULL
         DO UPDATE SET email = EXCLUDED.email, updated_at = NOW()
@@ -51,7 +51,7 @@ export const syncUserHandler = async (
       values = [uid, email]
     } else {
       text = `
-        INSERT INTO public.users (id, firebase_uid, email, last_seen)
+        INSERT INTO safetrust.users (id, firebase_uid, email, last_seen)
         VALUES ($1, $1, $2, NOW())
         ON CONFLICT (id)
         DO UPDATE SET last_seen = NOW(), email = EXCLUDED.email, firebase_uid = EXCLUDED.firebase_uid

@@ -1,9 +1,12 @@
 'use strict';
 
-const { createHash, timingSafeEqual } = require('crypto');
+import { createHash, timingSafeEqual } from 'node:crypto';
+import type * as NativeVerifier from '../../../crates/zk-verifier';
 
-let nativeVerifier = null;
-let nativeLoadError = null;
+export type ZkVerifierError = Error & { code: 'ZK_VERIFIER_UNAVAILABLE' | 'ZK_VERIFIER_MISCONFIGURED' };
+
+let nativeVerifier: typeof NativeVerifier | null = null;
+let nativeLoadError: unknown = null;
 
 try {
   nativeVerifier = require('../../../crates/zk-verifier');
@@ -15,14 +18,14 @@ try {
  * Verify a proof-of-funds proof with the Rust UltraHonk addon.
  * The addon is optional for non-ZK requests, but ZK requests fail closed.
  */
-function verifyProofOfFunds(
-  proofHex,
-  verificationKeyHex,
-  thresholdStroops,
-  balanceCommitmentHex
+export function verifyProofOfFunds(
+  proofHex: string,
+  verificationKeyHex: string,
+  thresholdStroops: string,
+  balanceCommitmentHex: string
 ) {
   if (!nativeVerifier) {
-    const error = new Error('ZK proof verifier is unavailable');
+    const error = new Error('ZK proof verifier is unavailable') as ZkVerifierError;
     error.code = 'ZK_VERIFIER_UNAVAILABLE';
     error.cause = nativeLoadError;
     throw error;
@@ -35,7 +38,7 @@ function verifyProofOfFunds(
   const expectedKeyHash = process.env.ZK_PROOF_OF_FUNDS_VK_SHA256;
   if (expectedKeyHash) {
     if (!/^[0-9a-fA-F]{64}$/.test(expectedKeyHash)) {
-      const error = new Error('ZK verification key hash is misconfigured');
+      const error = new Error('ZK verification key hash is misconfigured') as ZkVerifierError;
       error.code = 'ZK_VERIFIER_MISCONFIGURED';
       throw error;
     }
@@ -58,4 +61,3 @@ function verifyProofOfFunds(
   );
 }
 
-module.exports = { verifyProofOfFunds };

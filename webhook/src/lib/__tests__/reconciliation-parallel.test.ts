@@ -1,7 +1,9 @@
+export {};
+type ProcessChunksArgs = Parameters<typeof import('../../../../crates/chunk-processor').processChunksParallel>;
 'use strict';
 
 /**
- * @file src/lib/__tests__/reconciliation-parallel.test.js
+ * @file src/lib/__tests__/reconciliation-parallel.test.ts
  *
  * Unit tests for the parallel chunk-processing integration added alongside the
  * Rust `chunk-processor` addon:
@@ -45,7 +47,7 @@ function makeEscrow(overrides = {}) {
 }
 
 /** Make https.request return a JSON body — used by the sequential path. */
-function mockHttpResponse(body, statusCode = 200) {
+function mockHttpResponse(body: unknown, statusCode = 200) {
   const { EventEmitter } = require('events');
   const fakeRes = new EventEmitter();
   fakeRes.statusCode = statusCode;
@@ -59,7 +61,7 @@ function mockHttpResponse(body, statusCode = 200) {
       fakeRes.emit('end');
     });
   });
-  https.request.mockImplementation((_opts, cb) => {
+  https.request.mockImplementation((_opts: unknown, cb: (response: unknown) => void) => {
     cb(fakeRes);
     return fakeReq;
   });
@@ -128,7 +130,7 @@ describe('syncChunksParallel', () => {
     process.env.CHUNK_CONCURRENCY = '3';
     process.env.CHUNK_TIMEOUT_MS = '1234';
 
-    const processChunksParallel = jest.fn(async () =>
+    const processChunksParallel = jest.fn(async (..._args: ProcessChunksArgs) =>
       JSON.stringify([
         { chunk_index: 0, fetched: 1, duration_ms: 10, error: null, escrows: [makeEscrow({ contractId: 'C1' })] },
         { chunk_index: 1, fetched: 1, duration_ms: 12, error: null, escrows: [makeEscrow({ contractId: 'C2' })] },
@@ -150,7 +152,7 @@ describe('syncChunksParallel', () => {
   });
 
   it('records a failed chunk in errors and still upserts the healthy ones', async () => {
-    const processChunksParallel = jest.fn(async () =>
+    const processChunksParallel = jest.fn(async (..._args: ProcessChunksArgs) =>
       JSON.stringify([
         { chunk_index: 0, fetched: 0, duration_ms: 5000, error: 'chunk timed out after 5000ms', escrows: [] },
         { chunk_index: 1, fetched: 1, duration_ms: 20, error: null, escrows: [makeEscrow({ contractId: 'C2' })] },
@@ -185,7 +187,7 @@ describe('syncAllChunks', () => {
 
     let call = 0;
     const { EventEmitter } = require('events');
-    https.request.mockImplementation((_opts, cb) => {
+    https.request.mockImplementation((_opts: unknown, cb: (response: unknown) => void) => {
       const fakeReq = new EventEmitter();
       fakeReq.setTimeout = jest.fn();
       fakeReq.destroy = jest.fn();
@@ -220,7 +222,7 @@ describe('syncAllChunks', () => {
 
   it('routes through the Rust addon when RUST_CHUNKS_ENABLED=true', async () => {
     process.env.RUST_CHUNKS_ENABLED = 'true';
-    const processChunksParallel = jest.fn(async () =>
+    const processChunksParallel = jest.fn(async (..._args: ProcessChunksArgs) =>
       JSON.stringify([
         { chunk_index: 0, fetched: 1, duration_ms: 8, error: null, escrows: [makeEscrow({ contractId: 'C1' })] },
       ])

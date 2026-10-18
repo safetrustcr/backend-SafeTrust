@@ -70,13 +70,13 @@ Feature: POST /reconciliation/sync-escrows — Big O linear scaling verification
     When method POST
     Then status 200
     And match response.success == true
-    And match response.totalEscrows == 1
-    And match response.chunks == 1
-    And match response.errors == '#number'
-    And assert response.durationMs < 5000
+    And match response.data.totalEscrows == 1
+    And match response.data.chunks == 1
+    And match response.data.errors == '#number'
+    And assert response.data.durationMs < 5000
     # Persist baseline for the n=200 O(n) ratio check (scenarios do not share karate.set)
-    * eval java.lang.System.setProperty('syncPerfBaselineMs', '' + response.durationMs)
-    * karate.set('baseline', response.durationMs)
+    * eval java.lang.System.setProperty('syncPerfBaselineMs', '' + response.data.durationMs)
+    * karate.set('baseline', response.data.durationMs)
 
   Scenario: n=50 escrow — O(n) sync duration < 15s and chunks == 1
     * prepareBenchmark()
@@ -85,10 +85,10 @@ Feature: POST /reconciliation/sync-escrows — Big O linear scaling verification
     When method POST
     Then status 200
     And match response.success == true
-    And match response.totalEscrows == 50
-    And match response.chunks == 1
-    And match response.errors == '#number'
-    And assert response.durationMs < 15000
+    And match response.data.totalEscrows == 50
+    And match response.data.chunks == 1
+    And match response.data.errors == '#number'
+    And assert response.data.durationMs < 15000
 
   Scenario: n=100 escrow — O(n) sync duration < 25s and chunks == 2
     * prepareBenchmark()
@@ -98,10 +98,10 @@ Feature: POST /reconciliation/sync-escrows — Big O linear scaling verification
     When method POST
     Then status 200
     And match response.success == true
-    And match response.totalEscrows == 100
-    And match response.chunks == 2
-    And match response.errors == '#number'
-    And assert response.durationMs < 25000
+    And match response.data.totalEscrows == 100
+    And match response.data.chunks == 2
+    And match response.data.errors == '#number'
+    And assert response.data.durationMs < 25000
 
   Scenario: n=200 escrow — O(n) scaling ratio vs n=1 must be < 400 (rejects O(n²))
     * prepareBenchmark()
@@ -110,10 +110,10 @@ Feature: POST /reconciliation/sync-escrows — Big O linear scaling verification
     When method POST
     Then status 200
     And match response.success == true
-    And match response.totalEscrows == 200
-    And match response.chunks == 4
-    And match response.errors == '#number'
-    And assert response.durationMs < 50000
+    And match response.data.totalEscrows == 200
+    And match response.data.chunks == 4
+    And match response.data.errors == '#number'
+    And assert response.data.durationMs < 50000
     # O(n) check: duration for 200 escrows should be < 400x duration for 1 escrow
     # O(n²) would give ~40000x ratio — far exceeds this bound
     # This assertion catches quadratic regressions without requiring exact timing
@@ -121,6 +121,6 @@ Feature: POST /reconciliation/sync-escrows — Big O linear scaling verification
     * def baselineStr = java.lang.System.getProperty('syncPerfBaselineMs')
     * if (baselineStr == null) karate.fail('syncPerfBaselineMs missing — n=1 scenario must run first in this feature')
     * def baseline = java.lang.Double.parseDouble(baselineStr)
-    * def ratio = response.durationMs / baseline
-    * print 'sync O(n) ratio n=200/n=1 =', ratio, 'baselineMs=', baseline, 'durationMs=', response.durationMs
+    * def ratio = response.data.durationMs / baseline
+    * print 'sync O(n) ratio n=200/n=1 =', ratio, 'baselineMs=', baseline, 'durationMs=', response.data.durationMs
     And assert ratio < 400

@@ -25,21 +25,21 @@ export const VALID_TRANSITIONS: Record<string, string[]> = {
 
 const GET_BID = `
   SELECT br.*, a.owner_id
-  FROM public.bid_requests br
-  JOIN public.apartments a ON br.apartment_id = a.id
+  FROM safetrust.bid_requests br
+  JOIN safetrust.apartments a ON br.apartment_id = a.id
   WHERE br.id = $1 AND br.deleted_at IS NULL
   FOR UPDATE OF br
 `
 
 const UPDATE_BID = `
-  UPDATE public.bid_requests
+  UPDATE safetrust.bid_requests
   SET current_status = $1, updated_at = NOW()
   WHERE id = $2
   RETURNING *
 `
 
 const INSERT_HISTORY = `
-  INSERT INTO public.bid_status_histories
+  INSERT INTO safetrust.bid_status_histories
     (bid_request_id, status, changed_by)
   VALUES ($1, $2, $3)
 `
@@ -68,7 +68,7 @@ export const updateBidRequestHandler = async (
     await client.query('BEGIN')
 
     const userRow = await client.query<{ id: string }>(
-      'SELECT id FROM public.users WHERE id = $1 OR firebase_uid = $1 LIMIT 1',
+      'SELECT id FROM safetrust.users WHERE id = $1 OR firebase_uid = $1 LIMIT 1',
       [uid]
     )
     if (userRow.rows.length === 0) {

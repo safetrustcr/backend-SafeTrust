@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 echo "🥋 Running Karate API tests..."
 
 # Load .env.test if it exists so TEST_* variables are available to compose
-ENV_FILE_FLAG=""
+ENV_FILE_FLAGS=()
 if [ -f .env.test ]; then
-  ENV_FILE_FLAG="--env-file .env.test"
+  ENV_FILE_FLAGS=(--env-file .env.test)
 fi
 
-docker compose -f docker-compose-test.yml ${ENV_FILE_FLAG} run --rm --build karate
+docker compose -p safetrust-test -f docker-compose-test.yml "${ENV_FILE_FLAGS[@]}" run --rm --build karate

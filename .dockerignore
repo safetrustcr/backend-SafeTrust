@@ -6,3 +6,4 @@
 tests/results
 *.node
 .env.test
+.docker-cache

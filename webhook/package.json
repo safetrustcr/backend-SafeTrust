@@ -1,12 +1,14 @@
 {
   "scripts": {
-    "build:rust": "node ../crates/zk-verifier/install-bb.js && cargo build --release --workspace --manifest-path ../crates/Cargo.toml && node ../crates/webhook-verifier/copy-native.js && node ../crates/zk-verifier/copy-native.js && node ../crates/stellar-utils/copy-native.js && node ../crates/chunk-processor/copy-native.js && node ../crates/pg-bulk-upsert/copy-native.js && node ../crates/x402-processor/copy-native.js && node ../crates/escrow-state-machine/copy-native.js && node ../crates/soroban-reconciler/copy-native.js",
+    "build:rust": "npm run build:tooling && node ../crates/zk-verifier/install-bb.js && cargo build --release --workspace --manifest-path ../crates/Cargo.toml && node ../crates/webhook-verifier/copy-native.js && node ../crates/zk-verifier/copy-native.js && node ../crates/stellar-utils/copy-native.js && node ../crates/chunk-processor/copy-native.js && node ../crates/pg-bulk-upsert/copy-native.js && node ../crates/x402-processor/copy-native.js && node ../crates/escrow-state-machine/copy-native.js && node ../crates/soroban-reconciler/copy-native.js",
     "build": "npm run build:rust && tsc",
     "dev": "nodemon --exec ts-node src/index.ts",
     "start": "node dist/index.js",
-    "type-check": "tsc --noEmit",
-    "test": "jest --runInBand",
-    "test:watch": "jest --watch"
+    "type-check": "tsc --noEmit && tsc -p tsconfig.test.json && tsc -p ../tsconfig.crates.json --noEmit && tsc -p ../tests/karate/tsconfig.json --noEmit && tsc -p ../tests/karate/tsconfig.helpers.json --noEmit",
+    "test": "npm run build:tooling && jest --runInBand",
+    "test:watch": "jest --watch",
+    "build:tooling": "tsc -p ../tsconfig.crates.json",
+    "build:karate": "tsc -p ../tests/karate/tsconfig.json && tsc -p ../tests/karate/tsconfig.helpers.json"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -30,21 +32,20 @@
       "<rootDir>/src"
     ],
     "testMatch": [
-      "**/__tests__/**/*.test.ts",
-      "**/__tests__/**/*.test.js"
+      "**/__tests__/**/*.test.ts"
     ],
     "transform": {
       "^.+\\.tsx?$": "ts-jest"
     }
   },
   "dependencies": {
-    "axios": "^1.19.0",
+    "axios": "^1.20.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "firebase-admin": "^14.2.0",
+    "firebase-admin": "^14.5.0",
     "helmet": "^8.3.0",
-    "morgan": "^1.12.0",
+    "morgan": "^1.12.1",
     "pg": "^8.23.0"
   }
 }

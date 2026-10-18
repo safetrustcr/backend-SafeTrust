@@ -26,12 +26,28 @@ ALTER TABLE IF EXISTS public.escrow_analytics_by_day     SET SCHEMA safetrust;
 ALTER TABLE IF EXISTS public.escrow_status_summary        SET SCHEMA safetrust;
 
 -- Move functions to safetrust schema if present
-ALTER FUNCTION IF EXISTS public.find_nearby_apartments(double precision, double precision, double precision) SET SCHEMA safetrust;
-ALTER FUNCTION IF EXISTS public.find_apartments_by_owner(uuid) SET SCHEMA safetrust;
-ALTER FUNCTION IF EXISTS public.search_apartments(text, text, numeric, numeric, text) SET SCHEMA safetrust;
-ALTER FUNCTION IF EXISTS public.get_apartments_in_bounds(double precision, double precision, double precision, double precision) SET SCHEMA safetrust;
-ALTER FUNCTION IF EXISTS public.get_escrow_analytics_by_day(date, date) SET SCHEMA safetrust;
-ALTER FUNCTION IF EXISTS public.get_escrow_status_summary() SET SCHEMA safetrust;
+-- ALTER FUNCTION has no IF EXISTS clause; resolve each exact signature first.
+DO $migration$
+DECLARE
+  function_signature text;
+  existing_function regprocedure;
+BEGIN
+  FOREACH function_signature IN ARRAY ARRAY[
+    'public.find_nearby_apartments(double precision, double precision, double precision)',
+    'public.find_apartments_by_owner(text, integer, integer)',
+    'public.search_apartments(text, text, numeric, numeric, integer, integer, boolean, boolean, integer, integer)',
+    'public.get_apartments_in_bounds(double precision, double precision, double precision, double precision)',
+    'public.get_escrow_analytics_by_day(timestamp with time zone, timestamp with time zone, character varying)',
+    'public.get_escrow_status_summary(character varying)'
+  ]
+  LOOP
+    existing_function := to_regprocedure(function_signature);
+    IF existing_function IS NOT NULL THEN
+      EXECUTE format('ALTER FUNCTION %s SET SCHEMA %I', existing_function, 'safetrust');
+    END IF;
+  END LOOP;
+END;
+$migration$;
 
 -- Step 3: Add safetrust to search_path so existing queries still work
 -- during transition period (remove after all queries are updated)

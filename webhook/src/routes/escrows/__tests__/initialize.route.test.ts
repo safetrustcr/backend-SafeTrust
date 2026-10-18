@@ -3,8 +3,15 @@ import express from 'express'
 
 jest.mock('../../../services/hasura', () => ({
   hasuraRequest: jest.fn().mockResolvedValue({}),
+}))
+
+jest.mock('../../../repositories/webhook-event.repository', () => ({
   logAndCheckWebhookEvent: jest.fn().mockResolvedValue({ isDuplicate: false, eventId: 'event-1' }),
   markWebhookEventProcessed: jest.fn().mockResolvedValue(true),
+}))
+
+jest.mock('../../../repositories/escrow.repository', () => ({
+  createEscrow: jest.fn().mockResolvedValue({ id: 'escrow-1' }),
 }))
 
 jest.mock('../../../middleware/trustlesswork-signature.middleware', () => ({
@@ -38,6 +45,25 @@ describe('initialize.route with x402 payment gate', () => {
       .send({})
 
     // Returns 400 from handler (missing fields) rather than 402 from middleware
+    expect(res.status).toBe(400)
+    expect(res.body.error).toContain('Missing required fields')
+  })
+
+  it('does not let an X-Payment header grant eligibility while x402 is disabled', async () => {
+    process.env.X402_ENABLED = 'false'
+    const router = require('../initialize.route').default
+
+    const app = express()
+    app.use(express.json())
+    app.use(router)
+
+    const res = await request(app)
+      .post('/api/escrows/initialize')
+      .set('x-payment', 'x402 valid-payload')
+      .send({})
+
+    // The HMAC middleware is mocked to next(); the handler rejects the empty
+    // body. x402 must not answer 402 or 200 here.
     expect(res.status).toBe(400)
     expect(res.body.error).toContain('Missing required fields')
   })

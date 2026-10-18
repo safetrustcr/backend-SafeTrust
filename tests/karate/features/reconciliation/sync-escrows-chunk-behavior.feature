@@ -26,10 +26,10 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
     When method POST
     Then status 200
     And match response.success == true
-    And match response.totalEscrows == 0
-    And match response.updated == 0
-    And match response.chunks == 0
-    And match response.errors == 0
+    And match response.data.totalEscrows == 0
+    And match response.data.updated == 0
+    And match response.data.chunks == 0
+    And match response.data.errors == 0
 
   # ── Boundary: exactly 1 escrow → exactly 1 chunk → 1 TW call ─────────────
   Scenario: sync with 1 escrow produces 1 chunk
@@ -39,8 +39,8 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
     When method POST
     Then status 200
     And match response.success == true
-    And match response.totalEscrows == 1
-    And match response.chunks == 1
+    And match response.data.totalEscrows == 1
+    And match response.data.chunks == 1
 
   # ── Boundary: exactly 50 escrows → exactly 1 chunk (CHUNK_SIZE boundary) ──
   Scenario: sync with exactly 50 escrows produces exactly 1 chunk
@@ -50,8 +50,8 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
-    And match response.totalEscrows == 50
-    And match response.chunks == 1
+    And match response.data.totalEscrows == 50
+    And match response.data.chunks == 1
 
   # ── Boundary: 51 escrows → 2 chunks (crosses CHUNK_SIZE boundary) ─────────
   Scenario: sync with 51 escrows produces exactly 2 chunks — O(⌈n/50⌉) verified
@@ -61,8 +61,8 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
-    And match response.totalEscrows == 51
-    And match response.chunks == 2
+    And match response.data.totalEscrows == 51
+    And match response.data.chunks == 2
 
   # ── Idempotency: unchanged rows → updated = 0 (IS DISTINCT FROM guard) ────
   Scenario: calling sync twice on unchanged data returns updated 0 on second call
@@ -76,9 +76,9 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
-    And match response.updated == 0
-    And match response.skipped == 0
-    And assert response.unchanged >= 0
+    And match response.data.updated == 0
+    And match response.data.skipped == 0
+    And assert response.data.unchanged >= 0
 
   # ── Performance baseline: O(n) duration grows linearly ────────────────────
   Scenario: sync with 50 escrows completes within 30 seconds
@@ -88,9 +88,9 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
-    And match response.durationMs == '#number'
+    And match response.data.durationMs == '#number'
     # O(n) for n=50: should complete well within 30s even with TW network latency
-    And assert response.durationMs < 30000
+    And assert response.data.durationMs < 30000
 
   # ── Error resilience: partial TW failure → errors > 0 but success = true ──
   Scenario: chunk error increments errors counter but does not abort sync
@@ -102,4 +102,4 @@ Feature: POST /reconciliation/sync-escrows — chunk processing and Big O correc
     Then status 200
     And match response.success == true
     # errors may be 0 (mock) or > 0 (live TW chunk failure) — both are valid
-    And match response.errors == '#number'
+    And match response.data.errors == '#number'

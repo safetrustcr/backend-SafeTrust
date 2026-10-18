@@ -3,6 +3,7 @@ Feature: POST /api/escrows/initialize — TrustlessWork initialize callback
   Background:
     * url webhookUrl
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
+    * db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id = 'STELLAR_CONTRACT_TEST_001'")
     * db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE contract_id = 'STELLAR_CONTRACT_TEST_001'")
 
   Scenario: Valid initialize callback inserts new escrow with status created

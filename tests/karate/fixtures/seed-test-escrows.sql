@@ -11,6 +11,16 @@
 --
 -- Dependency: seed-test-users.sql must run first
 
+-- Reset delivery history together with the recreated escrow fixture rows.
+DELETE FROM safetrust.trustless_work_webhook_events
+WHERE contract_id IN (
+  'escrow-created-001',
+  'escrow-pending-001',
+  'escrow-funded-001',
+  'escrow-disputed-001',
+  'escrow-completed-001'
+);
+
 DELETE FROM safetrust.trustless_work_escrows
 WHERE contract_id IN (
   'escrow-created-001',

@@ -49,9 +49,9 @@ Feature: GET /helper/get-escrow-by-contract-ids — TrustlessWork indexer query 
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
-    And match response.totalEscrows == 50
+    And match response.data.totalEscrows == 50
     # chunks = ⌈50/50⌉ = 1 — exactly one batch TW call made
-    And match response.chunks == 1
+    And match response.data.chunks == 1
 
   # ── CHUNK_SIZE boundary: 51 IDs → 2 TW API calls ─────────────────────────
   Scenario: sync with 51 escrows produces exactly 2 TW API calls (2 chunks)
@@ -60,9 +60,9 @@ Feature: GET /helper/get-escrow-by-contract-ids — TrustlessWork indexer query 
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
-    And match response.totalEscrows == 51
+    And match response.data.totalEscrows == 51
     # chunks = ⌈51/50⌉ = 2 — two batch TW calls made
-    And match response.chunks == 2
+    And match response.data.chunks == 2
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
 
   # ── isActive=false mapping → status reflects inactive state ───────────────
