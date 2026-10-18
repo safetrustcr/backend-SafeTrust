@@ -168,7 +168,9 @@ The `host` role can read only its own user's `display_name` and `avatar_url`,
 scoped by `id = x-hasura-user-id`. Host access does not include the user's
 email, ID, host flag, or timestamps. No cross-user profile relationship is
 currently authorized; add a separately scoped permission only when its
-business rule is defined. The guest role's self-only row filter is unchanged.
+business rule is defined. These are the profile fields hosts can update on
+their own account, and the read permission exposes only that same basic
+self-profile projection. The guest role's self-only row filter is unchanged.
 
 In Hasura, `filter: {}` means all rows are permitted for that role; it does
 not mean no rows. The checked-in
