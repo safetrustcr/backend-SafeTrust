@@ -22,7 +22,7 @@ import type { ChunkSyncResult } from './index'
  * timers from the measured loop.
  *
  * Run:  node crates/chunk-processor/benchmark.js
- * (Requires `cargo build --release -p chunk-processor && node copy-native.js`.)
+ * (Requires `cargo build --release -p chunk-processor && node ../scripts/copy-native.js --crate=chunk-processor`.)
  */
 
 import http = require('node:http')
