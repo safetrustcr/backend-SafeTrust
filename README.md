@@ -161,6 +161,37 @@ metadata/
 
 ```
 
+### SafeTrust user profile permissions
+
+The `host` role can read only its own user's `first_name` and `last_name`,
+scoped by `id = X-Hasura-User-Id`. The `users` schema has no avatar field.
+Host access does not include email, phone number, country code, location,
+Firebase UID/user ID, or last-seen data. No cross-user profile relationship
+is currently authorized; add a separately scoped permission only when its
+business rule is defined. The guest role's self-only row filter is unchanged.
+
+In Hasura, `filter: {}` means all rows are permitted for that role; it does
+not mean no rows. The checked-in
+[`public_users.yaml`](./metadata/tenants/safetrust/databases/tables/public_users.yaml)
+currently has a self-only host filter, not an empty one. Its row restriction
+also applies to list, primary-key, relationship, and aggregate query paths;
+host aggregation is not enabled.
+
+This repository configures the JWT secret through
+`HASURA_GRAPHQL_JWT_SECRET`, but does not define the token issuer or claims
+mapping. A role name in metadata alone does not prove that ordinary clients
+cannot claim `host`: deployment must verify that trusted token issuance sets
+`X-Hasura-User-Id` to the authenticated user's ID and only grants `host` in
+the allowed-role claims to authorized users. Do not use an admin-secret query
+to validate row permissions; test with two actual authenticated host/guest
+users and their supported claims.
+
+Local metadata is not evidence of deployed state. Confirm the exported target
+metadata after the HAS-02 metadata-deployment fix, then test the deployed
+permissions. This repository does not establish whether the prior broader
+host field list was ever deployed or reachable, so no deployed exposure or
+breach is confirmed.
+
 ---
 
 ## 🛠️ Manual Commands (optional)

@@ -34,15 +34,8 @@ select_permissions:
   - role: host
     permission:
       columns:
-        - id
-        - firebase_uid
-        - email
         - first_name
         - last_name
-        - phone_number
-        - country_code
-        - location
-        - last_seen
       filter:
         id:
           _eq: X-Hasura-User-Id
