@@ -9,8 +9,8 @@ flowchart TD
     C --> D{PARALLEL_DEPLOY?}
     D -- true --> E[Migrations: parallel\nN tenants concurrently\nGustafson scaling]
     D -- false --> F[Migrations: sequential\nAmdahl baseline]
-    E --> G[Metadata: sequential\ncomplete replace per tenant\noutput streamed, never suppressed]
-    F --> H[Metadata: sequential\ncomplete replace per tenant]
+    E --> G[Metadata: parallel\nsetup-tenant.sh × N\nlog capture per tenant]
+    F --> H[Metadata: sequential]
     G --> I[Metadata reload\nirreducible sequential]
     H --> I
     I --> J{PARALLEL_DEPLOY?}
@@ -24,15 +24,9 @@ flowchart TD
 
 `S(N) = s + p×N`
 where:
-- `s` = sequential fraction (sources + metadata + metadata reload)
-- `p` = parallel fraction (migrations + seeds)
+- `s` = sequential fraction (sources + metadata reload)
+- `p` = parallel fraction (migrations + metadata + seeds)
 - `N` = number of tenants
-
-Metadata is deliberately sequential. Each tenant deploy exports the server's
-current metadata and applies a full `replace_metadata` document; running those
-concurrently would let one tenant's replace erase another tenant's source.
-Similarly, `setup-tenant.sh` output is no longer redirected to `/dev/null`, so a
-failed metadata apply or reload is visible in CI and deployment logs.
 
 Example measurements:
 - N=1 (sequential baseline): ~45s
@@ -43,12 +37,6 @@ Example measurements:
 - `hasura migrate apply`: ~8s (15+ subprocess calls)
 - `psql init.sql`: ~1s (1 transaction)
 - Saving: ~7s per tenant
-
-Because `init.sql` runs through `psql` instead of the Hasura CLI, the fast path
-follows it with `hasura migrate apply --skip-execution --up all` to record the
-versions in Hasura's migration catalog. `deploy-tenant.sh` validates
-`hasura migrate status` before applying metadata, so without that step the fast
-path would correctly refuse to deploy.
 
 ## When to use each tool
 

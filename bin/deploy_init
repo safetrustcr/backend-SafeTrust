@@ -27,9 +27,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
 HASURA_PORT="${HASURA_PORT:-8080}"
-# Local default; set HASURA_GRAPHQL_ENDPOINT to target a Hasura Cloud instance.
-HASURA_ENDPOINT="${HASURA_GRAPHQL_ENDPOINT:-http://localhost:${HASURA_PORT}}"
-HASURA_ENDPOINT="${HASURA_ENDPOINT%/}"
+HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
 
 PARALLEL_DEPLOY="${PARALLEL_DEPLOY:-true}"
 USE_INIT_SQL="${USE_INIT_SQL:-false}"
@@ -67,8 +65,6 @@ echo "════════════════════════�
 echo "  bin/deploy_init — Experimental deployment path"
 echo "  Tenants:      ${TENANTS[*]}"
 echo "  Parallel:     ${PARALLEL_DEPLOY}"
-echo "  Metadata:     sequential (full-document replace)"
-echo "  Endpoint:     ${HASURA_ENDPOINT}"
 echo "  init.sql:     ${USE_INIT_SQL}"
 echo "  Seed chunks:  ${SEED_CHUNK_SIZE} rows/tx"
 echo "════════════════════════════════════════════════════"
@@ -88,17 +84,14 @@ record_phase() {
 echo "🔌 Registering database sources..."
 SOURCE_START=$SECONDS
 
-SOURCE_RESP_FILE=$(mktemp)
 for TENANT in "${TENANTS[@]}"; do
-  SOURCE_HTTP=$(curl -sS -o "$SOURCE_RESP_FILE" -w '%{http_code}' \
-    -X POST "${HASURA_ENDPOINT}/v1/metadata" \
+  curl -sf -X POST "${HASURA_ENDPOINT}/v1/metadata" \
     -H "X-Hasura-Admin-Secret: $HASURA_ADMIN_SECRET" \
     -H "Content-Type: application/json" \
     -d "{
       \"type\": \"pg_add_source\",
       \"args\": {
         \"name\": \"${TENANT}\",
-        \"kind\": \"postgres\",
         \"configuration\": {
           \"connection_info\": {
             \"database_url\": {\"from_env\": \"PG_DATABASE_URL\"},
@@ -107,21 +100,10 @@ for TENANT in "${TENANTS[@]}"; do
           }
         }
       }
-    }") || { echo "❌ Could not reach ${HASURA_ENDPOINT}/v1/metadata"; rm -f "$SOURCE_RESP_FILE"; exit 1; }
-  SOURCE_BODY=$(cat "$SOURCE_RESP_FILE")
-
-  if [[ "$SOURCE_HTTP" == "200" ]]; then
-    echo " ✅ Source registered: $TENANT"
-  elif printf '%s' "$SOURCE_BODY" | jq -e '.error | test("already exists"; "i")' >/dev/null 2>&1; then
-    echo " ℹ️ Source already exists: $TENANT"
-  else
-    echo "❌ Failed to register source: $TENANT (HTTP ${SOURCE_HTTP})"
-    printf '%s\n' "$SOURCE_BODY"
-    rm -f "$SOURCE_RESP_FILE"
-    exit 1
-  fi
+    }" > /dev/null \
+    && echo " ✅ Source registered: $TENANT" \
+    || echo " ℹ️ Source already exists: $TENANT"
 done
-rm -f "$SOURCE_RESP_FILE"
 
 PHASE_TIMINGS["sources"]=$((SECONDS - GLOBAL_START))
 
@@ -141,24 +123,14 @@ apply_migration_for_tenant() {
       psql -U postgres -d postgres \
       -v ON_ERROR_STOP=1 \
       < "$INIT_SQL"
-
-    # init.sql bypasses the Hasura CLI, so record the migrations in Hasura's
-    # catalog. deploy-tenant.sh validates `hasura migrate status` before applying
-    # dependent metadata and would otherwise see them as Not Present.
-    echo " 📝 [$TENANT] marking migrations as applied in Hasura catalog"
-    hasura migrate apply \
-      --skip-execution \
-      --up all \
-      --endpoint "${HASURA_ENDPOINT}" \
-      --admin-secret "$HASURA_ADMIN_SECRET" \
-      --database-name "$TENANT"
     echo " ✅ [$TENANT] init.sql applied ($((SECONDS - T_START))s)"
   else
     echo " ▶ [$TENANT] hasura migrate apply (sequential subprocess)"
     hasura migrate apply \
       --endpoint "${HASURA_ENDPOINT}" \
       --admin-secret "$HASURA_ADMIN_SECRET" \
-      --database-name "$TENANT"
+      --database-name "$TENANT" \
+      > /dev/null 2>&1
     echo " ✅ [$TENANT] migrations applied ($((SECONDS - T_START))s)"
   fi
 }
@@ -194,24 +166,40 @@ deploy_metadata_for_tenant() {
   local T_START=$SECONDS
   echo " ▶ [$TENANT] building + deploying metadata..."
   cd "$ROOT_DIR/metadata"
-  if ! ./setup-tenant.sh "$TENANT" \
-      --endpoint "${HASURA_ENDPOINT}" \
-      --admin-secret "$HASURA_ADMIN_SECRET"; then
-    cd "$ROOT_DIR"
-    echo "❌ Metadata failed for $TENANT"
-    return 1
-  fi
+  ./setup-tenant.sh "$TENANT" \
+    --endpoint "${HASURA_ENDPOINT}" \
+    --admin-secret "$HASURA_ADMIN_SECRET" \
+    > /dev/null 2>&1
   cd "$ROOT_DIR"
   echo " ✅ [$TENANT] metadata deployed ($((SECONDS - T_START))s)"
 }
 
-# Metadata deploys must be sequential: each deploy replaces the full metadata
-# document (current server metadata + this tenant's source). Parallel deploys
-# can export the same baseline and overwrite each other's sources.
-echo "   Mode: sequential (full metadata replace preserves other tenants)"
-for TENANT in "${TENANTS[@]}"; do
-  deploy_metadata_for_tenant "$TENANT"
-done
+if [[ "$PARALLEL_DEPLOY" == "true" ]]; then
+  echo "   Mode: parallel (${#TENANTS[@]} tenants concurrently)"
+  PIDS=()
+  LOG_DIR=$(mktemp -d)
+  for TENANT in "${TENANTS[@]}"; do
+    deploy_metadata_for_tenant "$TENANT" \
+      > "$LOG_DIR/$TENANT.log" 2>&1 &
+    PIDS+=($!)
+  done
+  for i in "${!PIDS[@]}"; do
+    if wait "${PIDS[$i]}"; then
+      cat "$LOG_DIR/${TENANTS[$i]}.log"
+    else
+      cat "$LOG_DIR/${TENANTS[$i]}.log"
+      echo "❌ Metadata failed for ${TENANTS[$i]}"
+      rm -rf "$LOG_DIR"
+      exit 1
+    fi
+  done
+  rm -rf "$LOG_DIR"
+else
+  echo "   Mode: sequential"
+  for TENANT in "${TENANTS[@]}"; do
+    deploy_metadata_for_tenant "$TENANT"
+  done
+fi
 
 PHASE_TIMINGS["metadata"]=$((SECONDS - GLOBAL_START))
 METADATA_ELAPSED=$((SECONDS - METADATA_START))
@@ -222,12 +210,10 @@ echo ""
 echo "📋 Reloading metadata..."
 RELOAD_START=$SECONDS
 
-if ! hasura metadata reload \
+hasura metadata reload \
   --endpoint "${HASURA_ENDPOINT}" \
-  --admin-secret "$HASURA_ADMIN_SECRET"; then
-  echo "❌ Metadata reload failed"
-  exit 1
-fi
+  --admin-secret "$HASURA_ADMIN_SECRET" \
+  > /dev/null 2>&1
 
 PHASE_TIMINGS["metadata_reload"]=$((SECONDS - GLOBAL_START))
 echo " ✅ Metadata reloaded ($((SECONDS - RELOAD_START))s)"

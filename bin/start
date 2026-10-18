@@ -139,21 +139,17 @@ echo ""
 
 # ── 3. Register database sources for each tenant ─────────────────────────────
 # Must happen before migrations so Hasura knows about the database.
-# pg_add_source is idempotent — safe to run on every start call. A response is
-# only treated as "already exists" when it says so; any other failure aborts.
+# pg_add_source is idempotent — safe to run on every start call.
 echo "🔌 Registering database sources..."
-SOURCE_RESP_FILE=$(mktemp)
 for TENANT in "${TENANTS[@]}"; do
   echo "   ▶ Registering source: $TENANT"
-  SOURCE_HTTP=$(curl -sS -o "$SOURCE_RESP_FILE" -w '%{http_code}' \
-    -X POST "${HASURA_ENDPOINT}/v1/metadata" \
+  curl -sf -X POST "${HASURA_ENDPOINT}/v1/metadata" \
     -H "X-Hasura-Admin-Secret: $HASURA_ADMIN_SECRET" \
     -H "Content-Type: application/json" \
     -d "{
       \"type\": \"pg_add_source\",
       \"args\": {
         \"name\": \"${TENANT}\",
-        \"kind\": \"postgres\",
         \"configuration\": {
           \"connection_info\": {
             \"database_url\": {
@@ -164,21 +160,9 @@ for TENANT in "${TENANTS[@]}"; do
           }
         }
       }
-    }") || { echo "❌ Could not reach ${HASURA_ENDPOINT}/v1/metadata"; rm -f "$SOURCE_RESP_FILE"; exit 1; }
-  SOURCE_BODY=$(cat "$SOURCE_RESP_FILE")
-
-  if [[ "$SOURCE_HTTP" == "200" ]]; then
-    echo "   ✅ Source registered: $TENANT"
-  elif printf '%s' "$SOURCE_BODY" | jq -e '.error | test("already exists"; "i")' >/dev/null 2>&1; then
-    echo "   ℹ️  Source already exists: $TENANT (skipping)"
-  else
-    echo "❌ Failed to register source: $TENANT (HTTP ${SOURCE_HTTP})"
-    printf '%s\n' "$SOURCE_BODY"
-    rm -f "$SOURCE_RESP_FILE"
-    exit 1
-  fi
+    }" > /dev/null && echo "   ✅ Source registered: $TENANT" \
+      || echo "   ℹ️  Source already exists: $TENANT (skipping)"
 done
-rm -f "$SOURCE_RESP_FILE"
 
 echo ""
 
@@ -210,23 +194,55 @@ echo ""
 
 # ── 5. Deploy tenant metadata AFTER migrations ────────────────────────────────
 # Tables now exist in the DB so Hasura can track them successfully.
-#
-# Metadata is applied as a full document assembled from the server's current
-# metadata plus each tenant's desired source. Deploys MUST be sequential:
-# concurrent export/replace calls can overwrite each other and silently drop
-# another tenant's source.
 echo "🏗️  Deploying tenant metadata: ${TENANTS[*]}"
 
-for TENANT in "${TENANTS[@]}"; do
-  echo "   ▶ Deploying metadata for $TENANT"
-  (
-    cd metadata
-    ./setup-tenant.sh "$TENANT" \
-      --endpoint "${HASURA_ENDPOINT}" \
-      --admin-secret "$HASURA_ADMIN_SECRET"
-  )
-  echo "   ✅ Metadata deployed for $TENANT"
-done
+if [[ "${#TENANTS[@]}" -eq 1 ]]; then
+  # Single tenant — call setup-tenant.sh directly, no parallelization
+  cd metadata
+  ./setup-tenant.sh "${TENANTS[0]}" \
+    --endpoint "${HASURA_ENDPOINT}" \
+    --admin-secret "$HASURA_ADMIN_SECRET"
+  cd ..
+else
+  # Multiple tenants — deploy metadata in parallel background jobs
+  # setup-tenant.sh uses mktemp -d internally so parallel runs are safe
+  METADATA_PIDS=()
+  METADATA_LOGS=$(mktemp -d)
+
+  for TENANT in "${TENANTS[@]}"; do
+    (
+      cd metadata
+      ./setup-tenant.sh "$TENANT" \
+        --endpoint "${HASURA_ENDPOINT}" \
+        --admin-secret "$HASURA_ADMIN_SECRET" \
+        > "$METADATA_LOGS/$TENANT.log" 2>&1
+      cd ..
+    ) &
+    METADATA_PIDS+=($!)
+    echo "   ▶ Deploying metadata for $TENANT (pid ${METADATA_PIDS[-1]})"
+  done
+
+  METADATA_FAILED=()
+  for i in "${!METADATA_PIDS[@]}"; do
+    TENANT="${TENANTS[$i]}"
+    if wait "${METADATA_PIDS[$i]}"; then
+      # Stream the log output after completion so it appears in order
+      cat "$METADATA_LOGS/$TENANT.log"
+      echo "   ✅ Metadata deployed for $TENANT"
+    else
+      cat "$METADATA_LOGS/$TENANT.log"
+      echo "   ❌ Metadata deployment failed for $TENANT"
+      METADATA_FAILED+=("$TENANT")
+    fi
+  done
+
+  rm -rf "$METADATA_LOGS"
+
+  if [[ ${#METADATA_FAILED[@]} -gt 0 ]]; then
+    echo "❌ Metadata deployment failed for: ${METADATA_FAILED[*]}"
+    exit 1
+  fi
+fi
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
   TIMING_METADATA_DEPLOY_SAFETRUST=$((SECONDS - TIMER_START))

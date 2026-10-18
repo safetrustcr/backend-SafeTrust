@@ -6,7 +6,7 @@ set -eo pipefail # Exit on error and if any command in a pipeline fails
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/base"
 TENANTS_DIR="$SCRIPT_DIR/tenants"
-BUILD_DIR="${BUILD_DIR:-$SCRIPT_DIR/build}"
+BUILD_DIR="$SCRIPT_DIR/build"
 YAML_MERGE_TOOL="yq" # Make sure yq is installed: https://github.com/mikefarah/yq
 
 
