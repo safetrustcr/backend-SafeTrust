@@ -360,7 +360,7 @@ curl -X POST http://localhost:8080/v1/graphql \
 | Step above | `bin/start` automated equivalent |
 |---|---|
 | Step 1 — `migrate apply --version 1779300000001` | `hasura migrate apply --database-name <tenant>` (applies all pending versions) |
-| Step 2 — `metadata apply` | `metadata/setup-tenant.sh <tenant>` (build + deploy), followed by metadata reload |
+| Step 2 — `metadata apply` | `metadata/setup-tenant.sh <tenant>` (build + validate migrations + full metadata replace), followed by metadata reload |
 | Step 3 — smoke test | Verification executed post container bring-up |
 
 ---

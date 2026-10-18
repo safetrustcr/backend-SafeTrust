@@ -157,10 +157,35 @@ metadata/
 │   └── hotel_industry/  ← hotels, rooms, reservations, escrow_transactions
 ├── build/               ← generated output (tenants merged with base), ready to deploy
 ├── build-metadata.sh
-├── deploy-tenant.sh
+├── deploy-tenant.sh     ← applies complete metadata for a tenant
 └── setup-tenant.sh      ← runs build + deploy in one command ✅
 
 ```
+
+`deploy-tenant.sh` deploys the **complete** metadata document for a tenant:
+source configuration, table configuration, select/insert/update/delete
+permissions, object/array relationships, event triggers, tracked functions,
+and shared metadata (actions, cron triggers, inherited roles, …).
+
+It works by exporting the metadata currently on the server, replacing only the
+target tenant's source with the built metadata, and applying the full document
+with `replace_metadata`. This means:
+
+- re-deploying an already-tracked table applies changed permissions and
+  relationships instead of skipping it;
+- deploying one tenant preserves every other tenant's source and all shared
+  metadata;
+- migrations are validated first, so permissions are never applied to a table
+  that has not been migrated yet;
+- `get_inconsistent_metadata` and representative guest/host role checks run
+  after the apply, and any failure fails the deployment with an explicit error.
+
+Within the tenant being deployed, the built metadata is authoritative: objects
+missing from it (for example a removed table) are dropped on the next re-deploy,
+while other tenants and shared metadata are preserved.
+
+Deploy metadata for several tenants sequentially — `setup-tenant.sh` and
+`bin/start` already serialize metadata deployment for this reason.
 
 ---
 
@@ -175,6 +200,39 @@ cd metadata
 ./setup-tenant.sh safetrust --endpoint http://localhost:8080 --admin-secret myadminsecretkey
 
 ```
+
+### Deploy metadata — Hasura Cloud
+
+Local commands default to `http://localhost:8080`. Cloud deployments need an
+explicit target endpoint and an explicit admin secret — keep the secret in
+`HASURA_GRAPHQL_ADMIN_SECRET` rather than on the command line so it does not
+appear in process listings or shell history:
+
+```bash
+# Admin secret comes from the environment; set it in .env or your secret store
+export HASURA_GRAPHQL_ADMIN_SECRET=...
+export HASURA_GRAPHQL_ENDPOINT=https://<project>.hasura.app
+
+# Apply migrations before permissions/relationships are deployed
+hasura migrate apply --database-name safetrust
+
+cd metadata
+./setup-tenant.sh safetrust --cloud --endpoint "$HASURA_GRAPHQL_ENDPOINT"
+
+```
+
+The `--cloud` flag rejects local or non-https endpoints and refuses the local
+default admin secret. The same flags work with `deploy-tenant.sh`:
+
+```bash
+HASURA_GRAPHQL_ADMIN_SECRET=... ./deploy-tenant.sh safetrust \
+  --cloud --endpoint https://<project>.hasura.app
+
+```
+
+Set `HASURA_GRAPHQL_ENDPOINT` instead of `--endpoint` when a tool reads the
+target from the environment. Never commit the admin secret, and never paste it
+into an issue or CI log.
 
 ### Migrations — single tenant
 
@@ -238,6 +296,21 @@ Reports are generated at:
 - `tests/results/karate-tags.html`
 
 **Add new tests:** Create `.feature` files in `tests/karate/features/` — picked up automatically.
+
+### Metadata deployment tests
+
+The metadata deployer has its own tests that need no Docker or Hasura instance:
+a stateful mock Hasura server plus a stub Hasura CLI. They cover fresh and
+repeated deploys, configuration drift, failed metadata API responses,
+multi-tenant preservation, migration validation, inconsistent metadata, role
+verification, and Cloud target guards.
+
+```bash
+bin/test-metadata
+```
+
+Dependencies: `jq`, `curl`, `python3`, and mikefarah `yq` v4. The same command
+runs in the `metadata deploy tests` GitHub workflow.
 
 **Config files:**
 

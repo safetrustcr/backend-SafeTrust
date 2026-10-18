@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Runs the metadata deployment tests (no Docker required).
+#
+# Dependencies: bash, curl, jq, python3, and mikefarah yq v4.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+missing=()
+command -v jq >/dev/null 2>&1 || missing+=("jq")
+command -v curl >/dev/null 2>&1 || missing+=("curl")
+command -v python3 >/dev/null 2>&1 || missing+=("python3")
+command -v yq >/dev/null 2>&1 || missing+=("yq (mikefarah v4)")
+
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo "❌ Missing test dependencies: ${missing[*]}" >&2
+  echo "   Install mikefarah yq v4: https://github.com/mikefarah/yq" >&2
+  exit 1
+fi
+
+exec bash tests/metadata/deploy_tenant_test.sh "$@"

@@ -150,8 +150,50 @@ flowchart LR
 | Health check | Polls `GET /healthz` up to 3 minutes before continuing |
 | Register sources | `pg_add_source` is called twice — once per tenant — both pointing at `PG_DATABASE_URL` |
 | Apply migrations | `hasura migrate apply --database-name <tenant>` runs versioned SQL for each schema |
-| Deploy metadata | `metadata/setup-tenant.sh <tenant>` merges tenant YAML with base config and applies it to Hasura |
+| Validate migrations | `hasura migrate status --database-name <tenant>` must show every migration as `Present` before metadata is applied |
+| Deploy metadata | `metadata/setup-tenant.sh <tenant>` builds the tenant's YAML, merges it into the server's current metadata, and applies the full document with `replace_metadata` |
+| Verify metadata | `get_inconsistent_metadata` must be consistent, then representative guest/host role introspection and select operations are executed |
 | Apply seeds | Seed SQL files run inside PostgreSQL transactions; both tenants run concurrently |
+
+### Metadata replacement and multi-tenant safety
+
+`deploy-tenant.sh` applies more than tracked-object registration. The built
+metadata contains table configuration, select/insert/update/delete permissions,
+object/array relationships, event triggers, tracked functions, and shared
+metadata. Because Hasura's `replace_metadata` replaces the whole document, the
+deployer always assembles:
+
+1. the metadata currently exported from the server, and
+2. the desired source for the tenant being deployed (replacing only that
+   source), plus
+3. shared metadata merged by name/role without deleting existing entries.
+
+This is why deploying `safetrust` leaves the `hotel_industry` source and shared
+actions/cron triggers intact. It is also why metadata deploys must be
+**sequential** — two concurrent exports would both start from the same baseline
+and the second replace would erase the first tenant's changes. `bin/start`,
+`metadata/setup-tenant.sh`, and `bin/deploy_init` therefore serialize this
+phase.
+
+### Cloud targets
+
+Local commands default to `http://localhost:8080`. Hasura Cloud requires an
+explicit endpoint and admin secret:
+
+```bash
+export HASURA_GRAPHQL_ADMIN_SECRET=...   # do not put the secret in argv or logs
+export HASURA_GRAPHQL_ENDPOINT=https://<project>.hasura.app
+
+hasura migrate apply --database-name safetrust
+
+cd metadata
+./setup-tenant.sh safetrust --cloud --endpoint "$HASURA_GRAPHQL_ENDPOINT"
+```
+
+`--cloud` rejects local or non-https endpoints and the local default admin
+secret. The admin secret is passed to the Hasura CLI through
+`HASURA_GRAPHQL_ADMIN_SECRET`, never printed. `bin/start` remains the local
+Docker workflow and keeps `http://localhost:8080` as its default.
 
 Each seed file is wrapped in `BEGIN`/`COMMIT`. A failed file rolls back
 completely. Re-running `bin/start` without `--reset` is safe because seed

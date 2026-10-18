@@ -4,8 +4,12 @@ set -eo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 # setup-tenant.sh
 # Runs build-metadata.sh then deploy-tenant.sh for one or more tenants.
-# Function tracking is handled entirely by deploy-tenant.sh — no duplicate
-# tracking logic here.
+#
+# deploy-tenant.sh applies the complete metadata for a tenant: source config,
+# table configuration, permissions, relationships, event triggers, functions,
+# and shared metadata. Tenants are processed sequentially because each deploy
+# replaces the full metadata document assembled from the server's current
+# metadata; concurrent replaces could silently drop another tenant's source.
 #
 # Usage:
 #   ./setup-tenant.sh <tenant1> [tenant2 ...] [--admin-secret SECRET] [--endpoint URL]
@@ -14,14 +18,19 @@ set -eo pipefail
 #   ./setup-tenant.sh safetrust
 #   ./setup-tenant.sh safetrust hotel_industry
 #   ./setup-tenant.sh safetrust hotel_industry --admin-secret myadminsecretkey --endpoint http://localhost:8080
+#
+# Cloud (explicit endpoint and explicit admin secret, preferably via env):
+#   HASURA_GRAPHQL_ADMIN_SECRET=... ./setup-tenant.sh safetrust \
+#     --cloud --endpoint https://example.hasura.app
 # ─────────────────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Defaults
+# Defaults — local development remains localhost.
 ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-}"
-ENDPOINT="http://localhost:8080"
+ENDPOINT="${HASURA_GRAPHQL_ENDPOINT:-http://localhost:8080}"
 TENANTS=()
+DEPLOY_FLAGS=()
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -41,6 +50,33 @@ while [[ $# -gt 0 ]]; do
       fi
       ENDPOINT="$2"
       shift 2
+      ;;
+    --cloud)
+      DEPLOY_FLAGS+=(--cloud)
+      shift
+      ;;
+    --skip-role-checks)
+      DEPLOY_FLAGS+=(--skip-role-checks)
+      shift
+      ;;
+    -h | --help)
+      cat <<'USAGE'
+Usage: ./setup-tenant.sh <tenant1> [tenant2 ...] [options]
+
+Builds and deploys complete Hasura metadata for each tenant.
+
+Options:
+  --admin-secret SECRET  Hasura admin secret (prefer HASURA_GRAPHQL_ADMIN_SECRET)
+  --endpoint URL         Hasura endpoint (default: http://localhost:8080)
+  --cloud                Require an explicit non-local https endpoint
+  --skip-role-checks     Skip post-deploy guest/host role verification
+  -h, --help             Show this help
+
+Cloud example:
+  HASURA_GRAPHQL_ADMIN_SECRET=... ./setup-tenant.sh safetrust \
+    --cloud --endpoint https://example.hasura.app
+USAGE
+      exit 0
       ;;
     -*)
       echo "❌ Unknown option: $1"
@@ -77,73 +113,48 @@ echo "  Endpoint: $ENDPOINT"
 echo "════════════════════════════════════════════════════"
 echo ""
 
-# ── Per-tenant tracking ───────────────────────────────────────────────────────
+# ── Per-tenant build + complete metadata deploy ───────────────────────────────
 SUCCESSFUL_TENANTS=()
 FAILED_TENANTS=()
 SETUP_START=$SECONDS
 
-# ── Parallel tenant processing with per-tenant log capture ────────────────────
-PIDS=()
-LOG_FILES=()
-
 for TENANT in "${TENANTS[@]}"; do
-  LOG_FILE=$(mktemp)
-  LOG_FILES+=("$LOG_FILE")
+  echo "────────────────────────────────────────────────────"
+  echo "  Processing tenant: $TENANT"
+  echo "────────────────────────────────────────────────────"
 
-  (
-    echo "────────────────────────────────────────────────────"
-    echo "  Processing tenant: $TENANT"
-    echo "────────────────────────────────────────────────────"
+  TENANT_START=$SECONDS
 
-    TENANT_START=$SECONDS
-
-    # Step 1 — Build metadata (base + tenant-specific merge)
-    echo "🔨 Building metadata for $TENANT..."
-    if ! "$SCRIPT_DIR/build-metadata.sh" "$TENANT"; then
-      echo "❌ [$TENANT] Build failed."
-      exit 1
-    fi
-    echo "✅ Metadata built for $TENANT"
-    echo ""
-
-    # Step 2 — Deploy metadata
-    # deploy-tenant.sh handles: source registration, table tracking, function tracking
-    # Do NOT add any duplicate tracking logic here.
-    echo "🚀 Deploying metadata for $TENANT..."
-    if ! "$SCRIPT_DIR/deploy-tenant.sh" "$TENANT" \
-        --endpoint "$ENDPOINT" \
-        --admin-secret "$ADMIN_SECRET"; then
-      echo "❌ [$TENANT] Deploy failed."
-      exit 1
-    fi
-
-    TENANT_ELAPSED=$(( SECONDS - TENANT_START ))
-    echo ""
-    echo "✅ [$TENANT] Successfully deployed in ${TENANT_ELAPSED}s"
-  ) > "$LOG_FILE" 2>&1 &
-
-  PIDS+=($!)
-done
-
-# ── Wait for all tenant processes and collect results ────────────────────────
-for i in "${!PIDS[@]}"; do
-  TENANT="${TENANTS[$i]}"
-  PID="${PIDS[$i]}"
-  LOG_FILE="${LOG_FILES[$i]}"
-
-  # Stream per-tenant log to stdout as it completes
-  if wait "$PID"; then
-    SUCCESSFUL_TENANTS+=("$TENANT")
-  else
+  # Step 1 — Build metadata (base + tenant-specific merge)
+  echo "🔨 Building metadata for $TENANT..."
+  if ! "$SCRIPT_DIR/build-metadata.sh" "$TENANT"; then
+    echo "❌ [$TENANT] Build failed."
     FAILED_TENANTS+=("$TENANT")
+    continue
+  fi
+  echo "✅ Metadata built for $TENANT"
+  echo ""
+
+  # Step 2 — Deploy the complete metadata document for this tenant.
+  # deploy-tenant.sh validates migrations, applies configuration/permissions/
+  # relationships/event triggers, checks consistency, and verifies role access.
+  echo "🚀 Deploying metadata for $TENANT..."
+  if ! "$SCRIPT_DIR/deploy-tenant.sh" "$TENANT" \
+      --endpoint "$ENDPOINT" \
+      --admin-secret "$ADMIN_SECRET" \
+      ${DEPLOY_FLAGS[@]+"${DEPLOY_FLAGS[@]}"}; then
+    echo "❌ [$TENANT] Deploy failed."
+    FAILED_TENANTS+=("$TENANT")
+    continue
   fi
 
-  # Print captured log for this tenant
-  cat "$LOG_FILE"
-  rm -f "$LOG_FILE"
+  TENANT_ELAPSED=$((SECONDS - TENANT_START))
+  echo ""
+  echo "✅ [$TENANT] Successfully deployed in ${TENANT_ELAPSED}s"
+  SUCCESSFUL_TENANTS+=("$TENANT")
 done
 
-SETUP_ELAPSED=$(( SECONDS - SETUP_START ))
+SETUP_ELAPSED=$((SECONDS - SETUP_START))
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo "════════════════════════════════════════════════════"
