@@ -24,7 +24,9 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Approve Milestone](stellar/approve-milestone.md) | Milestone verification and approval lifecycle for escrow funds |
 | [Release Funds](stellar/release-funds.md) | Payout release mechanisms and on-chain settlement execution |
 | [Dispute & Resolve](stellar/dispute-resolve.md) | Two-phase XDR dispute lifecycle, Soroban roles, status transitions, and indexer synchronization |
+| [Escrow State Source](stellar/escrow-state-source.md) | Authoritative state source selection, removal of fabricated reads, and adapter validation |
 | [x402 Protocol](stellar/x402-protocol.md) | Agentic payments on Stellar using Soroban authorization entries and USDC SEP-41 |
+
 
 ### 🐘 Database & Migrations
 | Document | Description |
