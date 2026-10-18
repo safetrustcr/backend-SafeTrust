@@ -16,6 +16,11 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Rust Crates in SafeTrust](architecture/rust-crates.md) | High-assurance native extensions via Neon bindings for cryptography and blockchain operations |
 | [Crate Boundaries](architecture/crate-boundaries.md) | Consumers, exports, fallbacks, dispositions, and quarantine gates for all eight Rust crates |
 
+### 📜 Architecture Decision Records (ADRs)
+| Document | Description |
+|---|---|
+| [ADR-0001: ZK Eligibility Statement and Trust Model](adr/0001-zk-eligibility-statement-and-trust-model.md) | Predicate specification, trust boundaries, feasibility trade-offs, and verification key pinning for escrow admission |
+
 ### 🔐 Stellar & Escrow Flows
 | Document | Description |
 |---|---|

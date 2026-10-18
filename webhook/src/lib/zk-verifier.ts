@@ -33,9 +33,20 @@ export function verifyProofOfFunds(
 
   // A proof only establishes the statement encoded by its verification key.
   // Pin the SafeTrust circuit key in production so a valid proof for an
-  // attacker-controlled circuit cannot be substituted. The pin is optional
-  // to keep local circuit development frictionless.
+  // attacker-controlled circuit cannot be substituted. In production, this
+  // pin is mandatory. In non-production, the pin is optional to keep local
+  // circuit development frictionless.
+  const isProduction = process.env.NODE_ENV === 'production';
   const expectedKeyHash = process.env.ZK_PROOF_OF_FUNDS_VK_SHA256;
+
+  if (isProduction && !expectedKeyHash) {
+    const error = new Error(
+      'ZK verification key hash pin (ZK_PROOF_OF_FUNDS_VK_SHA256) is mandatory in production'
+    ) as ZkVerifierError;
+    error.code = 'ZK_VERIFIER_MISCONFIGURED';
+    throw error;
+  }
+
   if (expectedKeyHash) {
     if (!/^[0-9a-fA-F]{64}$/.test(expectedKeyHash)) {
       const error = new Error('ZK verification key hash is misconfigured') as ZkVerifierError;
@@ -60,4 +71,12 @@ export function verifyProofOfFunds(
     balanceCommitmentHex
   );
 }
+
+/**
+ * Test-only utility to mock or reset the native verifier.
+ */
+export function _setNativeVerifierForTesting(verifier: typeof NativeVerifier | null): void {
+  nativeVerifier = verifier;
+}
+
 
