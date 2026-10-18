@@ -1,6 +1,22 @@
 import request from 'supertest'
 import express from 'express'
 
+jest.mock('../../../crates/x402-processor', () => ({
+  buildPaymentRequirement: jest.fn((amountUsdc, network, facilitatorUrl, payTo) =>
+    JSON.stringify({
+      scheme: 'exact',
+      network,
+      max_amount_usdc: amountUsdc,
+      asset: { code: 'USDC' },
+      facilitatorUrl,
+      payTo,
+    })
+  ),
+  validateX402Payment: jest.fn(() =>
+    JSON.stringify({ is_valid: false, invalid_reason: 'Invalid payment header' })
+  ),
+}), { virtual: true })
+
 jest.mock('../../../services/hasura', () => ({
   hasuraRequest: jest.fn().mockResolvedValue({}),
 }))
@@ -67,8 +83,27 @@ describe('initialize.route with x402 payment gate', () => {
     expect(res.body.feature).toBe('x402')
   })
 
+  it('fails closed when an X-Payment header is sent while x402 is disabled', async () => {
+    process.env.X402_ENABLED = 'false'
+    const router = require('../initialize.route').default
+
+    const app = express()
+    app.use(express.json())
+    app.use(router)
+
+    const res = await request(app)
+      .post('/api/escrows/initialize')
+      .set('x-payment', 'x402 valid-payload')
+      .send({})
+
+    expect(res.status).toBe(503)
+    expect(res.body.error).toBe('Feature Unavailable')
+    expect(res.body.feature).toBe('x402')
+  })
+
   it('enforces 402 payment when X402_ENABLED is true and X-Payment is missing', async () => {
     process.env.X402_ENABLED = 'true'
+    process.env.SAFETRUST_PLATFORM_WALLET = 'GTESTPLATFORMWALLET'
     const router = require('../initialize.route').default
 
     const app = express()
@@ -90,6 +125,7 @@ describe('initialize.route with x402 payment gate', () => {
 
   it('returns 402 with invalid_reason when X402_ENABLED is true and X-Payment is invalid', async () => {
     process.env.X402_ENABLED = 'true'
+    process.env.SAFETRUST_PLATFORM_WALLET = 'GTESTPLATFORMWALLET'
     const router = require('../initialize.route').default
 
     const app = express()

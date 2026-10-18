@@ -6,6 +6,14 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# The current RPC reader does not read contract storage. It returns hardcoded
+# state (and calls only `getHealth` for non-mock ids), so it must never run in
+# production. Both this compile-time feature and the runtime
+# SOROBAN_RECONCILER_ALLOW_UNVALIDATED=true opt-in are required to enable it.
+default = []
+unvalidated-reader = []
+
 [dependencies]
 neon       = { version = "0.10", default-features = false, features = ["napi-6"] }
 serde      = { version = "1.0", features = ["derive"] }

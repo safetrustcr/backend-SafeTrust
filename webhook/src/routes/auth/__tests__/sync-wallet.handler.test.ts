@@ -107,18 +107,7 @@ describe('syncWalletHandler', () => {
     expect(query).not.toHaveBeenCalled()
   })
 
-  it('accepts a valid Stellar address and upserts the wallet', async () => {
-    ;(query as jest.Mock).mockResolvedValue({
-      rows: [
-        {
-          id: 'wallet-1',
-          wallet_address: VALID_STELLAR,
-          chain_type: 'STELLAR',
-          is_primary: true,
-        },
-      ],
-    })
-
+  it('requires challenge verification before registering a Stellar address', async () => {
     const req = makeRequest({
       wallet_address: VALID_STELLAR,
       chain_type: 'STELLAR',
@@ -128,18 +117,9 @@ describe('syncWalletHandler', () => {
 
     await syncWalletHandler(req, res)
 
-    expect(res.status).toHaveBeenCalledWith(200)
-    expect(res.json).toHaveBeenCalledWith({
-      success: true,
-      wallet_address: VALID_STELLAR,
-    })
-    expect(query).toHaveBeenCalledTimes(1)
-    expect((query as jest.Mock).mock.calls[0][1]).toEqual([
-      'user-1',
-      VALID_STELLAR,
-      'STELLAR',
-      true,
-    ])
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'WALLET_CHALLENGE_REQUIRED' }))
+    expect(query).not.toHaveBeenCalled()
   })
 
   it('returns 500 when the database upsert fails', async () => {
@@ -147,7 +127,7 @@ describe('syncWalletHandler', () => {
 
     const req = makeRequest({
       wallet_address: VALID_STELLAR,
-      chain_type: 'STELLAR',
+      chain_type: 'ETH',
       is_primary: false,
     })
     const res = makeResponse()

@@ -149,9 +149,28 @@ mod tests {
         assert_eq!(report.discrepancies[0].field, "marker");
     }
 
+    #[cfg(not(feature = "unvalidated-reader"))]
+    #[test]
+    fn test_query_escrow_state_is_disabled_by_default() {
+        let res = query_escrow_state("mock_contract_1", "testnet");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("quarantined"));
+    }
+
+    #[cfg(feature = "unvalidated-reader")]
     #[test]
     fn test_query_escrow_state_mock() {
+        // The feature only compiles the legacy reader in. Without the runtime
+        // opt-in it must still refuse to return fabricated state.
+        std::env::remove_var("SOROBAN_RECONCILER_ALLOW_UNVALIDATED");
+        let disabled = query_escrow_state("mock_contract_1", "testnet");
+        assert!(disabled.is_err());
+
+        // With both gates open, this documents the old fabricated behavior
+        // that a validated adapter must replace.
+        std::env::set_var("SOROBAN_RECONCILER_ALLOW_UNVALIDATED", "true");
         let res = query_escrow_state("mock_contract_1", "testnet");
+        std::env::remove_var("SOROBAN_RECONCILER_ALLOW_UNVALIDATED");
         assert!(res.is_ok());
         let state = res.unwrap();
         assert_eq!(state.contract_id, "mock_contract_1");
