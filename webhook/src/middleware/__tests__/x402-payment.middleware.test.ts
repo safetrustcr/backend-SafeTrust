@@ -18,13 +18,32 @@ describe('x402-payment.middleware', () => {
       json: jest.fn().mockReturnThis(),
     }
     next = jest.fn()
+    process.env.X402_ENABLED = 'true'
     delete process.env.STELLAR_NETWORK
     delete process.env.X402_FACILITATOR_URL
     delete process.env.SAFETRUST_PLATFORM_WALLET
   })
 
   afterEach(() => {
+    delete process.env.X402_ENABLED
     jest.clearAllMocks()
+  })
+
+  describe('Quarantine flag', () => {
+    it('fails closed without evaluating a payment when X402_ENABLED is not true', () => {
+      process.env.X402_ENABLED = 'false'
+      const validate = jest.fn()
+      setX402Addon({ validateX402Payment: validate, buildPaymentRequirement: jest.fn() })
+      req.headers['x-payment'] = 'x402 valid-payload'
+
+      const middleware = requireX402Payment(0.10)
+      middleware(req as Request, res as Response, next as NextFunction)
+
+      expect(res.status).toHaveBeenCalledWith(503)
+      expect(res.json).toHaveBeenCalledWith({ error: 'x402 payments are disabled' })
+      expect(validate).not.toHaveBeenCalled()
+      expect(next).not.toHaveBeenCalled()
+    })
   })
 
   describe('Missing X-Payment Header (402 Payment Required)', () => {

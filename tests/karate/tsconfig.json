@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "none",
+    "strict": true,
+    "noEmitOnError": true,
+    "types": [],
+    "alwaysStrict": false
+  },
+  "files": [
+    "src/test/resources/karate-config.ts",
+    "src/test/resources/karate-interop.d.ts"
+  ]
+}

@@ -1,3 +1,11 @@
+# Compile Karate's TypeScript configuration to the JavaScript consumed by Graal.
+FROM node:24-bookworm-slim AS karate-config
+WORKDIR /app
+COPY webhook/package*.json ./webhook/
+RUN cd webhook && npm ci --ignore-scripts
+COPY tests/karate/ ./tests/karate/
+RUN cd webhook && npm run build:karate
+
 FROM eclipse-temurin:17-jdk-jammy
 
 WORKDIR /app
@@ -5,6 +13,7 @@ RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 # Copy test files
 COPY tests /app/tests
+COPY --from=karate-config /app/tests/karate/src/test/resources /app/tests/karate/src/test/resources
 
 # Make sure karate-config.js is in the right place
 RUN mkdir -p /app/tests/karate/src/test/resources

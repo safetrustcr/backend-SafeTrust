@@ -138,12 +138,12 @@ describe('authMiddleware', () => {
       expect(next).toHaveBeenCalled()
     })
 
-    it('should return 500 if mock-token is used outside the test environment', async () => {
+    it('should reject mock-token outside the test environment', async () => {
       process.env.NODE_ENV = 'production'
       req.headers['authorization'] = 'Bearer mock-token'
 
       await authMiddleware(req, res, next)
-      expect(res.status).toHaveBeenCalledWith(500)
+      expect(res.status).toHaveBeenCalledWith(401)
       expect(next).not.toHaveBeenCalled()
     })
   })

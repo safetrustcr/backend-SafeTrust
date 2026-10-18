@@ -1,4 +1,3 @@
-```
 # Compiled and build artifacts
 *.pyc
 __pycache__/
@@ -19,6 +18,10 @@ venv/
 .env.local
 .env.*
 !.env.example
+!.env.test.example
+
+# Docker cache
+.docker-cache/
 
 # Karate test artifacts
 tests/results/**
@@ -84,3 +87,11 @@ Thumbs.db
 *.tar.bz2
 *.tar.xz
 *.tar.zst
+crates/target/
+
+# JavaScript generated from TypeScript tooling and Karate sources
+/crates/**/*.js
+# The verifier fallback is required at runtime when the native addon fails to
+# load, so its generated compatibility output is checked in with index.js.
+!/crates/webhook-verifier/fallback.js
+/tests/karate/src/test/resources/**/*.js

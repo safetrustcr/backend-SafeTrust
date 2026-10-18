@@ -3,27 +3,38 @@
 import { Request, Response } from 'express'
 import { approveMilestoneHandler } from '../approve-milestone.handler'
 import {
-  hasuraRequest,
-  logAndCheckWebhookEvent,
-  markWebhookEventProcessed,
-  getHasuraEndpoint,
-} from '../../../services/hasura'
+  approveMilestone,
+  EscrowStateConflictError,
+  EscrowNotFoundError,
+  MilestoneNotFoundError,
+} from '../../../services/milestone.service'
+import { getHasuraEndpoint } from '../../../services/hasura'
 import type { ApproveMilestonePayload } from '@safetrust/types'
 
-jest.mock('../../../services/hasura', () => ({
-  getHasuraEndpoint: jest.requireActual('../../../services/hasura').getHasuraEndpoint,
-  hasuraRequest: jest.fn(),
-  logAndCheckWebhookEvent: jest.fn(),
-  markWebhookEventProcessed: jest.fn(),
+jest.mock('../../../services/milestone.service', () => ({
+  approveMilestone: jest.fn(),
+  EscrowStateConflictError: class EscrowStateConflictError extends Error {
+    constructor(message: string) {
+      super(message)
+      this.name = 'EscrowStateConflictError'
+    }
+  },
+  EscrowNotFoundError: class EscrowNotFoundError extends Error {
+    constructor(message: string) {
+      super(message)
+      this.name = 'EscrowNotFoundError'
+    }
+  },
+  MilestoneNotFoundError: class MilestoneNotFoundError extends Error {
+    constructor(message: string) {
+      super(message)
+      this.name = 'MilestoneNotFoundError'
+    }
+  },
 }))
 
-const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>
-const mockedLogAndCheck = logAndCheckWebhookEvent as jest.MockedFunction<
-  typeof logAndCheckWebhookEvent
->
-const mockedMarkProcessed = markWebhookEventProcessed as jest.MockedFunction<
-  typeof markWebhookEventProcessed
->
+const mockedApproveMilestone =
+  approveMilestone as jest.MockedFunction<typeof approveMilestone>
 
 function makeResponse(): Response {
   const res: Partial<Response> = {}
@@ -42,9 +53,13 @@ describe('approveMilestoneHandler', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     process.env.HASURA_GRAPHQL_ADMIN_SECRET = 'test-secret'
-    process.env.HASURA_GRAPHQL_ENDPOINT = 'http://graphql-engine-test:8080'
-    mockedLogAndCheck.mockResolvedValue({ isDuplicate: false, eventId: 'event-1' })
-    mockedMarkProcessed.mockResolvedValue(undefined)
+    process.env.HASURA_GRAPHQL_ENDPOINT =
+      'http://graphql-engine-test:8080'
+
+    mockedApproveMilestone.mockResolvedValue({
+      isDuplicate: false,
+      eventId: 'event-1',
+    })
   })
 
   afterAll(() => {
@@ -59,8 +74,10 @@ describe('approveMilestoneHandler', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({
+      success: false,
       error: 'Missing required fields: contractId, milestoneId, approver, flag',
     })
+    expect(mockedApproveMilestone).not.toHaveBeenCalled()
   })
 
   it('returns 400 when flag is not true', async () => {
@@ -76,22 +93,13 @@ describe('approveMilestoneHandler', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({
+      success: false,
       error: 'flag must be true to approve a milestone',
     })
+    expect(mockedApproveMilestone).not.toHaveBeenCalled()
   })
 
-  it('uses milestone-specific idempotency keys', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({})
-
+  it('passes milestone-specific approval data to the service', async () => {
     const req = makeRequest({
       contractId: 'contract-1',
       milestoneId: 'check_in',
@@ -102,44 +110,34 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res)
 
-    expect(mockedLogAndCheck).toHaveBeenCalledWith(
+    expect(mockedApproveMilestone).toHaveBeenCalledWith(
       'contract-1',
-      'milestone.approved:check_in',
+      'check_in',
+      'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z',
       req.body
     )
     expect(res.status).toHaveBeenCalledWith(200)
+    expect(res.json).toHaveBeenCalledWith({ success: true })
   })
 
-  it('updates Hasura and returns 200 when both updates succeed', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_escrow_milestones: { affected_rows: 1 },
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({
-      update_trustless_work_escrows: { affected_rows: 1 },
-    })
-    mockedHasuraRequest.mockResolvedValueOnce({})
-
+  it('returns 200 when the service succeeds', async () => {
     const req = makeRequest({
       contractId: 'contract-1',
       milestoneId: 'check_in',
-      approver: 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z',
+      approver: 'GABC',
       flag: true,
     })
     const res = makeResponse()
 
     await approveMilestoneHandler(req, res)
 
-    expect(mockedHasuraRequest).toHaveBeenCalledTimes(4)
-    expect(mockedMarkProcessed).toHaveBeenCalledWith('event-1')
+    expect(mockedApproveMilestone).toHaveBeenCalledTimes(1)
     expect(res.status).toHaveBeenCalledWith(200)
-    expect(res.json).toHaveBeenCalledWith({ received: true })
+    expect(res.json).toHaveBeenCalledWith({ success: true })
   })
 
   it('returns 200 without re-processing duplicate milestone approvals', async () => {
-    mockedLogAndCheck.mockResolvedValueOnce({
+    mockedApproveMilestone.mockResolvedValueOnce({
       isDuplicate: true,
       eventId: 'event-duplicate',
     })
@@ -154,15 +152,43 @@ describe('approveMilestoneHandler', () => {
 
     await approveMilestoneHandler(req, res)
 
-    expect(mockedHasuraRequest).not.toHaveBeenCalled()
-    expect(mockedMarkProcessed).toHaveBeenCalledWith('event-duplicate')
+    expect(mockedApproveMilestone).toHaveBeenCalledTimes(1)
     expect(res.status).toHaveBeenCalledWith(200)
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      duplicate: true,
+      eventId: 'event-duplicate',
+    })
+  })
+
+  it('returns 409 when the escrow is in an invalid prior state', async () => {
+    mockedApproveMilestone.mockRejectedValueOnce(
+      new EscrowStateConflictError(
+        'Escrow is not in a valid state for milestone approval'
+      )
+    )
+
+    const req = makeRequest({
+      contractId: 'contract-1',
+      milestoneId: 'check_in',
+      approver: 'GABC',
+      flag: true,
+    })
+    const res = makeResponse()
+
+    await approveMilestoneHandler(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      error: 'Escrow is not in a valid state for milestone approval',
+    })
   })
 
   it('returns 404 when the escrow is not found', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [],
-    })
+    mockedApproveMilestone.mockRejectedValueOnce(
+      new EscrowNotFoundError('Escrow not found')
+    )
 
     const req = makeRequest({
       contractId: 'missing-contract',
@@ -176,20 +202,37 @@ describe('approveMilestoneHandler', () => {
 
     expect(res.status).toHaveBeenCalledWith(404)
     expect(res.json).toHaveBeenCalledWith({
+      success: false,
       error: 'Escrow not found',
     })
-    expect(mockedMarkProcessed).not.toHaveBeenCalled()
   })
 
-  it('returns 500 when Hasura responds with GraphQL errors during mutation', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      trustless_work_escrows: [{ id: 'escrow-1' }],
-    })
+  it('returns 404 when the milestone is not found', async () => {
+    mockedApproveMilestone.mockRejectedValueOnce(
+      new MilestoneNotFoundError('Milestone not found')
+    )
 
-    const error = Object.assign(new Error('Hasura request failed'), {
-      details: [{ message: 'permission denied' }],
+    const req = makeRequest({
+      contractId: 'contract-1',
+      milestoneId: 'check_in',
+      approver: 'GABC',
+      flag: true,
     })
-    mockedHasuraRequest.mockRejectedValueOnce(error)
+    const res = makeResponse()
+
+    await approveMilestoneHandler(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      error: 'Milestone not found',
+    })
+  })
+
+  it('returns 500 for unexpected service errors', async () => {
+    mockedApproveMilestone.mockRejectedValueOnce(
+      new Error('Unexpected database failure')
+    )
 
     const req = makeRequest({
       contractId: 'contract-1',
@@ -203,9 +246,9 @@ describe('approveMilestoneHandler', () => {
 
     expect(res.status).toHaveBeenCalledWith(500)
     expect(res.json).toHaveBeenCalledWith({
+      success: false,
       error: 'Failed to update milestone approval',
     })
-    expect(mockedMarkProcessed).not.toHaveBeenCalled()
   })
 })
 

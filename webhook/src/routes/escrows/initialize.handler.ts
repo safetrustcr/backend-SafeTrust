@@ -1,13 +1,20 @@
 import { Request, Response } from 'express';
+import { badRequest, duplicate, ok, serverError, serviceUnavailable } from '../../utils/response'
 import { InitializeEscrowPayload } from '@safetrust/types';
 import {
-  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} from '../../services/hasura';
+} from '../../repositories/webhook-event.repository';
+import {
+  createEscrow,
+} from '../../repositories/escrow.repository';
+import {
+  linkEscrowToReservation,
+} from '../../repositories/reservation.repository';
 import { verifyProofOfFunds } from '../../lib/zk-verifier';
+import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
-const EVENT_TYPE = 'escrow.initialized';
+const EVENT_TYPE = EscrowEventType.Initialized;
 const STROOPS_PER_UNIT = 10_000_000n;
 const U64_MAX = 18_446_744_073_709_551_615n;
 
@@ -72,7 +79,7 @@ export const initializeEscrowHandler = async (
 
   // 1 — Validate required fields
   if (!contract_id || !marker || !approver || !releaser || !amount || !escrow_type) {
-    return res.status(400).json({
+    return badRequest(res, {
       error: 'Missing required fields: contract_id, marker, approver, releaser, amount, escrow_type'
     });
   }
@@ -80,7 +87,7 @@ export const initializeEscrowHandler = async (
   // 2 — Validate escrow_type matches migration CHECK constraint
   const validTypes = ['single_release', 'multi_release'];
   if (!validTypes.includes(escrow_type)) {
-    return res.status(400).json({
+    return badRequest(res, {
       error: `escrow_type must be one of: ${validTypes.join(', ')}`
     });
   }
@@ -102,7 +109,7 @@ export const initializeEscrowHandler = async (
       typeof zk_balance_commitment === 'string' && zk_balance_commitment.length > 0;
 
     if (!hasCompleteBundle) {
-      return res.status(400).json({
+      return badRequest(res, {
         error: 'zk_proof, zk_verification_key, zk_threshold_stroops, and zk_balance_commitment must be supplied together'
       });
     }
@@ -110,7 +117,7 @@ export const initializeEscrowHandler = async (
     const expectedThreshold = amountToStroops(amount);
     const suppliedThreshold = normalizeU64(zk_threshold_stroops);
     if (!expectedThreshold || !suppliedThreshold || suppliedThreshold !== expectedThreshold) {
-      return res.status(400).json({ error: 'Invalid ZK proof of funds' });
+      return badRequest(res, { error: 'Invalid ZK proof of funds' });
     }
 
     try {
@@ -121,25 +128,14 @@ export const initializeEscrowHandler = async (
         zk_balance_commitment
       );
       if (!isValidProof) {
-        return res.status(400).json({ error: 'Invalid ZK proof of funds' });
+        return badRequest(res, { error: 'Invalid ZK proof of funds' });
       }
     } catch (error) {
       const err = error as Error;
       console.error('[escrow/initialize] ZK verifier unavailable:', err.message);
-      return res.status(503).json({ error: 'ZK proof verification is unavailable' });
+      return serviceUnavailable(res, { error: 'ZK proof verification is unavailable' });
     }
   }
-
-  const mutation = `
-    mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
-      insert_trustless_work_escrows_one(object: $object) {
-        id
-        contractId
-        status
-        createdAt
-      }
-    }
-  `;
 
   try {
     // 4 — Idempotency check
@@ -151,75 +147,52 @@ export const initializeEscrowHandler = async (
 
     if (isDuplicate) {
       await markWebhookEventProcessed(eventId);
-      return res.status(200).json({ received: true });
+      return duplicate(res, eventId);
     }
 
-    // 5 — Persist to public.trustless_work_escrows via Hasura GraphQL mutation
-    const data = await hasuraRequest<{ insert_trustless_work_escrows_one?: { id: string } }>(mutation, {
-      object: {
-        contractId: contract_id,
-        marker,
-        approver,
-        releaser,
-        resolver: resolver || null,
-        escrowType: escrow_type,
-        status: 'created',
-        assetCode: asset_code || 'USDC',
-        assetIssuer: asset_issuer || null,
-        amount,
-        balance: 0,
-        bookingId: booking_id || null,
-        roomId: room_id || null,
-        hotelId: hotel_id || null,
-        guestId: guest_id || null,
-        tenantId: 'safetrust',
-        escrowMetadata: req.body,
-        bookingMetadata: booking_metadata || null,
-      }
+    // 5 — Persist to safetrust.trustless_work_escrows via repository
+    const escrow = await createEscrow({
+      contractId: contract_id,
+      marker,
+      approver,
+      releaser,
+      resolver: resolver || null,
+      escrowType: escrow_type,
+      status: EscrowStatus.Created,
+      assetCode: asset_code || 'USDC',
+      assetIssuer: asset_issuer || null,
+      amount,
+      balance: 0,
+      bookingId: booking_id || null,
+      roomId: room_id || null,
+      hotelId: hotel_id || null,
+      guestId: guest_id || null,
+      tenantId: 'safetrust',
+      escrowMetadata: req.body,
+      bookingMetadata: booking_metadata || null,
     });
 
-    const escrow = data.insert_trustless_work_escrows_one;
     if (!escrow) {
-      return res.status(500).json({ error: 'Failed to insert escrow record' });
+      return serverError(res, { error: 'Failed to insert escrow record' });
     }
 
     // 6 — Link escrow to reservation AFTER escrow is confirmed to exist
-    // booking_metadata.reservation_id is set by the frontend when BOOK was clicked
     const reservationId = booking_metadata?.reservation_id;
     if (reservationId) {
-      const linkMutation = `
-        mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!) {
-          update_safetrust_reservations_by_pk(
-            pk_columns: { id: $reservationId }
-            _set: {
-              escrow_id: $escrowId,
-              status: "escrow_created",
-              updatedAt: "now()"
-            }
-          ) {
-            id status escrow_id
-          }
-        }
-      `;
-
-      await hasuraRequest(linkMutation, {
-        reservationId,
-        escrowId: escrow.id
-      });
-
+      await linkEscrowToReservation(reservationId, escrow.id);
       console.log(`[escrow/initialize] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrow.id}`);
     }
 
     console.log(`[escrow/initialize] ✅ Escrow persisted — contract_id: ${contract_id}, id: ${escrow.id}`);
     await markWebhookEventProcessed(eventId);
-    return res.status(200).json({ received: true });
+    return ok(res);
 
   } catch (error) {
     const err = error as Error & { details?: unknown };
     console.error('[escrow/initialize] ❌ Error:', err.details || err.message);
     if (err.details) {
-      return res.status(500).json({ error: 'Failed to persist escrow record', details: err.details });
+      return serverError(res, { error: 'Failed to persist escrow record', details: err.details });
     }
-    return res.status(500).json({ error: 'Internal server error', details: err.message });
+    return serverError(res, { error: 'Internal server error', details: err.message });
   }
 };

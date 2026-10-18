@@ -67,7 +67,7 @@ struct BulkUpsertResult {
 /// Bulk UPSERT statement. Byte-for-byte equivalent to `UPSERT_ESCROW_SQL` in
 /// `reconciliation.js`, but fed by `UNNEST` arrays instead of one VALUES tuple.
 const BULK_UPSERT_SQL: &str = "
-    INSERT INTO public.trustless_work_escrows
+    INSERT INTO safetrust.trustless_work_escrows
       (contract_id, status, amount, balance, marker, approver, releaser,
        escrow_type, updated_at, tenant_id)
     SELECT
@@ -86,12 +86,12 @@ const BULK_UPSERT_SQL: &str = "
       releaser   = EXCLUDED.releaser,
       updated_at = NOW()
     WHERE (
-      public.trustless_work_escrows.status,
-      public.trustless_work_escrows.amount,
-      public.trustless_work_escrows.balance,
-      public.trustless_work_escrows.marker,
-      public.trustless_work_escrows.approver,
-      public.trustless_work_escrows.releaser
+      safetrust.trustless_work_escrows.status,
+      safetrust.trustless_work_escrows.amount,
+      safetrust.trustless_work_escrows.balance,
+      safetrust.trustless_work_escrows.marker,
+      safetrust.trustless_work_escrows.approver,
+      safetrust.trustless_work_escrows.releaser
     ) IS DISTINCT FROM (
       EXCLUDED.status,
       EXCLUDED.amount,

@@ -33,6 +33,6 @@ CREATE INDEX IF NOT EXISTS idx_hotel_messages_forwarded
   ON hotel_industry.messages(forwarded_from_id)
   WHERE forwarded_from_id IS NOT NULL;
 
-CREATE TRIGGER hotel_conversations_update_last_message
+CREATE OR REPLACE TRIGGER hotel_conversations_update_last_message
   AFTER INSERT ON hotel_industry.messages
   FOR EACH ROW EXECUTE FUNCTION hotel_industry.update_conversation_last_message();

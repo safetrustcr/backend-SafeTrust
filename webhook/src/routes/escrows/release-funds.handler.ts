@@ -1,15 +1,22 @@
 import { Request, Response } from 'express';
+import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
 import { ReleaseFundsPayload } from '@safetrust/types';
 import {
-  hasuraRequest,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} from '../../services/hasura';
+} from '../../repositories/webhook-event.repository';
+import {
+  releaseFunds,
+} from '../../repositories/escrow.repository';
+import {
+  mirrorReservationStatus,
+} from '../../repositories/reservation.repository';
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
+import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
-const EVENT_TYPE = 'escrow.completed';
+const EVENT_TYPE = EscrowEventType.FundsReleased;
 
 export const releaseFundsHandler = async (
   req: Request<{}, {}, ReleaseFundsPayload>,
@@ -18,7 +25,7 @@ export const releaseFundsHandler = async (
   const { contractId, releaseSigner } = req.body;
 
   if (!contractId || !releaseSigner) {
-    return res.status(400).json({
+    return badRequest(res, {
       error: 'Missing required fields: contractId, releaseSigner'
     });
   }
@@ -33,55 +40,22 @@ export const releaseFundsHandler = async (
 
     if (isDuplicate) {
       await markWebhookEventProcessed(eventId);
-      return res.status(200).json({ received: true });
+      return duplicate(res, eventId);
     }
 
     // 2 — Update trustless_work_escrows
-    const mutation = `
-      mutation ReleaseFunds($contractId: String!) {
-        update_trustless_work_escrows(
-          where: { contractId: { _eq: $contractId } }
-          _set: {
-            status: "completed"
-            balance: 0
-          }
-        ) {
-          returning { id contractId status balance }
-        }
-      }
-    `;
+    const updated = await releaseFunds(contractId);
 
-    const data = await hasuraRequest<{
-      update_trustless_work_escrows?: {
-        returning: Array<{ id: string; contractId: string; status: string; balance: number }>;
-      };
-    }>(mutation, { contractId });
-    const updated = data.update_trustless_work_escrows?.returning;
-
-    if (!updated || !updated.length) {
-      return res.status(404).json({
+    if (!updated) {
+      return notFound(res, {
         error: `Escrow not found for contractId: ${contractId}`
       });
     }
 
-    const escrowId = updated[0].id;
+    const escrowId = updated.id;
 
-    // 3 — Mirror status to public.reservations
-    const mirrorMutation = `
-      mutation MirrorCompletedToReservation($escrowId: uuid!) {
-        update_safetrust_reservations(
-          where: { escrowId: { _eq: $escrowId } }
-          _set: {
-            status: "completed"
-            updatedAt: "now()"
-          }
-        ) {
-          returning { id status }
-        }
-      }
-    `;
-
-    await hasuraRequest(mirrorMutation, { escrowId });
+    // 3 — Mirror status to safetrust.reservations
+    await mirrorReservationStatus(escrowId, 'completed');
 
     // 4 — Notify hotel conversation (best-effort, never fail the response)
     await notifyHotelEscrowConversation({
@@ -93,14 +67,14 @@ export const releaseFundsHandler = async (
     await markWebhookEventProcessed(eventId);
 
     console.log(`[escrow/release-funds] ✅ Funds released — contractId: ${contractId}`);
-    return res.status(200).json({ received: true });
+    return ok(res);
 
   } catch (error) {
     const err = error as Error & { details?: unknown };
     console.error('[escrow/release-funds] ❌ error:', err.details || err.message);
     if (err.details) {
-      return res.status(500).json({ error: 'Failed to update escrow status', details: err.details });
+      return serverError(res, { error: 'Failed to update escrow status', details: err.details });
     }
-    return res.status(500).json({ error: 'Internal server error', details: err.message });
+    return serverError(res, { error: 'Internal server error', details: err.message });
   }
 };

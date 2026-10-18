@@ -1,43 +1,28 @@
-#!/bin/bash
-HASURA_FOLDER=/app
-cd $HASURA_FOLDER || {
-    echo "Hasura folder '$HASURA_FOLDER' not found"
+#!/usr/bin/env bash
+# start.sh — Hasura CLI container entrypoint
+# Used by hasura-cli-test in docker-compose-test.yml
+set -euo pipefail
+
+HASURA_FOLDER="${HASURA_FOLDER:-/app}"
+cd "$HASURA_FOLDER" || {
+    echo "❌ Hasura folder '$HASURA_FOLDER' not found"
     exit 1
 }
 
-# Workaround for https://github.com/hasura/graphql-engine/issues/2824#issuecomment-801293056
-socat TCP-LISTEN:8080,fork TCP:graphql-engine:8080 &
-socat TCP-LISTEN:9695,fork,reuseaddr,bind=console TCP:127.0.0.1:9695 &
-socat TCP-LISTEN:9693,fork,reuseaddr,bind=console TCP:127.0.0.1:9693 &
+# Note on socat workaround:
+# The original issue (github.com/hasura/graphql-engine/issues/2824) was filed for Hasura v1.x
+# where internal ports only bound to 127.0.0.1. On Hasura v2.x / v2.47.0 with --address 0.0.0.0,
+# both the console (port 9696) and CLI API server (port 9693) bind to all interfaces directly,
+# and the CLI communicates directly with GraphQL Engine via docker networking. Tested and verified
+# on Hasura v2.47.0 / v2.x that the console functions normally without socat port-forwarding proxies.
 
-{
-    # Skip migrations for safetrust since it will be created during tenant deployment
-    echo "Skipping migrations for safetrust database as it will be created during tenant deployment"
-    
-    # Apply only metadata changes (disabled: metadata is already fully built and applied via bin/start)
-    # echo "Applying metadata from metadata/base..."
-    # mkdir -p /tmp/hasura_project
-    # cat > /tmp/hasura_project/config.yaml << EOL
-    # version: 3
-    # metadata_directory: /app/metadata/base
-    # EOL
-    # hasura metadata apply --project /tmp/hasura_project --skip-update-check
-    # rm -rf /tmp/hasura_project
-    
-    # Run console if specified
-    if [[ -v HASURA_RUN_CONSOLE ]]; then
-        echo "Starting console..."
-        hasura console \
-            --log-level DEBUG \
-            --address "127.0.0.1" \
-            --no-browser \
-            --endpoint "$HASURA_GRAPHQL_ENDPOINT" \
-            --admin-secret "$HASURA_GRAPHQL_ADMIN_SECRET" \
-            --console-hge-endpoint "http://127.0.0.1:8080" \
-            --api-host "http://127.0.0.1" \
-            || exit 1
-    else
-        echo "Started without console"
-        tail -f /dev/null
-    fi
-}
+# Start Hasura console with exec for proper signal handling (replaces PID 1)
+echo "[start.sh] Starting Hasura console..."
+exec hasura console \
+    --log-level "${HASURA_LOG_LEVEL:-DEBUG}" \
+    --address "0.0.0.0" \
+    --no-browser \
+    --endpoint "${HASURA_GRAPHQL_ENDPOINT:-http://graphql-engine:8080}" \
+    --admin-secret "${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}" \
+    --console-port "${CONSOLE_PORT:-9696}" \
+    --api-port "${API_PORT:-9693}"

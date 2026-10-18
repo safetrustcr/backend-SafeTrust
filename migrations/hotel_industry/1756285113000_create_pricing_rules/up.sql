@@ -36,7 +36,7 @@ CREATE INDEX IF NOT EXISTS idx_hotel_pricing_rules_advance_booking
     WHERE is_active = true AND advance_booking_days IS NOT NULL;
 
 -- Use the schema-qualified function defined in 1723171122097
-CREATE TRIGGER update_hotel_pricing_rules_updated_at
+CREATE OR REPLACE TRIGGER update_hotel_pricing_rules_updated_at
     BEFORE UPDATE ON hotel_industry.pricing_rules
     FOR EACH ROW EXECUTE FUNCTION hotel_industry.update_updated_at_column();
 

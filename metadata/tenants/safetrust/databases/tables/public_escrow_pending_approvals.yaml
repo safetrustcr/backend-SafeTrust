@@ -1,6 +1,6 @@
 table:
   name: escrow_pending_approvals
-  schema: public
+  schema: safetrust
 event_triggers:
   - name: on_escrow_approval_required
     definition:

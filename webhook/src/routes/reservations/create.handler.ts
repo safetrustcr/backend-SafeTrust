@@ -1,4 +1,5 @@
-import { Request, Response } from 'express'
+import { Response } from 'express'
+import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { hasuraRequest } from '../../services/hasura'
 import type { CreateReservationPayload, Reservation } from '@safetrust/types'
 
@@ -7,7 +8,7 @@ type CreateReservationResponse =
   | { error: string; details?: unknown }
 
 export const createReservationHandler = async (
-  req: Request<{}, CreateReservationResponse, CreateReservationPayload>,
+  req: AuthenticatedRequest,
   res: Response<CreateReservationResponse>
 ): Promise<Response<CreateReservationResponse>> => {
   const guestId = req.user?.uid

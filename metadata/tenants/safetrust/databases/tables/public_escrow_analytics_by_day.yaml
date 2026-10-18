@@ -1,3 +1,3 @@
 table:
   name: escrow_analytics_by_day
-  schema: public
+  schema: safetrust

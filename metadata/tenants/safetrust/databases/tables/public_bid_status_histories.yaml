@@ -1,6 +1,6 @@
 table:
   name: bid_status_histories
-  schema: public
+  schema: safetrust
 object_relationships:
   - name: bid_request
     using:

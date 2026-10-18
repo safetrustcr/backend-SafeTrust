@@ -1,5 +1,5 @@
 function:
-  schema: public
+  schema: safetrust
   name: get_escrow_analytics_by_day
 configuration:
   exposed_as: query

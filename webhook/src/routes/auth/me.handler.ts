@@ -11,13 +11,13 @@ export const meHandler = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<Response> => {
-  const { uid, email } = req.user
+  const { uid, email } = req.user!
 
   try {
     const result = await query<RoleRow>(
       `SELECT r.name
-       FROM public.user_roles ur
-       JOIN public.roles r ON r.id = ur.role_id
+       FROM safetrust.user_roles ur
+       JOIN safetrust.roles r ON r.id = ur.role_id
        WHERE ur.user_id = $1`,
       [uid]
     )

@@ -1,6 +1,6 @@
 table:
   name: user_wallets
-  schema: public
+  schema: safetrust
 object_relationships:
   - name: user
     using:
