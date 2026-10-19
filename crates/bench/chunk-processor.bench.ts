@@ -11,7 +11,8 @@ const { performance } = require('node:perf_hooks')
  * - Records cold start cost (native module require time)
  *
  * Run:
- *   node crates/bench/chunk-processor.bench.ts
+ *   npm --prefix webhook run build:tooling
+ *   node crates/bench/chunk-processor.bench.js
  */
 
 export interface ChunkSyncResult {
