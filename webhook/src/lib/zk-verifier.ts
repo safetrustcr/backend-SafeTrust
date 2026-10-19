@@ -12,6 +12,10 @@ try {
   nativeVerifier = require('../../../crates/zk-verifier');
 } catch (error) {
   nativeLoadError = error;
+  console.warn(
+    '[zk-verifier] native addon unavailable; ZK proof verification will fail closed:',
+    error instanceof Error ? error.message : error
+  );
 }
 
 /**
@@ -60,4 +64,3 @@ export function verifyProofOfFunds(
     balanceCommitmentHex
   );
 }
-

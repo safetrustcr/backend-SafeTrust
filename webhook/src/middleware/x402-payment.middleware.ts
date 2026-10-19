@@ -17,8 +17,12 @@ try {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     x402Addon = require('../../crates/x402-processor')
-  } catch {
+  } catch (error) {
     // Addon will be injected in tests or when native module is built
+    console.warn(
+      '[x402] native addon unavailable; payment validation will fail closed without it:',
+      error instanceof Error ? error.message : error
+    )
   }
 }
 

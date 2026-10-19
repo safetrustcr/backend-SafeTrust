@@ -1,7 +1,7 @@
 const {
   validateX402Payment,
   buildPaymentRequirement,
-} = require('../../../../crates/x402-processor') as {
+} = require('../../../../crates/x402-processor/index.js') as {
   validateX402Payment: (header: string, requiredAmount: number) => string
   buildPaymentRequirement: (
     amountUsdc: number,
@@ -11,7 +11,7 @@ const {
   ) => string
 }
 
-describe('x402-processor native addon', () => {
+describe('x402-processor JavaScript fallback', () => {
   it('buildPaymentRequirement generates correct testnet JSON structure', () => {
     const jsonStr = buildPaymentRequirement(
       0.10,
