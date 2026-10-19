@@ -17,14 +17,11 @@ select_permissions:
   - role: host
     permission:
       columns:
-        - id
-        - email
         - display_name
         - avatar_url
-        - created_at
-        - updated_at
-        - is_host
-      filter: {}
+      filter:
+        id:
+          _eq: x-hasura-user-id
   - role: admin
     permission:
       columns:

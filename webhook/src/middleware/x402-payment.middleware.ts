@@ -78,9 +78,8 @@ export const requireX402Payment =
       return
     }
 
-    const addon = getX402Addon()
-    const NETWORK = process.env.STELLAR_NETWORK ?? 'testnet'
-    const FACILITATOR_URL =
+    const network = process.env.STELLAR_NETWORK ?? 'testnet'
+    const facilitatorUrl =
       process.env.X402_FACILITATOR_URL ??
       (network === 'mainnet'
         ? 'https://channels.openzeppelin.com/x402'
@@ -96,29 +95,17 @@ export const requireX402Payment =
     }
     const paymentHeader = req.headers['x-payment'] as string | undefined
 
-    // No payment header → return 402 with payment requirements
-    if (!paymentHeader) {
-      if (!addon) {
-        // Fallback in case native addon failed to load
-        const fallbackRequirement = {
-          scheme: 'exact',
-          network: `stellar:${NETWORK}`,
-          max_amount_usdc: amountUsdc,
-          asset: {
-            code: 'USDC',
-            contract:
-              NETWORK === 'mainnet'
-                ? 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'
-                : 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
-            issuer:
-              NETWORK === 'mainnet'
-                ? 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
-                : 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
-          },
-          facilitator_url: FACILITATOR_URL,
-          pay_to: PLATFORM_WALLET,
-          description: 'SafeTrust booking fee',
-        }
+    try {
+      if (!paymentHeader) {
+        const requirement = JSON.parse(
+          addon.buildPaymentRequirement(
+            amountUsdc,
+            `stellar:${network}`,
+            facilitatorUrl,
+            platformWallet
+          )
+        )
+
         res.status(402).json({
           error: 'Payment Required',
           x402Version: 2,
@@ -127,29 +114,9 @@ export const requireX402Payment =
         return
       }
 
-      const requirementJson = addon.buildPaymentRequirement(
-        amountUsdc,
-        `stellar:${NETWORK}`,
-        FACILITATOR_URL,
-        PLATFORM_WALLET
+      const result = JSON.parse(
+        addon.validateX402Payment(paymentHeader, amountUsdc)
       )
-      const requirement = JSON.parse(requirementJson)
-      res.status(402).json({
-        error: 'Payment Required',
-        x402Version: 2,
-        accepts: [requirement],
-      })
-      return
-    }
-
-    // Payment header present → validate via Rust + facilitator
-    try {
-      if (!addon) {
-        throw new Error('x402-processor native addon not loaded')
-      }
-
-      const resultJson = addon.validateX402Payment(paymentHeader, amountUsdc)
-      const result = JSON.parse(resultJson)
 
       if (!result.is_valid) {
         res.status(402).json({
