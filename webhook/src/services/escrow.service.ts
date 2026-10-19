@@ -139,6 +139,12 @@ export function validateEscrowInitializationPayload(
   const zkValues = [zk_proof, zk_verification_key, zk_threshold_stroops, zk_balance_commitment];
   const hasZkBundle = zkValues.some((v) => v !== undefined && v !== null);
 
+  if (hasZkBundle && process.env.ZK_ENABLED !== 'true') {
+    throw new EscrowValidationError(
+      'Unsupported Feature: ZK proof verification is disabled'
+    );
+  }
+
   if (hasZkBundle) {
     const hasCompleteBundle =
       typeof zk_proof === 'string' && zk_proof.length > 0 &&
