@@ -199,7 +199,7 @@ describe('reconciliation.service', () => {
       expect(result.errors[0]).toContain('soroban_chunk_1: soroban-reconciler native addon is not available')
     })
 
-    it('validates drift and auto-corrects critical discrepancies when addon is present', async () => {
+    it('detects critical discrepancies without auto-correcting database state', async () => {
       process.env.SOROBAN_VALIDATION_ENABLED = 'true'
 
       const mockQueryEscrowStateBatch = jest.fn().mockReturnValue(
@@ -244,18 +244,11 @@ describe('reconciliation.service', () => {
       const result = await validateSorobanDrift(['c1'], 'testnet')
 
       expect(mockQueryEscrowStateBatch).toHaveBeenCalledWith('c1', 'testnet')
-      expect(hasuraRequest).toHaveBeenCalledWith(
-        expect.stringContaining('mutation CorrectDriftFromSoroban'),
-        {
-          contractId: 'c1',
-          status: 'COMPLETED',
-          balance: 0,
-        }
-      )
+      expect(hasuraRequest).not.toHaveBeenCalled()
       expect(result).toEqual({
         enabled: true,
         drift: 1,
-        corrected: 1,
+        corrected: 0,
         errors: [],
       })
     })
