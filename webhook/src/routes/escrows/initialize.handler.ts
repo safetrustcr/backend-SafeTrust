@@ -101,6 +101,14 @@ export const initializeEscrowHandler = async (
     zk_balance_commitment,
   ];
   const hasZkBundle = zkValues.some((value) => value !== undefined && value !== null);
+  if (hasZkBundle && process.env.ZK_ENABLED !== 'true') {
+    return badRequest(res, {
+      error: 'Unsupported Feature',
+      feature: 'zk-proof-verification',
+      message: 'ZK proof verification is disabled',
+    });
+  }
+
   if (hasZkBundle) {
     const hasCompleteBundle =
       typeof zk_proof === 'string' && zk_proof.length > 0 &&

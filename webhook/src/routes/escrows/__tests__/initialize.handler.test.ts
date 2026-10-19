@@ -52,6 +52,7 @@ function makeResponse() {
 describe('initializeEscrowHandler ZK verification', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ZK_ENABLED = 'true'
     verifyProofOfFunds.mockReturnValue(true);
     logAndCheckWebhookEvent.mockResolvedValue({
       isDuplicate: false,

@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "build:rust": "npm run build:tooling && node ../crates/zk-verifier/install-bb.js && cargo build --release --workspace --manifest-path ../crates/Cargo.toml && node ../crates/webhook-verifier/copy-native.js && node ../crates/zk-verifier/copy-native.js && node ../crates/stellar-utils/copy-native.js && node ../crates/chunk-processor/copy-native.js && node ../crates/pg-bulk-upsert/copy-native.js && node ../crates/x402-processor/copy-native.js && node ../crates/escrow-state-machine/copy-native.js && node ../crates/soroban-reconciler/copy-native.js",
+    "build:rust": "npm run build:tooling && node ../crates/zk-verifier/install-bb.js && cargo build --release --workspace --manifest-path ../crates/Cargo.toml && node ../crates/scripts/copy-native.js --crate=webhook-verifier && node ../crates/scripts/copy-native.js --crate=zk-verifier && node ../crates/scripts/copy-native.js --crate=stellar-utils && node ../crates/scripts/copy-native.js --crate=chunk-processor && node ../crates/scripts/copy-native.js --crate=pg-bulk-upsert && node ../crates/scripts/copy-native.js --crate=x402-processor && node ../crates/scripts/copy-native.js --crate=escrow-state-machine && node ../crates/scripts/copy-native.js --crate=soroban-reconciler",
     "build": "npm run build:rust && tsc",
     "dev": "nodemon --exec ts-node src/index.ts",
     "start": "node dist/index.js",

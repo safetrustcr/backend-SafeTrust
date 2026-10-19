@@ -88,6 +88,7 @@ function validPayload(overrides: Partial<EscrowInitPayload> = {}): EscrowInitPay
 describe('validateEscrowInitializationPayload', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ZK_ENABLED = 'true'
     mockedVerifyProof.mockReturnValue(true);
   });
 

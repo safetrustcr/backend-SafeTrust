@@ -163,12 +163,12 @@ export async function syncEscrowsWithIndexer(
 
 /**
  * Validates a chunk of escrow contracts against on-chain Soroban state via native Rust addon.
- * Detects discrepancies and auto-corrects critical drift in Hasura GraphQL.
+ * Detects discrepancies and reports critical drift without modifying Hasura state.
  *
  * @param chunk - Batch of contract IDs to reconcile
  * @param dbStateMap - Map of database escrow states indexed by contract ID
  * @param network - Stellar network name (e.g. 'testnet')
- * @returns Counts of drifted and auto-corrected contracts
+ * @returns Counts of drifted and corrected contracts (corrections remain disabled).
  */
 export async function runSorobanValidation(
   chunk: string[],
@@ -220,29 +220,8 @@ export async function runSorobanValidation(
             )
           )
 
-          // Auto-correct: update database to match blockchain ground truth
-          await hasuraRequest(
-            `mutation CorrectDriftFromSoroban(
-               $contractId: String!
-               $status: String!
-               $balance: numeric!
-             ) {
-               update_trustless_work_escrows(
-                 where: { contractId: { _eq: $contractId } }
-                 _set: {
-                   status:    $status
-                   balance:   $balance
-                   updatedAt: "now()"
-                 }
-               ) { affected_rows }
-             }`,
-            {
-              contractId,
-              status: onChain.status,
-              balance: onChain.balance / 10_000_000,
-            }
-          )
-          corrected++
+          // Report critical drift only. Database corrections remain disabled
+          // until ESC-02 establishes a validated authoritative read adapter.
         }
       }
     } catch (err) {
@@ -260,7 +239,7 @@ export async function runSorobanValidation(
  *
  * @param contractIds - Array of contract IDs to validate
  * @param network - Stellar network name (e.g. 'testnet')
- * @returns Summary of drift and auto-correction counts
+ * @returns Summary of detected drift; no automatic database corrections are performed
  */
 export async function validateSorobanDrift(
   contractIds: string[],
@@ -304,7 +283,7 @@ export async function validateSorobanDrift(
       if (drifted > 0) {
         console.warn(
           `[reconciliation] ⚠️  Soroban drift in chunk ${i + 1}:` +
-            ` ${drifted} contracts, ${corrected} auto-corrected`
+            ` ${drifted} contracts with drift; automatic corrections disabled`
         )
       }
     } catch (sorobanError) {
