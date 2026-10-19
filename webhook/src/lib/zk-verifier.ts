@@ -5,6 +5,17 @@ import type * as NativeVerifier from '../../../crates/zk-verifier';
 
 export type ZkVerifierError = Error & { code: 'ZK_VERIFIER_UNAVAILABLE' | 'ZK_VERIFIER_MISCONFIGURED' };
 
+function createZkError(
+  message: string,
+  code: ZkVerifierError['code'],
+  cause?: unknown
+): ZkVerifierError {
+  const error = new Error(message) as ZkVerifierError;
+  error.code = code;
+  if (cause !== undefined) error.cause = cause;
+  return error;
+}
+
 let nativeVerifier: typeof NativeVerifier | null = null;
 let nativeLoadError: unknown = null;
 
@@ -29,10 +40,11 @@ export function verifyProofOfFunds(
   balanceCommitmentHex: string
 ) {
   if (!nativeVerifier) {
-    const error = new Error('ZK proof verifier is unavailable') as ZkVerifierError;
-    error.code = 'ZK_VERIFIER_UNAVAILABLE';
-    error.cause = nativeLoadError;
-    throw error;
+    throw createZkError(
+      'ZK proof verifier is unavailable',
+      'ZK_VERIFIER_UNAVAILABLE',
+      nativeLoadError
+    );
   }
 
   // A proof only establishes the statement encoded by its verification key.
@@ -42,9 +54,10 @@ export function verifyProofOfFunds(
   const expectedKeyHash = process.env.ZK_PROOF_OF_FUNDS_VK_SHA256;
   if (expectedKeyHash) {
     if (!/^[0-9a-fA-F]{64}$/.test(expectedKeyHash)) {
-      const error = new Error('ZK verification key hash is misconfigured') as ZkVerifierError;
-      error.code = 'ZK_VERIFIER_MISCONFIGURED';
-      throw error;
+      throw createZkError(
+        'ZK verification key hash is misconfigured',
+        'ZK_VERIFIER_MISCONFIGURED'
+      );
     }
 
     const normalizedKey = verificationKeyHex.replace(/^0x/, '');

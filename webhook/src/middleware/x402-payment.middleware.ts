@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 
-let x402Addon: {
+type X402Addon = {
   validateX402Payment: (header: string, requiredAmount: number) => string
   buildPaymentRequirement: (
     amountUsdc: number,
@@ -8,26 +8,36 @@ let x402Addon: {
     facilitatorUrl: string,
     payTo: string
   ) => string
-} | null = null
+}
 
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  x402Addon = require('../../../crates/x402-processor')
-} catch {
+// undefined = not loaded yet; null = unavailable or explicitly injected as absent.
+let x402Addon: X402Addon | null | undefined
+
+function getX402Addon(): X402Addon | null {
+  if (x402Addon !== undefined) return x402Addon
+
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    x402Addon = require('../../crates/x402-processor')
+    x402Addon = require('../../../crates/x402-processor')
   } catch (error) {
-    // Addon will be injected in tests or when native module is built
-    console.warn(
-      '[x402] native addon unavailable; payment validation will fail closed without it:',
-      error instanceof Error ? error.message : error
-    )
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      x402Addon = require('../../crates/x402-processor')
+    } catch (fallbackError) {
+      x402Addon = null
+      console.warn('[x402] native addon unavailable; payment validation will fail closed without it:', {
+        primaryPathError: error instanceof Error ? error.message : error,
+        fallbackPathError:
+          fallbackError instanceof Error ? fallbackError.message : fallbackError,
+      })
+    }
   }
+
+  return x402Addon ?? null
 }
 
 /** Test seam: allow tests to override or inject the native addon */
-export function setX402Addon(addon: typeof x402Addon): void {
+export function setX402Addon(addon: X402Addon | null): void {
   x402Addon = addon
 }
 
@@ -56,6 +66,7 @@ export const requireX402Payment =
       return
     }
 
+    const addon = getX402Addon()
     const NETWORK = process.env.STELLAR_NETWORK ?? 'testnet'
     const FACILITATOR_URL =
       process.env.X402_FACILITATOR_URL ??
@@ -68,7 +79,7 @@ export const requireX402Payment =
 
     // No payment header → return 402 with payment requirements
     if (!paymentHeader) {
-      if (!x402Addon) {
+      if (!addon) {
         // Fallback in case native addon failed to load
         const fallbackRequirement = {
           scheme: 'exact',
@@ -97,7 +108,7 @@ export const requireX402Payment =
         return
       }
 
-      const requirementJson = x402Addon.buildPaymentRequirement(
+      const requirementJson = addon.buildPaymentRequirement(
         amountUsdc,
         `stellar:${NETWORK}`,
         FACILITATOR_URL,
@@ -114,11 +125,11 @@ export const requireX402Payment =
 
     // Payment header present → validate via Rust + facilitator
     try {
-      if (!x402Addon) {
+      if (!addon) {
         throw new Error('x402-processor native addon not loaded')
       }
 
-      const resultJson = x402Addon.validateX402Payment(paymentHeader, amountUsdc)
+      const resultJson = addon.validateX402Payment(paymentHeader, amountUsdc)
       const result = JSON.parse(resultJson)
 
       if (!result.is_valid) {
