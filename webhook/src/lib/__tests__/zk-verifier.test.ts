@@ -20,13 +20,27 @@ describe('zk-verifier library', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env = { ...originalEnv };
+    process.env = { ...originalEnv, ZK_ENABLED: 'true' };
     _setNativeVerifierForTesting(mockNativeVerifier as any);
   });
 
   afterAll(() => {
     process.env = originalEnv;
     _setNativeVerifierForTesting(null);
+  });
+
+  describe('ZK feature flag', () => {
+    it('throws ZK_FEATURE_DISABLED when ZK_ENABLED is not true', () => {
+      delete process.env.ZK_ENABLED;
+      expect(() => {
+        verifyProofOfFunds('00', sampleVkHex, '1000', '00'.repeat(32));
+      }).toThrow(
+        expect.objectContaining({
+          code: 'ZK_FEATURE_DISABLED',
+          message: 'ZK proof verification is disabled',
+        })
+      );
+    });
   });
 
   describe('native verifier availability', () => {

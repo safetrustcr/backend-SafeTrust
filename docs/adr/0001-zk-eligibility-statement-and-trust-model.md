@@ -110,10 +110,15 @@ $$\mathcal{P}_{\text{eligible}}(W, \text{Asset}, \text{Threshold}, \text{Tenant}
    The balance snapshot was observed at ledger sequence $L_{\text{snapshot}}$ with timestamp $t_{\text{snapshot}}$ such that:
    $$t_{\text{current}} - t_{\text{snapshot}} \le \Delta t_{\text{max}} \quad (\Delta t_{\text{max}} = 300\text{ seconds / 60 ledgers})$$
    Snapshots older than 300 seconds are stale and evaluate to `False`.
-6. **Tenant & Request Replay Prevention**:
+6. **Tenant & Request Replay Prevention (Single-Use Nonce Lifecycle)**:
    The proof or attestation must commit to a cryptographically secure context digest:
    $$\text{ContextDigest} = \text{SHA256}(\text{TenantID} \parallel \text{NetworkPassphrase} \parallel \text{ContractID} \parallel \text{Nonce})$$
    This prevents reusing an eligibility proof generated for tenant `safetrust` inside tenant `hotel_industry`, or reusing a testnet proof on mainnet.
+
+   To guarantee request replay prevention, the $\text{Nonce}$ follows a strict single-use lifecycle:
+   - **Issuance**: The verifier / backend issues a cryptographically secure 32-byte nonce (generated via CSPRNG) bound to the requesting client's active initialization session, tenant, and intended contract ID with a short time-to-live (TTL $\le 300\text{ seconds}$).
+   - **Request Binding**: The client supplies this nonce within the initialization request. The verifier validates that the supplied nonce matches the active challenge session and context parameters $(\text{TenantID}, \text{NetworkPassphrase}, \text{ContractID})$.
+   - **Atomic One-Time Consumption**: During verification, the verifier executes an atomic test-and-set consumption of the nonce (e.g. database CAS `UPDATE zk_challenges SET consumed = true, consumed_at = NOW() WHERE id = $nonce AND consumed = false` or Redis atomic `GETDEL`). If the nonce is missing, expired, or already consumed, the request is rejected immediately before running proof verification or creating escrow records.
 
 ---
 
@@ -128,7 +133,7 @@ where $\text{secret\_balance}$ is an unconstrained private input provided by the
 - Yet the client may possess 0 USDC on the Stellar network.
 
 **Fundamental Requirement**: The secret number must be **authenticated** against actual wallet state. The circuit must verify that the balance was either:
-1. **Attested by a trusted signer**: verified inside the circuit using an ECDSA/Ed25519 signature check over $(W, \text{Asset}, \text{Balance}, L_{\text{seq}}, t_{\text{snapshot}})$, OR
+1. **Attested by a trusted signer**: verified inside the circuit using an ECDSA/Ed25519 signature check over $(W, \text{Asset}, B_{\text{available}}, L_{\text{seq}}, t_{\text{snapshot}})$, OR
 2. **Authenticated via cryptographic ledger state**: proven against the Stellar SCP ledger header and BucketList Merkle/hash accumulator root.
 
 ---

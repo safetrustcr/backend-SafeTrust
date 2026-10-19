@@ -18,6 +18,8 @@ function createZkError(
   return error;
 }
 
+let nativeVerifier: typeof NativeVerifier | null | undefined = undefined;
+
 /**
  * Verify a proof-of-funds proof with the Rust UltraHonk addon.
  * ZK is opt-in and the native addon is loaded only when explicitly enabled.
@@ -35,16 +37,25 @@ export function verifyProofOfFunds(
     );
   }
 
-  let nativeVerifier: typeof NativeVerifier;
+  let verifier = nativeVerifier;
 
-  try {
-    // Do not load the experimental native addon during normal application startup.
-    nativeVerifier = require('../../../crates/zk-verifier');
-  } catch (cause) {
+  if (verifier === undefined) {
+    try {
+      // Do not load the experimental native addon during normal application startup.
+      verifier = require('../../../crates/zk-verifier');
+    } catch (cause) {
+      throw createZkError(
+        'ZK proof verifier is unavailable',
+        'ZK_VERIFIER_UNAVAILABLE',
+        cause
+      );
+    }
+  }
+
+  if (!verifier) {
     throw createZkError(
       'ZK proof verifier is unavailable',
-      'ZK_VERIFIER_UNAVAILABLE',
-      cause
+      'ZK_VERIFIER_UNAVAILABLE'
     );
   }
 
@@ -81,7 +92,7 @@ export function verifyProofOfFunds(
     if (!timingSafeEqual(actual, expected)) return false;
   }
 
-  return nativeVerifier.verifyProofOfFunds(
+  return verifier.verifyProofOfFunds(
     proofHex,
     verificationKeyHex,
     thresholdStroops,

@@ -104,6 +104,13 @@ export const initializeEscrowHandler = async (
     zk_balance_commitment,
   ];
   const hasZkBundle = zkValues.some((value) => value !== undefined && value !== null);
+
+  if (isZkEnforced && !hasZkBundle) {
+    return badRequest(res, {
+      error: 'ZK proof of funds bundle is required for escrow initialization',
+    });
+  }
+
   if (hasZkBundle && process.env.ZK_ENABLED !== 'true') {
     return badRequest(res, {
       error: 'Unsupported Feature',
