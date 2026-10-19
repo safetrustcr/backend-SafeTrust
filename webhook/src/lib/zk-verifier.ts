@@ -3,7 +3,9 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type * as NativeVerifier from '../../../crates/zk-verifier';
 
-export type ZkVerifierError = Error & { code: 'ZK_VERIFIER_UNAVAILABLE' | 'ZK_VERIFIER_MISCONFIGURED' };
+export type ZkVerifierError = Error & {
+  code: 'ZK_FEATURE_DISABLED' | 'ZK_VERIFIER_UNAVAILABLE' | 'ZK_VERIFIER_MISCONFIGURED';
+};
 
 function createZkError(
   message: string,
@@ -31,7 +33,7 @@ try {
 
 /**
  * Verify a proof-of-funds proof with the Rust UltraHonk addon.
- * The addon is optional for non-ZK requests, but ZK requests fail closed.
+ * ZK is opt-in and the native addon is loaded only when explicitly enabled.
  */
 export function verifyProofOfFunds(
   proofHex: string,

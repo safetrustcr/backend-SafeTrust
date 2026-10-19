@@ -17,6 +17,7 @@ function getX402Addon(): X402Addon | null {
   if (x402Addon !== undefined) return x402Addon
 
   try {
+    // Load the experimental native addon only when x402 is enabled and used.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     x402Addon = require('../../../crates/x402-processor')
   } catch (error) {
@@ -58,11 +59,22 @@ declare global {
 export const requireX402Payment =
   (amountUsdc: number) =>
   (req: Request, res: Response, next: NextFunction): void => {
-    // Defense in depth: even if a route mounts this middleware by mistake, the
-    // quarantine flag must be explicit before any payment is evaluated. Fail
-    // closed rather than falling through to the eligibility handler.
     if (process.env.X402_ENABLED !== 'true') {
-      res.status(503).json({ error: 'x402 payments are disabled' })
+      res.status(503).json({
+        error: 'Feature Unavailable',
+        feature: 'x402',
+        message: 'x402 payments are disabled',
+      })
+      return
+    }
+
+    const addon = getX402Addon()
+    if (!addon) {
+      res.status(503).json({
+        error: 'Feature Unavailable',
+        feature: 'x402',
+        message: 'x402 payment processor is unavailable',
+      })
       return
     }
 
@@ -70,11 +82,18 @@ export const requireX402Payment =
     const NETWORK = process.env.STELLAR_NETWORK ?? 'testnet'
     const FACILITATOR_URL =
       process.env.X402_FACILITATOR_URL ??
-      (NETWORK === 'mainnet'
+      (network === 'mainnet'
         ? 'https://channels.openzeppelin.com/x402'
         : 'https://channels.openzeppelin.com/x402/testnet')
-    const PLATFORM_WALLET = process.env.SAFETRUST_PLATFORM_WALLET ?? ''
-
+    const platformWallet = process.env.SAFETRUST_PLATFORM_WALLET?.trim() ?? ''
+    if (!platformWallet) {
+      res.status(503).json({
+        error: 'Feature Unavailable',
+        feature: 'x402',
+        message: 'x402 platform wallet is not configured',
+      })
+      return
+    }
     const paymentHeader = req.headers['x-payment'] as string | undefined
 
     // No payment header → return 402 with payment requirements
@@ -103,7 +122,7 @@ export const requireX402Payment =
         res.status(402).json({
           error: 'Payment Required',
           x402Version: 2,
-          accepts: [fallbackRequirement],
+          accepts: [requirement],
         })
         return
       }
@@ -141,7 +160,6 @@ export const requireX402Payment =
         return
       }
 
-      // Attach payer info to request for downstream handlers
       req.x402 = {
         payer: result.payer_address,
         amountUsdc: result.amount_usdc,
@@ -150,7 +168,7 @@ export const requireX402Payment =
       next()
     } catch (error) {
       const err = error as Error
-      console.error('[x402] ❌ Validation error:', err.message)
+      console.error('[x402] Validation error:', err.message)
       res.status(500).json({ error: 'Payment validation failed' })
     }
   }
