@@ -126,7 +126,7 @@ describe('syncWalletHandler', () => {
     ;(query as jest.Mock).mockRejectedValue(new Error('connection refused'))
 
     const req = makeRequest({
-      wallet_address: VALID_STELLAR,
+      wallet_address: '0x1234567890123456789012345678901234567890',
       chain_type: 'ETH',
       is_primary: false,
     })

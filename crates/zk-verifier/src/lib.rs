@@ -93,7 +93,7 @@ fn bb_binary_path() -> PathBuf {
         })
 }
 
-#[allow(clippy::manual_is_multiple_of)] // Keep compatibility with Rust 1.86 used by Noir tooling.
+#[allow(clippy::manual_is_multiple_of, clippy::chunks_exact_to_as_chunks)] // Keep compatibility with Rust 1.86 used by Noir tooling.
 fn split_fields(bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
     if bytes.is_empty() || bytes.len() % FIELD_SIZE != 0 {
         return None;
@@ -196,15 +196,22 @@ fn verify_ultrahonk(
     let crs_path = env::var_os("ZK_BB_CRS_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crs"));
-    fs::create_dir_all(&crs_path)
-        .map_err(|error| format!("could not create CRS directory {}: {error}", crs_path.display()))?;
+    fs::create_dir_all(&crs_path).map_err(|error| {
+        format!(
+            "could not create CRS directory {}: {error}",
+            crs_path.display()
+        )
+    })?;
     command.arg("--crs_path").arg(crs_path);
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 
-    let output = command
-        .output()
-        .map_err(|error| format!("could not execute bb binary at {}: {error}", binary.display()))?;
+    let output = command.output().map_err(|error| {
+        format!(
+            "could not execute bb binary at {}: {error}",
+            binary.display()
+        )
+    })?;
 
     Ok(output.status.success())
 }
@@ -312,10 +319,7 @@ mod tests {
             verify_proof_of_funds_hex("00", "not-hex", "1", &commitment),
             Ok(false)
         );
-        assert_eq!(
-            verify_proof_of_funds_hex("00", "00", "1", "xyz"),
-            Ok(false)
-        );
+        assert_eq!(verify_proof_of_funds_hex("00", "00", "1", "xyz"), Ok(false));
     }
 
     #[test]
