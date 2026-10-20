@@ -97,6 +97,9 @@ export const createClaimHandler = async (
       if (raced && raced.escrow_id === escrowId) {
         return res.status(200).json(toResponse(raced))
       }
+      if (raced) {
+        return res.status(409).json({ error: 'CLIENT_OP_ID_REUSED' })
+      }
       console.error('createClaimHandler: claim missing after insert conflict')
       return res.status(500).json({ error: 'INTERNAL_ERROR' })
     }

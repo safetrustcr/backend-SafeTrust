@@ -155,6 +155,19 @@ describe('createClaimHandler', () => {
     expect(errorSpy).toHaveBeenCalled()
   })
 
+  it('returns 409 when the re-select after a lost race finds another escrow', async () => {
+    script({
+      participation: released,
+      insert: [],
+      reselect: [claimRow({ escrow_id: OTHER_ESCROW_ID })],
+    })
+    const res = makeRes()
+    await createClaimHandler(makeReq(), res)
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith({ error: 'CLIENT_OP_ID_REUSED' })
+    expect(sqls()).toContain('ROLLBACK')
+  })
+
   it('counts code points, not UTF-16 units, for the body length', async () => {
     script({ participation: released, insert: [claimRow()] })
     const ok = makeRes()

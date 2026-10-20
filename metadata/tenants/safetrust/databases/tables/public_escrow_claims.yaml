@@ -71,23 +71,3 @@ select_permissions:
               apartment:
                 owner_id:
                   _eq: X-Hasura-User-Id
-  - role: admin
-    permission:
-      columns:
-        - id
-        - escrow_id
-        - reservation_id
-        - author_id
-        - body
-        - status
-        - client_op_id
-        - created_at
-        - updated_at
-      filter: {}
-update_permissions:
-  - role: admin
-    permission:
-      columns:
-        - status
-      filter: {}
-      check: null
