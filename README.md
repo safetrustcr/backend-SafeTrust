@@ -52,6 +52,8 @@ The backend infrastructure for **SafeTrust** — a decentralized P2P escrow plat
 | Docker + Docker Compose | ≥ 24 |
 | Hasura CLI | ≥ 2.x |
 | curl | any |
+| jq | ≥ 1.6 |
+| yq (mikefarah) | ≥ 4.x |
 
 > 💡 **Windows Note:** Run `bin/start` inside WSL (Ubuntu) or Git Bash.
 
@@ -157,10 +159,16 @@ metadata/
 │   └── hotel_industry/  ← hotels, rooms, reservations, escrow_transactions
 ├── build/               ← generated output (tenants merged with base), ready to deploy
 ├── build-metadata.sh
-├── deploy-tenant.sh
+├── deploy-tenant.sh     ← applies complete metadata (configuration, permissions,
+│                          relationships, event triggers) without erasing other tenants
 └── setup-tenant.sh      ← runs build + deploy in one command ✅
-
 ```
+
+`deploy-tenant.sh` validates migrations first, merges the tenant into the
+endpoint's exported metadata document, replaces it atomically, checks
+`get_inconsistent_metadata`, and verifies representative guest/host queries.
+See [Metadata deployment](docs/infra/metadata-deployment.md) for the sequence,
+Cloud endpoint usage, and failure behavior.
 
 ---
 
@@ -221,6 +229,7 @@ In-depth guides live in [`docs/`](docs/README.md).
 | Document | What it covers |
 |---|---|
 | [SafeTrust Schema Migration Strategy](docs/migrations/safetrust-schema-migration.md) | Why SafeTrust tables moved from `public` to the `safetrust` schema, plus the deployment and rollback sequences |
+| [Metadata deployment](docs/infra/metadata-deployment.md) | Complete tenant metadata deployment, migration gating, consistency and role verification, multi-tenant preservation, and Cloud endpoints |
 
 ---
 

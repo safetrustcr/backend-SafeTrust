@@ -9,9 +9,9 @@ flowchart TD
     C --> D{PARALLEL_DEPLOY?}
     D -- true --> E[Migrations: parallel\nN tenants concurrently\nGustafson scaling]
     D -- false --> F[Migrations: sequential\nAmdahl baseline]
-    E --> G[Metadata: parallel\nsetup-tenant.sh × N\nlog capture per tenant]
+    E --> G[Metadata: parallel\nsetup-tenant.sh × N\ncomplete document per tenant\nlog capture per tenant]
     F --> H[Metadata: sequential]
-    G --> I[Metadata reload\nirreducible sequential]
+    G --> I[Metadata reload\nirreducible sequential\noutput streamed, failure exits]
     H --> I
     I --> J{PARALLEL_DEPLOY?}
     J -- true --> K[Seeds: parallel\nBEGIN/COMMIT per file\nON CONFLICT DO NOTHING]
@@ -48,3 +48,24 @@ Example measurements:
 | Benchmark N tenants | `bin/deploy_init safetrust hotel_industry` |
 | Measure parallel vs sequential | `PARALLEL_DEPLOY=false bin/deploy_init ...` |
 | Test init.sql fast path | `USE_INIT_SQL=true bin/deploy_init ...` |
+
+## Output and failures
+
+`bin/deploy_init` streams `setup-tenant.sh`, migration, and metadata reload
+output instead of suppressing it. A non-zero status fails the run, so CI logs
+show the actual Hasura error rather than a misleading success line.
+
+Metadata deployment now applies a complete document per tenant and takes a
+per-endpoint lock, so parallel tenants preserve each other's sources and shared
+metadata. See [Metadata deployment](metadata-deployment.md).
+
+## Cloud endpoints
+
+The script defaults to `http://localhost:8080`. For Hasura Cloud or another
+remote target, set the endpoint explicitly; there is no implicit Cloud default:
+
+```bash
+HASURA_ENDPOINT=https://<project>.hasura.app \
+HASURA_GRAPHQL_ADMIN_SECRET=... \
+bin/deploy_init safetrust
+```

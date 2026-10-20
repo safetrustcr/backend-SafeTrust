@@ -85,7 +85,7 @@ echo "🔌 Registering database sources..."
 SOURCE_START=$SECONDS
 
 for TENANT in "${TENANTS[@]}"; do
-  curl -sf -X POST "${HASURA_ENDPOINT}/v1/metadata" \
+  SOURCE_RESPONSE=$(curl -sS -X POST "${HASURA_ENDPOINT}/v1/metadata" \
     -H "X-Hasura-Admin-Secret: $HASURA_ADMIN_SECRET" \
     -H "Content-Type: application/json" \
     -d "{
@@ -100,9 +100,28 @@ for TENANT in "${TENANTS[@]}"; do
           }
         }
       }
-    }" > /dev/null \
-    && echo " ✅ Source registered: $TENANT" \
-    || echo " ℹ️ Source already exists: $TENANT"
+    }") || {
+    echo "❌ Source registration request failed for $TENANT"
+    exit 1
+  }
+
+  if ! jq -e . >/dev/null 2>&1 <<< "$SOURCE_RESPONSE"; then
+    echo "❌ Invalid source registration response for $TENANT"
+    echo "$SOURCE_RESPONSE"
+    exit 1
+  fi
+
+  if jq -e 'type == "object" and has("error")' >/dev/null 2>&1 <<< "$SOURCE_RESPONSE"; then
+    if grep -qi 'already exists' <<< "$SOURCE_RESPONSE"; then
+      echo " ℹ️ Source already exists: $TENANT"
+    else
+      echo "❌ Failed to register source: $TENANT"
+      echo "$SOURCE_RESPONSE"
+      exit 1
+    fi
+  else
+    echo " ✅ Source registered: $TENANT"
+  fi
 done
 
 PHASE_TIMINGS["sources"]=$((SECONDS - GLOBAL_START))
@@ -129,8 +148,7 @@ apply_migration_for_tenant() {
     hasura migrate apply \
       --endpoint "${HASURA_ENDPOINT}" \
       --admin-secret "$HASURA_ADMIN_SECRET" \
-      --database-name "$TENANT" \
-      > /dev/null 2>&1
+      --database-name "$TENANT"
     echo " ✅ [$TENANT] migrations applied ($((SECONDS - T_START))s)"
   fi
 }
@@ -168,8 +186,7 @@ deploy_metadata_for_tenant() {
   cd "$ROOT_DIR/metadata"
   ./setup-tenant.sh "$TENANT" \
     --endpoint "${HASURA_ENDPOINT}" \
-    --admin-secret "$HASURA_ADMIN_SECRET" \
-    > /dev/null 2>&1
+    --admin-secret "$HASURA_ADMIN_SECRET"
   cd "$ROOT_DIR"
   echo " ✅ [$TENANT] metadata deployed ($((SECONDS - T_START))s)"
 }
@@ -210,10 +227,12 @@ echo ""
 echo "📋 Reloading metadata..."
 RELOAD_START=$SECONDS
 
-hasura metadata reload \
+if ! hasura metadata reload \
   --endpoint "${HASURA_ENDPOINT}" \
-  --admin-secret "$HASURA_ADMIN_SECRET" \
-  > /dev/null 2>&1
+  --admin-secret "$HASURA_ADMIN_SECRET"; then
+  echo "❌ Metadata reload failed; see the Hasura output above"
+  exit 1
+fi
 
 PHASE_TIMINGS["metadata_reload"]=$((SECONDS - GLOBAL_START))
 echo " ✅ Metadata reloaded ($((SECONDS - RELOAD_START))s)"

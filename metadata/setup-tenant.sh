@@ -4,23 +4,32 @@ set -eo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 # setup-tenant.sh
 # Runs build-metadata.sh then deploy-tenant.sh for one or more tenants.
-# Function tracking is handled entirely by deploy-tenant.sh — no duplicate
-# tracking logic here.
+# deploy-tenant.sh applies the complete metadata document (source, table
+# configuration, permissions, relationships, and event triggers), validates
+# migrations first, and preserves other tenants' sources.
 #
 # Usage:
 #   ./setup-tenant.sh <tenant1> [tenant2 ...] [--admin-secret SECRET] [--endpoint URL]
 #
+# Environment:
+#   HASURA_ENDPOINT              Default endpoint (localhost unless overridden)
+#   HASURA_GRAPHQL_ADMIN_SECRET  Default admin secret
+#
 # Examples:
 #   ./setup-tenant.sh safetrust
 #   ./setup-tenant.sh safetrust hotel_industry
-#   ./setup-tenant.sh safetrust hotel_industry --admin-secret myadminsecretkey --endpoint http://localhost:8080
+#   ./setup-tenant.sh safetrust --endpoint http://localhost:8080
+#
+#   # Hasura Cloud / remote endpoint (explicit target, secret from env)
+#   HASURA_GRAPHQL_ADMIN_SECRET=... ./setup-tenant.sh safetrust \
+#     --endpoint https://<project>.hasura.app
 # ─────────────────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Defaults
 ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-}"
-ENDPOINT="http://localhost:8080"
+ENDPOINT="${HASURA_ENDPOINT:-http://localhost:8080}"
 TENANTS=()
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
@@ -59,6 +68,7 @@ if [[ ${#TENANTS[@]} -eq 0 ]]; then
   echo ""
   echo "Usage:   ./setup-tenant.sh <tenant1> [tenant2 ...] [--admin-secret SECRET] [--endpoint URL]"
   echo "Example: ./setup-tenant.sh safetrust hotel_industry --endpoint http://localhost:8080"
+  echo "Cloud:   HASURA_GRAPHQL_ADMIN_SECRET=... ./setup-tenant.sh safetrust --endpoint https://<project>.hasura.app"
   exit 1
 fi
 
@@ -77,7 +87,7 @@ echo "  Endpoint: $ENDPOINT"
 echo "════════════════════════════════════════════════════"
 echo ""
 
-# ── Per-tenant tracking ───────────────────────────────────────────────────────
+# ── Per-tenant build + complete metadata deployment ─────────────────────────
 SUCCESSFUL_TENANTS=()
 FAILED_TENANTS=()
 SETUP_START=$SECONDS
@@ -106,9 +116,13 @@ for TENANT in "${TENANTS[@]}"; do
     echo "✅ Metadata built for $TENANT"
     echo ""
 
-    # Step 2 — Deploy metadata
-    # deploy-tenant.sh handles: source registration, table tracking, function tracking
-    # Do NOT add any duplicate tracking logic here.
+    # Step 2 — Deploy complete metadata
+    # deploy-tenant.sh validates migrations, applies source/table configuration,
+    # permissions, relationships, and event triggers, then verifies consistency
+    # and representative guest/host role queries. Do NOT add duplicate metadata
+    # logic here.
+    # Multi-tenant deploys are safe to run in parallel: deploy-tenant.sh
+    # serializes whole-document replacements per endpoint.
     echo "🚀 Deploying metadata for $TENANT..."
     if ! "$SCRIPT_DIR/deploy-tenant.sh" "$TENANT" \
         --endpoint "$ENDPOINT" \
