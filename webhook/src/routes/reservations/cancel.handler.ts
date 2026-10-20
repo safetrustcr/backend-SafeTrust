@@ -62,21 +62,21 @@ export const cancelReservationHandler = async (
     }
 
     // Cancellation is allowed for pending or escrow_created
-    await updateReservationCancellation(id, userId, reason)
+    const didCancel = await updateReservationCancellation(id, userId, reason)
+    const current = await findReservationById(id)
 
-    const updated = await findReservationById(id)
-    const dto = toReservationDto(
-      updated ?? {
-        ...reservation,
-        status: 'cancelled',
-        cancelled_by: userId,
-        cancelled_at: new Date(),
-        cancel_reason: reason ?? null,
-      },
-      userId
-    )
+    if (!current) {
+      return res.status(404).json({ error: 'Reservation not found' })
+    }
 
-    return res.status(200).json(dto)
+    if (!didCancel && current.status !== 'cancelled') {
+      return res.status(409).json({
+        error: 'RESERVATION_NOT_CANCELLABLE',
+        status: current.status,
+      })
+    }
+
+    return res.status(200).json(toReservationDto(current, userId))
   } catch (error) {
     const err = error as Error
     console.error('[reservations/cancel] ❌ error:', err.message)

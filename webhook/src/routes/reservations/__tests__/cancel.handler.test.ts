@@ -279,4 +279,50 @@ describe('reservations/cancel.handler', () => {
     })
     expect(reservationRepo.updateReservationCancellation).not.toHaveBeenCalled()
   })
+
+  it('returns 409 when updateReservationCancellation returns false and reservation transitioned to funded concurrently', async () => {
+    const fundedReservation: reservationRepo.ReservationRow = {
+      ...mockReservation,
+      status: 'funded',
+    }
+
+    ;(reservationRepo.findReservationById as jest.Mock)
+      .mockResolvedValueOnce(mockReservation) // initial read: pending
+      .mockResolvedValueOnce(fundedReservation) // re-read: funded
+    ;(reservationRepo.updateReservationCancellation as jest.Mock).mockResolvedValue(false)
+
+    const req = {
+      user: { uid: 'guest-1' },
+      params: { id: 'res-123' },
+      body: {},
+    } as unknown as AuthenticatedRequest
+    const res = makeResponse()
+
+    await cancelReservationHandler(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'RESERVATION_NOT_CANCELLABLE',
+      status: 'funded',
+    })
+  })
+
+  it('returns 404 when reservation is deleted concurrently after cancel attempt', async () => {
+    ;(reservationRepo.findReservationById as jest.Mock)
+      .mockResolvedValueOnce(mockReservation) // initial read: pending
+      .mockResolvedValueOnce(null) // re-read: null
+    ;(reservationRepo.updateReservationCancellation as jest.Mock).mockResolvedValue(false)
+
+    const req = {
+      user: { uid: 'guest-1' },
+      params: { id: 'res-123' },
+      body: {},
+    } as unknown as AuthenticatedRequest
+    const res = makeResponse()
+
+    await cancelReservationHandler(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Reservation not found' })
+  })
 })

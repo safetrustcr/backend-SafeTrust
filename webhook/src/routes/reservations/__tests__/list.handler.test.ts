@@ -77,8 +77,28 @@ describe('reservations/list.handler', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({
-      error: "Invalid role parameter. Must be 'guest' or 'host'",
+      error: "Invalid role parameter. Must be 'guest', 'host' or 'both'",
     })
+  })
+
+  it('accepts role=both and queries both guest and host (parsedRole undefined)', async () => {
+    ;(reservationRepo.findReservationsByParty as jest.Mock).mockResolvedValue(mockRows)
+
+    const req = {
+      user: { uid: 'user-1' },
+      query: { role: 'both' },
+    } as unknown as AuthenticatedRequest
+    const res = makeResponse()
+
+    await listReservationsHandler(req, res)
+
+    expect(reservationRepo.findReservationsByParty).toHaveBeenCalledWith(
+      'user-1',
+      undefined,
+      50,
+      0
+    )
+    expect(res.status).toHaveBeenCalledWith(200)
   })
 
   it('returns reservations with computed allowedActions and party roles (default: both)', async () => {

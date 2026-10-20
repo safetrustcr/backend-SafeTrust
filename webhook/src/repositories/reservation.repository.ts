@@ -99,7 +99,7 @@ export async function findReservationsByParty(
     JOIN safetrust.apartments a ON a.id = r.apartment_id
     LEFT JOIN safetrust.trustless_work_escrows e ON e.id = r.escrow_id
     WHERE ${whereClause}
-    ORDER BY r.check_in_date DESC
+    ORDER BY r.check_in_date DESC, r.id DESC
     LIMIT $2 OFFSET $3
   `
 

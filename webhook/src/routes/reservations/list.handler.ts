@@ -24,12 +24,12 @@ export const listReservationsHandler = async (
   const { role, limit, offset, page } = req.query
 
   let parsedRole: 'guest' | 'host' | undefined
-  if (role) {
+  if (role && role !== 'both') {
     if (role === 'guest' || role === 'host') {
       parsedRole = role
     } else {
       return res.status(400).json({
-        error: "Invalid role parameter. Must be 'guest' or 'host'",
+        error: "Invalid role parameter. Must be 'guest', 'host' or 'both'",
       })
     }
   }
