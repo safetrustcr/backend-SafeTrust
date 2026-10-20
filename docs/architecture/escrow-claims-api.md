@@ -49,7 +49,7 @@ Both parties of the escrow see all claims on it, newest first. Strangers and unk
 }
 ```
 
-`status` is one of `submitted`, `in_review`, `resolved`, `rejected`. Only admins change it (through Hasura).
+`status` is one of `submitted`, `in_review`, `resolved`, `rejected`. Changing it is an admin task done outside this API (see the Hasura section).
 
 ## Errors
 
@@ -59,7 +59,8 @@ All errors have the shape `{ "error": "CODE" }`.
 |---|---|---|
 | 400 | `INVALID_CLAIM_BODY` | `body` is not a string of 10 to 2000 characters (Unicode code points, not UTF-16 units) after trimming |
 | 400 | `INVALID_CLAIM_REQUEST` | `escrowId` or `clientOpId` is not a UUID |
-| 401 | `UNAUTHORIZED` | Missing or invalid credentials |
+| 401 | `Unauthorized` | Returned by the auth middleware as `{ "error": "Unauthorized", "message": "..." }` for a missing, malformed or invalid token |
+| 401 | `UNAUTHORIZED` | Returned by the handler when the authenticated request has no `uid` |
 | 404 | `ESCROW_NOT_FOUND` | The escrow does not exist, or the caller is not its guest or host (same response for both) |
 | 409 | `ESCROW_NOT_RELEASED` | The reservation is not `completed`; use dispute instead |
 | 409 | `CLIENT_OP_ID_REUSED` | This `clientOpId` was already used for a different escrow |
@@ -68,7 +69,7 @@ All errors have the shape `{ "error": "CODE" }`.
 
 ## Idempotency and rate limit
 
-`(author, clientOpId)` is unique. A retry with the same `clientOpId` returns `200` with the original claim and never creates a duplicate. If two identical requests race, the loser re-reads the winner's row and also gets `200`; if that row cannot be found it gets `500 INTERNAL_ERROR` (never `409`), and retrying with the same `clientOpId` is safe. The idempotency check runs before the released check and before the rate limit, so a retry still gets `200` after the user reached the daily limit. Generate a new `clientOpId` for each new claim.
+`(author, clientOpId)` is unique. A retry with the same `clientOpId` returns `200` with the original claim and never creates a duplicate. If two identical requests race, the loser re-reads the winner's row and also gets `200`; if that row belongs to a different escrow it gets `409 CLIENT_OP_ID_REUSED`; if it cannot be found it gets `500 INTERNAL_ERROR`. Retrying with the same `clientOpId` is safe. The idempotency check runs before the released check and before the rate limit, so a retry still gets `200` after the user reached the daily limit. Generate a new `clientOpId` for each new claim.
 
 The rate limit is 5 claims per user per escrow in a rolling 24 hours, counted in the database inside a transaction guarded by an advisory lock, so concurrent requests cannot exceed it.
 
@@ -85,10 +86,13 @@ curl "$API/api/escrow-claims/$ESCROW_ID" -H "Authorization: Bearer $ID_TOKEN"
 
 ## Hasura
 
-`safetrust_escrow_claims` is readable by `guest` and `host` for claims they authored or that belong to their reservation or apartment, and by `admin` for all rows. `client_op_id` is visible to `admin` only, not to `guest` or `host`. `admin` can update `status` only. No role can insert; creation always goes through the endpoint.
+`safetrust_escrow_claims` is readable by `guest` and `host` for claims they authored or that belong to their reservation or apartment. `client_op_id` is not exposed to them. No client role can insert or update; creation always goes through the endpoint.
+
+Hasura's built-in `admin` role bypasses table permissions, so it has unrestricted access to this table (including `client_op_id` and updating any column) and no permission block is declared for it. Restricting an operator to updating `status` only would need a non-reserved role such as `platform_admin`.
 
 ## Out of scope (TODO)
 
 - TODO: attachments on claims.
 - TODO: email or push notifications to the other party.
+- TODO: a non-reserved `platform_admin` role limited to selecting claims and updating `status`.
 - TODO: admin tooling to review and resolve claims.
