@@ -63,6 +63,25 @@ declare module '@safetrust/types' {
     totalPages: number
   }
 
+  export type ReportCategory =
+    | 'inaccurate'
+    | 'scam_or_fraud'
+    | 'offensive'
+    | 'safety'
+    | 'duplicate'
+    | 'other'
+
+  export interface CreateListingReportPayload {
+    category: ReportCategory
+    details?: string
+    clientOpId: string
+  }
+
+  export interface ListingReportResponse {
+    id: string
+    status: string
+  }
+
   export interface CreateReservationPayload {
     apartment_id: string
     check_in_date: string
