@@ -68,7 +68,7 @@ dependency and it builds cleanly on Alpine/musl.
 ```bash
 # From the repo root — pg-bulk-upsert is a workspace member:
 cargo build --release -p pg-bulk-upsert
-node crates/pg-bulk-upsert/copy-native.js   # -> crates/pg-bulk-upsert/index.node
+node crates/scripts/copy-native.js --crate=pg-bulk-upsert   # -> crates/pg-bulk-upsert/index.node
 
 # Or as part of the webhook build (builds all addons + TypeScript):
 cd webhook && npm run build

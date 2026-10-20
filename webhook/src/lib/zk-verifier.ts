@@ -3,20 +3,24 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type * as NativeVerifier from '../../../crates/zk-verifier';
 
-export type ZkVerifierError = Error & { code: 'ZK_VERIFIER_UNAVAILABLE' | 'ZK_VERIFIER_MISCONFIGURED' };
+export type ZkVerifierError = Error & {
+  code: 'ZK_FEATURE_DISABLED' | 'ZK_VERIFIER_UNAVAILABLE' | 'ZK_VERIFIER_MISCONFIGURED';
+};
 
-let nativeVerifier: typeof NativeVerifier | null = null;
-let nativeLoadError: unknown = null;
-
-try {
-  nativeVerifier = require('../../../crates/zk-verifier');
-} catch (error) {
-  nativeLoadError = error;
+function createZkError(
+  message: string,
+  code: ZkVerifierError['code'],
+  cause?: unknown
+): ZkVerifierError {
+  const error = new Error(message) as ZkVerifierError;
+  error.code = code;
+  if (cause !== undefined) error.cause = cause;
+  return error;
 }
 
 /**
  * Verify a proof-of-funds proof with the Rust UltraHonk addon.
- * The addon is optional for non-ZK requests, but ZK requests fail closed.
+ * ZK is opt-in and the native addon is loaded only when explicitly enabled.
  */
 export function verifyProofOfFunds(
   proofHex: string,
@@ -24,11 +28,24 @@ export function verifyProofOfFunds(
   thresholdStroops: string,
   balanceCommitmentHex: string
 ) {
-  if (!nativeVerifier) {
-    const error = new Error('ZK proof verifier is unavailable') as ZkVerifierError;
-    error.code = 'ZK_VERIFIER_UNAVAILABLE';
-    error.cause = nativeLoadError;
-    throw error;
+  if (process.env.ZK_ENABLED !== 'true') {
+    throw createZkError(
+      'ZK proof verification is disabled',
+      'ZK_FEATURE_DISABLED'
+    );
+  }
+
+  let nativeVerifier: typeof NativeVerifier;
+
+  try {
+    // Do not load the experimental native addon during normal application startup.
+    nativeVerifier = require('../../../crates/zk-verifier');
+  } catch (cause) {
+    throw createZkError(
+      'ZK proof verifier is unavailable',
+      'ZK_VERIFIER_UNAVAILABLE',
+      cause
+    );
   }
 
   // A proof only establishes the statement encoded by its verification key.
