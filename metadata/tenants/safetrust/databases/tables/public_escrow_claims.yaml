@@ -36,7 +36,6 @@ select_permissions:
         - author_id
         - body
         - status
-        - client_op_id
         - created_at
         - updated_at
       filter:
@@ -59,7 +58,6 @@ select_permissions:
         - author_id
         - body
         - status
-        - client_op_id
         - created_at
         - updated_at
       filter:

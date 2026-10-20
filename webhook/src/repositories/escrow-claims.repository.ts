@@ -28,12 +28,14 @@ export interface NewEscrowClaim {
 
 export const CLAIM_RATE_LIMIT = 5
 
-const FIND_PARTICIPATION = `
+const PARTICIPATION_SELECT = `
   SELECT r.id AS reservation_id, r.status
   FROM safetrust.reservations r
   JOIN safetrust.apartments a ON a.id = r.apartment_id
   WHERE r.escrow_id = $1 AND (r.guest_id = $2 OR a.owner_id = $2)
-  FOR SHARE OF r
+`
+const FIND_PARTICIPATION = PARTICIPATION_SELECT
+const FIND_PARTICIPATION_LOCKED = `${PARTICIPATION_SELECT}  FOR SHARE OF r
 `
 
 const FIND_BY_OP_ID = `
@@ -65,10 +67,11 @@ const LIST_FOR_ESCROW = `
 export async function findParticipation(
   client: PoolClient,
   escrowId: string,
-  uid: string
+  uid: string,
+  lock = false
 ): Promise<Participation | null> {
   const result = await client.query<{ reservation_id: string; status: string }>(
-    FIND_PARTICIPATION,
+    lock ? FIND_PARTICIPATION_LOCKED : FIND_PARTICIPATION,
     [escrowId, uid]
   )
   const row = result.rows[0]

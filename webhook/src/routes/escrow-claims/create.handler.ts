@@ -11,8 +11,8 @@ import {
   findParticipation,
   insert,
 } from '../../repositories/escrow-claims.repository'
+import { UUID_PATTERN } from './validation'
 
-export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MIN_BODY = 10
 const MAX_BODY = 2000
 const RETRY_AFTER_SECONDS = '86400'
@@ -43,7 +43,8 @@ export const createClaimHandler = async (
   }
 
   const text = typeof body === 'string' ? body.trim() : ''
-  if (text.length < MIN_BODY || text.length > MAX_BODY) {
+  const length = Array.from(text).length
+  if (length < MIN_BODY || length > MAX_BODY) {
     return res.status(400).json({ error: 'INVALID_CLAIM_BODY' })
   }
 
@@ -57,7 +58,7 @@ export const createClaimHandler = async (
     await client.query('BEGIN')
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))", [uid, escrowId])
 
-    const participation = await findParticipation(client, escrowId, uid)
+    const participation = await findParticipation(client, escrowId, uid, true)
     if (!participation) {
       await client.query('ROLLBACK')
       return res.status(404).json({ error: 'ESCROW_NOT_FOUND' })
@@ -96,7 +97,8 @@ export const createClaimHandler = async (
       if (raced && raced.escrow_id === escrowId) {
         return res.status(200).json(toResponse(raced))
       }
-      return res.status(409).json({ error: 'CLIENT_OP_ID_REUSED' })
+      console.error('createClaimHandler: claim missing after insert conflict')
+      return res.status(500).json({ error: 'INTERNAL_ERROR' })
     }
 
     await client.query('COMMIT')

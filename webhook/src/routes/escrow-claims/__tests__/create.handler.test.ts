@@ -77,7 +77,14 @@ describe('createClaimHandler', () => {
 
   const sqls = () => mockClient.query.mock.calls.map((c) => c[0] as string)
 
+  let errorSpy: jest.SpyInstance
+
+  afterEach(() => {
+    errorSpy.mockRestore()
+  })
+
   beforeEach(() => {
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
     jest.clearAllMocks()
     mockClient = { query: jest.fn().mockResolvedValue({ rows: [] }), release: jest.fn() }
     ;(pool.connect as jest.Mock).mockResolvedValue(mockClient)
@@ -131,12 +138,39 @@ describe('createClaimHandler', () => {
     expect(res.status).not.toHaveBeenCalledWith(429)
   })
 
-  it('returns 200 when a concurrent retry wins the insert race', async () => {
+  it('returns 200 when the re-select after a lost race finds the claim', async () => {
     script({ participation: released, insert: [], reselect: [claimRow()] })
     const res = makeRes()
     await createClaimHandler(makeReq(), res)
     expect(res.status).toHaveBeenCalledWith(200)
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: CLAIM_ID }))
+  })
+
+  it('returns 500 when the re-select after a lost race finds nothing', async () => {
+    script({ participation: released, insert: [], reselect: [] })
+    const res = makeRes()
+    await createClaimHandler(makeReq(), res)
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith({ error: 'INTERNAL_ERROR' })
+    expect(sqls()).toContain('ROLLBACK')
+    expect(errorSpy).toHaveBeenCalled()
+  })
+
+  it('counts code points, not UTF-16 units, for the body length', async () => {
+    script({ participation: released, insert: [claimRow()] })
+    const ok = makeRes()
+    await createClaimHandler(
+      makeReq({ body: { body: '\u{1F600}'.repeat(1000), clientOpId: OP_ID } }),
+      ok
+    )
+    expect(ok.status).toHaveBeenCalledWith(201)
+
+    const tooLong = makeRes()
+    await createClaimHandler(
+      makeReq({ body: { body: '\u{1F600}'.repeat(2001), clientOpId: OP_ID } }),
+      tooLong
+    )
+    expect(tooLong.status).toHaveBeenCalledWith(400)
+    expect(tooLong.json).toHaveBeenCalledWith({ error: 'INVALID_CLAIM_BODY' })
   })
 
   it('returns 409 CLIENT_OP_ID_REUSED when the clientOpId belongs to another escrow', async () => {

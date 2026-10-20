@@ -4,7 +4,7 @@ import { Response } from 'express'
 import { pool } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { findParticipation, listForEscrow } from '../../repositories/escrow-claims.repository'
-import { UUID_PATTERN } from './create.handler'
+import { UUID_PATTERN } from './validation'
 
 /**
  * GET /api/escrow-claims/:escrowId: both parties of the escrow see all its claims.

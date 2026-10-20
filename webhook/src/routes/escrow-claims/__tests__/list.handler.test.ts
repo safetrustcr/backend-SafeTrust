@@ -32,7 +32,14 @@ function makeRes() {
 describe('listClaimsHandler', () => {
   let mockClient: { query: jest.Mock; release: jest.Mock }
 
+  let errorSpy: jest.SpyInstance
+
+  afterEach(() => {
+    errorSpy.mockRestore()
+  })
+
   beforeEach(() => {
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
     jest.clearAllMocks()
     mockClient = { query: jest.fn().mockResolvedValue({ rows: [] }), release: jest.fn() }
     ;(pool.connect as jest.Mock).mockResolvedValue(mockClient)
@@ -40,7 +47,7 @@ describe('listClaimsHandler', () => {
 
   it('returns 200 with the claims of both parties for a participant', async () => {
     mockClient.query.mockImplementation(async (sql: string) => {
-      if (sql.includes('FOR SHARE OF r')) {
+      if (sql.includes('safetrust.reservations')) {
         return { rows: [{ reservation_id: 'res-1', status: 'completed' }] }
       }
       return {
@@ -67,6 +74,9 @@ describe('listClaimsHandler', () => {
     const res = makeRes()
     await listClaimsHandler(makeReq(), res)
     expect(res.status).toHaveBeenCalledWith(200)
+    expect(
+      mockClient.query.mock.calls.some((c) => (c[0] as string).includes('FOR SHARE'))
+    ).toBe(false)
     expect(res.json).toHaveBeenCalledWith({
       claims: [
         {
