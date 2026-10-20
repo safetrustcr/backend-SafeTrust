@@ -60,16 +60,18 @@ export function verifyProofOfFunds(
   }
 
   // A proof only establishes the statement encoded by its verification key.
-  // Pin the SafeTrust circuit key in production so a valid proof for an
-  // attacker-controlled circuit cannot be substituted. In production, this
-  // pin is mandatory. In non-production, the pin is optional to keep local
-  // circuit development frictionless.
-  const isProduction = process.env.NODE_ENV === 'production';
+  // Pin the SafeTrust circuit key so a valid proof for an attacker-controlled
+  // circuit cannot be substituted. By default, this pin is mandatory in all
+  // environments (including production, staging, or unset NODE_ENV) to fail closed;
+  // it is exempt only when NODE_ENV is explicitly 'development' or 'test' to keep
+  // local circuit development frictionless.
+  const isDevOrTest =
+    process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
   const expectedKeyHash = process.env.ZK_PROOF_OF_FUNDS_VK_SHA256;
 
-  if (isProduction && !expectedKeyHash) {
+  if (!isDevOrTest && !expectedKeyHash) {
     const error = new Error(
-      'ZK verification key hash pin (ZK_PROOF_OF_FUNDS_VK_SHA256) is mandatory in production'
+      'ZK verification key hash pin (ZK_PROOF_OF_FUNDS_VK_SHA256) is mandatory in production and non-development environments'
     ) as ZkVerifierError;
     error.code = 'ZK_VERIFIER_MISCONFIGURED';
     throw error;

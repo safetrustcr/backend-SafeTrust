@@ -74,6 +74,34 @@ describe('zk-verifier library', () => {
       expect(mockNativeVerifier.verifyProofOfFunds).not.toHaveBeenCalled();
     });
 
+    it('throws ZK_VERIFIER_MISCONFIGURED when NODE_ENV is unset and VK hash is missing (fail-closed default)', () => {
+      delete process.env.NODE_ENV;
+      delete process.env.ZK_PROOF_OF_FUNDS_VK_SHA256;
+
+      expect(() => {
+        verifyProofOfFunds('00', sampleVkHex, '1000', '00'.repeat(32));
+      }).toThrow(
+        expect.objectContaining({
+          code: 'ZK_VERIFIER_MISCONFIGURED',
+        })
+      );
+      expect(mockNativeVerifier.verifyProofOfFunds).not.toHaveBeenCalled();
+    });
+
+    it('throws ZK_VERIFIER_MISCONFIGURED in staging environment if VK hash is unset', () => {
+      process.env.NODE_ENV = 'staging';
+      delete process.env.ZK_PROOF_OF_FUNDS_VK_SHA256;
+
+      expect(() => {
+        verifyProofOfFunds('00', sampleVkHex, '1000', '00'.repeat(32));
+      }).toThrow(
+        expect.objectContaining({
+          code: 'ZK_VERIFIER_MISCONFIGURED',
+        })
+      );
+      expect(mockNativeVerifier.verifyProofOfFunds).not.toHaveBeenCalled();
+    });
+
     it('throws ZK_VERIFIER_MISCONFIGURED in production if VK hash is empty string', () => {
       process.env.NODE_ENV = 'production';
       process.env.ZK_PROOF_OF_FUNDS_VK_SHA256 = '';

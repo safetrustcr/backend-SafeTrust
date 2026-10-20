@@ -209,10 +209,10 @@ In Noir/Barretenberg UltraHonk, a proof is verified with respect to a verificati
 4. The native verifier passes, admitting an unqualified client.
 
 ### Mitigation: Mandatory Production Pinning
-- In `webhook/src/lib/zk-verifier.ts`, the verification key SHA-256 hash (`ZK_PROOF_OF_FUNDS_VK_SHA256`) is **mandatory** when `NODE_ENV === 'production'`.
+- In `webhook/src/lib/zk-verifier.ts`, the verification key SHA-256 hash (`ZK_PROOF_OF_FUNDS_VK_SHA256`) is **mandatory by default** (required in production, staging, and any environment where `NODE_ENV` is not explicitly `'development'` or `'test'`).
 - Missing or malformed pins throw `ZK_VERIFIER_MISCONFIGURED` (HTTP 500 / fail-closed).
 - Any submitted verification key whose SHA-256 does not match the pinned hash is rejected with `false`.
-- Non-production environments (`test`, `development`) permit optional pins to allow frictionless circuit development.
+- Only explicit development and test environments (`test`, `development`) permit optional pins to allow frictionless local circuit development.
 
 ---
 
