@@ -13,7 +13,7 @@ Background:
     """
     query GetEscrowAnalytics($start_date: date!, $end_date: date!, $tenant_id: String!) {
       getEscrowAnalyticsByDay(args: { p_start_date: $start_date, p_end_date: $end_date, p_tenant_id: $tenant_id }) {
-        day event_count processed_count new_users active_escrows escrow_value
+        day webhook_records lifecycle_events processed_events last_active_users escrows_created cohort_active_escrows cohort_active_value_usdc
       }
     }
     """
@@ -43,11 +43,11 @@ Scenario: the dashboard operation returns one row per UTC day in the range
     And match response.errors == '#notpresent'
     * def rows = response.data.getEscrowAnalyticsByDay
     And match rows == '#[3]'
-    And match each rows contains { day: '#string', event_count: '#number', processed_count: '#number', new_users: '#number', active_escrows: '#number', escrow_value: '#number' }
+    And match each rows contains { day: '#string', webhook_records: '#number', lifecycle_events: '#number', processed_events: '#number', last_active_users: '#number', escrows_created: '#number', cohort_active_escrows: '#number', cohort_active_value_usdc: '#number' }
     And match karate.map(rows, function(r){ return r.day }) == ['2001-01-01', '2001-01-02', '2001-01-03']
     # 23:30Z stays on 2001-01-02 and 00:10Z lands on 2001-01-03 regardless of server time zone
-    And match rows[1] contains { event_count: 2, processed_count: 1 }
-    And match rows[2] contains { event_count: 1, processed_count: 1 }
+    And match rows[1] contains { webhook_records: 2 }
+    And match rows[2] contains { webhook_records: 1 }
 
 Scenario: omitting p_tenant_id is a schema error, not a silent default
     Given request { query: "{ getEscrowAnalyticsByDay(args: { p_start_date: \"2001-01-01\", p_end_date: \"2001-01-03\" }) { day } }" }
