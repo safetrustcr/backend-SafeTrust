@@ -50,14 +50,14 @@ flowchart TD
 
 | Crate | Native exports | Fallback when the addon is absent | Build script / deployment artifact |
 |---|---|---|---|
-| `zk-verifier` | `verifyProofOfFunds` | **None — fail closed.** `webhook/src/lib/zk-verifier.ts` throws `ZK_VERIFIER_UNAVAILABLE`, and the init handler returns `503`. | `npm run build:rust` → `cargo build --release --workspace` + `install-bb.js` + `copy-native.js`; artifact `crates/zk-verifier/index.node` and `bb`. |
-| `stellar-utils` | `validateStellarAddress`, `verifyStellarEd25519` | JS regex `^G[A-Z2-7]{55}$` in `sync-wallet.handler.ts` (weaker; native path keeps CRC/version checks). | Same workspace build + `copy-native.js`; artifact `crates/stellar-utils/native/index.node`. |
-| `escrow-state-machine` | `validateTransition`, `getValidPriorStates`, `getTransitionTable`, `getGraphqlFilter` | JS transition table in `crates/escrow-state-machine/index.ts` (same eight rules). | Workspace build + `copy-native.js`; artifact `crates/escrow-state-machine/index.node`. |
-| `webhook-verifier` | `verifyHmacSignature`, `validateStellarAddress` | `crates/webhook-verifier/fallback.ts` (Node `crypto`, same raw bytes, fail closed). | Workspace build + `copy-native.js`; artifact `crates/webhook-verifier/index.node`. |
-| `chunk-processor` | `processChunksParallel` | Sequential JS chunk loop in `reconciliation.ts`. | Workspace build + `copy-native.js`; artifact `crates/chunk-processor/index.node`. |
-| `pg-bulk-upsert` | `bulkUpsertEscrows` | Row-by-row `UPSERT_ESCROW_SQL` loop in `reconciliation.ts`. | Workspace build + `copy-native.js`; artifact `crates/pg-bulk-upsert/index.node`. |
-| `soroban-reconciler` | `queryEscrowStateBatch`, `reconcileBatch` | **None.** The service logs and skips the contract; the reader is disabled by default (see §4). | Workspace build + `copy-native.js`; artifact `crates/soroban-reconciler/native/index.node`. |
-| `x402-processor` | `validateX402Payment`, `buildPaymentRequirement` | JS fallback in `crates/x402-processor/index.ts` never returns `is_valid: true`; it fails closed. | Workspace build + `copy-native.js`; artifact `crates/x402-processor/index.node`. |
+| `zk-verifier` | `verifyProofOfFunds` | **None — fail closed.** `webhook/src/lib/zk-verifier.ts` throws `ZK_VERIFIER_UNAVAILABLE`, and the init handler returns `503`. | `npm run build:rust` → `cargo build --release --workspace` + `install-bb.js` + shared `scripts/copy-native.js`; artifact `crates/zk-verifier/index.node` and `bb`. |
+| `stellar-utils` | `validateStellarAddress`, `verifyStellarEd25519` | JS regex `^G[A-Z2-7]{55}$` in `sync-wallet.handler.ts` (weaker; native path keeps CRC/version checks). | Same workspace build + shared `scripts/copy-native.js`; artifact `crates/stellar-utils/native/index.node`. |
+| `escrow-state-machine` | `validateTransition`, `getValidPriorStates`, `getTransitionTable`, `getGraphqlFilter` | JS transition table in `crates/escrow-state-machine/index.ts` (same eight rules). | Workspace build + shared `scripts/copy-native.js`; artifact `crates/escrow-state-machine/index.node`. |
+| `webhook-verifier` | `verifyHmacSignature`, `validateStellarAddress` | `crates/webhook-verifier/fallback.ts` (Node `crypto`, same raw bytes, fail closed). | Workspace build + shared `scripts/copy-native.js`; artifact `crates/webhook-verifier/index.node`. |
+| `chunk-processor` | `processChunksParallel` | Sequential JS chunk loop in `reconciliation.ts`. | Workspace build + shared `scripts/copy-native.js`; artifact `crates/chunk-processor/index.node`. |
+| `pg-bulk-upsert` | `bulkUpsertEscrows` | Row-by-row `UPSERT_ESCROW_SQL` loop in `reconciliation.ts`. | Workspace build + shared `scripts/copy-native.js`; artifact `crates/pg-bulk-upsert/index.node`. |
+| `soroban-reconciler` | `queryEscrowStateBatch`, `reconcileBatch` | **None.** The service logs and skips the contract; the reader is disabled by default (see §4). | Workspace build + shared `scripts/copy-native.js`; artifact `crates/soroban-reconciler/native/index.node`. |
+| `x402-processor` | `validateX402Payment`, `buildPaymentRequirement` | JS fallback in `crates/x402-processor/index.ts` never returns `is_valid: true`; it fails closed. | Workspace build + shared `scripts/copy-native.js`; artifact `crates/x402-processor/index.node`. |
 
 The workspace manifest is [`crates/Cargo.toml`](../../crates/Cargo.toml). The
 production image runs `npm run build` in [`webhook/Dockerfile`](../../webhook/Dockerfile),
@@ -235,7 +235,8 @@ the following are recorded in this document and the PR:
 3. **Equivalent supported behavior** — a test demonstrates the replacement
    handles the same vectors, including error paths.
 4. **Build/deployment updates** — remove the member from `crates/Cargo.toml`,
-   drop its `copy-native.js` step from `webhook/package.json`, and remove its
+   drop its shared `copy-native.js --crate=<name>` invocation from
+   `webhook/package.json`, and remove its
    `COPY` lines from `webhook/Dockerfile`.
 5. **Rollback path** — document how to restore the crate and rebuild the
    artifact, and test that rollback.

@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "type-check": "npm --prefix webhook run type-check",
-    "test": "npm --prefix webhook test"
+    "test": "npm --prefix webhook test",
+    "crates:clean": "node scripts/clean-crates.js"
   },
   "engines": {
     "node": ">=20.13"
