@@ -1,3 +1,4 @@
+import { withTransaction } from './escrow.service';
 import { hasuraRequest } from './hasura';
 import {
   logAndCheckWebhookEvent,
@@ -125,11 +126,7 @@ export async function approveMilestoneAndUpdateReservation(
   const reservationStatus =
     milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
 
-  const client = await connect();
-
-  try {
-    await client.query('BEGIN');
-
+  return withTransaction(async (client) => {
     const milestoneResult = await client.query(
       `
         SELECT id, status
@@ -165,7 +162,6 @@ export async function approveMilestoneAndUpdateReservation(
       escrowStatus === 'milestone_approved' &&
       milestoneResult.rows[0].status === 'approved'
     ) {
-      await client.query('COMMIT');
       return;
     }
 
@@ -210,22 +206,7 @@ export async function approveMilestoneAndUpdateReservation(
       `,
       [reservationStatus, approvedAt, escrowId]
     );
-
-    await client.query('COMMIT');
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK');
-    } catch (rollbackError) {
-      console.error(
-        '[milestone.service] Failed to rollback milestone approval transaction:',
-        rollbackError
-      );
-    }
-
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**
