@@ -1,3 +1,4 @@
+import { PoolClient } from 'pg'
 import { hasuraRequest } from '../services/hasura'
 import { query } from '../services/db'
 
@@ -44,10 +45,27 @@ export async function linkEscrowToReservation(
   })
 }
 
+export type TransactionClient = PoolClient | { query: (text: string, params?: unknown[]) => Promise<unknown> }
+
 export async function mirrorReservationStatus(
   escrowId: string,
-  status: string
+  status: string,
+  client?: TransactionClient
 ): Promise<void> {
+  if (client) {
+    await client.query(
+      `
+        UPDATE safetrust.reservations
+        SET
+          status = $1,
+          updated_at = NOW()
+        WHERE escrow_id = $2
+      `,
+      [status, escrowId]
+    )
+    return
+  }
+
   const mutation = `
     mutation MirrorStatusToReservation($escrowId: uuid!, $status: String!) {
       update_reservations: update_safetrust_reservations(

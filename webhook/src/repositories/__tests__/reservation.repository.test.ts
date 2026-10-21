@@ -55,5 +55,20 @@ describe('reservation.repository', () => {
         }
       )
     })
+
+    it('uses the provided transaction client instead of Hasura', async () => {
+      const mockClient = {
+        query: jest.fn().mockResolvedValueOnce({ rowCount: 1 }),
+      }
+
+      await mirrorReservationStatus('escrow-1', 'funded', mockClient)
+
+      expect(mockClient.query).toHaveBeenCalledTimes(1)
+      expect(mockClient.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE safetrust.reservations'),
+        ['funded', 'escrow-1']
+      )
+      expect(mockedHasuraRequest).not.toHaveBeenCalled()
+    })
   })
 })
