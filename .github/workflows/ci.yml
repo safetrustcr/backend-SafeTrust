@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'tests/**'
+      - 'migrations/**'
+      - 'metadata/**'
+      - 'docker-compose-test.yml'
+      - 'Dockerfile.test'
+      - 'bin/test'
+      - 'bin/prepare-test-db'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'tests/**'
+      - 'migrations/**'
+      - 'metadata/**'
+      - 'docker-compose-test.yml'
+      - 'Dockerfile.test'
+      - 'bin/test'
+      - 'bin/prepare-test-db'
+      - '.github/workflows/ci.yml'
+
+jobs:
+  integration-tests:
+    name: Karate & Analytics Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run Karate integration tests (local Docker Compose)
+        run: |
+          chmod +x bin/test bin/prepare-test-db
+          ./bin/test
+
+      - name: Upload Karate Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: karate-test-reports
+          path: tests/results/
+          if-no-files-found: ignore
