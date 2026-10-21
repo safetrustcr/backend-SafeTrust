@@ -21,7 +21,7 @@ catch (err) {
         { from: ['created', 'pending_funding'], to: 'funded', event: 'escrow.funded' },
         { from: ['funded'], to: 'active', event: 'escrow.funded' },
         { from: ['active', 'funded'], to: 'milestone_approved', event: 'milestone.approved' },
-        { from: ['milestone_approved'], to: 'completed', event: 'funds.released' },
+        { from: ['funded', 'milestone_approved'], to: 'completed', event: 'funds.released' },
         { from: ['funded', 'active', 'milestone_approved'], to: 'disputed', event: 'dispute.raised' },
         { from: ['disputed'], to: 'resolved', event: 'dispute.resolved' },
         { from: ['created', 'pending_funding', 'funded', 'disputed'], to: 'cancelled', event: 'escrow.cancelled' },

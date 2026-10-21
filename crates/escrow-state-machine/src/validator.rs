@@ -63,6 +63,7 @@ mod tests {
         assert!(is_valid_transition(&S::Funded, &S::Active, &E::EscrowFunded));
         assert!(is_valid_transition(&S::Funded, &S::MilestoneApproved, &E::MilestoneApproved));
         assert!(is_valid_transition(&S::MilestoneApproved, &S::Completed, &E::FundsReleased));
+        assert!(is_valid_transition(&S::Funded, &S::Completed, &E::FundsReleased));
         assert!(is_valid_transition(&S::Funded, &S::Disputed, &E::DisputeRaised));
         assert!(is_valid_transition(&S::Disputed, &S::Resolved, &E::DisputeResolved));
         // A dispute may end with funds returned to the tenant.
@@ -73,8 +74,8 @@ mod tests {
     fn illegal_transitions_are_rejected() {
         // completed → created is not a legal transition
         assert!(!is_valid_transition(&S::Completed, &S::Created, &E::EscrowInitialized));
-        // funded → completed is not a direct transition
-        assert!(!is_valid_transition(&S::Funded, &S::Completed, &E::FundsReleased));
+        // created → completed is not a direct transition
+        assert!(!is_valid_transition(&S::Created, &S::Completed, &E::FundsReleased));
         // wrong event
         assert!(!is_valid_transition(&S::Funded, &S::Active, &E::EscrowInitialized));
         // a completed escrow cannot be cancelled

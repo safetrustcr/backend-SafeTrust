@@ -1,20 +1,12 @@
 import { hasuraRequest } from '../services/hasura'
+import {
+  getValidPriorStates,
+  StateConflictError,
+  StaleStateError,
+} from '../lib/escrow-transitions'
+import { EscrowStatus as CanonicalStatus, EscrowEventType } from '../types/escrow.types'
 
-export class StateConflictError extends Error {
-  readonly statusCode = 409
-  constructor(message: string) {
-    super(message)
-    this.name = 'StateConflictError'
-  }
-}
-
-export class StaleStateError extends Error {
-  readonly statusCode = 409
-  constructor(message: string) {
-    super(message)
-    this.name = 'StaleStateError'
-  }
-}
+export { StateConflictError, StaleStateError }
 
 export type EscrowStatus =
   | 'created'
@@ -300,8 +292,13 @@ export async function fundEscrow(
 
 export async function releaseFunds(
   contractId: string,
-  validStates: string[] = ['funded', 'milestone_approved']
+  validStates?: string[]
 ): Promise<TrustlessWorkEscrow> {
+  const allowedPriorStates =
+    validStates && validStates.length > 0
+      ? validStates
+      : getValidPriorStates(CanonicalStatus.Completed, EscrowEventType.FundsReleased)
+
   const mutation = `
     mutation ReleaseFunds($contractId: String!, $validStates: [String!]!) {
       update_trustless_work_escrows(
@@ -323,12 +320,12 @@ export async function releaseFunds(
     update_trustless_work_escrows?: {
       returning: Array<{ id: string; contractId: string; status: string; balance: number }>
     }
-  }>(mutation, { contractId, validStates })
+  }>(mutation, { contractId, validStates: allowedPriorStates })
 
   const updated = data?.update_trustless_work_escrows?.returning?.[0]
   if (!updated) {
     throw new StateConflictError(
-      `Escrow cannot transition to completed: contractId '${contractId}' not found or current status not in [${validStates.join(', ')}]`
+      `Escrow cannot transition to completed: contractId '${contractId}' not found or current status not in [${allowedPriorStates.join(', ')}]`
     )
   }
 

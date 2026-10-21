@@ -5,6 +5,10 @@ import {
 } from '../repositories/webhook-event.repository';
 import { connect, withTransaction as dbWithTransaction } from './db';
 import type { PoolClient } from 'pg';
+import {
+  getValidPriorStates,
+  StateConflictError,
+} from '../lib/escrow-transitions';
 
 async function executeInTransaction<T>(
   fn: (client: PoolClient) => Promise<T>
@@ -59,13 +63,7 @@ export class EscrowNotFoundError extends Error {
   }
 }
 
-export class StateConflictError extends Error {
-  readonly statusCode = 409;
-  constructor(message: string) {
-    super(message);
-    this.name = 'StateConflictError';
-  }
-}
+export { StateConflictError };
 
 export class EscrowStateConflictError extends StateConflictError {
   constructor(message: string) {
@@ -148,13 +146,10 @@ export async function approveMilestoneAndUpdateReservation(
 ): Promise<void> {
   const approvedAt = new Date().toISOString();
 
-  // Resolve valid prior states before any DB write.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
-    getValidPriorStates: (to: string, event: string) => string;
-  };
-  const validStates: string[] = JSON.parse(
-    getValidPriorStates('milestone_approved', 'milestone.approved') as string
+  // Resolve valid prior states before any DB write via canonical shared module.
+  const validStates: string[] = getValidPriorStates(
+    'milestone_approved',
+    'milestone.approved'
   );
 
   const reservationStatus =
