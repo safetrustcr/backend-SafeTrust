@@ -21,3 +21,4 @@
 - "!include public_reservations.yaml"
 - "!include public_escrow_analytics_by_day.yaml"
 - "!include public_escrow_status_summary.yaml"
+- "!include public_webhook_health_summary.yaml"
