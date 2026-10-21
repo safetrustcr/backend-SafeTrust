@@ -12,6 +12,7 @@ import {
   mirrorReservationStatus,
 } from '../../repositories/reservation.repository';
 import {
+  DEFAULT_NOTIFICATION_TIMEOUT_MS,
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
@@ -74,11 +75,16 @@ export const fundEscrowHandler = async (
     // 4 — Mirror status to safetrust.reservations
     await mirrorReservationStatus(escrowId, 'funded');
 
-    // 5 — Notify hotel conversation (best-effort, never fail the response)
-    await notifyHotelEscrowConversation({
+    // 5 — Notify hotel conversation. Fire-and-forget: the shared service is
+    // bounded by an explicit budget and never throws, so messaging can never
+    // delay or fail the escrow lifecycle response.
+    void notifyHotelEscrowConversation({
       contractId,
       eventType: 'escrow_funded',
       body: 'SafeTrust: Your deposit has been confirmed on the Stellar network. Your booking is secured.',
+      timeoutMs: DEFAULT_NOTIFICATION_TIMEOUT_MS,
+    }).catch((error) => {
+      console.error('[escrow/fund] ❌ notification dispatch error:', error);
     });
 
     await markWebhookEventProcessed(eventId);

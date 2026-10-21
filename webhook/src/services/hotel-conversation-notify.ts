@@ -1,10 +1,23 @@
 'use strict'
 
 import { query } from './db'
+import {
+  DEFAULT_CONVERSATION_DB_TIMEOUT_MS,
+  HotelMessageRecord,
+  recordHotelConversationMessage,
+} from '../repositories/hotel-conversation.repository'
+
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+/**
+ * Hard budget for a lifecycle notification. The lifecycle response never waits
+ * longer than this, even if the database is slow or lock-blocked.
+ */
+export const DEFAULT_NOTIFICATION_TIMEOUT_MS = DEFAULT_CONVERSATION_DB_TIMEOUT_MS
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface HotelEscrowParties {
+export interface HotelEscrowParties {
   reservationId: string
   apartmentId:   string
   hostId:        string
@@ -12,22 +25,49 @@ interface HotelEscrowParties {
   escrowId:      string
 }
 
-interface NotifyHotelEscrowConversationParams {
+export interface NotifyHotelEscrowConversationParams {
   contractId: string
   eventType:  string
   body:       string
+  timeoutMs?: number
 }
 
-interface ConversationPayload {
-  reservation_id:         string
-  escrow_transaction_id?: string
-  sender_id:              string
-  body:                   string
-  is_automated?:          boolean
-  event_type?:            string
+export interface SendHotelConversationMessageParams {
+  reservationId:        string
+  hostId:               string
+  guestId:              string
+  escrowTransactionId?: string | null
+  senderId:             string
+  body:                 string
+  isAutomated?:         boolean
+  eventType?:           string | null
+  timeoutMs?:           number
+}
+
+// ── Errors ─────────────────────────────────────────────────────────────────────
+
+export class NotificationTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`hotel conversation notification exceeded its ${timeoutMs}ms budget`)
+    this.name = 'NotificationTimeoutError'
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+function withTimeout<T>(operation: () => Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new NotificationTimeoutError(timeoutMs)), timeoutMs)
+    // Never keep the process (or a Jest worker) alive for a best-effort timer.
+    timer.unref?.()
+  })
+
+  return Promise.race([operation(), timeout]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
 
 /**
  * Resolve hotel reservation + host/guest UUIDs for a TrustlessWork contract id.
@@ -83,79 +123,99 @@ export async function resolveHotelEscrowParties(
   }
 }
 
-export function webhookBaseUrl(): string {
-  if (process.env.WEBHOOK_BASE_URL) {
-    return process.env.WEBHOOK_BASE_URL.replace(/\/$/, '')
-  }
-  const port = process.env.WEBHOOK_PORT ?? process.env.PORT ?? '3001'
-  return `http://127.0.0.1:${port}`
+// ── Shared conversation service ────────────────────────────────────────────────
+
+/**
+ * Direct, in-process conversation write.
+ *
+ * This is the shared service entrypoint for any internal caller (lifecycle
+ * handlers today, future workers tomorrow). It never performs an HTTP request
+ * back into this application; the conversation upsert is idempotent at the
+ * database level.
+ */
+export async function sendHotelConversationMessage(
+  params: SendHotelConversationMessageParams
+): Promise<HotelMessageRecord> {
+  const {
+    timeoutMs = DEFAULT_NOTIFICATION_TIMEOUT_MS,
+    ...conversationParams
+  } = params
+
+  const { message } = await recordHotelConversationMessage(
+    conversationParams,
+    timeoutMs
+  )
+
+  return message
 }
 
 /**
  * Best-effort automated lifecycle message into the hotel conversation.
- * Never throws — escrow status updates must not fail because of messaging.
+ *
+ * The whole operation (party lookup + conversation upsert + message insert) is
+ * bounded by `timeoutMs`. Never throws — escrow status updates must not fail
+ * because of messaging.
+ *
+ * Delivery is best-effort. If durable delivery ever becomes a requirement, the
+ * minimal addition is a small notification/outbox row that a retry loop can
+ * drain — not a message broker.
+ *
+ * @returns `true` when the message was persisted, `false` when it was skipped
+ * or failed. Callers should treat `false` as non-fatal.
  */
 export async function notifyHotelEscrowConversation({
   contractId,
   eventType,
   body,
-}: NotifyHotelEscrowConversationParams): Promise<void> {
+  timeoutMs = DEFAULT_NOTIFICATION_TIMEOUT_MS,
+}: NotifyHotelEscrowConversationParams): Promise<boolean> {
+  const budgetMs = Math.max(1, timeoutMs)
+  const deadline = Date.now() + budgetMs
+
   try {
-    const parties = await resolveHotelEscrowParties(contractId)
+    return await withTimeout(async () => {
+      const parties = await resolveHotelEscrowParties(contractId)
 
-    if (!parties) {
-      console.log(
-        `[conversations/send] ⏭ skip — no hotel escrow parties for contractId: ${contractId}`
-      )
-      return
-    }
-
-    const payload: ConversationPayload = {
-      reservation_id:        parties.reservationId,
-      escrow_transaction_id: parties.escrowId,
-      sender_id:             parties.guestId,
-      body,
-      is_automated:          true,
-      event_type:            eventType,
-    }
-
-    const internalSecret = process.env.INTERNAL_SERVICE_SECRET
-    if (!internalSecret) {
-      console.error('[conversations/send] ❌ INTERNAL_SERVICE_SECRET not set')
-      return
-    }
-
-    const res = await fetch(
-      `${webhookBaseUrl()}/api/hotel/conversations/send`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type':      'application/json',
-          'x-internal-secret': internalSecret,
-        },
-        body: JSON.stringify(payload),
+      if (!parties) {
+        console.log(
+          `[conversations/send] ⏭ skip — no hotel escrow parties for contractId: ${contractId}`
+        )
+        return false
       }
-    )
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      console.error(
-        `[conversations/send] ❌ automated message failed — status: ${res.status} ${text}`
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) {
+        throw new NotificationTimeoutError(budgetMs)
+      }
+
+      await sendHotelConversationMessage({
+        reservationId:        parties.reservationId,
+        hostId:               parties.hostId,
+        guestId:              parties.guestId,
+        escrowTransactionId:  parties.escrowId,
+        senderId:             parties.guestId,
+        body,
+        isAutomated:          true,
+        eventType,
+        timeoutMs:            remainingMs,
+      })
+
+      console.log(
+        `[conversations/send] ✅ automated message sent — event_type: ${eventType}`
       )
-      return
-    }
-
-    console.log(
-      `[conversations/send] ✅ automated message sent — event_type: ${eventType}`
-    )
+      return true
+    }, budgetMs)
   } catch (error) {
     const err = error as Error
     console.error(`[conversations/send] ❌ error — ${err.message}`)
+    return false
   }
 }
 
 export default {
   resolveHotelEscrowParties,
+  sendHotelConversationMessage,
   notifyHotelEscrowConversation,
-  webhookBaseUrl,
+  NotificationTimeoutError,
+  DEFAULT_NOTIFICATION_TIMEOUT_MS,
 }
