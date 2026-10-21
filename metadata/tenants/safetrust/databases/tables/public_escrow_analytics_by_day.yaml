@@ -1,3 +1,13 @@
 table:
   name: escrow_analytics_by_day
   schema: safetrust
+configuration:
+  custom_name: escrow_analytics_by_day
+  custom_root_fields: {}
+  column_config: {}
+select_permissions:
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+      allow_aggregations: true

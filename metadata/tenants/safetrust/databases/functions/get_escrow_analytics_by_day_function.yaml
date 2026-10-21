@@ -5,3 +5,6 @@ configuration:
   exposed_as: query
 comment: |
   Daily escrow analytics time series. Returns SETOF public.escrow_analytics_by_day.
+permissions:
+  - role: admin
+    privilege: EXECUTE
