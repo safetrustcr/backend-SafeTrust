@@ -1,8 +1,10 @@
-import { Request, Response, NextFunction } from "express";
+import { Response, NextFunction } from "express";
 import { getAuth } from "firebase-admin/auth";
 import db from "../services/db";
+import { AuthError, ForbiddenError, InternalError } from "../utils/errors";
+import { RequestWithContext } from "./logger";
 
-export interface AuthenticatedRequest extends Request {
+export interface AuthenticatedRequest extends RequestWithContext {
   user?: { uid: string; email?: string; role: string; [key: string]: any };
 }
 export type AuthRequest = AuthenticatedRequest;
@@ -14,13 +16,13 @@ export async function authMiddleware(
 ): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) {
-    res.status(401).json({ error: "Unauthorized", message: "Missing or malformed Authorization header" });
+    next(new AuthError("Missing or malformed Authorization header"));
     return;
   }
 
   const idToken = authHeader.split("Bearer ")[1];
   if (idToken === "mock-token" && process.env.NODE_ENV !== "test") {
-    res.status(401).json({ error: "Unauthorized", message: "Invalid or expired token" });
+    next(new AuthError("Invalid or expired token"));
     return;
   }
   let decodedToken: Record<string, any>;
@@ -33,7 +35,7 @@ export async function authMiddleware(
     try {
       decodedToken = await getAuth().verifyIdToken(idToken);
     } catch (error) {
-      res.status(401).json({ error: "Unauthorized", message: "Invalid or expired token" });
+      next(new AuthError("Invalid or expired token"));
       return;
     }
   }
@@ -48,7 +50,11 @@ export async function authMiddleware(
     req.user = { ...decodedToken, uid: decodedToken.uid, roles, role };
     next();
   } catch (error) {
-    res.status(500).json({ error: "Internal Server Error", message: "Failed to resolve user role" });
+    req.logger?.error("failed to resolve user role", {
+      event: "auth_role_lookup_failed",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    next(new InternalError("Failed to resolve user role"));
   }
 }
 
@@ -58,7 +64,7 @@ export function roleChecker(allowedRoles: string[]) {
     if (allowedRoles.includes(userRole)) {
       next();
     } else {
-      res.status(403).json({ error: "Forbidden" });
+      next(new ForbiddenError());
     }
   };
 }

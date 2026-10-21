@@ -5,8 +5,8 @@
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
+    "start": "node api.js && node src/server.js",
+    "dev": "node api.js && node --watch src/server.js",
     "type-check": "npm --prefix webhook run type-check",
     "test": "npm --prefix webhook test",
     "crates:clean": "node scripts/clean-crates.js"

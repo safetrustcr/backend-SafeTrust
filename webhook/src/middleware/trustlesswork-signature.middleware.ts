@@ -1,12 +1,14 @@
 'use strict'
 
-import { Request, Response, NextFunction } from 'express'
+import { Response, NextFunction } from 'express'
+import { AuthError, InternalError } from '../utils/errors'
+import type { RequestWithContext } from './logger'
 
 /**
  * Request populated with the exact request bytes by
- * `express.json({ verify })` upstream in `index.ts`.
+ * `express.json({ verify })` upstream in `app.ts`.
  */
-interface TrustlessWorkRequest extends Request {
+interface TrustlessWorkRequest extends RequestWithContext {
   rawBody: Buffer
 }
 
@@ -51,47 +53,49 @@ function canonicalSignedPayload(timestamp: string, rawBody: Buffer): Buffer {
  * fraudulent escrow state (e.g. a fake `completed`/`funded` status with no
  * real Stellar transaction behind it).
  *
- * HMAC is computed over the canonical bytes `timestamp + '.' + rawBody`
+ * HMAM is computed over the canonical bytes `timestamp + '.' + rawBody`
  * (`req.rawBody` is the exact request bytes populated by
  * `express.json({ verify })` upstream). The raw body is hashed as bytes,
  * not as a UTF-8 string, so invalid UTF-8 cannot change the digest.
  *
  * `x-trustlesswork-timestamp` must be a complete decimal unix-epoch
- * millisecond value and is rejected outside a ±5 minute replay window.
+ * millisecond value and is rejected outside a plus-minus 5 minute replay window.
  */
 export const verifyTrustlessWorkSignature = (
   req: TrustlessWorkRequest,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ): void => {
   const secret = process.env.TRUSTLESSWORK_WEBHOOK_SECRET
   if (!secret) {
-    console.error('[trustlesswork-signature] TRUSTLESSWORK_WEBHOOK_SECRET not set')
-    res.status(500).json({ error: 'Webhook secret not configured' })
+    req.logger?.error('TRUSTLESSWORK_WEBHOOK_SECRET not set', {
+      event: 'webhook_secret_missing',
+    })
+    next(new InternalError('Webhook secret not configured'))
     return
   }
 
   const signature = headerValue(req.headers['x-trustlesswork-signature'])
   if (!signature) {
-    res.status(401).json({ error: 'Missing x-trustlesswork-signature header' })
+    next(new AuthError('Missing x-trustlesswork-signature header'))
     return
   }
 
   const timestamp = headerValue(req.headers['x-trustlesswork-timestamp'])
   if (!timestamp) {
-    res.status(401).json({ error: 'Missing TrustlessWork signature headers' })
+    next(new AuthError('Missing TrustlessWork signature headers'))
     return
   }
 
   const parsedTimestamp = parseMillisTimestamp(timestamp)
   if (parsedTimestamp === null) {
-    res.status(401).json({ error: 'Webhook timestamp expired or invalid' })
+    next(new AuthError('Webhook timestamp expired or invalid'))
     return
   }
 
   const age = Date.now() - parsedTimestamp
   if (age > REPLAY_WINDOW_MS || age < -REPLAY_WINDOW_MS) {
-    res.status(401).json({ error: 'Webhook timestamp expired or invalid' })
+    next(new AuthError('Webhook timestamp expired or invalid'))
     return
   }
 
@@ -102,13 +106,16 @@ export const verifyTrustlessWorkSignature = (
   try {
     isValid = verifyHmacSignature(payload, signature, secret)
   } catch (err) {
-    console.error('[trustlesswork-signature] Rust verifier error:', err)
-    res.status(500).json({ error: 'Signature verification failed' })
+    req.logger?.error('Rust signature verifier failed', {
+      event: 'webhook_signature_verifier_error',
+      error: err,
+    })
+    next(new InternalError('Signature verification failed'))
     return
   }
 
   if (!isValid) {
-    res.status(401).json({ error: 'Invalid webhook signature' })
+    next(new AuthError('Invalid webhook signature'))
     return
   }
 
