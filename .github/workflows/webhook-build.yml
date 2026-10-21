@@ -25,6 +25,11 @@ on:
 jobs:
   docker-build:
     runs-on: ubuntu-latest
+    env:
+      # Injected from the repository secret store at run time. Never commit a
+      # value and never pass it as a Docker build arg, which would bake it into
+      # the image.
+      HASURA_ADMIN_SECRET: ${{ secrets.HASURA_ADMIN_SECRET }}
     steps:
       - uses: actions/checkout@v4
 
