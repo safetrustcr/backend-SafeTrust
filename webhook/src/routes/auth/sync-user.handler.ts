@@ -11,15 +11,25 @@ interface UserRow {
 }
 
 /**
- * Compatibility Policy:
+ * Compatibility & Reconciliation Policy:
  * Identity mapping decision: SafeTrust maps Firebase UID directly to `safetrust.users.id` (TEXT PRIMARY KEY)
  * and `safetrust.users.firebase_uid` (TEXT) as defined in migration 1731908676359_create_users and
  * 1779300000001_migrate_to_safetrust_schema. All supported deployments (development, staging, production)
  * use TEXT primary key identifiers matching Firebase UIDs.
- * The legacy UUID column type check against information_schema was confirmed dead code across all active
- * environments and was removed in favor of this direct, deterministic upsert.
+ *
+ * To safely reconcile any existing rows where `id` may differ from the Firebase UID (e.g. historical seeds
+ * or legacy deployments with a separate unique index on `firebase_uid`), we first attempt to reconcile/update
+ * by `id = $1 OR firebase_uid = $1`. If no matching row exists, we insert a new user with `id = firebase_uid = $1`.
+ * This preserves the `firebase_uid` conflict path and avoids duplicate key constraint violations (HTTP 500).
  */
-const SYNC_USER_SQL = `
+const RECONCILE_USER_SQL = `
+  UPDATE safetrust.users
+  SET last_seen = NOW(), email = $2, firebase_uid = $1
+  WHERE id = $1 OR firebase_uid = $1
+  RETURNING id, firebase_uid, email, last_seen
+`
+
+const INSERT_USER_SQL = `
   INSERT INTO safetrust.users (id, firebase_uid, email, last_seen)
   VALUES ($1, $1, $2, NOW())
   ON CONFLICT (id)
@@ -46,8 +56,31 @@ export const syncUserHandler = async (
   }
 
   try {
-    const result = await query<UserRow>(SYNC_USER_SQL, [uid, email])
-    const user = result.rows[0]
+    // 1. Reconcile/update existing row matching either id or firebase_uid
+    const updateResult = await query<UserRow>(RECONCILE_USER_SQL, [uid, email])
+    let user = updateResult.rows[0]
+
+    // 2. If no existing row found, insert new record
+    if (!user) {
+      try {
+        const insertResult = await query<UserRow>(INSERT_USER_SQL, [uid, email])
+        user = insertResult.rows[0]
+      } catch (insertError: unknown) {
+        // Fallback for concurrent insert or unique constraint collision on firebase_uid
+        const fallback = await query<UserRow>(
+          `SELECT id, firebase_uid, email, last_seen
+           FROM safetrust.users
+           WHERE id = $1 OR firebase_uid = $1
+           LIMIT 1`,
+          [uid]
+        )
+        if (fallback.rows[0]) {
+          user = fallback.rows[0]
+        } else {
+          throw insertError
+        }
+      }
+    }
 
     console.log(`[sync-user] user synced - uid: ${user.firebase_uid}`)
     return res.status(200).json({
