@@ -7,6 +7,16 @@ export interface AuthenticatedRequest extends Request {
 }
 export type AuthRequest = AuthenticatedRequest;
 
+function isNoDefaultAppError(error: unknown): boolean {
+  if (!error) return false;
+  const code = (typeof error === "object" && error !== null && "code" in error)
+    ? (error as { code?: unknown }).code
+    : undefined;
+  if (code === "app/no-default-app") return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /no default app/i.test(message);
+}
+
 export async function authMiddleware(
   req: AuthenticatedRequest,
   res: Response,
@@ -19,6 +29,10 @@ export async function authMiddleware(
   }
 
   const idToken = authHeader.split("Bearer ")[1];
+  if (!idToken) {
+    res.status(401).json({ error: "Unauthorized", message: "Missing or malformed Authorization header" });
+    return;
+  }
   if (idToken === "mock-token" && process.env.NODE_ENV !== "test") {
     res.status(401).json({ error: "Unauthorized", message: "Invalid or expired token" });
     return;
@@ -33,6 +47,16 @@ export async function authMiddleware(
     try {
       decodedToken = await getAuth().verifyIdToken(idToken);
     } catch (error) {
+      if (isNoDefaultAppError(error)) {
+        console.error(
+          '[Auth] Firebase Admin is not initialized; cannot verify ID tokens.'
+        );
+        res.status(500).json({
+          error: "Internal Server Error",
+          message: "Authentication service is not configured",
+        });
+        return;
+      }
       res.status(401).json({ error: "Unauthorized", message: "Invalid or expired token" });
       return;
     }

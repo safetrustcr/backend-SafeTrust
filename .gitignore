@@ -37,7 +37,6 @@ tests/postgresql-jdbc.jar
 *.swo
 
 # Editors
-.vscode/
 .idea/
 
 # Coverage
@@ -48,6 +47,7 @@ htmlcov/
 # Build directories
 dist/
 build/
+temp_auto_push.bat
 target/
 .gradle/
 
@@ -98,3 +98,5 @@ crates/target/
 # tooling build, so keep it available in standalone package builds.
 !/crates/scripts/copy-native.js
 /tests/karate/src/test/resources/**/*.js
+.gitignore
+branch_structure.json
