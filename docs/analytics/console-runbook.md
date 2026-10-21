@@ -65,19 +65,11 @@ The SafeTrust Analytics Dashboard depends on two PostgreSQL functions exposed as
 Run this introspection query in the Hasura Console GraphiQL tab or via `curl` to verify that both analytics query roots are registered with their expected arguments and return types.
 
 ```graphql
+# 1. Query root field verification
 query IntrospectAnalyticsRoots {
   __schema {
     queryType {
-      fields(
-        filter: {
-          name: {
-            _in: [
-              "get_escrow_analytics_by_day"
-              "get_escrow_status_summary"
-            ]
-          }
-        }
-      ) {
+      fields {
         name
         description
         args {
@@ -106,6 +98,32 @@ query IntrospectAnalyticsRoots {
             }
           }
         }
+      }
+    }
+  }
+}
+
+# 2. Targeted type introspection for analytics return types
+query IntrospectAnalyticsTypes {
+  analyticsByDay: __type(name: "escrow_analytics_by_day") {
+    name
+    kind
+    fields {
+      name
+      type {
+        name
+        kind
+      }
+    }
+  }
+  statusSummary: __type(name: "escrow_status_summary") {
+    name
+    kind
+    fields {
+      name
+      type {
+        name
+        kind
       }
     }
   }

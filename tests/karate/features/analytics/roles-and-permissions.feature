@@ -50,8 +50,10 @@ Scenario: Diagram 2 - safetrust_user role accessing own tenant sees own data onl
     """
     When method POST
     Then status 200
-    # When role permissions are active, user sees own data (total_value = 1000), or hasura rejects with authorization error
-    And assert (response.data != null && response.data.get_escrow_status_summary != null && response.data.get_escrow_status_summary[0].total_value == 1000) || (response.errors != null)
+    # Own-tenant access must succeed without errors and show own data only
+    And match response.errors == '#notpresent'
+    And match response.data != null
+    And match response.data.get_escrow_status_summary[0] == { total_escrows: 1, active_escrows: 1, total_value: 1000 }
 
 Scenario: Diagram 2 - safetrust_user role querying another tenant returns own data or authorization error
     * db.execute(karate.read('file:tests/fixtures/analytics/seed-tenants-roles.sql'))
@@ -67,9 +69,9 @@ Scenario: Diagram 2 - safetrust_user role querying another tenant returns own da
     """
     When method POST
     Then status 200
-    # Tenant boundary invariant: safetrust_user must NEVER see hotel_industry private data (8888)
-    # The response must either be an authorization error or isolated empty/zeroed data
-    And assert response.errors != null || (response.data != null && response.data.get_escrow_status_summary[0].total_value != 8888)
+    # Tenant boundary invariant: cross-tenant query must return an authorization error
+    # or an allowed isolated result (0 or own-tenant 1000), strictly rejecting foreign values
+    And assert (response.errors != null) || (response.data != null && (response.data.get_escrow_status_summary[0].total_value == 0 || response.data.get_escrow_status_summary[0].total_value == 1000))
 
 Scenario: Diagram 2 - Anonymous role request is rejected (missing credentials)
     # Clear admin secret header to simulate unauthenticated/anonymous client

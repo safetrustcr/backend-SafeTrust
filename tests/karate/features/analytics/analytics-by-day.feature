@@ -53,8 +53,8 @@ Scenario: Diagram 1 - Zero-filled days when no events exist in range
     {
         "query": "query GetZeroFill($startDate: timestamptz!, $endDate: timestamptz!) { get_escrow_analytics_by_day(args: {start_date: $startDate, end_date: $endDate, tenant_id_input: \"safetrust\"}) { day event_count processed_count new_users active_escrows escrow_value } }",
         "variables": {
-            "startDate": "2026-11-01T00:00:00Z",
-            "endDate": "2026-11-05T00:00:00Z"
+            "startDate": "2035-01-01T00:00:00Z",
+            "endDate": "2035-01-05T00:00:00Z"
         }
     }
     """
@@ -64,8 +64,8 @@ Scenario: Diagram 1 - Zero-filled days when no events exist in range
     And match response.data.get_escrow_analytics_by_day == '#[5]'
     # Ensure all days are present, all counts are 0, and no null values exist
     And match each response.data.get_escrow_analytics_by_day contains { event_count: 0, processed_count: 0, new_users: 0, active_escrows: 0, escrow_value: 0 }
-    And match response.data.get_escrow_analytics_by_day[0].day == '2026-11-01'
-    And match response.data.get_escrow_analytics_by_day[4].day == '2026-11-05'
+    And match response.data.get_escrow_analytics_by_day[0].day == '2035-01-01'
+    And match response.data.get_escrow_analytics_by_day[4].day == '2035-01-05'
 
 Scenario: Diagram 1 - Duplicate delivery event_count deduplication semantics
     * db.execute(karate.read('file:tests/fixtures/analytics/seed-duplicate-delivery.sql'))

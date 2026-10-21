@@ -3,12 +3,10 @@
 -- Safe for repeated runs and teardown before/after tests
 
 DELETE FROM safetrust.trustless_work_webhook_events
-WHERE contract_id LIKE 'test-ana-%'
-   OR tenant_id IN ('safetrust-test-tenant', 'other-tenant');
+WHERE contract_id LIKE 'test-ana-%';
 
 DELETE FROM safetrust.trustless_work_escrows
-WHERE contract_id LIKE 'test-ana-%'
-   OR tenant_id IN ('safetrust-test-tenant', 'other-tenant');
+WHERE contract_id LIKE 'test-ana-%';
 
 DELETE FROM safetrust.user_roles
 WHERE user_id LIKE 'test-ana-%';
