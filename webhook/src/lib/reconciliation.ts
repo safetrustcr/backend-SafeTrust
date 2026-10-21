@@ -249,6 +249,12 @@ export function __resetBulkUpsertForTests(): void {
 
 // ─── Idempotent UPSERT ────────────────────────────────────────────────────────
 /**
+ * ARCHITECTURAL OVERRIDE (ARCH-A5 / ESC-04):
+ * This UPSERT path deliberately overrides single-step transition validation.
+ * As an external authoritative reconciliation engine syncing on-chain indexer truth,
+ * multi-step transitions (e.g. created -> funded -> completed) across missed webhook
+ * periods must be converged without rejection by transition guards.
+ *
  * INSERT … ON CONFLICT (contract_id) DO UPDATE …
  * The WHERE clause uses IS DISTINCT FROM so unchanged rows produce 0 affected
  * rows — xmax = 0 means the row was inserted; otherwise it was updated.

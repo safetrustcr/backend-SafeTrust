@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
+import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response'
 import { ReleaseFundsPayload } from '@safetrust/types';
 import {
   logAndCheckWebhookEvent,
@@ -7,6 +7,7 @@ import {
 } from '../../repositories/webhook-event.repository';
 import {
   releaseFunds,
+  StateConflictError,
 } from '../../repositories/escrow.repository';
 import {
   mirrorReservationStatus,
@@ -46,12 +47,6 @@ export const releaseFundsHandler = async (
     // 2 — Update trustless_work_escrows
     const updated = await releaseFunds(contractId);
 
-    if (!updated) {
-      return notFound(res, {
-        error: `Escrow not found for contractId: ${contractId}`
-      });
-    }
-
     const escrowId = updated.id;
 
     // 3 — Mirror status to safetrust.reservations
@@ -71,6 +66,11 @@ export const releaseFundsHandler = async (
 
   } catch (error) {
     const err = error as Error & { details?: unknown };
+    if (err instanceof StateConflictError) {
+      console.warn(`[escrow/release-funds] ⚠️ State conflict: ${err.message}`);
+      return conflict(res, { error: err.message });
+    }
+
     console.error('[escrow/release-funds] ❌ error:', err.details || err.message);
     if (err.details) {
       return serverError(res, { error: 'Failed to update escrow status', details: err.details });

@@ -3,7 +3,35 @@ import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
-import { connect } from './db';
+import { connect, withTransaction as dbWithTransaction } from './db';
+import type { PoolClient } from 'pg';
+
+async function executeInTransaction<T>(
+  fn: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  if (typeof dbWithTransaction === 'function') {
+    return dbWithTransaction(fn);
+  }
+  const client = await connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error(
+        '[milestone.service] Failed to rollback milestone approval transaction:',
+        rollbackError
+      );
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -31,8 +59,15 @@ export class EscrowNotFoundError extends Error {
   }
 }
 
-export class EscrowStateConflictError extends Error {
+export class StateConflictError extends Error {
   readonly statusCode = 409;
+  constructor(message: string) {
+    super(message);
+    this.name = 'StateConflictError';
+  }
+}
+
+export class EscrowStateConflictError extends StateConflictError {
   constructor(message: string) {
     super(message);
     this.name = 'EscrowStateConflictError';
@@ -125,11 +160,7 @@ export async function approveMilestoneAndUpdateReservation(
   const reservationStatus =
     milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
 
-  const client = await connect();
-
-  try {
-    await client.query('BEGIN');
-
+  return executeInTransaction(async (client) => {
     const milestoneResult = await client.query(
       `
         SELECT id, status
@@ -165,7 +196,6 @@ export async function approveMilestoneAndUpdateReservation(
       escrowStatus === 'milestone_approved' &&
       milestoneResult.rows[0].status === 'approved'
     ) {
-      await client.query('COMMIT');
       return;
     }
 
@@ -210,22 +240,7 @@ export async function approveMilestoneAndUpdateReservation(
       `,
       [reservationStatus, approvedAt, escrowId]
     );
-
-    await client.query('COMMIT');
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK');
-    } catch (rollbackError) {
-      console.error(
-        '[milestone.service] Failed to rollback milestone approval transaction:',
-        rollbackError
-      );
-    }
-
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**

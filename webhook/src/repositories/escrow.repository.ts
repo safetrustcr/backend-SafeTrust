@@ -1,5 +1,21 @@
 import { hasuraRequest } from '../services/hasura'
 
+export class StateConflictError extends Error {
+  readonly statusCode = 409
+  constructor(message: string) {
+    super(message)
+    this.name = 'StateConflictError'
+  }
+}
+
+export class StaleStateError extends Error {
+  readonly statusCode = 409
+  constructor(message: string) {
+    super(message)
+    this.name = 'StaleStateError'
+  }
+}
+
 export type EscrowStatus =
   | 'created'
   | 'funded'
@@ -77,11 +93,38 @@ export async function getEscrowByContractId(
   }
 }
 
+/**
+ * Generic status updater for escrow records.
+ *
+ * Audit Note (ARCH-A5):
+ * Unconstrained status updates bypass the state machine transition table.
+ * All lifecycle writers MUST supply validPriorStates or use dedicated guarded
+ * writer functions (fundEscrow, disputeEscrow, resolveDispute, releaseFunds, approveEscrowStatus).
+ * When validPriorStates is provided, an atomic status guard is applied and
+ * StateConflictError is thrown if 0 rows are affected.
+ */
 export async function updateEscrowStatus(
   contractId: string,
-  status: EscrowStatus
+  status: EscrowStatus,
+  validPriorStates?: string[]
 ): Promise<void> {
-  const mutation = `
+  const hasGuard = Array.isArray(validPriorStates) && validPriorStates.length > 0
+
+  const mutation = hasGuard
+    ? `
+    mutation UpdateEscrowStatusWithGuard($contractId: String!, $status: String!, $validStates: [String!]!) {
+      update_trustless_work_escrows(
+        where: {
+          contractId: { _eq: $contractId }
+          status: { _in: $validStates }
+        }
+        _set: { status: $status }
+      ) {
+        affected_rows
+      }
+    }
+  `
+    : `
     mutation UpdateEscrowStatus($contractId: String!, $status: String!) {
       update_trustless_work_escrows(
         where: { contractId: { _eq: $contractId } }
@@ -92,7 +135,19 @@ export async function updateEscrowStatus(
     }
   `
 
-  await hasuraRequest(mutation, { contractId, status })
+  const variables = hasGuard
+    ? { contractId, status, validStates: validPriorStates }
+    : { contractId, status }
+
+  const data = await hasuraRequest<{
+    update_trustless_work_escrows?: { affected_rows: number }
+  }>(mutation, variables)
+
+  if (hasGuard && (!data?.update_trustless_work_escrows?.affected_rows || data.update_trustless_work_escrows.affected_rows === 0)) {
+    throw new StateConflictError(
+      `Escrow cannot transition to ${status}: contractId '${contractId}' not found or current status not in [${validPriorStates.join(', ')}]`
+    )
+  }
 }
 
 export async function createEscrow(
@@ -244,12 +299,16 @@ export async function fundEscrow(
 }
 
 export async function releaseFunds(
-  contractId: string
-): Promise<TrustlessWorkEscrow | null> {
+  contractId: string,
+  validStates: string[] = ['funded', 'milestone_approved']
+): Promise<TrustlessWorkEscrow> {
   const mutation = `
-    mutation ReleaseFunds($contractId: String!) {
+    mutation ReleaseFunds($contractId: String!, $validStates: [String!]!) {
       update_trustless_work_escrows(
-        where: { contractId: { _eq: $contractId } }
+        where: {
+          contractId: { _eq: $contractId }
+          status: { _in: $validStates }
+        }
         _set: {
           status: "completed"
           balance: 0
@@ -264,11 +323,13 @@ export async function releaseFunds(
     update_trustless_work_escrows?: {
       returning: Array<{ id: string; contractId: string; status: string; balance: number }>
     }
-  }>(mutation, { contractId })
+  }>(mutation, { contractId, validStates })
 
   const updated = data?.update_trustless_work_escrows?.returning?.[0]
   if (!updated) {
-    return null
+    throw new StateConflictError(
+      `Escrow cannot transition to completed: contractId '${contractId}' not found or current status not in [${validStates.join(', ')}]`
+    )
   }
 
   return {
