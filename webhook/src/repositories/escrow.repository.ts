@@ -314,7 +314,8 @@ export async function releaseFunds(
 
 export async function releaseFundsInTransaction(
   client: PoolClient,
-  contractId: string
+  contractId: string,
+  validStates: string[]
 ): Promise<TrustlessWorkEscrow | null> {
   const result = await client.query<{
     id: string
@@ -324,9 +325,11 @@ export async function releaseFundsInTransaction(
   }>(
     `UPDATE safetrust.trustless_work_escrows
      SET status = 'completed', balance = 0, updated_at = NOW()
-     WHERE contract_id = $1 AND tenant_id = 'safetrust'
+     WHERE contract_id = $1
+       AND tenant_id = 'safetrust'
+       AND status = ANY($2::varchar[])
      RETURNING id, contract_id, status, balance`,
-    [contractId]
+    [contractId, validStates]
   )
 
   const updated = result.rows[0]

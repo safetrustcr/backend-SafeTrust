@@ -13,6 +13,10 @@ import {
 } from '../../services/hotel-conversation-notify';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
+const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
+  getValidPriorStates: (to: string, event: string) => string
+}
+
 const EVENT_TYPE = EscrowEventType.FundsReleased;
 
 export const releaseFundsHandler = async (
@@ -34,7 +38,10 @@ export const releaseFundsHandler = async (
       EVENT_TYPE,
       req.body as unknown as Record<string, unknown>,
       async (client) => {
-        const escrow = await releaseFundsInTransaction(client, contractId)
+        const validStates: string[] = JSON.parse(
+          getValidPriorStates(EscrowStatus.Completed, EscrowEventType.FundsReleased) as string
+        );
+        const escrow = await releaseFundsInTransaction(client, contractId, validStates)
         if (escrow) {
           await mirrorReservationStatusInTransaction(client, escrow.id, 'completed')
         }
