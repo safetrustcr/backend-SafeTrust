@@ -10,7 +10,7 @@ WHERE FALSE;
 COMMENT ON VIEW safetrust.webhook_health_summary
   IS 'Hasura return type for get_webhook_health_summary(); the view itself contains no rows';
 
-CREATE OR REPLACE FUNCTION safetrust.get_webhook_health_summary(hasura_session JSONB DEFAULT '{}'::JSONB)
+CREATE OR REPLACE FUNCTION safetrust.get_webhook_health_summary(hasura_session JSONB DEFAULT NULL)
 RETURNS SETOF safetrust.webhook_health_summary
 LANGUAGE plpgsql
 STABLE
