@@ -8,11 +8,13 @@ select_permissions:
     permission:
       columns:
         - day
-        - event_count
-        - processed_count
-        - new_users
-        - active_escrows
-        - escrow_value
+        - webhook_records
+        - lifecycle_events
+        - processed_events
+        - last_active_users
+        - escrows_created
+        - cohort_active_escrows
+        - cohort_active_value_usdc
       filter: {}
       query_root_fields: []
       subscription_root_fields: []
