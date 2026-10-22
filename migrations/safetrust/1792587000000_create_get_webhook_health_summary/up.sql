@@ -10,13 +10,14 @@ WHERE FALSE;
 COMMENT ON VIEW safetrust.webhook_health_summary
   IS 'Hasura return type for get_webhook_health_summary(); the view itself contains no rows';
 
-CREATE OR REPLACE FUNCTION safetrust.get_webhook_health_summary()
+CREATE OR REPLACE FUNCTION safetrust.get_webhook_health_summary(hasura_session JSONB DEFAULT '{}'::JSONB)
 RETURNS SETOF safetrust.webhook_health_summary
 LANGUAGE plpgsql
 STABLE
 AS $$
 DECLARE
   session_claims JSONB := COALESCE(
+    hasura_session,
     NULLIF(current_setting('hasura.user', TRUE), '')::JSONB,
     '{}'::JSONB
   );
@@ -66,5 +67,5 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION safetrust.get_webhook_health_summary()
+COMMENT ON FUNCTION safetrust.get_webhook_health_summary(JSONB)
   IS 'Admin health summary; non-admin results are restricted to their verified session tenant';
