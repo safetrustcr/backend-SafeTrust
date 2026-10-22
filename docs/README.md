@@ -18,6 +18,11 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Escrow Claims API](architecture/escrow-claims-api.md) | Request and response contract, error codes, idempotency and rate limit for claims on released escrows |
 | [Reservations API](architecture/reservations-api.md) | Lifecycle, allowed actions computation, read endpoints, and safe cancellation protocol |
 
+### 📜 Architecture Decision Records (ADRs)
+| Document | Description |
+|---|---|
+| [ADR-0001: ZK Eligibility Statement and Trust Model](adr/0001-zk-eligibility-statement-and-trust-model.md) | Predicate specification, trust boundaries, feasibility trade-offs, and verification key pinning for escrow admission |
+
 ### 🔐 Stellar & Escrow Flows
 | Document | Description |
 |---|---|

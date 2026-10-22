@@ -73,7 +73,9 @@ are intentionally git-ignored.
 
 - **`zk-verifier`** — retained. It performs a real UltraHonk verification with
   a pinned Barretenberg version and fails closed when the addon is unavailable.
-  The verification key can be pinned with `ZK_PROOF_OF_FUNDS_VK_SHA256`.
+  The verification key pin (`ZK_PROOF_OF_FUNDS_VK_SHA256`) is mandatory by
+  default (exempt only in explicit development or test environments) to prevent circuit
+  substitution attacks (see ADR-0001).
 - **`stellar-utils`** — retained. It is the authoritative wallet-address check
   used during auth; the JS regex is a degraded fallback only.
 - **`escrow-state-machine`** — retained. It prevents handlers from requesting
