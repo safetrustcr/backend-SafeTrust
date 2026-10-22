@@ -5,7 +5,8 @@ set -eo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${BUILD_DIR:-$SCRIPT_DIR/build}"
 HASURA_ENDPOINT="http://localhost:8080"
-HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
+# Required at runtime — never hardcode a secret in this script.
+HASURA_ADMIN_SECRET="${HASURA_ADMIN_SECRET:-}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # create_metadata_source
@@ -312,6 +313,11 @@ main() {
 
     if [ ${#tenants[@]} -eq 0 ]; then
         echo "Usage: ./deploy-tenant.sh tenant1 tenant2 ... [--admin-secret SECRET] [--endpoint URL]"
+        exit 1
+    fi
+
+    if [ -z "$HASURA_ADMIN_SECRET" ]; then
+        echo "❌ Error: HASURA_ADMIN_SECRET is required. Export it in the environment or pass --admin-secret." >&2
         exit 1
     fi
 
