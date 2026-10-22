@@ -5,24 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-# Let Compose parse .env so JSON quotes and spaces survive unchanged.
-# The same resolved values are used by Compose and the deployment commands.
-if [ -f .env ]; then
-  COMPOSE_ENV=$(docker compose config --environment)
-  while IFS= read -r ENV_ENTRY; do
-    if [[ "$ENV_ENTRY" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]]; then
-      export "$ENV_ENTRY"
-    fi
-  done <<< "$COMPOSE_ENV"
-  unset COMPOSE_ENV ENV_ENTRY
-fi
-
-HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
-HASURA_PORT="${HASURA_PORT:-8080}"
-POSTGRES_PORT="${POSTGRES_PORT:-5433}"
-WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
-HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
-
 RESET_DATABASE=false
 RESTART_CONTAINERS=false
 TENANTS=()
@@ -78,6 +60,30 @@ Example:
   bin/start --restart safetrust hotel_industry
 USAGE
   exit 0
+fi
+
+# Let Compose parse .env so JSON quotes and spaces survive unchanged.
+# The same resolved values are used by Compose and the deployment commands.
+if [ -f .env ]; then
+  COMPOSE_ENV=$(docker compose config --environment)
+  while IFS= read -r ENV_ENTRY; do
+    if [[ "$ENV_ENTRY" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]]; then
+      export "$ENV_ENTRY"
+    fi
+  done <<< "$COMPOSE_ENV"
+  unset COMPOSE_ENV ENV_ENTRY
+fi
+
+HASURA_ADMIN_SECRET="${HASURA_ADMIN_SECRET:-}"
+HASURA_PORT="${HASURA_PORT:-8080}"
+POSTGRES_PORT="${POSTGRES_PORT:-5433}"
+WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
+HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
+
+if [[ -z "$HASURA_ADMIN_SECRET" ]]; then
+  echo "❌ Error: HASURA_ADMIN_SECRET is required."
+  echo "   Set it in .env or export it before running bin/start."
+  exit 1
 fi
 
 TRACK_SAFETRUST_TIMINGS=false
@@ -308,4 +314,4 @@ echo "   PostgreSQL:       localhost:${POSTGRES_PORT}"
 echo "   Webhook:          http://localhost:${WEBHOOK_PORT}"
 echo ""
 echo "👉 To open Hasura console:"
-echo "   hasura console --endpoint ${HASURA_ENDPOINT} --admin-secret $HASURA_ADMIN_SECRET"
+echo "   hasura console --endpoint ${HASURA_ENDPOINT} --admin-secret \"\$HASURA_ADMIN_SECRET\""
