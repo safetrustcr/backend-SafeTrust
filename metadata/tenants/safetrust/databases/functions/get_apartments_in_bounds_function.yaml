@@ -32,8 +32,8 @@ comment: |
   Exposes a map viewport filter for apartment listings. The function is stable and
   uses a partial GIST-backed index on coordinates for efficient bounding box scans.
 permissions:
-  - role: anonymous
+  - role: guest
     privilege: EXECUTE
-  - role: user
+  - role: host
     privilege: EXECUTE
 exposed_as: query
