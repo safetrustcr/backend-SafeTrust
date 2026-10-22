@@ -18,6 +18,19 @@ function createZkError(
   return error;
 }
 
+let nativeVerifier: typeof NativeVerifier | null = null;
+let nativeLoadError: unknown = null;
+
+try {
+  nativeVerifier = require('../../../crates/zk-verifier');
+} catch (error) {
+  nativeLoadError = error;
+  console.warn(
+    '[zk-verifier] native addon unavailable; ZK proof verification will fail closed:',
+    error instanceof Error ? error.message : error
+  );
+}
+
 /**
  * Verify a proof-of-funds proof with the Rust UltraHonk addon.
  * ZK is opt-in and the native addon is loaded only when explicitly enabled.
@@ -28,23 +41,11 @@ export function verifyProofOfFunds(
   thresholdStroops: string,
   balanceCommitmentHex: string
 ) {
-  if (process.env.ZK_ENABLED !== 'true') {
-    throw createZkError(
-      'ZK proof verification is disabled',
-      'ZK_FEATURE_DISABLED'
-    );
-  }
-
-  let nativeVerifier: typeof NativeVerifier;
-
-  try {
-    // Do not load the experimental native addon during normal application startup.
-    nativeVerifier = require('../../../crates/zk-verifier');
-  } catch (cause) {
+  if (!nativeVerifier) {
     throw createZkError(
       'ZK proof verifier is unavailable',
       'ZK_VERIFIER_UNAVAILABLE',
-      cause
+      nativeLoadError
     );
   }
 
@@ -55,9 +56,10 @@ export function verifyProofOfFunds(
   const expectedKeyHash = process.env.ZK_PROOF_OF_FUNDS_VK_SHA256;
   if (expectedKeyHash) {
     if (!/^[0-9a-fA-F]{64}$/.test(expectedKeyHash)) {
-      const error = new Error('ZK verification key hash is misconfigured') as ZkVerifierError;
-      error.code = 'ZK_VERIFIER_MISCONFIGURED';
-      throw error;
+      throw createZkError(
+        'ZK verification key hash is misconfigured',
+        'ZK_VERIFIER_MISCONFIGURED'
+      );
     }
 
     const normalizedKey = verificationKeyHex.replace(/^0x/, '');
@@ -77,4 +79,3 @@ export function verifyProofOfFunds(
     balanceCommitmentHex
   );
 }
-
