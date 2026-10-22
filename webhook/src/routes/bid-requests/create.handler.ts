@@ -76,7 +76,7 @@ export const createBidRequestHandler = async (
   req: AuthenticatedRequest & { body: CreateBidRequestPayload },
   res: Response
 ): Promise<Response> => {
-  const { uid } = req.user || {}
+  const uid = req.context?.uid || req.user?.uid
   const apartmentId = req.body?.apartmentId || req.body?.apartment_id
   const proposedPrice = req.body?.proposedPrice || req.body?.proposed_price
   const desiredMoveIn = req.body?.desiredMoveIn || req.body?.desired_move_in

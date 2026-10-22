@@ -330,13 +330,15 @@ flowchart TD
 <a id="deployment-commands--binstart-mapping"></a>
 ## 💻 Deployment Commands & bin/start Mapping
 
-Execute the following sequential commands during migration deployment:
+Execute the following sequential commands during migration deployment.
+Export `HASURA_ADMIN_SECRET` in your shell first; never paste a literal secret
+into a command or commit it.
 
 ```bash
 # Step 1 — Apply database migration
 hasura migrate apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
+  --admin-secret "$HASURA_ADMIN_SECRET" \
   --database-name safetrust \
   --version 1779300000001 \
   --type up
@@ -344,11 +346,11 @@ hasura migrate apply \
 # Step 2 — Reload Hasura metadata
 hasura metadata apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 # Step 3 — GraphQL smoke test
 curl -X POST http://localhost:8080/v1/graphql \
-  -H "x-hasura-admin-secret: myadminsecretkey" \
+  -H "x-hasura-admin-secret: $HASURA_ADMIN_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"query": "query { safetrust_reservations(limit: 1) { id } }"}'
 ```
@@ -390,7 +392,7 @@ Prior to executing the migration, capture a pre-migration metadata snapshot:
 # Step 0 — Export pre-migration metadata snapshot
 hasura metadata export \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 # Create snapshot backup (fail if metadata_backup already exists to avoid overwrite)
 if [ -e metadata_backup ]; then
@@ -406,7 +408,7 @@ cp -a metadata metadata_backup
 # Step 1 — Revert migration
 hasura migrate apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
+  --admin-secret "$HASURA_ADMIN_SECRET" \
   --database-name safetrust \
   --version 1779300000001 \
   --type down
@@ -418,7 +420,7 @@ cp -a metadata_backup metadata
 # Step 3 — Apply restored metadata
 hasura metadata apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 ```
 
 `down.sql` mirrors `up.sql` statement for statement: every table and function moves back with `SET SCHEMA public`, `search_path` is reset to `public`, and the now-empty `safetrust` schema is dropped. Because the down path operates purely on system catalog metadata, the rollback preserves all data intact.

@@ -5,11 +5,17 @@ function fn() {
   karate.configure("logPrettyRequest", true);
   karate.configure("logPrettyResponse", true);
 
+  // The test stack injects the admin secret; never hardcode it.
+  var adminSecret = java.lang.System.getenv('HASURA_ADMIN_SECRET');
+  if (!adminSecret) {
+    throw new Error('HASURA_ADMIN_SECRET is required to run Karate tests');
+  }
+
   // Basic configuration
   var endpoints = {
     baseUrl: karate.properties['baseUrl'] || 'http://graphql-engine-test:8080/v1/graphql',
     webhookUrl: karate.properties['webhookUrl'] || 'http://webhook:3001',
-    adminSecret: 'myadminsecretkey',
+    adminSecret: adminSecret,
   };
 
 
