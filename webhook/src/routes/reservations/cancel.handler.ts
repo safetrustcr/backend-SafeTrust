@@ -17,7 +17,7 @@ export const cancelReservationHandler = async (
   req: AuthenticatedRequest,
   res: Response<CancelReservationResponse>
 ): Promise<Response<CancelReservationResponse>> => {
-  const userId = req.user?.uid
+  const userId = req.context?.uid || req.user?.uid
   if (!userId) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
