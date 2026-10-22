@@ -164,6 +164,7 @@ describe('reconciliation.service', () => {
         enabled: false,
         drift: 0,
         corrected: 0,
+        unresolved: 0,
         errors: [],
       })
     })
@@ -178,9 +179,11 @@ describe('reconciliation.service', () => {
         enabled: true,
         drift: 0,
         corrected: 0,
+        unresolved: 0,
         errors: [],
       })
     })
+
 
     it('captures chunk error when soroban native addon is unavailable', async () => {
       process.env.SOROBAN_VALIDATION_ENABLED = 'true'
@@ -199,8 +202,65 @@ describe('reconciliation.service', () => {
       expect(result.errors[0]).toContain('soroban_chunk_1: soroban-reconciler native addon is not available')
     })
 
-    it('detects critical discrepancies without auto-correcting database state', async () => {
+    it('validates drift and preserves database state when auto-correction is disabled by default', async () => {
       process.env.SOROBAN_VALIDATION_ENABLED = 'true'
+      delete process.env.SOROBAN_AUTO_CORRECT_ENABLED
+
+      const mockQueryEscrowStateBatch = jest.fn().mockReturnValue(
+        JSON.stringify({
+          status: 'COMPLETED',
+          balance: 0,
+        })
+      )
+
+      const mockReconcileBatch = jest.fn().mockReturnValue(
+        JSON.stringify({
+          in_sync: false,
+          discrepancies: [
+            {
+              field: 'status',
+              severity: 'critical',
+              in_database: 'ACTIVE',
+              on_chain: 'COMPLETED',
+            },
+          ],
+        })
+      )
+
+      setSorobanReconcilerAddon({
+        queryEscrowStateBatch: mockQueryEscrowStateBatch,
+        reconcileBatch: mockReconcileBatch,
+      })
+
+      ;(db.query as jest.Mock).mockResolvedValueOnce({
+        rows: [
+          {
+            contract_id: 'c1',
+            status: 'ACTIVE',
+            balance: '10000000',
+            marker: 'm',
+            approver: 'a',
+          },
+        ],
+      })
+
+      const result = await validateSorobanDrift(['c1'], 'testnet')
+
+      expect(mockQueryEscrowStateBatch).toHaveBeenCalledWith('c1', 'testnet')
+      // Auto-correction is disabled by default — Hasura mutation is NEVER called
+      expect(hasuraRequest).not.toHaveBeenCalled()
+      expect(result).toEqual({
+        enabled: true,
+        drift: 1,
+        corrected: 0,
+        unresolved: 0,
+        errors: [],
+      })
+    })
+
+    it('validates drift and auto-corrects critical discrepancies when SOROBAN_AUTO_CORRECT_ENABLED is true', async () => {
+      process.env.SOROBAN_VALIDATION_ENABLED = 'true'
+      process.env.SOROBAN_AUTO_CORRECT_ENABLED = 'true'
 
       const mockQueryEscrowStateBatch = jest.fn().mockReturnValue(
         JSON.stringify({
@@ -244,14 +304,23 @@ describe('reconciliation.service', () => {
       const result = await validateSorobanDrift(['c1'], 'testnet')
 
       expect(mockQueryEscrowStateBatch).toHaveBeenCalledWith('c1', 'testnet')
-      expect(hasuraRequest).not.toHaveBeenCalled()
+      expect(hasuraRequest).toHaveBeenCalledWith(
+        expect.stringContaining('mutation CorrectDriftFromSoroban'),
+        {
+          contractId: 'c1',
+          status: 'COMPLETED',
+          balance: 0,
+        }
+      )
       expect(result).toEqual({
         enabled: true,
         drift: 1,
-        corrected: 0,
+        corrected: 1,
+        unresolved: 0,
         errors: [],
       })
     })
+
 
     it('does not auto-correct when discrepancy severity is non-critical', async () => {
       process.env.SOROBAN_VALIDATION_ENABLED = 'true'
@@ -309,26 +378,56 @@ describe('reconciliation.service', () => {
 
       expect(mockQuery).toHaveBeenCalledWith('c1', 'testnet')
       expect(mockReconcile).not.toHaveBeenCalled()
-      expect(result).toEqual({ drifted: 0, corrected: 0 })
+      expect(result).toEqual({ drifted: 0, corrected: 0, unresolved: 0 })
     })
 
-    it('handles per-contract errors gracefully without crashing the chunk', async () => {
+    it('handles per-contract errors gracefully without crashing the chunk and preserves DB value as unresolved', async () => {
       setSorobanReconcilerAddon({
         queryEscrowStateBatch: jest.fn().mockImplementation(() => {
-          throw new Error('RPC error')
+          throw new Error('RPC error: contract not found')
         }),
         reconcileBatch: jest.fn(),
       })
 
       const result = await runSorobanValidation(
         ['c1'],
-        { c1: { contract_id: 'c1' } },
+        { c1: { contract_id: 'c1', status: 'funded', balance: '100' } },
         'testnet'
       )
 
-      expect(result).toEqual({ drifted: 0, corrected: 0 })
+      expect(result).toEqual({ drifted: 0, corrected: 0, unresolved: 1 })
+      expect(hasuraRequest).not.toHaveBeenCalled()
+    })
+
+    it('never auto-corrects or mutates DB when adapter fails or getHealth alone is returned (AC 1 & 9)', async () => {
+      setSorobanReconcilerAddon({
+        queryEscrowStateBatch: jest.fn().mockImplementation(() => {
+          throw new Error(
+            'Missing contract data: getHealth confirms node reachability but does not establish contract state'
+          )
+        }),
+        reconcileBatch: jest.fn(),
+      })
+
+      const result = await runSorobanValidation(
+        ['CAZTM2P4QYFODK3Q242A5Q24P2BODU3RQQN4S3Q4Z4V6R7S8T9U0V1W2'],
+        {
+          CAZTM2P4QYFODK3Q242A5Q24P2BODU3RQQN4S3Q4Z4V6R7S8T9U0V1W2: {
+            contract_id: 'CAZTM2P4QYFODK3Q242A5Q24P2BODU3RQQN4S3Q4Z4V6R7S8T9U0V1W2',
+            status: 'funded',
+            balance: '100',
+          },
+        },
+        'testnet'
+      )
+
+      // Verifies getHealth alone NEVER triggers status, balance, or participant updates
+      expect(hasuraRequest).not.toHaveBeenCalled()
+      expect(result.corrected).toBe(0)
+      expect(result.unresolved).toBe(1)
     })
   })
+
 
   // ─── 4. detectStaleEscrows ─────────────────────────────────────────────────
   describe('detectStaleEscrows', () => {
@@ -417,6 +516,7 @@ describe('reconciliation.service', () => {
         sorobanEnabled: true,
         sorobanDrift: 1,
         sorobanCorrected: 1,
+        sorobanUnresolved: 0,
         durationMs: 250,
       })
       expect(response.message).toBeUndefined()
@@ -454,8 +554,10 @@ describe('reconciliation.service', () => {
         sorobanEnabled: false,
         sorobanDrift: 0,
         sorobanCorrected: 0,
+        sorobanUnresolved: 0,
         durationMs: 10,
       })
+
     })
 
     it('slices staleContractIds to at most 10 items', () => {
