@@ -1,5 +1,85 @@
 import { hasuraRequest } from '../services/hasura'
 import { query } from '../services/db'
+import type { Reservation } from '@safetrust/types'
+
+export interface CreateReservationInput {
+  apartmentId: string
+  guestId: string
+  checkInDate: string
+  checkOutDate: string
+  totalAmount: number
+  assetCode: string
+}
+
+interface ReservationGraphQLResult {
+  id: string
+  apartmentId: string
+  guestId: string
+  status: string
+  checkInDate: string
+  checkOutDate: string
+  totalAmount: number
+  assetCode: string
+  escrowId: string | null
+  createdAt: string
+  tenantId: string
+}
+
+export async function createReservation(
+  input: CreateReservationInput
+): Promise<Reservation | null> {
+  const mutation = `
+    mutation CreateReservation($object: safetrust_reservations_insert_input!) {
+      insert_safetrust_reservations_one(object: $object) {
+        id
+        apartmentId
+        guestId
+        status
+        checkInDate
+        checkOutDate
+        totalAmount
+        assetCode
+        escrowId
+        createdAt
+        tenantId
+      }
+    }
+  `
+
+  const data = await hasuraRequest<{
+    insert_safetrust_reservations_one: ReservationGraphQLResult | null
+  }>(mutation, {
+    object: {
+      apartmentId: input.apartmentId,
+      guestId: input.guestId,
+      checkInDate: input.checkInDate,
+      checkOutDate: input.checkOutDate,
+      totalAmount: input.totalAmount,
+      assetCode: input.assetCode,
+      status: 'pending',
+      tenantId: 'safetrust',
+    },
+  })
+
+  const reservation = data?.insert_safetrust_reservations_one
+  if (!reservation) {
+    return null
+  }
+
+  return {
+    id: reservation.id,
+    apartment_id: reservation.apartmentId,
+    guest_id: reservation.guestId,
+    status: reservation.status,
+    check_in_date: reservation.checkInDate,
+    check_out_date: reservation.checkOutDate,
+    total_amount: reservation.totalAmount,
+    asset_code: reservation.assetCode,
+    escrow_id: reservation.escrowId,
+    created_at: reservation.createdAt,
+    tenant_id: reservation.tenantId,
+  }
+}
 
 export interface ReservationRow {
   id: string

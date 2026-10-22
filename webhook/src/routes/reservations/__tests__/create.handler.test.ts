@@ -1,12 +1,14 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { createReservationHandler } from '../create.handler'
-import { hasuraRequest } from '../../../services/hasura'
+import { createReservation } from '../../../repositories/reservation.repository'
 import type { CreateReservationPayload } from '@safetrust/types'
 
-jest.mock('../../../services/hasura', () => ({
-  hasuraRequest: jest.fn(),
+jest.mock('../../../repositories/reservation.repository', () => ({
+  createReservation: jest.fn(),
 }))
+
+const mockedCreateReservation = createReservation as jest.MockedFunction<typeof createReservation>
 
 function makeResponse(): Response {
   const res: Partial<Response> = {}
@@ -85,7 +87,7 @@ describe('reservations/create.handler', () => {
     })
   })
 
-  it('creates reservation successfully via Hasura', async () => {
+  it('creates reservation successfully via the repository', async () => {
     const mockReservation = {
       id: 'res-1',
       apartment_id: 'apt-1',
@@ -98,9 +100,7 @@ describe('reservations/create.handler', () => {
       created_at: '2026-08-24T00:00:00Z',
     }
 
-    ;(hasuraRequest as jest.Mock).mockResolvedValueOnce({
-      insert_reservations_one: mockReservation,
-    })
+    mockedCreateReservation.mockResolvedValueOnce(mockReservation)
 
     const req = {
       user: { uid: 'guest-123' },
@@ -115,12 +115,20 @@ describe('reservations/create.handler', () => {
 
     await createReservationHandler(req, res)
 
+    expect(mockedCreateReservation).toHaveBeenCalledWith({
+      apartmentId: 'apt-1',
+      guestId: 'guest-123',
+      checkInDate: '2026-09-01',
+      checkOutDate: '2026-09-05',
+      totalAmount: 500,
+      assetCode: 'USDC',
+    })
     expect(res.status).toHaveBeenCalledWith(201)
     expect(res.json).toHaveBeenCalledWith({ reservation: mockReservation })
   })
 
-  it('returns 500 when Hasura request fails', async () => {
-    ;(hasuraRequest as jest.Mock).mockRejectedValueOnce(new Error('Hasura connection failed'))
+  it('returns 500 when repository request fails', async () => {
+    mockedCreateReservation.mockRejectedValueOnce(new Error('Hasura connection failed'))
 
     const req = {
       user: { uid: 'guest-123' },
