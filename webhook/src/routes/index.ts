@@ -3,11 +3,7 @@ import crypto from 'crypto'
 
 import verifyTrustlessWorkSignature from '../middleware/trustlesswork-signature.middleware'
 import { authMiddleware } from '../middleware/auth.middleware'
-
-// Compile-time SafeTrust escrow state machine (Neon native addon).
-const { getTransitionTable } = require('../../../crates/escrow-state-machine') as {
-  getTransitionTable: () => string
-}
+import healthRoutes from './health.route'
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 import initializeRoute from './escrows/initialize.route'
@@ -52,10 +48,8 @@ function verifyInternalSecret(req: Request, res: Response, next: NextFunction) {
   next()
 }
 
-// ── 1. Health check (public) ──────────────────────────────────────────────────
-router.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({ status: 'ok' })
-})
+// ── 1. Dependency readiness check (public) ────────────────────────────────────
+router.use(healthRoutes)
 
 // ── 2. Escrows / x402 booking entrypoint & TrustlessWork callbacks ──────────────
 router.use(initializeRoute)

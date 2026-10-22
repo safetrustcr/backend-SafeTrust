@@ -89,7 +89,7 @@ services:
       graphql-engine:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${WEBHOOK_PORT:-3000}/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${WEBHOOK_PORT:-3000}/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -81,6 +81,13 @@ HASURA_EVENT_SECRET=your_event_secret
 >
 > ⚠️ `HASURA_ADMIN_SECRET` is required and has no default. `bin/start`, the webhook, and the metadata scripts fail closed when it is missing. In CI and production, inject it from the GitHub Actions secret store or your cloud secret manager instead of `.env`.
 
+The webhook exposes `/health/live` for process liveness and `/health/ready`
+for Firebase and PostgreSQL readiness. PostgreSQL connection acquisition and
+query timeouts are configurable with `DB_CONNECTION_TIMEOUT_MS` (default
+`5000`) and `DB_QUERY_TIMEOUT_MS` (default `30000`). Native Rust modules are
+loaded only when their corresponding operations run; they do not gate liveness
+or readiness.
+
 ### 2. 🔮 Start everything
 
 ```bash

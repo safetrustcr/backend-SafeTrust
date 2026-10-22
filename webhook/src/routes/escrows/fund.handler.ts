@@ -16,12 +16,6 @@ import {
 } from '../../services/hotel-conversation-notify';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
-// Compile-time SafeTrust escrow state machine (Neon native addon).
-// Replaces hardcoded status arrays with the authoritative transition table.
-const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
-  getValidPriorStates: (to: string, event: string) => string
-}
-
 const EVENT_TYPE = EscrowEventType.Funded;
 
 export const fundEscrowHandler = async (
@@ -57,6 +51,9 @@ export const fundEscrowHandler = async (
     }
 
     // 3 — Update safetrust.trustless_work_escrows
+    const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
+      getValidPriorStates: (to: string, event: string) => string
+    }
     const validStates: string[] = JSON.parse(
       getValidPriorStates(EscrowStatus.Funded, EscrowEventType.Funded) as string
     );

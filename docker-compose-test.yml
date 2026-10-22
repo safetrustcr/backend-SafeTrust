@@ -94,7 +94,7 @@ services:
       postgres_test:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health/live"]
       interval: 5s
       timeout: 5s
       retries: 10
