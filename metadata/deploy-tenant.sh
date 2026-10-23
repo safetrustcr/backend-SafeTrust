@@ -257,6 +257,13 @@ process_metadata_functions() {
         echo "ℹ️  All functions already tracked for $tenant_name"
     fi
 
+    # Re-fetch metadata so the permissions idempotency diff uses the post-tracking state.
+    # (existing_metadata was fetched before pg_track_function calls, so it may be stale.)
+    existing_metadata=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
+        -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+        -H "Content-Type: application/json" \
+        -d '{"type":"export_metadata","args":{}}') || return 1
+
     # Track function permissions
     local desired_perms
     desired_perms=$(echo "$raw_functions_json" | jq --arg source "$tenant_name" \
@@ -273,10 +280,12 @@ process_metadata_functions() {
             local perm_payload
             perm_payload=$(jq -cn --argjson perms "$perms_to_create" \
                 '{type:"bulk", args:($perms | map({type:"pg_create_function_permission", args:.}))}')
-            curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+            local perm_response
+            perm_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
                 -H "X-Hasura-Admin-Secret: ${admin_secret}" \
                 -H "Content-Type: application/json" \
-                -d "$perm_payload" >/dev/null || true
+                -d "$perm_payload")
+            echo "[perm-response] $perm_response" >&2
             echo "✅ Function permissions updated for $tenant_name"
         fi
     fi

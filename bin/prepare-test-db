@@ -23,49 +23,68 @@ for tenant in safetrust hotel_industry; do
 done
 metadata/setup-tenant.sh safetrust hotel_industry --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
 
-echo "[migrate-test] Ensuring analytics functions and permissions are tracked..."
-track_funcs_payload=$(jq -cn '{
-  type: "bulk",
-  args: [
-    {
-      type: "pg_track_function",
-      args: {
-        source: "safetrust",
-        function: { schema: "safetrust", name: "get_escrow_analytics_by_day" },
-        configuration: { custom_name: "getEscrowAnalyticsByDay", exposed_as: "query" }
-      }
-    },
-    {
-      type: "pg_create_function_permission",
-      args: {
-        source: "safetrust",
-        function: { schema: "safetrust", name: "get_escrow_analytics_by_day" },
-        role: "host"
-      }
-    },
-    {
-      type: "pg_track_function",
-      args: {
-        source: "safetrust",
-        function: { schema: "safetrust", name: "get_escrow_status_summary" },
-        configuration: { exposed_as: "query" }
-      }
-    },
-    {
-      type: "pg_create_function_permission",
-      args: {
-        source: "safetrust",
-        function: { schema: "safetrust", name: "get_escrow_status_summary" },
-        role: "host"
-      }
-    }
-  ]
-}')
+echo "[migrate-test] Ensuring analytics functions and permissions are tracked (idempotent)..."
 
-curl -sS -X POST "$ENDPOINT/v1/metadata" \
-  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
-  -H 'Content-Type: application/json' \
-  -d "$track_funcs_payload" >/dev/null || true
+# Helper: call Hasura metadata API, ignore "already exists" / "already tracked" errors,
+# but surface any other failure to stderr.
+hasura_meta_call() {
+  local desc="$1"
+  local payload="$2"
+  local resp
+  resp=$(curl -sS -X POST "$ENDPOINT/v1/metadata" \
+    -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+    -H 'Content-Type: application/json' \
+    -d "$payload")
+  local err
+  err=$(echo "$resp" | jq -r '.error // ""' 2>/dev/null || true)
+  if [ -n "$err" ] && \
+     ! echo "$err" | grep -qi "already exists" && \
+     ! echo "$err" | grep -qi "already tracked"; then
+    echo "[migrate-test] WARNING: $desc: $resp" >&2
+  else
+    echo "[migrate-test] OK: $desc"
+  fi
+}
+
+# 1. Track get_escrow_analytics_by_day (idempotent — ignored if already tracked)
+hasura_meta_call "track get_escrow_analytics_by_day" "$(jq -cn '{
+  type: "pg_track_function",
+  args: {
+    source: "safetrust",
+    function: { schema: "safetrust", name: "get_escrow_analytics_by_day" },
+    configuration: { custom_name: "getEscrowAnalyticsByDay", exposed_as: "query" }
+  }
+}')"
+
+# 2. Grant host permission on get_escrow_analytics_by_day (idempotent)
+hasura_meta_call "grant host perm on get_escrow_analytics_by_day" "$(jq -cn '{
+  type: "pg_create_function_permission",
+  args: {
+    source: "safetrust",
+    function: { schema: "safetrust", name: "get_escrow_analytics_by_day" },
+    role: "host"
+  }
+}')"
+
+# 3. Track get_escrow_status_summary (idempotent — ignored if already tracked)
+hasura_meta_call "track get_escrow_status_summary" "$(jq -cn '{
+  type: "pg_track_function",
+  args: {
+    source: "safetrust",
+    function: { schema: "safetrust", name: "get_escrow_status_summary" },
+    configuration: { exposed_as: "query" }
+  }
+}')"
+
+# 4. Grant host permission on get_escrow_status_summary (idempotent)
+hasura_meta_call "grant host perm on get_escrow_status_summary" "$(jq -cn '{
+  type: "pg_create_function_permission",
+  args: {
+    source: "safetrust",
+    function: { schema: "safetrust", name: "get_escrow_status_summary" },
+    role: "host"
+  }
+}')"
 
 echo "[migrate-test] Reloading Hasura metadata cache..."
 curl -fsS -X POST "$ENDPOINT/v1/metadata" \
