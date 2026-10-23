@@ -8,7 +8,7 @@ Background:
     * url baseUrl
     * header x-hasura-role = 'host'
     * eval db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id LIKE 'ana01-%'")
-    * eval db.execute("INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, payload, processed, created_at, tenant_id) VALUES ('ana01-c1', 'escrow.created', '{}', true, '2001-01-02 23:30+00', 'safetrust'), ('ana01-c1', 'escrow.created', '{}', false, '2001-01-02 10:00+00', 'safetrust'), ('ana01-c2', 'escrow.funded', '{}', true, '2001-01-03 00:10+00', 'safetrust')")
+    * eval db.execute("INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, event_identity, payload, processed, created_at, tenant_id) VALUES ('ana01-c1', 'escrow.created', 'ana01-ev1', '{}', true, '2001-01-02 23:30+00', 'safetrust'), ('ana01-c1', 'escrow.created', 'ana01-ev2', '{}', false, '2001-01-02 10:00+00', 'safetrust'), ('ana01-c2', 'escrow.funded', 'ana01-ev3', '{}', true, '2001-01-03 00:10+00', 'safetrust')")
     * text analyticsQuery =
     """
     query GetEscrowAnalytics($start_date: date!, $end_date: date!, $tenant_id: String!) {

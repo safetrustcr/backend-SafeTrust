@@ -8,10 +8,11 @@ DELETE FROM safetrust.trustless_work_escrows WHERE contract_id LIKE 'test-ana-%'
 -- Duplicate webhook event delivery for the same contract_id on 2026-10-12
 -- Delivery 1: Original successfully processed event
 INSERT INTO safetrust.trustless_work_webhook_events (
-  contract_id, event_type, payload, processed, processed_at, created_at, tenant_id
+  contract_id, event_type, event_identity, payload, processed, processed_at, created_at, tenant_id
 ) VALUES (
   'test-ana-dup-001',
   'escrow.funded',
+  'test-ana-dup-001-del1',
   '{"contract_id": "test-ana-dup-001", "delivery": 1}',
   true,
   '2026-10-12 10:00:00+00',
@@ -21,10 +22,11 @@ INSERT INTO safetrust.trustless_work_webhook_events (
 
 -- Delivery 2: Duplicate delivery (e.g. retry from network glitch, processed = false)
 INSERT INTO safetrust.trustless_work_webhook_events (
-  contract_id, event_type, payload, processed, processed_at, created_at, tenant_id
+  contract_id, event_type, event_identity, payload, processed, processed_at, created_at, tenant_id
 ) VALUES (
   'test-ana-dup-001',
   'escrow.funded',
+  'test-ana-dup-001-del2',
   '{"contract_id": "test-ana-dup-001", "delivery": 2}',
   false,
   NULL,

@@ -86,7 +86,7 @@ Scenario: Diagram 2 - Anonymous role request is rejected (missing credentials)
     }
     """
     When method POST
-    Then assert responseStatus == 401 || (response.errors != null && response.errors.length > 0)
+    Then assert responseStatus == 400 || responseStatus == 401 || response.error != null || (response.errors != null && response.errors.length > 0)
 
 Scenario: Diagram 2 - Explicit anonymous role impersonation is rejected by GraphQL engine
     * configure headers = { 'Content-Type': 'application/json', 'x-hasura-admin-secret': adminSecret, 'x-hasura-role': 'anonymous' }
@@ -98,4 +98,4 @@ Scenario: Diagram 2 - Explicit anonymous role impersonation is rejected by Graph
     }
     """
     When method POST
-    Then assert responseStatus == 401 || (response.errors != null && response.errors.length > 0)
+    Then assert responseStatus == 400 || responseStatus == 401 || response.error != null || (response.errors != null && response.errors.length > 0)

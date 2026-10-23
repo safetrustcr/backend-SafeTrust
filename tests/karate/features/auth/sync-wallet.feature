@@ -28,18 +28,28 @@ Feature: POST /api/auth/sync-wallet
     And match rows[0].chain_type == 'ETH'
     And match rows[0].is_primary == '#? _ == "true" || _ == "t" || _ == true'
 
-  Scenario: Upsert same address updates user_id and is_primary
-    # Pre-seed the address under tenant-456, then reassign it to testUid via the endpoint
+  Scenario: Upsert same address for same user updates is_primary
+    * db.execute("INSERT INTO safetrust.user_wallets (user_id, wallet_address, chain_type, is_primary) VALUES ('" + testUid + "', '" + ethAddress + "', 'ETH', false)")
+    Given path '/api/auth/sync-wallet'
+    And header Authorization = 'Bearer ' + validToken
+    And header x-test-uid = testUid
+    And request { wallet_address: '#(ethAddress)', chain_type: 'ETH', is_primary: true }
+    When method POST
+    Then status 200
+    And match response.success == true
+    * def rows = db.query("SELECT * FROM safetrust.user_wallets WHERE wallet_address = '" + ethAddress + "'")
+    And match rows[0].user_id == testUid
+    And match rows[0].is_primary == '#? _ == "true" || _ == "t" || _ == true'
+
+  Scenario: Registering wallet owned by another user returns 409
     * db.execute("INSERT INTO safetrust.user_wallets (user_id, wallet_address, chain_type, is_primary) VALUES ('tenant-456', '" + ethAddress + "', 'ETH', false)")
     Given path '/api/auth/sync-wallet'
     And header Authorization = 'Bearer ' + validToken
     And header x-test-uid = testUid
     And request { wallet_address: '#(ethAddress)', chain_type: 'ETH', is_primary: false }
     When method POST
-    Then status 200
-    And match response.success == true
-    * def rows = db.query("SELECT * FROM safetrust.user_wallets WHERE wallet_address = '" + ethAddress + "'")
-    And match rows[0].user_id == testUid
+    Then status 409
+    And match response.error == 'WALLET_ALREADY_REGISTERED'
 
   Scenario: Missing wallet_address → 400
     Given path '/api/auth/sync-wallet'
