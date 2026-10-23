@@ -160,6 +160,10 @@ async function runRustPath(addon: any, baseUrl: string, chunks: string[][], conc
     5000
   )
   const results: ChunkSyncResult[] = JSON.parse(json)
+  const failed = results.filter((r) => r.error !== null)
+  if (failed.length > 0) {
+    throw new Error(`Rust path: ${failed.length} chunk(s) failed: ${failed[0].error}`)
+  }
   const fetched = results.reduce((sum, r) => sum + r.fetched, 0)
   return { durationMs: performance.now() - start, fetched }
 }
