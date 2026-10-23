@@ -692,3 +692,48 @@ export async function findStaleEscrows(staleDays = 7): Promise<string[]> {
 
   return rows.map((r) => r.contract_id)
 }
+
+// ─── Durable Retry Helpers ───────────────────────────────────────────────────
+
+/**
+ * Calculates exponential backoff bounded by maxMs.
+ * Formula: min(baseMs * 2^(attemptCount - 1), maxMs)
+ */
+export function calculateRetryBackoff(
+  attemptCount: number,
+  baseMs = 1000,
+  maxMs = 300_000
+): number {
+  if (attemptCount <= 0) return 0
+  const exp = Math.min(attemptCount - 1, 30)
+  const delay = baseMs * Math.pow(2, exp)
+  return Math.min(delay, maxMs)
+}
+
+/**
+ * Fetches pending confirmation retries that are scheduled for execution.
+ */
+export async function fetchPendingConfirmationRetries(limit = 50): Promise<Array<{
+  id: string
+  tx_hash: string
+  escrow_id: string
+  escrow_action: string
+  network: string
+  submission_path: string
+  attempt_count: number
+  max_attempts: number
+  next_retry_at: string
+  last_error: string | null
+}>> {
+  const { rows } = await db.query<any>(
+    `SELECT id, tx_hash, escrow_id, escrow_action, network, submission_path,
+            attempt_count, max_attempts, next_retry_at, last_error
+       FROM safetrust.escrow_confirmation_retries
+      WHERE status = 'retrying'
+        AND next_retry_at <= NOW()
+      ORDER BY next_retry_at ASC
+      LIMIT $1`,
+    [limit]
+  )
+  return rows
+}
