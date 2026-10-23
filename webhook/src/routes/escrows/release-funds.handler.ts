@@ -1,20 +1,21 @@
 import { Request, Response } from 'express';
 import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
 import { ReleaseFundsPayload } from '@safetrust/types';
+import { processWebhookEvent } from '../../repositories/webhook-event.repository';
 import {
-  logAndCheckWebhookEvent,
-  markWebhookEventProcessed,
-} from '../../repositories/webhook-event.repository';
-import {
-  releaseFunds,
+  releaseFundsInTransaction,
 } from '../../repositories/escrow.repository';
 import {
-  mirrorReservationStatus,
+  mirrorReservationStatusInTransaction,
 } from '../../repositories/reservation.repository';
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
+
+const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
+  getValidPriorStates: (to: string, event: string) => string
+}
 
 const EVENT_TYPE = EscrowEventType.FundsReleased;
 
@@ -31,20 +32,26 @@ export const releaseFundsHandler = async (
   }
 
   try {
-    // 1 — Idempotency check
-    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    // 1 — Claim the event and apply database state changes atomically
+    const { isDuplicate, eventId, result: updated } = await processWebhookEvent(
       contractId,
       EVENT_TYPE,
-      req.body as unknown as Record<string, unknown>
+      req.body as unknown as Record<string, unknown>,
+      async (client) => {
+        const validStates: string[] = JSON.parse(
+          getValidPriorStates(EscrowStatus.Completed, EscrowEventType.FundsReleased) as string
+        );
+        const escrow = await releaseFundsInTransaction(client, contractId, validStates)
+        if (escrow) {
+          await mirrorReservationStatusInTransaction(client, escrow.id, 'completed')
+        }
+        return escrow
+      }
     );
 
     if (isDuplicate) {
-      await markWebhookEventProcessed(eventId);
       return duplicate(res, eventId);
     }
-
-    // 2 — Update trustless_work_escrows
-    const updated = await releaseFunds(contractId);
 
     if (!updated) {
       return notFound(res, {
@@ -54,17 +61,12 @@ export const releaseFundsHandler = async (
 
     const escrowId = updated.id;
 
-    // 3 — Mirror status to safetrust.reservations
-    await mirrorReservationStatus(escrowId, 'completed');
-
-    // 4 — Notify hotel conversation (best-effort, never fail the response)
+    // 2 — Notify hotel conversation after the state transaction commits
     await notifyHotelEscrowConversation({
       contractId,
       eventType: 'escrow_completed',
       body: 'SafeTrust: Funds have been released. Thank you for booking with us.',
     });
-
-    await markWebhookEventProcessed(eventId);
 
     console.log(`[escrow/release-funds] ✅ Funds released — contractId: ${contractId}`);
     return ok(res);

@@ -1,5 +1,6 @@
 import { hasuraRequest } from '../services/hasura'
 import { query } from '../services/db'
+import { PoolClient } from 'pg'
 
 export interface ReservationRow {
   id: string
@@ -63,6 +64,19 @@ export async function mirrorReservationStatus(
   `
 
   await hasuraRequest(mutation, { escrowId, status })
+}
+
+export async function mirrorReservationStatusInTransaction(
+  client: PoolClient,
+  escrowId: string,
+  status: string
+): Promise<void> {
+  await client.query(
+    `UPDATE safetrust.reservations
+     SET status = $1, updated_at = NOW()
+     WHERE escrow_id = $2 AND tenant_id = 'safetrust'`,
+    [status, escrowId]
+  )
 }
 
 export async function findReservationsByParty(
