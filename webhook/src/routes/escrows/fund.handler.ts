@@ -9,6 +9,7 @@ import {
   mirrorReservationStatusInTransaction,
 } from '../../repositories/reservation.repository';
 import {
+  DEFAULT_NOTIFICATION_TIMEOUT_MS,
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
@@ -75,13 +76,16 @@ export const fundEscrowHandler = async (
       });
     }
 
-    const escrowId = updated.id;
-
-    // 3 — Notify hotel conversation after the state transaction commits
-    await notifyHotelEscrowConversation({
+    // 3 — Notify hotel conversation after the state transaction commits.
+    // Fire-and-forget: the shared service is bounded by an explicit budget and
+    // never throws, so messaging can never delay or fail the lifecycle response.
+    void notifyHotelEscrowConversation({
       contractId,
       eventType: 'escrow_funded',
       body: 'SafeTrust: Your deposit has been confirmed on the Stellar network. Your booking is secured.',
+      timeoutMs: DEFAULT_NOTIFICATION_TIMEOUT_MS,
+    }).catch((error) => {
+      console.error('[escrow/fund] ❌ notification dispatch error:', error);
     });
 
     console.log(`[escrow/fund] ✅ Escrow funded — contractId: ${contractId}`);

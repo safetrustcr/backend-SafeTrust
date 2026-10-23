@@ -9,6 +9,7 @@ import {
   mirrorReservationStatusInTransaction,
 } from '../../repositories/reservation.repository';
 import {
+  DEFAULT_NOTIFICATION_TIMEOUT_MS,
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
@@ -59,13 +60,16 @@ export const releaseFundsHandler = async (
       });
     }
 
-    const escrowId = updated.id;
-
-    // 2 — Notify hotel conversation after the state transaction commits
-    await notifyHotelEscrowConversation({
+    // 2 — Notify hotel conversation after the state transaction commits.
+    // Fire-and-forget: the shared service is bounded by an explicit budget and
+    // never throws, so messaging can never delay or fail the lifecycle response.
+    void notifyHotelEscrowConversation({
       contractId,
       eventType: 'escrow_completed',
       body: 'SafeTrust: Funds have been released. Thank you for booking with us.',
+      timeoutMs: DEFAULT_NOTIFICATION_TIMEOUT_MS,
+    }).catch((error) => {
+      console.error('[escrow/release-funds] ❌ notification dispatch error:', error);
     });
 
     console.log(`[escrow/release-funds] ✅ Funds released — contractId: ${contractId}`);
