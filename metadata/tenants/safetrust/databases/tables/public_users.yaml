@@ -1,6 +1,18 @@
 table:
   name: users
   schema: safetrust
+# Issue #666: tables outside the `public` schema are exposed by Hasura as
+# `<schema>_<table>` unless a custom name is set. Without this block the
+# 1779300000001 schema move turned `users` into `safetrust_users` (and
+# `users_by_pk`, `insert_users`, ... into `safetrust_users_by_pk`, ...), which
+# is exactly "the users operations are gone" for every client still using the
+# original names. `custom_name` restores the original contract (same pattern
+# as public_roles.yaml).
+configuration:
+  column_config: {}
+  custom_column_names: {}
+  custom_name: users
+  custom_root_fields: {}
 select_permissions:
   - role: guest
     permission:
