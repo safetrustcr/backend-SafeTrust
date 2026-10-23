@@ -1,0 +1,15 @@
+{
+  "name": "webhook-verifier",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.node",
+  "types": "index.d.ts",
+  "files": [
+    "index.node",
+    "index.d.ts"
+  ],
+  "scripts": {
+    "build": "cargo build --release -p webhook-verifier",
+    "postbuild": "node ../scripts/copy-native.js --crate=webhook-verifier"
+  }
+}

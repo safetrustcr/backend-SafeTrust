@@ -3,7 +3,8 @@ Feature: POST /api/escrows/initialize — TrustlessWork initialize callback
   Background:
     * url webhookUrl
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
-    * db.execute("DELETE FROM public.trustless_work_escrows WHERE contract_id = 'STELLAR_CONTRACT_TEST_001'")
+    * db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id = 'STELLAR_CONTRACT_TEST_001'")
+    * db.execute("DELETE FROM safetrust.trustless_work_escrows WHERE contract_id = 'STELLAR_CONTRACT_TEST_001'")
 
   Scenario: Valid initialize callback inserts new escrow with status created
     * def body =
@@ -25,8 +26,8 @@ Feature: POST /api/escrows/initialize — TrustlessWork initialize callback
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
-    * def rows = db.query("SELECT status, amount, escrow_type, asset_code FROM public.trustless_work_escrows WHERE contract_id = 'STELLAR_CONTRACT_TEST_001'")
+    And match response.success == true
+    * def rows = db.query("SELECT status, amount, escrow_type, asset_code FROM safetrust.trustless_work_escrows WHERE contract_id = 'STELLAR_CONTRACT_TEST_001'")
     And match rows[0].status == 'created'
     And assert rows[0].amount == '2500' || rows[0].amount == '2500.0000000'
     And match rows[0].escrow_type == 'single_release'

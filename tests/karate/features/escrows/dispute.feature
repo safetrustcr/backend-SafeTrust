@@ -14,8 +14,8 @@ Feature: POST /api/escrows/dispute — TrustlessWork dispute callback
     And request bodyStr
     When method POST
     Then status 200
-    And match response.received == true
-    * def rows = db.query("SELECT status FROM public.trustless_work_escrows WHERE contract_id = 'escrow-funded-001'")
+    And match response.success == true
+    * def rows = db.query("SELECT status FROM safetrust.trustless_work_escrows WHERE contract_id = 'escrow-funded-001'")
     And match rows[0].status == 'disputed'
 
   Scenario: Missing contractId returns 400

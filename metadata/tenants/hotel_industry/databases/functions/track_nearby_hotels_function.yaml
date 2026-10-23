@@ -1,7 +1,7 @@
 - name: find_nearby_hotels
-  schema: public
+  schema: hotel_industry
   definition: |
-    CREATE OR REPLACE FUNCTION public.find_nearby_hotels(
+    CREATE OR REPLACE FUNCTION hotel_industry.find_nearby_hotels(
         search_location POINT,
         radius_meters FLOAT,
         location_area VARCHAR DEFAULT NULL

@@ -9,4 +9,5 @@ INSERT INTO hotel_industry.escrow_transactions (
   (NULL, 'contract-1', 'PENDING',   '0xAliceSignerAddress1234', 'RENTAL', 'ESCROW_INIT',    200),
   (NULL, 'contract-2', 'CONFIRMED', '0xDianaSigner9876',        'RENTAL', 'ESCROW_CONFIRM', 200),
   (NULL, 'contract-3', 'FAILED',    '0xBobSignerFail',          'RENTAL', 'ESCROW_FAIL',    500),
-  (NULL, 'contract-4', 'PENDING',   '0xWitnessSignerPending',   'RENTAL', 'ESCROW_INIT',    102);
+  (NULL, 'contract-4', 'PENDING',   '0xWitnessSignerPending',   'RENTAL', 'ESCROW_INIT',    102)
+ON CONFLICT DO NOTHING;
