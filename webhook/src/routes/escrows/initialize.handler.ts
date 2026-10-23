@@ -7,11 +7,13 @@ import {
 } from '../../repositories/webhook-event.repository';
 import {
   createEscrow,
+  getEscrowByContractId,
 } from '../../repositories/escrow.repository';
 import {
   linkEscrowToReservation,
 } from '../../repositories/reservation.repository';
 import { verifyProofOfFunds } from '../../lib/zk-verifier';
+import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
 const EVENT_TYPE = EscrowEventType.Initialized;
@@ -160,19 +162,27 @@ export const initializeEscrowHandler = async (
 
   try {
     // 4 — Idempotency check
-    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
       contract_id,
       EVENT_TYPE,
       req.body as unknown as Record<string, unknown>
     );
 
-    if (isDuplicate) {
+    // A duplicate whose earlier delivery failed part-way (processed = false)
+    // is retried instead of acknowledged.
+    if (isDuplicate && processed !== false) {
       await markWebhookEventProcessed(eventId);
       return duplicate(res, eventId);
     }
 
-    // 5 — Persist to safetrust.trustless_work_escrows via repository
-    const escrow = await createEscrow({
+    // Signed server-to-server callback: no user session, so the escrow belongs
+    // to the configured platform tenant.
+    const tenantId = getPlatformTenantId();
+
+    // 5 — Persist to safetrust.trustless_work_escrows via repository.
+    // A retry reuses the escrow row an earlier attempt already created.
+    const existingEscrow = isDuplicate ? await getEscrowByContractId(contract_id) : null;
+    const escrow = existingEscrow ?? await createEscrow({
       contractId: contract_id,
       marker,
       approver,
@@ -188,7 +198,7 @@ export const initializeEscrowHandler = async (
       roomId: room_id || null,
       hotelId: hotel_id || null,
       guestId: guest_id || null,
-      tenantId: 'safetrust',
+      tenantId,
       escrowMetadata: req.body,
       bookingMetadata: booking_metadata || null,
     });
@@ -200,7 +210,7 @@ export const initializeEscrowHandler = async (
     // 6 — Link escrow to reservation AFTER escrow is confirmed to exist
     const reservationId = booking_metadata?.reservation_id;
     if (reservationId) {
-      await linkEscrowToReservation(reservationId, escrow.id);
+      await linkEscrowToReservation(reservationId, escrow.id, tenantId);
       console.log(`[escrow/initialize] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrow.id}`);
     }
 

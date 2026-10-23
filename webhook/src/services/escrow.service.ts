@@ -1,5 +1,6 @@
 import { InitializeEscrowPayload } from '@safetrust/types';
-import { hasuraRequest } from './hasura';
+import { hasuraTenantRequest } from './tenant-scoped-hasura';
+import { linkEscrowToReservation } from '../repositories/reservation.repository';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
@@ -219,7 +220,8 @@ export function validateEscrowInitializationPayload(
  * Returns the created escrow record.
  */
 export async function persistEscrow(
-  payload: EscrowInitPayload
+  payload: EscrowInitPayload,
+  tenantId: string
 ): Promise<TrustlessWorkEscrow> {
   const mutation = `
     mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
@@ -238,9 +240,9 @@ export async function persistEscrow(
     }
   `;
 
-  const data = await hasuraRequest<{
+  const data = await hasuraTenantRequest<{
     insert_trustless_work_escrows_one?: TrustlessWorkEscrow;
-  }>(mutation, {
+  }>(tenantId, mutation, {
     object: {
       contractId: payload.contract_id,
       marker: payload.marker,
@@ -257,7 +259,7 @@ export async function persistEscrow(
       roomId: payload.room_id,
       hotelId: payload.hotel_id,
       guestId: payload.guest_id,
-      tenantId: 'safetrust',
+      tenantId,
       escrowMetadata: payload.raw,
       bookingMetadata: payload.booking_metadata,
     },
@@ -272,29 +274,15 @@ export async function persistEscrow(
 }
 
 /**
- * Update a reservation row to link it to the created escrow.
- * No-op when reservationId is null or undefined.
+ * Link a reservation row in `tenantId` to the created escrow.
+ * Throws when no reservation in that tenant matches.
  */
 export async function linkReservationToEscrow(
   reservationId: string,
-  escrowId: string
+  escrowId: string,
+  tenantId: string
 ): Promise<void> {
-  const mutation = `
-    mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!) {
-      update_reservations_by_pk(
-        pk_columns: { id: $reservationId }
-        _set: {
-          escrow_id: $escrowId,
-          status: "escrow_created",
-          updatedAt: "now()"
-        }
-      ) {
-        id status escrow_id
-      }
-    }
-  `;
-
-  await hasuraRequest(mutation, { reservationId, escrowId });
+  await linkEscrowToReservation(reservationId, escrowId, tenantId);
 
   console.log(
     `[escrow.service] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrowId}`
@@ -307,24 +295,27 @@ export async function linkReservationToEscrow(
  */
 export async function initializeEscrow(
   payload: EscrowInitPayload,
-  rawPayload: Record<string, unknown>
+  rawPayload: Record<string, unknown>,
+  tenantId: string
 ): Promise<{ isDuplicate: boolean; eventId: string; escrow?: TrustlessWorkEscrow }> {
-  const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+  const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
     payload.contract_id,
     'escrow.initialized',
     rawPayload
   );
 
-  if (isDuplicate) {
+  // Retry a duplicate whose earlier delivery failed part-way; persistEscrow
+  // upserts on contract_id, so re-running it is safe.
+  if (isDuplicate && processed !== false) {
     await markWebhookEventProcessed(eventId);
     return { isDuplicate: true, eventId };
   }
 
-  const escrow = await persistEscrow(payload);
+  const escrow = await persistEscrow(payload, tenantId);
 
   const reservationId = payload.booking_metadata?.reservation_id;
   if (reservationId) {
-    await linkReservationToEscrow(reservationId, escrow.id);
+    await linkReservationToEscrow(reservationId, escrow.id, tenantId);
   }
 
   await markWebhookEventProcessed(eventId);

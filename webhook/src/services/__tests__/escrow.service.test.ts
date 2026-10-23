@@ -274,7 +274,7 @@ describe('initializeEscrow', () => {
       eventId: 'event-duplicate',
     });
 
-    const result = await initializeEscrow(validPayload(), validBody());
+    const result = await initializeEscrow(validPayload(), validBody(), 'safetrust');
 
     expect(result).toEqual({
       isDuplicate: true,
@@ -284,6 +284,26 @@ describe('initializeEscrow', () => {
     expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith(
       'event-duplicate'
     );
+  });
+
+  it('retries a duplicate whose earlier delivery did not finish', async () => {
+    mockedLogAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: true,
+      eventId: 'event-retry',
+      processed: false,
+    });
+    mockedHasuraRequest.mockResolvedValueOnce({
+      insert_trustless_work_escrows_one: escrowResponse,
+    });
+
+    const result = await initializeEscrow(validPayload(), validBody(), 'safetrust');
+
+    expect(result).toEqual({
+      isDuplicate: false,
+      eventId: 'event-retry',
+      escrow: escrowResponse,
+    });
+    expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-retry');
   });
 
   it('persists, links reservation, and marks the event processed', async () => {
@@ -296,18 +316,14 @@ describe('initializeEscrow', () => {
         insert_trustless_work_escrows_one: escrowResponse,
       })
       .mockResolvedValueOnce({
-        update_reservations_by_pk: {
-          id: 'res-1',
-          status: 'escrow_created',
-          escrow_id: 'escrow-uuid-1',
-        },
+        update_reservations: { affected_rows: 1 },
       });
 
     const payload = validPayload({
       booking_metadata: { reservation_id: 'res-1' },
     });
 
-    const result = await initializeEscrow(payload, validBody());
+    const result = await initializeEscrow(payload, validBody(), 'safetrust');
 
     expect(result).toEqual({
       isDuplicate: false,
@@ -328,7 +344,7 @@ describe('initializeEscrow', () => {
     );
 
     await expect(
-      initializeEscrow(validPayload(), validBody())
+      initializeEscrow(validPayload(), validBody(), 'safetrust')
     ).rejects.toThrow('Hasura request failed');
 
     expect(mockedMarkWebhookEventProcessed).not.toHaveBeenCalled();
@@ -354,7 +370,7 @@ describe('persistEscrow', () => {
       insert_trustless_work_escrows_one: escrowResponse,
     });
 
-    const result = await persistEscrow(validPayload());
+    const result = await persistEscrow(validPayload(), 'safetrust');
 
     expect(mockedHasuraRequest).toHaveBeenCalledTimes(1);
     expect(mockedHasuraRequest).toHaveBeenCalledWith(
@@ -378,12 +394,23 @@ describe('persistEscrow', () => {
     expect(result).toEqual(escrowResponse);
   });
 
+  it('writes the tenant passed by the caller instead of a literal', async () => {
+    mockedHasuraRequest.mockResolvedValue({
+      insert_trustless_work_escrows_one: escrowResponse,
+    });
+
+    await persistEscrow(validPayload(), 'tenant-b');
+
+    const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
+    expect(callArgs.object.tenantId).toBe('tenant-b');
+  });
+
   it('throws when Hasura returns no escrow record', async () => {
     mockedHasuraRequest.mockResolvedValue({
       insert_trustless_work_escrows_one: undefined,
     });
 
-    await expect(persistEscrow(validPayload())).rejects.toThrow(
+    await expect(persistEscrow(validPayload(), 'safetrust')).rejects.toThrow(
       'Failed to insert escrow record'
     );
   });
@@ -394,7 +421,7 @@ describe('persistEscrow', () => {
     });
     mockedHasuraRequest.mockRejectedValue(err);
 
-    await expect(persistEscrow(validPayload())).rejects.toThrow('Hasura request failed');
+    await expect(persistEscrow(validPayload(), 'safetrust')).rejects.toThrow('Hasura request failed');
   });
 
   it('uses defaults for optional fields', async () => {
@@ -402,7 +429,7 @@ describe('persistEscrow', () => {
       insert_trustless_work_escrows_one: escrowResponse,
     });
 
-    await persistEscrow(validPayload());
+    await persistEscrow(validPayload(), 'safetrust');
 
     const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
     expect(callArgs.object.assetCode).toBe('USDC');
@@ -420,10 +447,10 @@ describe('linkReservationToEscrow', () => {
 
   it('calls hasuraRequest with the correct reservationId and escrowId', async () => {
     mockedHasuraRequest.mockResolvedValue({
-      update_reservations_by_pk: { id: 'res-1', status: 'escrow_created', escrow_id: 'escrow-1' },
+      update_reservations: { affected_rows: 1 },
     });
 
-    await linkReservationToEscrow('res-1', 'escrow-1');
+    await linkReservationToEscrow('res-1', 'escrow-1', 'safetrust');
 
     expect(mockedHasuraRequest).toHaveBeenCalledTimes(1);
     expect(mockedHasuraRequest).toHaveBeenCalledWith(
@@ -431,7 +458,18 @@ describe('linkReservationToEscrow', () => {
       expect.objectContaining({
         reservationId: 'res-1',
         escrowId: 'escrow-1',
+        tenantId: 'safetrust',
       })
+    );
+  });
+
+  it('throws when no reservation in the tenant matches', async () => {
+    mockedHasuraRequest.mockResolvedValue({
+      update_reservations: { affected_rows: 0 },
+    });
+
+    await expect(linkReservationToEscrow('res-1', 'escrow-1', 'safetrust')).rejects.toThrow(
+      'Reservation res-1 was not linked'
     );
   });
 
@@ -441,7 +479,7 @@ describe('linkReservationToEscrow', () => {
     });
     mockedHasuraRequest.mockRejectedValue(err);
 
-    await expect(linkReservationToEscrow('res-missing', 'escrow-1')).rejects.toThrow(
+    await expect(linkReservationToEscrow('res-missing', 'escrow-1', 'safetrust')).rejects.toThrow(
       'Hasura request failed'
     );
   });
