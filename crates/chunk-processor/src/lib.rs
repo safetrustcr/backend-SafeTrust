@@ -83,8 +83,7 @@ fn http_client() -> &'static Client {
 
 /// Parse the `chunksJson` argument into `Vec<Vec<String>>`.
 fn parse_chunks(chunks_json: &str) -> Result<Vec<Vec<String>>, String> {
-    serde_json::from_str(chunks_json)
-        .map_err(|e| format!("invalid chunks JSON: {e}"))
+    serde_json::from_str(chunks_json).map_err(|e| format!("invalid chunks JSON: {e}"))
 }
 
 /// Normalise the indexer response body into a flat list of escrow objects.
@@ -203,12 +202,12 @@ async fn process_chunks(
                 // Hard per-chunk deadline: even if the reqwest timeout is evaded
                 // (e.g. a slow TLS handshake), tokio::time::timeout guarantees the
                 // chunk resolves within timeout_ms.
-                let outcome =
-                    tokio::time::timeout(timeout, fetch_chunk(client, &api_url, &api_key, &chunk, timeout))
-                        .await
-                        .unwrap_or_else(|_| {
-                            Err(format!("chunk timed out after {timeout_ms}ms"))
-                        });
+                let outcome = tokio::time::timeout(
+                    timeout,
+                    fetch_chunk(client, &api_url, &api_key, &chunk, timeout),
+                )
+                .await
+                .unwrap_or_else(|_| Err(format!("chunk timed out after {timeout_ms}ms")));
 
                 let duration_ms = started.elapsed().as_millis() as u64;
                 match outcome {
@@ -399,7 +398,11 @@ mod tests {
     async fn failed_chunks_are_isolated_and_indexed() {
         // Unroutable address → every chunk fails fast, but the call still returns
         // one result per chunk, each carrying its own error and correct index.
-        let chunks = vec![vec!["a".to_string()], vec!["b".to_string()], vec!["c".to_string()]];
+        let chunks = vec![
+            vec!["a".to_string()],
+            vec!["b".to_string()],
+            vec!["c".to_string()],
+        ];
         let results = process_chunks(
             chunks,
             "http://127.0.0.1:0".to_string(), // port 0 is not connectable
@@ -412,7 +415,10 @@ mod tests {
         assert_eq!(results.len(), 3);
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.chunk_index, i, "results must be ordered by chunk_index");
-            assert!(r.error.is_some(), "unreachable host must yield a per-chunk error");
+            assert!(
+                r.error.is_some(),
+                "unreachable host must yield a per-chunk error"
+            );
             assert_eq!(r.fetched, 0);
             assert!(r.escrows.is_empty());
         }
@@ -422,8 +428,14 @@ mod tests {
     async fn zero_concurrency_is_clamped_not_unbounded() {
         // max_concurrency = 0 must be treated as 1, never as "unbounded".
         let chunks = vec![vec!["a".to_string()]];
-        let results =
-            process_chunks(chunks, "http://127.0.0.1:0".to_string(), String::new(), 0, 100).await;
+        let results = process_chunks(
+            chunks,
+            "http://127.0.0.1:0".to_string(),
+            String::new(),
+            0,
+            100,
+        )
+        .await;
         assert_eq!(results.len(), 1);
     }
 }

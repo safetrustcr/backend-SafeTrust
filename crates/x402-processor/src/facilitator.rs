@@ -14,7 +14,9 @@ pub const ALLOWED_FACILITATORS: &[&str] = &[
 
 pub fn is_allowed_facilitator(url: &str) -> bool {
     let normalized = url.trim().trim_end_matches('/');
-    ALLOWED_FACILITATORS.iter().any(|allowed| allowed.trim_end_matches('/') == normalized)
+    ALLOWED_FACILITATORS
+        .iter()
+        .any(|allowed| allowed.trim_end_matches('/') == normalized)
 }
 
 /// Verify an x402 payment with the facilitator.
@@ -101,10 +103,7 @@ pub async fn verify_with_facilitator(
 
 /// Settle the payment asynchronously after serving the response.
 /// Called in a background task — never blocks the API response.
-pub async fn settle_with_facilitator(
-    payment: &X402PaymentHeader,
-    facilitator_url: &str,
-) {
+pub async fn settle_with_facilitator(payment: &X402PaymentHeader, facilitator_url: &str) {
     let client = match Client::builder().timeout(Duration::from_secs(15)).build() {
         Ok(c) => c,
         Err(e) => {

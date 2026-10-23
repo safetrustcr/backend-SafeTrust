@@ -92,12 +92,8 @@ fn build_payment_requirement(mut cx: FunctionContext) -> JsResult<JsString> {
     let facilitator_url = cx.argument::<JsString>(2)?.value(&mut cx);
     let pay_to = cx.argument::<JsString>(3)?.value(&mut cx);
 
-    let requirement = parser::build_payment_requirement(
-        amount_usdc,
-        &network,
-        &facilitator_url,
-        &pay_to,
-    );
+    let requirement =
+        parser::build_payment_requirement(amount_usdc, &network, &facilitator_url, &pay_to);
 
     let json = match serde_json::to_string(&requirement) {
         Ok(j) => j,
@@ -182,8 +178,12 @@ mod tests {
     fn facilitator_allowlist_checks() {
         use super::facilitator::*;
         assert!(is_allowed_facilitator("https://x402.org/facilitator"));
-        assert!(is_allowed_facilitator("https://channels.openzeppelin.com/x402/testnet"));
-        assert!(is_allowed_facilitator("https://channels.openzeppelin.com/x402"));
+        assert!(is_allowed_facilitator(
+            "https://channels.openzeppelin.com/x402/testnet"
+        ));
+        assert!(is_allowed_facilitator(
+            "https://channels.openzeppelin.com/x402"
+        ));
         assert!(!is_allowed_facilitator("https://attacker.evil/facilitator"));
         assert!(!is_allowed_facilitator("http://insecure.site"));
     }
