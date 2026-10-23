@@ -160,28 +160,61 @@ process_metadata_tables() {
         --argjson metadata "$existing_metadata" --argjson desired "$tables_json" \
         '[$metadata | (.metadata // .).sources[] | select(.name == $source) | .tables[]?.table] as $tracked | $desired | map(select(.table as $object | $tracked | index($object) | not))') || return 1
 
-    if [ -z "$tables_json" ] || [ "$tables_json" = "[]" ] || [ "$tables_json" = "null" ]; then
-        echo "⚠️  No trackable tables found for $tenant_name"
-        return 0
+    if [ -n "$tables_json" ] && [ "$tables_json" != "[]" ] && [ "$tables_json" != "null" ]; then
+        local track_payload
+        track_payload=$(jq -cn --arg source "$tenant_name" --argjson tables "$tables_json" \
+            '{type:"pg_track_tables", args:{source:$source, tables:($tables | map(. + {source:$source}))}}')
+
+        echo "🔎 Bulk-tracking tables for $tenant_name..."
+        local track_response
+        track_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d "$track_payload")
+
+        if echo "$track_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+            echo "❌ Error tracking tables for $tenant_name: $track_response"
+            return 1
+        fi
+        echo "✅ Successfully tracked tables for $tenant_name"
+    else
+        echo "ℹ️  All tables already tracked for $tenant_name"
     fi
 
-    local track_payload
-    track_payload=$(jq -cn --arg source "$tenant_name" --argjson tables "$tables_json" \
-        '{type:"pg_track_tables", args:{source:$source, tables:($tables | map(. + {source:$source}))}}')
+    # Track table select permissions
+    local raw_tables_json
+    raw_tables_json=$(yq -o json e '.' "${table_files[@]}" 2>/dev/null \
+        | jq -s 'map(if type == "array" then .[] else . end) | map(select(type == "object" and ((.table.name? // "") != "")))') || true
 
-    echo "🔎 Bulk-tracking tables for $tenant_name..."
-    local track_response
-    track_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
-        -H "X-Hasura-Admin-Secret: ${admin_secret}" \
-        -H "Content-Type: application/json" \
-        -d "$track_payload")
+    local desired_table_perms
+    desired_table_perms=$(echo "$raw_tables_json" | jq --arg source "$tenant_name" \
+        '[.[] | select(.select_permissions != null and (.select_permissions | length) > 0) | . as $tbl | .select_permissions[] | { source: $source, table: { name: $tbl.table.name, schema: ($tbl.table.schema // "public") }, role: .role, permission: .permission }]' 2>/dev/null || echo "[]")
 
-    if echo "$track_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
-        echo "❌ Error tracking tables for $tenant_name: $track_response"
-        return 1
+    if [ -n "$desired_table_perms" ] && [ "$desired_table_perms" != "[]" ] && [ "$desired_table_perms" != "null" ]; then
+        local current_meta
+        current_meta=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d '{"type":"export_metadata","args":{}}') || current_meta="{}"
+
+        local table_perms_to_create
+        table_perms_to_create=$(jq -cn --arg source "$tenant_name" \
+            --argjson metadata "$current_meta" --argjson desired "$desired_table_perms" \
+            '[$metadata | (.metadata // .).sources[]? | select(.name == $source) | .tables[]? | .table as $t | (.select_permissions // [])[]? | {table: $t, role: .role}] as $tracked | $desired | map(select(. as $d | $tracked | any(.table == $d.table and .role == $d.role) | not))' 2>/dev/null || echo "[]")
+
+        if [ -n "$table_perms_to_create" ] && [ "$table_perms_to_create" != "[]" ] && [ "$table_perms_to_create" != "null" ]; then
+            echo "🔎 Creating table select permissions for $tenant_name..."
+            local table_perms_payload
+            table_perms_payload=$(jq -cn --argjson perms "$table_perms_to_create" \
+                '{type:"bulk", args:($perms | map({type:"pg_create_select_permission", args:.}))}')
+            curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+                -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+                -H "Content-Type: application/json" \
+                -d "$table_perms_payload" >&2 || true
+            echo "✅ Table select permissions updated for $tenant_name"
+        fi
     fi
 
-    echo "✅ Successfully tracked tables for $tenant_name"
     return 0
 }
 

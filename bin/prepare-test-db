@@ -27,28 +27,42 @@ echo "[migrate-test] Ensuring analytics functions and permissions are tracked (i
 # Each curl is fired independently with || true so an "already exists/tracked" error
 # on pg_track_function never aborts the script before pg_create_function_permission runs.
 
-echo "[migrate-test] (1/4) Tracking get_escrow_analytics_by_day..."
+echo "[migrate-test] (1/6) Granting host select permission on escrow_analytics_by_day..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_create_select_permission","args":{"source":"safetrust","table":{"schema":"safetrust","name":"escrow_analytics_by_day"},"role":"host","permission":{"columns":"*","filter":{}}}}' \
+  >&2 || true
+
+echo "[migrate-test] (2/6) Granting host select permission on escrow_status_summary..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_create_select_permission","args":{"source":"safetrust","table":{"schema":"safetrust","name":"escrow_status_summary"},"role":"host","permission":{"columns":"*","filter":{}}}}' \
+  >&2 || true
+
+echo "[migrate-test] (3/6) Tracking get_escrow_analytics_by_day..."
 curl -sS -X POST "$ENDPOINT/v1/metadata" \
   -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
   -H 'Content-Type: application/json' \
   -d '{"type":"pg_track_function","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_analytics_by_day"},"configuration":{"custom_name":"getEscrowAnalyticsByDay","exposed_as":"query"}}}' \
   >&2 || true
 
-echo "[migrate-test] (2/4) Granting host permission on get_escrow_analytics_by_day..."
+echo "[migrate-test] (4/6) Granting host permission on get_escrow_analytics_by_day..."
 curl -sS -X POST "$ENDPOINT/v1/metadata" \
   -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
   -H 'Content-Type: application/json' \
   -d '{"type":"pg_create_function_permission","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_analytics_by_day"},"role":"host"}}' \
   >&2 || true
 
-echo "[migrate-test] (3/4) Tracking get_escrow_status_summary..."
+echo "[migrate-test] (5/6) Tracking get_escrow_status_summary..."
 curl -sS -X POST "$ENDPOINT/v1/metadata" \
   -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
   -H 'Content-Type: application/json' \
   -d '{"type":"pg_track_function","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_status_summary"},"configuration":{"exposed_as":"query"}}}' \
   >&2 || true
 
-echo "[migrate-test] (4/4) Granting host permission on get_escrow_status_summary..."
+echo "[migrate-test] (6/6) Granting host permission on get_escrow_status_summary..."
 curl -sS -X POST "$ENDPOINT/v1/metadata" \
   -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
   -H 'Content-Type: application/json' \
