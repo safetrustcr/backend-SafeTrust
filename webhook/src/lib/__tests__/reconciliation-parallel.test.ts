@@ -122,6 +122,45 @@ describe('upsertEscrows', () => {
     warnSpy.mockRestore();
   });
 
+  it('does not log false-positive conflict when equal-sequence balances are numerically identical', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    db.query
+      .mockResolvedValueOnce({ rows: [] }) // zero rows affected on versioned upsert (unchanged)
+      .mockResolvedValueOnce({
+        rows: [{ ledger_seq: '100', status: 'funded', balance: '1.0000000' }],
+      }); // stored check
+
+    const result = await upsertEscrows([
+      makeEscrow({ contractId: 'C1', ledgerSeq: 100n, status: 'funded', balance: '1' }),
+    ]);
+
+    expect(result).toEqual({ updated: 0, unchanged: 1, skipped: 0 });
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('includes ledger_seq in distinct-value check and network matching in conflict predicate', async () => {
+    db.query.mockResolvedValue({ rows: [{ contract_id: 'C1' }] });
+    await upsertEscrows([makeEscrow({ ledgerSeq: 105n, network: 'testnet' })]);
+
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('safetrust.trustless_work_escrows.ledger_seq');
+    expect(sql).toContain('EXCLUDED.ledger_seq');
+    expect(sql).toContain('safetrust.trustless_work_escrows.network IS NULL');
+    expect(sql).toContain('EXCLUDED.network IS NULL');
+    expect(sql).toContain('REGEXP_REPLACE');
+  });
+
+  it('includes network identity check in unversioned upsert query', async () => {
+    db.query.mockResolvedValue({ rows: [{ contract_id: 'C1' }] });
+    await upsertEscrows([makeEscrow({ ledgerSeq: null, network: 'testnet' })]);
+
+    const sql = db.query.mock.calls[0][0];
+    expect(sql).toContain('safetrust.trustless_work_escrows.network IS NULL');
+    expect(sql).toContain('EXCLUDED.network IS NULL');
+    expect(sql).toContain('REGEXP_REPLACE');
+  });
+
   it('isolates a per-row DB error as skipped', async () => {
     db.query
       .mockResolvedValueOnce({ rows: [{ contract_id: 'GOOD' }] })

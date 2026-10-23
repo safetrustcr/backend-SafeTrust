@@ -44,6 +44,7 @@ import db, { connect } from '../services/db'
 import {
   evaluateFreshness,
   formatExactBalance,
+  balancesEqual,
   parseLedgerSeq,
   FreshnessOutcome,
   StoredEscrowState,
@@ -332,7 +333,7 @@ const UPSERT_ESCROW_SQL = `
     marker     = EXCLUDED.marker,
     approver   = EXCLUDED.approver,
     releaser   = EXCLUDED.releaser,
-    network    = COALESCE(safetrust.trustless_work_escrows.network, EXCLUDED.network),
+    network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
     updated_at = NOW()
   WHERE (
     -- 1. Terminal state protection: completed, resolved, cancelled cannot be overwritten
@@ -346,7 +347,16 @@ const UPSERT_ESCROW_SQL = `
         ${SQL_TRANSITION_RULES}
       )
     )
-    -- 4. Value difference check: unchanged values produce no write
+    -- 4. Network identity check: stored network (if known) must match incoming network (if known)
+    AND (
+      safetrust.trustless_work_escrows.network IS NULL
+      OR NULLIF(TRIM(safetrust.trustless_work_escrows.network), '') IS NULL
+      OR EXCLUDED.network IS NULL
+      OR NULLIF(TRIM(EXCLUDED.network), '') IS NULL
+      OR LOWER(REGEXP_REPLACE(safetrust.trustless_work_escrows.network, '^stellar:', '', 'i')) =
+         LOWER(REGEXP_REPLACE(EXCLUDED.network, '^stellar:', '', 'i'))
+    )
+    -- 5. Value difference check: unchanged values produce no write
     AND (
       safetrust.trustless_work_escrows.status,
       safetrust.trustless_work_escrows.amount,
@@ -390,7 +400,7 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     approver   = EXCLUDED.approver,
     releaser   = EXCLUDED.releaser,
     ledger_seq = EXCLUDED.ledger_seq,
-    network    = COALESCE(safetrust.trustless_work_escrows.network, EXCLUDED.network),
+    network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
     updated_at = NOW()
   WHERE (
     -- 1. Terminal state protection: completed, resolved, cancelled cannot be overwritten
@@ -407,8 +417,18 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
         ${SQL_TRANSITION_RULES}
       )
     )
-    -- 4. Value difference check: unchanged values produce no write
+    -- 4. Network identity check: stored network (if known) must match incoming network (if known)
     AND (
+      safetrust.trustless_work_escrows.network IS NULL
+      OR NULLIF(TRIM(safetrust.trustless_work_escrows.network), '') IS NULL
+      OR EXCLUDED.network IS NULL
+      OR NULLIF(TRIM(EXCLUDED.network), '') IS NULL
+      OR LOWER(REGEXP_REPLACE(safetrust.trustless_work_escrows.network, '^stellar:', '', 'i')) =
+         LOWER(REGEXP_REPLACE(EXCLUDED.network, '^stellar:', '', 'i'))
+    )
+    -- 5. Value difference check: unchanged values produce no write (ledger_seq advancement included)
+    AND (
+      safetrust.trustless_work_escrows.ledger_seq,
       safetrust.trustless_work_escrows.status,
       safetrust.trustless_work_escrows.amount,
       safetrust.trustless_work_escrows.balance,
@@ -416,6 +436,7 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
       safetrust.trustless_work_escrows.approver,
       safetrust.trustless_work_escrows.releaser
     ) IS DISTINCT FROM (
+      EXCLUDED.ledger_seq,
       EXCLUDED.status,
       EXCLUDED.amount,
       EXCLUDED.balance,
@@ -601,7 +622,7 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
                 const storedStatus = (stored.status ?? '').trim().toLowerCase()
                 const incBal = escrow.balance !== undefined ? String(escrow.balance) : '0'
                 const storedBal = stored.balance !== undefined ? String(stored.balance) : '0'
-                if (incStatus !== storedStatus || incBal !== storedBal) {
+                if (incStatus !== storedStatus || !balancesEqual(incBal, storedBal)) {
                   console.warn(
                     `[reconciliation] ⚠️  Equal-sequence conflict on contract "${escrow.contractId}" at seq ${incomingSeq}: ` +
                     `stored status="${stored.status}", balance="${stored.balance}"; ` +

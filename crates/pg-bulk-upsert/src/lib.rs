@@ -81,7 +81,7 @@ pub const UPDATE_ROW_SQL: &str = "
         releaser = $7,
         escrow_type = $8,
         ledger_seq = $9,
-        network = COALESCE(safetrust.trustless_work_escrows.network, $10),
+        network = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM($10), '')),
         updated_at = NOW()
     WHERE id::text = $1 OR contract_id = $1
 ";
@@ -89,7 +89,7 @@ pub const UPDATE_ROW_SQL: &str = "
 pub const INSERT_ROW_SQL: &str = "
     INSERT INTO safetrust.trustless_work_escrows
       (contract_id, status, amount, balance, marker, approver, releaser, escrow_type, ledger_seq, network, updated_at, tenant_id)
-    VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust')
+    VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NULLIF(TRIM($10), ''), NOW(), 'safetrust')
     ON CONFLICT (contract_id) DO NOTHING
 ";
 
@@ -259,7 +259,22 @@ pub fn evaluate_observation(
     incoming: &EscrowUpdate,
 ) -> EvaluationOutcome {
     let Some(stored) = stored else {
-        // Record does not exist yet. Insert initial state.
+        // Record does not exist yet.
+        // Enforce unversioned pending-state policy: an observation missing ledger_seq
+        // cannot create an initial confirmed/completed record.
+        if incoming.ledger_seq.is_none() {
+            let incoming_status_norm = incoming.status.trim().to_lowercase();
+            let is_pending = matches!(
+                incoming_status_norm.as_str(),
+                "created" | "pending_funding"
+            );
+            if !is_pending {
+                return EvaluationOutcome::RejectUnversionedForConfirmed {
+                    stored_status: incoming.status.clone(),
+                };
+            }
+        }
+
         return EvaluationOutcome::Write {
             new_status: incoming.status.clone(),
             new_balance: incoming.balance.clone(),
@@ -419,6 +434,13 @@ pub fn parse_updates(updates_json: &str) -> Result<Vec<EscrowUpdate>, String> {
     serde_json::from_str(updates_json).map_err(|e| format!("invalid updates JSON: {e}"))
 }
 
+fn observations_differ(a: &EscrowUpdate, b: &EscrowUpdate) -> bool {
+    if a.status.trim().to_lowercase() != b.status.trim().to_lowercase() {
+        return true;
+    }
+    !balances_equal(&a.balance, &b.balance)
+}
+
 pub fn dedupe_last_wins(updates: Vec<EscrowUpdate>) -> Vec<EscrowUpdate> {
     use std::collections::HashMap;
     let mut position: HashMap<String, usize> = HashMap::with_capacity(updates.len());
@@ -427,13 +449,33 @@ pub fn dedupe_last_wins(updates: Vec<EscrowUpdate>) -> Vec<EscrowUpdate> {
         match position.get(&u.contract_id) {
             Some(&i) => {
                 let prev = &result[i];
-                let should_replace = match (prev.ledger_seq, u.ledger_seq) {
-                    (Some(prev_seq), Some(curr_seq)) => curr_seq >= prev_seq,
-                    (Some(_), None) => false,
-                    (None, Some(_)) => true,
-                    (None, None) => true,
+                let (should_replace, should_push_both) = match (prev.ledger_seq, u.ledger_seq) {
+                    (Some(prev_seq), Some(curr_seq)) => {
+                        if curr_seq > prev_seq {
+                            (true, false)
+                        } else if curr_seq < prev_seq {
+                            (false, false)
+                        } else {
+                            // Equal sequence: check if values contradict
+                            if observations_differ(prev, &u) {
+                                eprintln!(
+                                    "[pg-bulk-upsert] CONFLICT: Same-sequence contradiction in batch for contract {}: seq {}, values differ ({} / {} vs {} / {})",
+                                    u.contract_id, curr_seq, prev.status, prev.balance, u.status, u.balance
+                                );
+                                (false, true)
+                            } else {
+                                // Identical values: retain later arrival
+                                (true, false)
+                            }
+                        }
+                    }
+                    (Some(_), None) => (false, false),
+                    (None, Some(_)) => (true, false),
+                    (None, None) => (true, false),
                 };
-                if should_replace {
+                if should_push_both {
+                    result.push(u);
+                } else if should_replace {
                     result[i] = u;
                 }
             }
@@ -604,7 +646,114 @@ async fn run_bulk_upsert(
                         )
                         .await
                         .map_err(|e| format!("INSERT failed: {e}"))?;
-                    rows_affected += rows;
+
+                    if rows == 0 {
+                        // Concurrent insert race: another transaction inserted this contract concurrently.
+                        // Lock the inserted row and evaluate freshness against incoming observation.
+                        let locked_row = tx
+                            .query_opt(SELECT_LOCK_SQL, &[&u.contract_id])
+                            .await
+                            .map_err(|e| format!("SELECT FOR UPDATE on conflicting contract {}: {e}", u.contract_id))?;
+                        if let Some(row) = locked_row {
+                            let seq: Option<i64> = row.get(0);
+                            let status: String = row.get(1);
+                            let balance: String = match row.try_get::<_, Option<String>>(2) {
+                                Ok(Some(b)) => b,
+                                Ok(None) => return Err(format!("escrow balance for contract {} is NULL", u.contract_id)),
+                                Err(e) => return Err(format!("failed to get balance for contract {}: {e}", u.contract_id)),
+                            };
+                            let network: Option<String> = row.get(3);
+                            let stored_conflicted = StoredEscrowRow {
+                                id: u.contract_id.clone(),
+                                contract_id: u.contract_id.clone(),
+                                status,
+                                balance,
+                                ledger_seq: seq,
+                                network,
+                            };
+
+                            match evaluate_observation(Some(&stored_conflicted), u) {
+                                EvaluationOutcome::Write {
+                                    new_status,
+                                    new_balance,
+                                    new_ledger_seq,
+                                } => {
+                                    let update_rows = tx
+                                        .execute(
+                                            UPDATE_ROW_SQL,
+                                            &[
+                                                &u.contract_id,
+                                                &new_status,
+                                                &amount,
+                                                &new_balance,
+                                                &u.marker,
+                                                &u.approver,
+                                                &u.releaser,
+                                                &escrow_type,
+                                                &new_ledger_seq,
+                                                &u.network,
+                                            ],
+                                        )
+                                        .await
+                                        .map_err(|e| format!("UPDATE on conflicting row failed: {e}"))?;
+                                    rows_affected += update_rows;
+                                }
+                                EvaluationOutcome::RejectStale | EvaluationOutcome::IdempotentUnchanged => {
+                                    unchanged += 1;
+                                }
+                                EvaluationOutcome::ConflictLogEntry { reason } => {
+                                    eprintln!("[pg-bulk-upsert] CONFLICT on concurrent insert race: {}", reason);
+                                    unchanged += 1;
+                                }
+                                EvaluationOutcome::RejectTerminal { stored_status } => {
+                                    eprintln!(
+                                        "[pg-bulk-upsert] Terminal state overwrite rejected for escrow {}: stored is {}",
+                                        key, stored_status
+                                    );
+                                    unchanged += 1;
+                                }
+                                EvaluationOutcome::RejectUnversionedForConfirmed { stored_status } => {
+                                    eprintln!(
+                                        "[pg-bulk-upsert] Unversioned snapshot rejected for confirmed escrow {}: stored is {}",
+                                        key, stored_status
+                                    );
+                                    unchanged += 1;
+                                }
+                                EvaluationOutcome::RejectInvalidTransition { from, to } => {
+                                    eprintln!(
+                                        "[pg-bulk-upsert] Invalid state transition rejected for escrow {}: {} -> {}",
+                                        key, from, to
+                                    );
+                                    unchanged += 1;
+                                }
+                                EvaluationOutcome::RejectNetworkMismatch { stored, incoming } => {
+                                    eprintln!(
+                                        "[pg-bulk-upsert] Network mismatch rejected for escrow {}: stored is {}, incoming is {}",
+                                        key, stored, incoming
+                                    );
+                                    unchanged += 1;
+                                }
+                            }
+                        }
+                    } else {
+                        rows_affected += rows;
+                    }
+                }
+
+                // Update stored_map so any subsequent observations in the batch observe the written state
+                let new_stored = StoredEscrowRow {
+                    id: stored.map(|s| s.id.clone()).unwrap_or_else(|| u.contract_id.clone()),
+                    contract_id: u.contract_id.clone(),
+                    status: new_status.clone(),
+                    balance: new_balance.clone(),
+                    ledger_seq: new_ledger_seq,
+                    network: u.network.clone().or_else(|| stored.and_then(|s| s.network.clone())),
+                };
+                stored_map.insert(u.contract_id.clone(), new_stored.clone());
+                if let Some(ref id) = u.id {
+                    if !id.is_empty() {
+                        stored_map.insert(id.clone(), new_stored);
+                    }
                 }
             }
             EvaluationOutcome::RejectStale | EvaluationOutcome::IdempotentUnchanged => {
@@ -957,12 +1106,18 @@ mod tests {
         assert_eq!(deduped[0].status, "active");
         assert_eq!(deduped[0].ledger_seq, Some(50));
 
-        // Equal sequences retain later arrival
+        // Equal sequences retain later arrival when values are identical
         let a_eq1 = sample("C2", "funded", "1.0000000", Some(40));
-        let a_eq2 = sample("C2", "active", "1.0000000", Some(40));
+        let a_eq2 = sample("C2", "funded", "1.0000000", Some(40));
         let deduped2 = dedupe_last_wins(vec![a_eq1, a_eq2]);
         assert_eq!(deduped2.len(), 1);
-        assert_eq!(deduped2[0].status, "active");
+        assert_eq!(deduped2[0].status, "funded");
+
+        // Same-sequence contradictions preserve both observations for evaluation
+        let a_diff1 = sample("C2_diff", "funded", "1.0000000", Some(40));
+        let a_diff2 = sample("C2_diff", "active", "1.0000000", Some(40));
+        let deduped_diff = dedupe_last_wins(vec![a_diff1, a_diff2]);
+        assert_eq!(deduped_diff.len(), 2);
 
         // Versioned update replaces unversioned
         let unversioned = sample("C3", "created", "0.0000000", None);
@@ -984,6 +1139,47 @@ mod tests {
         let deduped5 = dedupe_last_wins(vec![unv1, unv2]);
         assert_eq!(deduped5.len(), 1);
         assert_eq!(deduped5[0].status, "pending_funding");
+    }
+
+    #[test]
+    fn unversioned_initial_confirmed_state_rejected() {
+        let incoming_completed = sample("C_new", "completed", "100.0000000", None);
+        let outcome = evaluate_observation(None, &incoming_completed);
+        assert!(matches!(
+            outcome,
+            EvaluationOutcome::RejectUnversionedForConfirmed { .. }
+        ));
+
+        let incoming_funded = sample("C_new", "funded", "100.0000000", None);
+        let outcome_funded = evaluate_observation(None, &incoming_funded);
+        assert!(matches!(
+            outcome_funded,
+            EvaluationOutcome::RejectUnversionedForConfirmed { .. }
+        ));
+
+        // Pending unversioned initial record is allowed
+        let incoming_pending = sample("C_new", "pending_funding", "0.0000000", None);
+        let outcome_pending = evaluate_observation(None, &incoming_pending);
+        assert!(matches!(outcome_pending, EvaluationOutcome::Write { .. }));
+    }
+
+    #[test]
+    fn blank_stored_network_treated_as_unset() {
+        let mut stored = stored_row("C1", "funded", "100.0000000", Some(100));
+        stored.network = Some("".to_string());
+
+        let mut incoming = sample("C1", "milestone_approved", "100.0000000", Some(110));
+        incoming.network = Some("testnet".to_string());
+
+        // Blank stored network should NOT cause network mismatch; incoming populates it
+        let outcome = evaluate_observation(Some(&stored), &incoming);
+        assert!(matches!(outcome, EvaluationOutcome::Write { .. }));
+
+        // Whitespace-only stored network is also treated as unset
+        let mut stored_spaces = stored_row("C1", "funded", "100.0000000", Some(100));
+        stored_spaces.network = Some("   ".to_string());
+        let outcome_spaces = evaluate_observation(Some(&stored_spaces), &incoming);
+        assert!(matches!(outcome_spaces, EvaluationOutcome::Write { .. }));
     }
 
     #[test]
