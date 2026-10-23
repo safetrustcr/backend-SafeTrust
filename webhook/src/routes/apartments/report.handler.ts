@@ -91,12 +91,15 @@ export const createReportHandler = async (
     let report = insertResult.rows[0]
     if (!report) {
       const existing = await query<{ id: string; status: string }>(
-        'SELECT id, status FROM safetrust.listing_reports WHERE reporter_id = $1 AND client_op_id = $2',
+        'SELECT id, status, apartment_id FROM safetrust.listing_reports WHERE reporter_id = $1 AND client_op_id = $2',
         [reporterId, clientOpId]
       )
       report = existing.rows[0]
       if (!report) {
         return res.status(500).json({ error: 'Failed to create report' })
+      }
+      if ((report as { apartment_id?: string }).apartment_id !== apartmentId) {
+        return res.status(409).json({ error: 'INVALID_REPORT' })
       }
     }
 
