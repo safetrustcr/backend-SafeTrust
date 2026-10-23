@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ENDPOINT="${HASURA_GRAPHQL_ENDPOINT:-http://graphql-engine-test:8080}"
-ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:?Hasura admin secret is required}"
+ADMIN_SECRET="${HASURA_ADMIN_SECRET:-${HASURA_GRAPHQL_ADMIN_SECRET:?Hasura admin secret is required}}"
 for ((attempt=0; ; attempt++)); do
   if curl -fsS --connect-timeout 5 --max-time 5 "$ENDPOINT/healthz" >/dev/null; then
     break
@@ -22,3 +22,55 @@ for tenant in safetrust hotel_industry; do
   hasura migrate apply --database-name "$tenant" --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
 done
 metadata/setup-tenant.sh safetrust hotel_industry --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
+
+echo "[migrate-test] Ensuring analytics functions and permissions are tracked..."
+track_funcs_payload=$(jq -cn '{
+  type: "bulk",
+  args: [
+    {
+      type: "pg_track_function",
+      args: {
+        source: "safetrust",
+        function: { schema: "safetrust", name: "get_escrow_analytics_by_day" },
+        configuration: { custom_name: "getEscrowAnalyticsByDay", exposed_as: "query" }
+      }
+    },
+    {
+      type: "pg_create_function_permission",
+      args: {
+        source: "safetrust",
+        function: { schema: "safetrust", name: "get_escrow_analytics_by_day" },
+        role: "host"
+      }
+    },
+    {
+      type: "pg_track_function",
+      args: {
+        source: "safetrust",
+        function: { schema: "safetrust", name: "get_escrow_status_summary" },
+        configuration: { exposed_as: "query" }
+      }
+    },
+    {
+      type: "pg_create_function_permission",
+      args: {
+        source: "safetrust",
+        function: { schema: "safetrust", name: "get_escrow_status_summary" },
+        role: "host"
+      }
+    }
+  ]
+}')
+
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d "$track_funcs_payload" >/dev/null || true
+
+echo "[migrate-test] Reloading Hasura metadata cache..."
+curl -fsS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"reload_metadata","args":{}}' >/dev/null
+
+echo "[migrate-test] Test database preparation complete!"

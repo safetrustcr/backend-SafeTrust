@@ -253,59 +253,61 @@ x-hasura-admin-secret: myadminsecretkey
 **Query**:
 ```graphql
 query AdminAnalyticsOverview {
-  get_escrow_status_summary(args: { tenant_id_input: "safetrust" }) {
+  safetrust_get_escrow_status_summary(args: { tenant_id_input: "safetrust" }) {
     total_escrows
     active_escrows
     completed_escrows
     disputed_escrows
-    total_value
-    pending_value
+    total_value_usdc
+    pending_value_usdc
   }
-  get_escrow_analytics_by_day(
+  getEscrowAnalyticsByDay(
     args: {
-      start_date: "2026-10-01T00:00:00Z"
-      end_date: "2026-10-05T00:00:00Z"
-      tenant_id_input: "safetrust"
+      p_start_date: "2026-10-01"
+      p_end_date: "2026-10-05"
+      p_tenant_id: "safetrust"
     }
   ) {
     day
-    event_count
-    processed_count
-    new_users
-    active_escrows
-    escrow_value
+    webhook_records
+    lifecycle_events
+    processed_events
+    last_active_users
+    escrows_created
+    cohort_active_escrows
+    cohort_active_value_usdc
   }
 }
 ```
 
-### B. SafeTrust User Role (`safetrust_user`)
-A tenant-authenticated user querying their own tenant (`safetrust`).
+### B. SafeTrust Host Role (`host`)
+A tenant-authenticated host user querying their tenant (`safetrust`).
 
 **Headers**:
 ```http
 Content-Type: application/json
 x-hasura-admin-secret: myadminsecretkey
-x-hasura-role: safetrust_user
+x-hasura-role: host
 x-hasura-user-id: usr_st_7721
 x-hasura-tenant-id: safetrust
 ```
 
 **Query**:
 ```graphql
-query UserEscrowSummary {
-  get_escrow_status_summary(args: { tenant_id_input: "safetrust" }) {
+query HostEscrowSummary {
+  safetrust_get_escrow_status_summary(args: { tenant_id_input: "safetrust" }) {
     total_escrows
     active_escrows
     completed_escrows
     disputed_escrows
-    total_value
-    pending_value
+    total_value_usdc
+    pending_value_usdc
   }
 }
 ```
 
 > [!NOTE]
-> If a `safetrust_user` supplies `tenant_id_input: "hotel_industry"`, the request must either return an authorization error or return isolated empty data (`0` counts) without leaking records from `hotel_industry`.
+> If a `host` supplies `tenant_id_input: "hotel_industry"`, the request must either return an authorization error or return isolated data without leaking records from `hotel_industry`.
 
 ### C. Anonymous Role (`anonymous`)
 Unauthenticated clients must be rejected by Hasura.
@@ -319,7 +321,7 @@ Content-Type: application/json
 **Query**:
 ```graphql
 query AnonymousAttempt {
-  get_escrow_status_summary {
+  safetrust_get_escrow_status_summary {
     total_escrows
   }
 }
@@ -330,9 +332,9 @@ query AnonymousAttempt {
 {
   "errors": [
     {
-      "message": "field 'get_escrow_status_summary' not found in type: 'query_root'",
+      "message": "field 'safetrust_get_escrow_status_summary' not found in type: 'query_root'",
       "extensions": {
-        "path": "$.selectionSet.get_escrow_status_summary",
+        "path": "$.selectionSet.safetrust_get_escrow_status_summary",
         "code": "validation-failed"
       }
     }

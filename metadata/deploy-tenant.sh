@@ -216,12 +216,15 @@ process_metadata_functions() {
         return 0
     fi
 
-    local functions_json
-    functions_json=$(yq -o json e '.' "${function_files[@]}" 2>/dev/null \
-        | jq -s 'map(if type == "array" then .[] else . end) | map(select(type == "object")) | map({ function: (.function // {name: .name, schema: (.schema // "public")}), configuration: ((.configuration // {}) + { exposed_as: (.configuration.exposed_as // "query") }) }) | map(select((.function.name? // "") != ""))') || {
+    local raw_functions_json
+    raw_functions_json=$(yq -o json e '.' "${function_files[@]}" 2>/dev/null \
+        | jq -s 'map(if type == "array" then .[] else . end) | map(select(type == "object")) | map({ function: (.function // {name: .name, schema: (.schema // "public")}), configuration: ((.configuration // {}) + { exposed_as: (.configuration.exposed_as // "query") }), permissions: (.permissions // []) }) | map(select((.function.name? // "") != ""))') || {
         echo "❌ Failed to read function metadata for $tenant_name" >&2
         return 1
     }
+
+    local functions_json
+    functions_json=$(echo "$raw_functions_json" | jq 'map({ function: .function, configuration: .configuration })')
 
     # Skip objects already tracked so deployment can safely resume.
     local existing_metadata
@@ -233,28 +236,50 @@ process_metadata_functions() {
         --argjson metadata "$existing_metadata" --argjson desired "$functions_json" \
         '[$metadata | (.metadata // .).sources[] | select(.name == $source) | .functions[]?.function] as $tracked | $desired | map(select(.function as $object | $tracked | index($object) | not))') || return 1
 
-    if [ -z "$functions_json" ] || [ "$functions_json" = "[]" ] || [ "$functions_json" = "null" ]; then
-        echo "⚠️  No trackable functions found for $tenant_name"
-        return 0
+    if [ -n "$functions_json" ] && [ "$functions_json" != "[]" ] && [ "$functions_json" != "null" ]; then
+        local track_payload
+        track_payload=$(jq -cn --arg source "$tenant_name" --argjson functions "$functions_json" \
+            '{type:"bulk", args:($functions | map({type:"pg_track_function", args:(. + {source:$source})}))}')
+
+        echo "🔎 Bulk-tracking functions for $tenant_name..."
+        local track_response
+        track_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d "$track_payload")
+
+        if echo "$track_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+            echo "❌ Error tracking functions for $tenant_name: $track_response"
+            return 1
+        fi
+        echo "✅ Successfully tracked functions for $tenant_name"
+    else
+        echo "ℹ️  All functions already tracked for $tenant_name"
     fi
 
-    local track_payload
-    track_payload=$(jq -cn --arg source "$tenant_name" --argjson functions "$functions_json" \
-        '{type:"bulk", args:($functions | map({type:"pg_track_function", args:(. + {source:$source})}))}')
+    # Track function permissions
+    local desired_perms
+    desired_perms=$(echo "$raw_functions_json" | jq --arg source "$tenant_name" \
+        '[.[] | select(.permissions != null and (.permissions | length) > 0) | . as $fn | .permissions[] | { source: $source, function: $fn.function, role: .role }]')
 
-    echo "🔎 Bulk-tracking functions for $tenant_name..."
-    local track_response
-    track_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
-        -H "X-Hasura-Admin-Secret: ${admin_secret}" \
-        -H "Content-Type: application/json" \
-        -d "$track_payload")
+    if [ -n "$desired_perms" ] && [ "$desired_perms" != "[]" ] && [ "$desired_perms" != "null" ]; then
+        local perms_to_create
+        perms_to_create=$(jq -cn --arg source "$tenant_name" \
+            --argjson metadata "$existing_metadata" --argjson desired "$desired_perms" \
+            '[$metadata | (.metadata // .).sources[] | select(.name == $source) | .functions[]? | .function as $f | (.permissions // [])[]? | {function: $f, role: .role}] as $tracked | $desired | map(select(. as $d | $tracked | any(.function == $d.function and .role == $d.role) | not))')
 
-    if echo "$track_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
-        echo "❌ Error tracking functions for $tenant_name: $track_response"
-        return 1
+        if [ -n "$perms_to_create" ] && [ "$perms_to_create" != "[]" ] && [ "$perms_to_create" != "null" ]; then
+            echo "🔎 Creating function permissions for $tenant_name..."
+            local perm_payload
+            perm_payload=$(jq -cn --argjson perms "$perms_to_create" \
+                '{type:"bulk", args:($perms | map({type:"pg_create_function_permission", args:.}))}')
+            curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+                -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+                -H "Content-Type: application/json" \
+                -d "$perm_payload" >/dev/null || true
+            echo "✅ Function permissions updated for $tenant_name"
+        fi
     fi
-
-    echo "✅ Successfully tracked functions for $tenant_name"
     return 0
 }
 
