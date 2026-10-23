@@ -1,6 +1,6 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
-import { hasuraRequest } from '../../services/hasura'
+import { createReservation } from '../../repositories/reservation.repository'
 import type { CreateReservationPayload, Reservation } from '@safetrust/types'
 
 type CreateReservationResponse =
@@ -41,39 +41,17 @@ export const createReservationHandler = async (
     })
   }
 
-  // 2 — Insert reservation via Hasura GraphQL
-  const mutation = `
-    mutation CreateReservation($object: reservations_insert_input!) {
-      insert_reservations_one(object: $object) {
-        id
-        apartment_id
-        guest_id
-        status
-        check_in_date
-        check_out_date
-        total_amount
-        asset_code
-        escrow_id
-        created_at
-      }
-    }
-  `
-
+  // 2 — Insert reservation through the repository's metadata-aligned contract
   try {
-    const data = await hasuraRequest<{ insert_reservations_one: Reservation | null }>(mutation, {
-      object: {
-        apartment_id,
-        guest_id: guestId,
-        check_in_date,
-        check_out_date,
-        total_amount,
-        asset_code: asset_code || 'USDC',
-        status: 'pending',
-        tenant_id: 'safetrust',
-      },
+    const reservation = await createReservation({
+      apartmentId: apartment_id,
+      guestId,
+      checkInDate: check_in_date,
+      checkOutDate: check_out_date,
+      totalAmount: total_amount,
+      assetCode: asset_code || 'USDC',
     })
 
-    const reservation = data?.insert_reservations_one
     if (!reservation) {
       return res.status(500).json({ error: 'Failed to create reservation' })
     }
