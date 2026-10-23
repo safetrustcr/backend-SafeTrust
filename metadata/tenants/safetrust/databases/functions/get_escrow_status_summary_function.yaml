@@ -4,4 +4,5 @@ function:
 configuration:
   exposed_as: query
 comment: |
-  Aggregated escrow lifecycle counts. Returns SETOF public.escrow_status_summary.
+  Escrow lifecycle counts and nominal USDC value. Returns SETOF safetrust.escrow_status_summary.
+  Metric definitions: docs/analytics/metrics.md.

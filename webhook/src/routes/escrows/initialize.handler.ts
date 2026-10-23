@@ -94,6 +94,9 @@ export const initializeEscrowHandler = async (
 
   // 3 — Verify an optional proof bundle before logging the event or writing
   // escrow state. Partial bundles and unavailable native verification fail closed.
+  // Real-funds ZK enforcement remains disabled by default until the chosen
+  // eligibility architecture (ADR-0001) is fully implemented (blocks ZK-02 through ZK-09).
+  const isZkEnforced = process.env.ZK_ENFORCEMENT_ENABLED === 'true';
   const zkValues = [
     zk_proof,
     zk_verification_key,
@@ -101,6 +104,13 @@ export const initializeEscrowHandler = async (
     zk_balance_commitment,
   ];
   const hasZkBundle = zkValues.some((value) => value !== undefined && value !== null);
+
+  if (isZkEnforced && !hasZkBundle) {
+    return badRequest(res, {
+      error: 'ZK proof of funds bundle is required for escrow initialization',
+    });
+  }
+
   if (hasZkBundle && process.env.ZK_ENABLED !== 'true') {
     return badRequest(res, {
       error: 'Unsupported Feature',
@@ -139,8 +149,11 @@ export const initializeEscrowHandler = async (
         return badRequest(res, { error: 'Invalid ZK proof of funds' });
       }
     } catch (error) {
-      const err = error as Error;
-      console.error('[escrow/initialize] ZK verifier unavailable:', err.message);
+      const err = error as Error & { code?: string };
+      console.error('[escrow/initialize] ZK verifier error:', err.message);
+      if (err.code === 'ZK_VERIFIER_MISCONFIGURED') {
+        return serverError(res, { error: 'ZK proof verifier is misconfigured' });
+      }
       return serviceUnavailable(res, { error: 'ZK proof verification is unavailable' });
     }
   }

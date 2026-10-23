@@ -154,6 +154,44 @@ describe('initializeEscrowHandler ZK verification', () => {
     expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
     expect(createEscrow).not.toHaveBeenCalled();
   });
+
+  it('returns 500 when the ZK verifier is misconfigured', async () => {
+    const error = new Error('misconfigured') as Error & { code?: string };
+    error.code = 'ZK_VERIFIER_MISCONFIGURED';
+    verifyProofOfFunds.mockImplementation(() => {
+      throw error;
+    });
+    const res = makeResponse();
+    await initializeEscrowHandler(makeRequest({
+      zk_proof: 'proof-hex',
+      zk_verification_key: 'vk-hex',
+      zk_threshold_stroops: '1000000000',
+      zk_balance_commitment: 'ab'.repeat(32),
+    }), res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'ZK proof verifier is misconfigured' }));
+    expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
+    expect(createEscrow).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing ZK proof bundle when ZK_ENFORCEMENT_ENABLED is true', async () => {
+    const originalFlag = process.env.ZK_ENFORCEMENT_ENABLED;
+    try {
+      process.env.ZK_ENFORCEMENT_ENABLED = 'true';
+      const res = makeResponse();
+      await initializeEscrowHandler(makeRequest(), res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+        error: 'ZK proof of funds bundle is required for escrow initialization',
+      }));
+      expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
+      expect(createEscrow).not.toHaveBeenCalled();
+    } finally {
+      process.env.ZK_ENFORCEMENT_ENABLED = originalFlag;
+    }
+  });
 });
 
 describe('amountToStroops', () => {
