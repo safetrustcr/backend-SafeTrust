@@ -150,6 +150,11 @@ export async function setPrimaryWalletHandler(
     await client.query('BEGIN')
     transactionOpen = true
 
+    await client.query(
+      `SELECT id FROM safetrust.user_wallets WHERE user_id = $1 ORDER BY id FOR UPDATE`,
+      [uid]
+    )
+
     const check = await client.query<{ id: string; is_primary: boolean }>(
       `SELECT id, is_primary FROM safetrust.user_wallets
         WHERE user_id = $1 AND wallet_address = $2 FOR UPDATE`,
