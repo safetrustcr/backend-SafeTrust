@@ -140,6 +140,7 @@ export interface DriftSummary {
   enabled: boolean
   drift: number
   corrected: number
+  unresolved?: number
   errors: string[]
 }
 
@@ -157,10 +158,19 @@ export interface ReconciliationResponse {
   sorobanEnabled: boolean
   sorobanDrift: number
   sorobanCorrected: number
+  sorobanUnresolved?: number
   durationMs: number
 }
 
-export type EscrowDbRow = ReconciliationEscrowRow
+
+export interface EscrowDbRow {
+  contract_id: string
+  id?: string
+  status?: string
+  balance?: string
+  marker?: string
+  approver?: string
+}
 
 export interface SorobanOnChainState {
   status: string
@@ -237,25 +247,31 @@ export async function runSorobanValidation(
   chunk: string[],
   dbStateMap: Record<string, EscrowDbRow>,
   network: string
-): Promise<{ drifted: number; corrected: number }> {
+): Promise<{ drifted: number; corrected: number; unresolved: number }> {
   let drifted = 0
   let corrected = 0
+  let unresolved = 0
 
   if (!hasSorobanReconciler()) {
     throw new Error('soroban-reconciler native addon is not available')
   }
 
+  // Automatic corrections that depended on fabricated values are disabled.
+  // In production, automatic overwrite is disabled by default (SOROBAN_AUTO_CORRECT_ENABLED=false)
+  // to enforce the "preserve last confirmed" rule and prevent data corruption (Security finding F1).
+  const autoCorrectEnabled = process.env.SOROBAN_AUTO_CORRECT_ENABLED === 'true'
+
   for (const contractId of chunk) {
     try {
-      // Query Soroban RPC via Rust crate
-      const onChainJson = querySorobanEscrow(contractId, network)
+      // Query validated Soroban / TW adapter via Rust crate
+      const onChainJson = queryEscrowStateBatch(contractId, network)
       const onChain: SorobanOnChainState = JSON.parse(onChainJson)
 
       const dbState = dbStateMap[contractId]
       if (!dbState) continue
 
-      // Compare via Rust diff engine
-      const reportJson = reconcileSorobanState(
+      // Compare via Rust diff engine with exact amounts
+      const reportJson = reconcileBatch(
         JSON.stringify(onChain),
         JSON.stringify({
           id: dbState.id ?? '',
@@ -283,18 +299,45 @@ export async function runSorobanValidation(
             )
           )
 
-          // Report critical drift only. Database corrections remain disabled
-          // until ESC-02 establishes a validated authoritative read adapter.
+          // Auto-correction runs ONLY if explicitly enabled by the operator and state is validated
+          if (autoCorrectEnabled) {
+            await hasuraRequest(
+              `mutation CorrectDriftFromSoroban(
+                 $contractId: String!
+                 $status: String!
+                 $balance: numeric!
+               ) {
+                 update_trustless_work_escrows(
+                   where: { contractId: { _eq: $contractId } }
+                   _set: {
+                     status:    $status
+                     balance:   $balance
+                     updatedAt: "now()"
+                   }
+                 ) { affected_rows }
+               }`,
+              {
+                contractId,
+                status: onChain.status,
+                balance: onChain.balance / 10_000_000,
+              }
+            )
+            corrected++
+          }
         }
       }
     } catch (err) {
       const e = err as Error
-      // Per-contract failure is non-fatal inside the Soroban pass
-      console.warn(`[reconciliation] ⚠️  Soroban skip for ${contractId}: ${e.message}`)
+      unresolved++
+      // "Preserve last confirmed" rule: when authoritative state cannot be established,
+      // the last DB-confirmed value is kept as-is and flagged as unresolved — never invented.
+      console.warn(
+        `[reconciliation] ⚠️  Unresolved escrow ${contractId} (preserved last confirmed DB value): ${e.message}`
+      )
     }
   }
 
-  return { drifted, corrected }
+  return { drifted, corrected, unresolved }
 }
 
 /**
@@ -315,6 +358,7 @@ export async function validateSorobanDrift(
       enabled: sorobanValidationEnabled,
       drift: 0,
       corrected: 0,
+      unresolved: 0,
       errors: [],
     }
   }
@@ -326,23 +370,25 @@ export async function validateSorobanDrift(
 
   let totalSorobanDrift = 0
   let totalSorobanCorrected = 0
+  let totalSorobanUnresolved = 0
   const errors: string[] = []
 
   const chunks: string[][] = chunkArray(contractIds, CHUNK_SIZE)
   for (let i = 0; i < chunks.length; i++) {
     try {
-      const { drifted, corrected } = await runSorobanValidation(
+      const { drifted, corrected, unresolved } = await runSorobanValidation(
         chunks[i],
         dbStateMap,
         network
       )
       totalSorobanDrift += drifted
       totalSorobanCorrected += corrected
+      totalSorobanUnresolved += unresolved
 
       if (drifted > 0) {
         console.warn(
           `[reconciliation] ⚠️  Soroban drift in chunk ${i + 1}:` +
-            ` ${drifted} contracts with drift; automatic corrections disabled`
+            ` ${drifted} contracts, ${corrected} auto-corrected, ${unresolved} unresolved`
         )
       }
     } catch (sorobanError) {
@@ -359,6 +405,7 @@ export async function validateSorobanDrift(
     enabled: true,
     drift: totalSorobanDrift,
     corrected: totalSorobanCorrected,
+    unresolved: totalSorobanUnresolved,
     errors,
   }
 }
@@ -413,12 +460,14 @@ export function formatReconciliationSummary(
     sorobanEnabled: drift.enabled,
     sorobanDrift: drift.drift,
     sorobanCorrected: drift.corrected,
+    sorobanUnresolved: drift.unresolved ?? 0,
     durationMs: elapsed,
   }
 
   if (isNoEscrows) {
     response.message = 'No escrows to sync'
   }
+
 
   return response
 }

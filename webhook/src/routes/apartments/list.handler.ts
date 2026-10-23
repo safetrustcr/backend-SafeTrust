@@ -180,7 +180,7 @@ export const createApartment = async (
   req: AuthenticatedRequest,
   res: Response<ApartmentResponse>
 ): Promise<Response<ApartmentResponse>> => {
-  const ownerId = req.user?.uid
+  const ownerId = req.context?.uid || req.user?.uid
   const {
     name,
     location,
