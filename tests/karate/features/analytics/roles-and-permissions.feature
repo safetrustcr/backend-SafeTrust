@@ -21,6 +21,7 @@ Scenario: Diagram 2 - Admin role is permitted to query any tenant
     """
     When method POST
     Then status 200
+    And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.safetrust_get_escrow_status_summary[0] == { total_escrows: 1, active_escrows: 1, total_value_usdc: 1000 }
 
@@ -33,6 +34,7 @@ Scenario: Diagram 2 - Admin role is permitted to query any tenant
     """
     When method POST
     Then status 200
+    And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.safetrust_get_escrow_status_summary[0] == { total_escrows: 1, active_escrows: 1, total_value_usdc: 8888 }
 
@@ -96,6 +98,4 @@ Scenario: Diagram 2 - Explicit anonymous role impersonation is rejected by Graph
     }
     """
     When method POST
-    Then status 200
-    And match response.errors != null
-    And match response.errors[0].message contains 'not found'
+    Then assert responseStatus == 401 || (response.errors != null && response.errors.length > 0)

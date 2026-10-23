@@ -22,6 +22,7 @@ Scenario: Contract - safetrust_get_escrow_status_summary field names and types
     """
     When method POST
     Then status 200
+    And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.safetrust_get_escrow_status_summary == '#[1]'
     # Validate structure and data types
@@ -59,6 +60,7 @@ Scenario: Default tenant parameter - operates without explicit arguments
     """
     When method POST
     Then status 200
+    And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.safetrust_get_escrow_status_summary == '#[1]'
     And match response.data.safetrust_get_escrow_status_summary[0].total_escrows == 6
@@ -76,6 +78,7 @@ Scenario: Diagram 1 - Multi-asset escrow status aggregation (USDC single-asset p
     """
     When method POST
     Then status 200
+    And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.safetrust_get_escrow_status_summary == '#[1]'
     # 3 total escrows, 2 active (funded 500 USDC + active 250 XLM). Under USDC policy: total_value_usdc = 500, pending_value_usdc = 0
@@ -90,6 +93,7 @@ Scenario: Empty tenant - returns zeroed counts without nulls
     """
     When method POST
     Then status 200
+    And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.safetrust_get_escrow_status_summary == '#[1]'
     And match response.data.safetrust_get_escrow_status_summary[0] ==

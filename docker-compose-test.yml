@@ -90,7 +90,7 @@ services:
       # still disabled so tests never call a facilitator /settle endpoint.
       - X402_ENABLED=true
       - X402_SETTLE_ENABLED=false
-      - SAFETRUST_PLATFORM_WALLET=GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57
+      - SAFETRUST_PLATFORM_WALLET=${TEST_PLATFORM_WALLET:-GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57}
       - X402_FACILITATOR_URL=https://channels.openzeppelin.com/x402/testnet
       - STELLAR_NETWORK=testnet
     depends_on:

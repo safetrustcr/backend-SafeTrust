@@ -24,6 +24,7 @@ Scenario: Contract - getEscrowAnalyticsByDay field names and types
     """
     When method POST
     Then status 200
+    And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.getEscrowAnalyticsByDay == '#array'
     And assert response.data.getEscrowAnalyticsByDay.length == 5
@@ -62,6 +63,7 @@ Scenario: Diagram 1 - Zero-filled days when no events exist in range
     """
     When method POST
     Then status 200
+    And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.getEscrowAnalyticsByDay == '#[5]'
     # Ensure all days are present, all counts are 0, and no null values exist
@@ -83,6 +85,7 @@ Scenario: Diagram 1 - Duplicate delivery event_count deduplication semantics
     """
     When method POST
     Then status 200
+    And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.getEscrowAnalyticsByDay == '#[1]'
     # Total received delivery events = 2, unique lifecycle event = 1, processed count = 1, unique active escrow = 1
@@ -102,6 +105,7 @@ Scenario: Diagram 1 - Multi-asset escrow aggregation (USDC single-asset policy)
     """
     When method POST
     Then status 200
+    And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.getEscrowAnalyticsByDay == '#[1]'
     # 2 active escrows (funded USDC 500 + active XLM 250), single-asset USDC value = 500
@@ -153,6 +157,7 @@ Scenario: Diagram 3 - Timezone boundary day buckets (midnight UTC vs CR)
     """
     When method POST
     Then status 200
+    And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.getEscrowAnalyticsByDay == '#[2]'
     # Day 1: 2026-10-20 (event at 23:30:00 UTC)

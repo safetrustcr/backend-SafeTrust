@@ -10,12 +10,13 @@ DELETE FROM safetrust.trustless_work_escrows WHERE contract_id LIKE 'test-ana-%'
 
 -- Event & Escrow 1: 23:30:00 UTC on 2026-10-20 (17:30 Costa Rica local time on Oct 20)
 INSERT INTO safetrust.trustless_work_webhook_events (
-  contract_id, event_type, payload, processed, created_at, tenant_id
+  contract_id, event_type, payload, processed, processed_at, created_at, tenant_id
 ) VALUES (
   'test-ana-tz-01',
   'escrow.funded',
   '{"contract_id": "test-ana-tz-01", "ts": "23:30 UTC"}',
   true,
+  '2026-10-20 23:30:00+00',
   '2026-10-20 23:30:00+00',
   'safetrust'
 );
@@ -38,12 +39,13 @@ INSERT INTO safetrust.trustless_work_escrows (
 
 -- Event & Escrow 2: 00:30:00 UTC on 2026-10-21 (18:30 Costa Rica local time on Oct 20, but 00:30 UTC Oct 21)
 INSERT INTO safetrust.trustless_work_webhook_events (
-  contract_id, event_type, payload, processed, created_at, tenant_id
+  contract_id, event_type, payload, processed, processed_at, created_at, tenant_id
 ) VALUES (
   'test-ana-tz-02',
   'escrow.active',
   '{"contract_id": "test-ana-tz-02", "ts": "00:30 UTC"}',
   true,
+  '2026-10-21 00:30:00+00',
   '2026-10-21 00:30:00+00',
   'safetrust'
 );

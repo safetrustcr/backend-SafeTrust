@@ -7,8 +7,8 @@ This runbook provides step-by-step procedures to inspect, verify, and test the S
 ## 1. Scope & System Architecture
 
 The SafeTrust Analytics Dashboard depends on two PostgreSQL functions exposed as GraphQL query roots:
-- `safetrust.get_escrow_analytics_by_day`: Generates a contiguous daily time-series combining webhook events, new users, active escrows, and escrow value over a specified date range.
-- `safetrust.get_escrow_status_summary`: Aggregates lifecycle counts (`total_escrows`, `active_escrows`, `completed_escrows`, `disputed_escrows`) and amounts (`total_value`, `pending_value`) for dashboard metric cards.
+- `safetrust.get_escrow_analytics_by_day` (exposed as `getEscrowAnalyticsByDay`): Generates a contiguous daily time-series combining webhook records, lifecycle events, processed events, active users, and cohort active escrows/USDC value over a specified date range.
+- `safetrust.get_escrow_status_summary` (exposed as `safetrust_get_escrow_status_summary`): Aggregates lifecycle counts (`total_escrows`, `active_escrows`, `completed_escrows`, `disputed_escrows`) and USDC values (`total_value_usdc`, `pending_value_usdc`) for dashboard metric cards.
 
 ```
 ┌─────────────────────────────────┐
@@ -138,7 +138,7 @@ query IntrospectAnalyticsTypes {
       "queryType": {
         "fields": [
           {
-            "name": "get_escrow_analytics_by_day",
+            "name": "getEscrowAnalyticsByDay",
             "args": [
               { "name": "args" }
             ],
@@ -149,17 +149,19 @@ query IntrospectAnalyticsTypes {
                 "kind": "OBJECT",
                 "fields": [
                   { "name": "day", "type": { "name": "date" } },
-                  { "name": "event_count", "type": { "name": "bigint" } },
-                  { "name": "processed_count", "type": { "name": "bigint" } },
-                  { "name": "new_users", "type": { "name": "bigint" } },
-                  { "name": "active_escrows", "type": { "name": "bigint" } },
-                  { "name": "escrow_value", "type": { "name": "numeric" } }
+                  { "name": "webhook_records", "type": { "name": "bigint" } },
+                  { "name": "lifecycle_events", "type": { "name": "bigint" } },
+                  { "name": "processed_events", "type": { "name": "bigint" } },
+                  { "name": "last_active_users", "type": { "name": "bigint" } },
+                  { "name": "escrows_created", "type": { "name": "bigint" } },
+                  { "name": "cohort_active_escrows", "type": { "name": "bigint" } },
+                  { "name": "cohort_active_value_usdc", "type": { "name": "numeric" } }
                 ]
               }
             }
           },
           {
-            "name": "get_escrow_status_summary",
+            "name": "safetrust_get_escrow_status_summary",
             "args": [
               { "name": "args" }
             ],
@@ -173,8 +175,8 @@ query IntrospectAnalyticsTypes {
                   { "name": "active_escrows", "type": { "name": "bigint" } },
                   { "name": "completed_escrows", "type": { "name": "bigint" } },
                   { "name": "disputed_escrows", "type": { "name": "bigint" } },
-                  { "name": "total_value", "type": { "name": "numeric" } },
-                  { "name": "pending_value", "type": { "name": "numeric" } }
+                  { "name": "total_value_usdc", "type": { "name": "numeric" } },
+                  { "name": "pending_value_usdc", "type": { "name": "numeric" } }
                 ]
               }
             }

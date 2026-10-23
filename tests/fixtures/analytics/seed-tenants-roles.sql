@@ -25,12 +25,13 @@ INSERT INTO safetrust.trustless_work_escrows (
 );
 
 INSERT INTO safetrust.trustless_work_webhook_events (
-  contract_id, event_type, payload, processed, created_at, tenant_id
+  contract_id, event_type, payload, processed, processed_at, created_at, tenant_id
 ) VALUES (
   'test-ana-tenant-st-01',
   'escrow.active',
   '{"contract_id": "test-ana-tenant-st-01", "tenant": "safetrust"}',
   true,
+  '2026-10-18 10:00:00+00',
   '2026-10-18 10:00:00+00',
   'safetrust'
 );
@@ -53,12 +54,13 @@ INSERT INTO safetrust.trustless_work_escrows (
 );
 
 INSERT INTO safetrust.trustless_work_webhook_events (
-  contract_id, event_type, payload, processed, created_at, tenant_id
+  contract_id, event_type, payload, processed, processed_at, created_at, tenant_id
 ) VALUES (
   'test-ana-tenant-hi-01',
   'escrow.active',
   '{"contract_id": "test-ana-tenant-hi-01", "tenant": "hotel_industry"}',
   true,
+  '2026-10-18 11:00:00+00',
   '2026-10-18 11:00:00+00',
   'hotel_industry'
 );

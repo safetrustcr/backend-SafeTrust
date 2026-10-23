@@ -17,29 +17,29 @@ VALUES
 
 -- 3. Seed Webhook Events
 -- Day 2026-10-01: 2 events (1 processed, 1 unprocessed)
-INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, payload, processed, created_at, tenant_id)
+INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, payload, processed, processed_at, created_at, tenant_id)
 VALUES
-  ('test-ana-std-01', 'escrow.created', '{"contract_id": "test-ana-std-01"}', true,  '2026-10-01 08:30:00+00', 'safetrust'),
-  ('test-ana-std-01', 'escrow.funded',  '{"contract_id": "test-ana-std-01"}', false, '2026-10-01 09:15:00+00', 'safetrust');
+  ('test-ana-std-01', 'escrow.created', '{"contract_id": "test-ana-std-01"}', true,  '2026-10-01 08:30:00+00', '2026-10-01 08:30:00+00', 'safetrust'),
+  ('test-ana-std-01', 'escrow.funded',  '{"contract_id": "test-ana-std-01"}', false, NULL,                    '2026-10-01 09:15:00+00', 'safetrust');
 
 -- Day 2026-10-02: 3 events (all 3 processed)
-INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, payload, processed, created_at, tenant_id)
+INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, payload, processed, processed_at, created_at, tenant_id)
 VALUES
-  ('test-ana-std-02', 'escrow.created', '{"contract_id": "test-ana-std-02"}', true, '2026-10-02 09:00:00+00', 'safetrust'),
-  ('test-ana-std-02', 'escrow.funded',  '{"contract_id": "test-ana-std-02"}', true, '2026-10-02 10:00:00+00', 'safetrust'),
-  ('test-ana-std-02', 'escrow.active',  '{"contract_id": "test-ana-std-02"}', true, '2026-10-02 14:00:00+00', 'safetrust');
+  ('test-ana-std-02', 'escrow.created', '{"contract_id": "test-ana-std-02"}', true, '2026-10-02 09:00:00+00', '2026-10-02 09:00:00+00', 'safetrust'),
+  ('test-ana-std-02', 'escrow.funded',  '{"contract_id": "test-ana-std-02"}', true, '2026-10-02 10:00:00+00', '2026-10-02 10:00:00+00', 'safetrust'),
+  ('test-ana-std-02', 'escrow.active',  '{"contract_id": "test-ana-std-02"}', true, '2026-10-02 14:00:00+00', '2026-10-02 14:00:00+00', 'safetrust');
 
 -- Day 2026-10-03: 0 events (tests partial zero day within range)
 
 -- Day 2026-10-04: 1 event (processed)
-INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, payload, processed, created_at, tenant_id)
+INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, payload, processed, processed_at, created_at, tenant_id)
 VALUES
-  ('test-ana-std-04', 'escrow.completed', '{"contract_id": "test-ana-std-04"}', true, '2026-10-04 12:00:00+00', 'safetrust');
+  ('test-ana-std-04', 'escrow.completed', '{"contract_id": "test-ana-std-04"}', true, '2026-10-04 12:00:00+00', '2026-10-04 12:00:00+00', 'safetrust');
 
 -- Day 2026-10-05: 1 event (processed)
-INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, payload, processed, created_at, tenant_id)
+INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, payload, processed, processed_at, created_at, tenant_id)
 VALUES
-  ('test-ana-std-05', 'escrow.disputed', '{"contract_id": "test-ana-std-05"}', true, '2026-10-05 16:20:00+00', 'safetrust');
+  ('test-ana-std-05', 'escrow.disputed', '{"contract_id": "test-ana-std-05"}', true, '2026-10-05 16:20:00+00', '2026-10-05 16:20:00+00', 'safetrust');
 
 -- 4. Seed Escrows
 -- Active escrows: funded (Day 1), active (Day 2), milestone_approved (Day 3)
