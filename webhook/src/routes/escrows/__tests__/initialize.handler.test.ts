@@ -8,6 +8,7 @@ jest.mock('../../../repositories/webhook-event.repository', () => ({
 
 jest.mock('../../../repositories/escrow.repository', () => ({
   createEscrow: jest.fn(),
+  getEscrowByContractId: jest.fn(),
 }));
 
 jest.mock('../../../repositories/reservation.repository', () => ({
@@ -25,7 +26,9 @@ const {
 } = require('../../../repositories/webhook-event.repository');
 const {
   createEscrow,
+  getEscrowByContractId,
 } = require('../../../repositories/escrow.repository');
+const { linkEscrowToReservation } = require('../../../repositories/reservation.repository');
 const { verifyProofOfFunds } = require('../../../lib/zk-verifier');
 
 function makeRequest(overrides = {}) {
@@ -206,5 +209,61 @@ describe('amountToStroops', () => {
     expect(amountToStroops('1.00000001')).toBeNull();
     expect(amountToStroops('0')).toBeNull();
     expect(amountToStroops('1844674407370.9551616')).toBeNull();
+  });
+});
+
+describe('initializeEscrowHandler idempotency and reservation link', () => {
+  const linkedRequest = () =>
+    makeRequest({ booking_metadata: { reservation_id: 'res-1' } });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    delete process.env.ZK_ENABLED;
+    createEscrow.mockResolvedValue({ id: 'escrow-1', contractId: 'contract-1', status: 'created' });
+    markWebhookEventProcessed.mockResolvedValue(undefined);
+    linkEscrowToReservation.mockResolvedValue(undefined);
+  });
+
+  it('acknowledges a duplicate that was already processed without side effects', async () => {
+    logAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: true,
+      eventId: 'event-1',
+      alreadyProcessed: true,
+    });
+    const res = makeResponse();
+
+    await initializeEscrowHandler(linkedRequest(), res);
+
+    expect(createEscrow).not.toHaveBeenCalled();
+    expect(linkEscrowToReservation).not.toHaveBeenCalled();
+    expect(markWebhookEventProcessed).not.toHaveBeenCalled();
+  });
+
+  it('retries an unprocessed duplicate, reusing the escrow and completing the link', async () => {
+    logAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: true,
+      eventId: 'event-1',
+      alreadyProcessed: false,
+    });
+    getEscrowByContractId.mockResolvedValue({ id: 'escrow-1', contractId: 'contract-1' });
+    const res = makeResponse();
+
+    await initializeEscrowHandler(linkedRequest(), res);
+
+    expect(createEscrow).not.toHaveBeenCalled();
+    expect(linkEscrowToReservation).toHaveBeenCalledWith('res-1', 'escrow-1', 'safetrust');
+    expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-1');
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('leaves the event unprocessed when the reservation link fails', async () => {
+    logAndCheckWebhookEvent.mockResolvedValue({ isDuplicate: false, eventId: 'event-1' });
+    linkEscrowToReservation.mockRejectedValue(new Error('no reservation res-1 found'));
+    const res = makeResponse();
+
+    await initializeEscrowHandler(linkedRequest(), res);
+
+    expect(markWebhookEventProcessed).not.toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalledWith(200);
   });
 });

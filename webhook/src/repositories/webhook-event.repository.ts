@@ -7,6 +7,12 @@ const TENANT_ID = 'safetrust'
 export interface WebhookEventResult {
   isDuplicate: boolean
   eventId: string
+  /**
+   * True only when a duplicate event was already fully processed. A duplicate
+   * whose earlier attempt failed (processed = false) must be retried, not
+   * acknowledged.
+   */
+  alreadyProcessed?: boolean
 }
 
 export interface ProcessedWebhookEventResult<T> extends WebhookEventResult {
@@ -91,9 +97,10 @@ export async function logAndCheckWebhookEvent(
     let eventId = inserted.rows[0]?.id
     const isDuplicate = !eventId
 
+    let alreadyProcessed = false
     if (isDuplicate) {
-      const existing = await client.query<{ id: string }>(
-        `SELECT id
+      const existing = await client.query<{ id: string; processed?: boolean }>(
+        `SELECT id, processed
          FROM safetrust.trustless_work_webhook_events
          WHERE tenant_id = $1 AND event_identity = $2`,
         [TENANT_ID, eventIdentity]
@@ -102,6 +109,7 @@ export async function logAndCheckWebhookEvent(
       if (!eventId) {
         throw new Error('Conflicting webhook event identity was not found')
       }
+      alreadyProcessed = existing.rows[0]?.processed !== false
     }
 
     await client.query('COMMIT')
@@ -109,6 +117,7 @@ export async function logAndCheckWebhookEvent(
     return {
       isDuplicate,
       eventId,
+      alreadyProcessed,
     }
   } catch (error) {
     await client.query('ROLLBACK')

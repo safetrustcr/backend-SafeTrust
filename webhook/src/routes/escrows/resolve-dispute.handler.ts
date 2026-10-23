@@ -36,23 +36,30 @@ export const resolveDisputeHandler = async (
 
   try {
     // 1 — Idempotency check
-    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    const { isDuplicate, eventId, alreadyProcessed } = await logAndCheckWebhookEvent(
       contractId,
       EVENT_TYPE,
       req.body as unknown as Record<string, unknown>
     );
 
-    if (isDuplicate) {
-      await markWebhookEventProcessed(eventId);
+    // Only acknowledge a duplicate that was fully processed. An earlier attempt
+    // that failed (e.g. reservation mirror) is retried below.
+    if (isDuplicate && alreadyProcessed) {
       return duplicate(res, eventId);
     }
+    const isRetry = isDuplicate;
 
     // 2 — Update trustless_work_escrows
     const validStates: string[] = JSON.parse(
       getValidPriorStates(EscrowStatus.Resolved, EscrowEventType.DisputeResolved) as string
     );
 
-    const updated = await resolveDispute(contractId, validStates);
+    // On a retry the escrow may already be in the target state from the failed
+    // attempt; accept it so the reservation mirror can be completed.
+    const updated = await resolveDispute(
+      contractId,
+      isRetry ? [...validStates, EscrowStatus.Resolved] : validStates
+    );
 
     if (!updated) {
       return notFound(res, {

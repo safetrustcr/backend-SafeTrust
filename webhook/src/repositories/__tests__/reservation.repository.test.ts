@@ -41,6 +41,14 @@ describe('reservation.repository', () => {
       })
     })
 
+    it('throws when no tenant-scoped reservation row is updated', async () => {
+      mockedHasuraAdminRequest.mockResolvedValueOnce({ update_reservations: { returning: [] } })
+
+      await expect(linkEscrowToReservation('res-1', 'escrow-1', 'tenant-a')).rejects.toThrow(
+        /no reservation res-1 found for tenant tenant-a/
+      )
+    })
+
     it('rejects an empty tenant without calling Hasura', async () => {
       await expect(linkEscrowToReservation('res-1', 'escrow-1', '')).rejects.toThrow(
         /tenantId is required/
@@ -60,7 +68,8 @@ describe('reservation.repository', () => {
   describe('mirrorReservationStatus', () => {
     it('issues a tenant-scoped status mirror', async () => {
       mockedHasuraAdminRequest.mockResolvedValueOnce({
-        update_reservations: { returning: [{ id: 'res-1', status: 'funded' }] },
+        update_reservations: { affected_rows: 1, returning: [{ id: 'res-1', status: 'funded' }] },
+        linked: { aggregate: { count: 1 } },
       })
 
       await mirrorReservationStatus('escrow-1', 'funded', 'safetrust')
@@ -70,6 +79,26 @@ describe('reservation.repository', () => {
       expect(mutation).toContain('MirrorStatusToReservation')
       expect(mutation).toContain('tenantId: { _eq: $tenantId }')
       expect(variables).toEqual({ escrowId: 'escrow-1', status: 'funded', tenantId: 'safetrust' })
+    })
+
+    it('is a no-op when the escrow has no linked reservation', async () => {
+      mockedHasuraAdminRequest.mockResolvedValueOnce({
+        update_reservations: { affected_rows: 0, returning: [] },
+        linked: { aggregate: { count: 0 } },
+      })
+
+      await expect(mirrorReservationStatus('escrow-1', 'funded', 'safetrust')).resolves.toBeUndefined()
+    })
+
+    it('throws when a linked reservation was not updated in the tenant', async () => {
+      mockedHasuraAdminRequest.mockResolvedValueOnce({
+        update_reservations: { affected_rows: 0, returning: [] },
+        linked: { aggregate: { count: 1 } },
+      })
+
+      await expect(mirrorReservationStatus('escrow-1', 'funded', 'tenant-a')).rejects.toThrow(
+        /1 reservation\(s\) for escrow escrow-1 were not updated in tenant tenant-a/
+      )
     })
 
     it('rejects an empty tenant without calling Hasura', async () => {

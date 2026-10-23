@@ -62,11 +62,21 @@ export async function linkEscrowToReservation(
     }
   `
 
-  await hasuraAdminRequest(tenantId, mutation, {
+  const data = await hasuraAdminRequest<{
+    update_reservations?: { returning: Array<{ id: string }> }
+  }>(tenantId, mutation, {
     reservationId,
     escrowId,
     tenantId,
   })
+
+  // Zero rows means the reservation is missing or owned by another tenant.
+  // Throw so the webhook event stays unprocessed and can be retried.
+  if (!data?.update_reservations?.returning?.length) {
+    throw new Error(
+      `linkEscrowToReservation: no reservation ${reservationId} found for tenant ${tenantId}`
+    )
+  }
 }
 
 export async function mirrorReservationStatus(
@@ -78,6 +88,9 @@ export async function mirrorReservationStatus(
     throw new Error('mirrorReservationStatus: tenantId is required')
   }
 
+  // `linked` counts every reservation pointing at this escrow regardless of
+  // tenant, so an escrow with no reservation is a no-op while a reservation in
+  // another tenant (or a failed update) is surfaced as an error.
   const mutation = `
     mutation MirrorStatusToReservation($escrowId: uuid!, $status: String!, $tenantId: String!) {
       update_reservations: update_safetrust_reservations(
@@ -90,12 +103,28 @@ export async function mirrorReservationStatus(
           updatedAt: "now()"
         }
       ) {
+        affected_rows
         returning { id status }
+      }
+      linked: safetrust_reservations_aggregate(where: { escrowId: { _eq: $escrowId } }) {
+        aggregate { count }
       }
     }
   `
 
-  await hasuraAdminRequest(tenantId, mutation, { escrowId, status, tenantId })
+  const data = await hasuraAdminRequest<{
+    update_reservations?: { affected_rows?: number; returning?: Array<{ id: string }> }
+    linked?: { aggregate?: { count?: number } }
+  }>(tenantId, mutation, { escrowId, status, tenantId })
+
+  const updated =
+    data?.update_reservations?.affected_rows ?? data?.update_reservations?.returning?.length ?? 0
+  const linked = data?.linked?.aggregate?.count ?? 0
+  if (updated < linked) {
+    throw new Error(
+      `mirrorReservationStatus: ${linked - updated} reservation(s) for escrow ${escrowId} were not updated in tenant ${tenantId}`
+    )
+  }
 }
 
 export async function mirrorReservationStatusInTransaction(

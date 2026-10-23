@@ -7,6 +7,7 @@ import {
 } from '../../repositories/webhook-event.repository';
 import {
   createEscrow,
+  getEscrowByContractId,
 } from '../../repositories/escrow.repository';
 import {
   linkEscrowToReservation,
@@ -161,14 +162,15 @@ export const initializeEscrowHandler = async (
 
   try {
     // 4 — Idempotency check
-    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    const { isDuplicate, eventId, alreadyProcessed } = await logAndCheckWebhookEvent(
       contract_id,
       EVENT_TYPE,
       req.body as unknown as Record<string, unknown>
     );
 
-    if (isDuplicate) {
-      await markWebhookEventProcessed(eventId);
+    // Only acknowledge a duplicate that was fully processed. An earlier attempt
+    // that failed (e.g. reservation link) is retried below.
+    if (isDuplicate && alreadyProcessed) {
       return duplicate(res, eventId);
     }
 
@@ -176,7 +178,8 @@ export const initializeEscrowHandler = async (
     // Signed webhooks have no user session; the tenant is the deployment's
     // platform tenant and the reservation link below is scoped to it.
     const escrowTenantId = getPlatformTenantId();
-    const escrow = await createEscrow({
+    const existingEscrow = isDuplicate ? await getEscrowByContractId(contract_id) : null;
+    const escrow = existingEscrow ?? await createEscrow({
       contractId: contract_id,
       marker,
       approver,

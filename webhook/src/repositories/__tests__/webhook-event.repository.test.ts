@@ -53,7 +53,7 @@ describe('webhook-event.repository', () => {
       expect.stringContaining('pg_advisory_xact_lock'),
       expect.anything()
     )
-    expect(result).toEqual({ isDuplicate: false, eventId: 'evt-100' })
+    expect(result).toEqual({ isDuplicate: false, eventId: 'evt-100', alreadyProcessed: false })
     expect(mockClient.query).toHaveBeenLastCalledWith('COMMIT')
     expect(mockClient.release).toHaveBeenCalledTimes(1)
   })
@@ -62,7 +62,7 @@ describe('webhook-event.repository', () => {
     mockClient.query
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: 'evt-existing' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'evt-existing', processed: true }] })
       .mockResolvedValueOnce({})
 
     const result = await logAndCheckWebhookEvent(
@@ -71,8 +71,21 @@ describe('webhook-event.repository', () => {
       { amount: 100 }
     )
 
-    expect(result).toEqual({ isDuplicate: true, eventId: 'evt-existing' })
+    expect(result).toEqual({ isDuplicate: true, eventId: 'evt-existing', alreadyProcessed: true })
     expect(mockClient.query.mock.calls[1][0]).toContain('ON CONFLICT')
+  })
+
+  it('flags a duplicate whose earlier attempt was not processed so it can be retried', async () => {
+    mockClient.query
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'evt-failed', processed: false }] })
+      .mockResolvedValueOnce({})
+
+    const result = await logAndCheckWebhookEvent('contract-1', 'escrow.funded', { amount: 100 })
+
+    expect(result).toEqual({ isDuplicate: true, eventId: 'evt-failed', alreadyProcessed: false })
+    expect(mockClient.query.mock.calls[2][0]).toContain('processed')
   })
 
   it('processes one state mutation for concurrent deliveries of the same event', async () => {
