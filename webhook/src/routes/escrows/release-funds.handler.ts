@@ -1,24 +1,33 @@
 import { Request, Response } from 'express';
-import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response'
+import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response';
 import { ReleaseFundsPayload } from '@safetrust/types';
+import { processWebhookEvent } from '../../repositories/webhook-event.repository';
 import {
-  logAndCheckWebhookEvent,
-  markWebhookEventProcessed,
-} from '../../repositories/webhook-event.repository';
-import {
-  releaseFunds,
-  StateConflictError,
+  releaseFundsInTransaction,
 } from '../../repositories/escrow.repository';
 import {
-  mirrorReservationStatus,
+  mirrorReservationStatusInTransaction,
 } from '../../repositories/reservation.repository';
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
+import {
+  getValidPriorStates,
+  StateConflictError,
+} from '../../lib/escrow-transitions';
 
 const EVENT_TYPE = EscrowEventType.FundsReleased;
 
+/**
+ * Handles the escrow release-funds webhook event.
+ * Atomically transitions the escrow to 'completed', mirrors reservation status,
+ * and notifies hotel conversation. Supports idempotent retry if already completed.
+ *
+ * @param req - Express request containing ReleaseFundsPayload
+ * @param res - Express response object
+ * @returns Express response indicating success, duplicate, conflict, or error
+ */
 export const releaseFundsHandler = async (
   req: Request<{}, {}, ReleaseFundsPayload>,
   res: Response
@@ -32,34 +41,74 @@ export const releaseFundsHandler = async (
   }
 
   try {
-    // 1 — Idempotency check
-    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    // 1 — Claim the event and apply database state changes atomically
+    const { isDuplicate, eventId, result: updated } = await processWebhookEvent(
       contractId,
       EVENT_TYPE,
-      req.body as unknown as Record<string, unknown>
+      req.body as unknown as Record<string, unknown>,
+      async (client) => {
+        const validStates: string[] = getValidPriorStates(
+          EscrowStatus.Completed,
+          EscrowEventType.FundsReleased
+        );
+        const escrow = await releaseFundsInTransaction(client, contractId, validStates);
+        if (escrow) {
+          await mirrorReservationStatusInTransaction(client, escrow.id, 'completed');
+          return escrow;
+        }
+
+        // Retry after partial failure or recovery: check current escrow in DB
+        const existing = await client.query<{
+          id: string;
+          contract_id: string;
+          status: string;
+          balance: number;
+        }>(
+          `SELECT id, contract_id, status, balance
+           FROM safetrust.trustless_work_escrows
+           WHERE contract_id = $1 AND tenant_id = 'safetrust'`,
+          [contractId]
+        );
+
+        if (existing.rows.length === 0) {
+          return null;
+        }
+
+        const current = existing.rows[0];
+        if (current.status === 'completed') {
+          // Escrow is already completed: reuse its ID, mirror reservation status, and return it
+          await mirrorReservationStatusInTransaction(client, current.id, 'completed');
+          return {
+            id: current.id,
+            contractId: current.contract_id,
+            status: current.status,
+            balance: current.balance,
+          };
+        }
+
+        // Real invalid prior state: throw StateConflictError so handler returns 409
+        throw new StateConflictError(
+          `Escrow cannot transition to completed: contractId '${contractId}' current status '${current.status}' not in [${validStates.join(', ')}]`
+        );
+      }
     );
 
     if (isDuplicate) {
-      await markWebhookEventProcessed(eventId);
       return duplicate(res, eventId);
     }
 
-    // 2 — Update trustless_work_escrows
-    const updated = await releaseFunds(contractId);
+    if (!updated) {
+      return notFound(res, {
+        error: `Escrow not found for contractId: ${contractId}`
+      });
+    }
 
-    const escrowId = updated.id;
-
-    // 3 — Mirror status to safetrust.reservations
-    await mirrorReservationStatus(escrowId, 'completed');
-
-    // 4 — Notify hotel conversation (best-effort, never fail the response)
+    // 2 — Notify hotel conversation after the state transaction commits
     await notifyHotelEscrowConversation({
       contractId,
       eventType: 'escrow_completed',
       body: 'SafeTrust: Funds have been released. Thank you for booking with us.',
     });
-
-    await markWebhookEventProcessed(eventId);
 
     console.log(`[escrow/release-funds] ✅ Funds released — contractId: ${contractId}`);
     return ok(res);
