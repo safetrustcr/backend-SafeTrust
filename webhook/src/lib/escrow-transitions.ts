@@ -35,6 +35,11 @@ export interface EscrowStateMachineBindings {
 let _bindings: EscrowStateMachineBindings | null = null
 let _bindingsOverride: EscrowStateMachineBindings | null | undefined
 
+/**
+ * Loads the native or fallback escrow-state-machine bindings.
+ *
+ * @returns EscrowStateMachineBindings interface implementation
+ */
 function loadBindings(): EscrowStateMachineBindings {
   if (_bindingsOverride !== undefined && _bindingsOverride !== null) {
     return _bindingsOverride

@@ -17,6 +17,15 @@ import { getValidPriorStates } from '../../lib/escrow-transitions';
 
 const EVENT_TYPE = EscrowEventType.DisputeResolved;
 
+/**
+ * Handles the escrow dispute resolved webhook event.
+ * Validates payload, checks idempotency, transitions the escrow to 'resolved',
+ * optionally records a resolution note, and mirrors the reservation status.
+ *
+ * @param req - Express request containing ResolveDisputePayload
+ * @param res - Express response object
+ * @returns Express response indicating success, duplicate, or error
+ */
 export const resolveDisputeHandler = async (
   req: Request<{}, {}, ResolveDisputePayload>,
   res: Response

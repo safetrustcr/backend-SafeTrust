@@ -3,39 +3,11 @@ import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
-import { connect, withTransaction as dbWithTransaction } from './db';
-import type { PoolClient } from 'pg';
+import { withTransaction } from './db';
 import {
   getValidPriorStates,
   StateConflictError,
 } from '../lib/escrow-transitions';
-
-async function executeInTransaction<T>(
-  fn: (client: PoolClient) => Promise<T>
-): Promise<T> {
-  if (typeof dbWithTransaction === 'function') {
-    return dbWithTransaction(fn);
-  }
-  const client = await connect();
-  try {
-    await client.query('BEGIN');
-    const result = await fn(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK');
-    } catch (rollbackError) {
-      console.error(
-        '[milestone.service] Failed to rollback milestone approval transaction:',
-        rollbackError
-      );
-    }
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -155,7 +127,7 @@ export async function approveMilestoneAndUpdateReservation(
   const reservationStatus =
     milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
 
-  return executeInTransaction(async (client) => {
+  return withTransaction(async (client) => {
     const milestoneResult = await client.query(
       `
         SELECT id, status
@@ -214,16 +186,23 @@ export async function approveMilestoneAndUpdateReservation(
       [approver, approvedAt, escrowId, milestoneId]
     );
 
-    await client.query(
+    const updateEscrowResult = await client.query(
       `
         UPDATE safetrust.trustless_work_escrows
         SET
           status = 'milestone_approved',
           updated_at = $1
         WHERE id = $2
+          AND status = ANY($3)
       `,
-      [approvedAt, escrowId]
+      [approvedAt, escrowId, validStates]
     );
+
+    if (updateEscrowResult && updateEscrowResult.rowCount === 0) {
+      throw new EscrowStateConflictError(
+        'Escrow cannot transition to milestone_approved: current status not in valid states'
+      );
+    }
 
     await client.query(
       `

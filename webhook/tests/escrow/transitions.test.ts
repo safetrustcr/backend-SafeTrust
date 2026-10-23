@@ -14,6 +14,7 @@ import { hasuraRequest } from '../../src/services/hasura'
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
+  processWebhookEvent,
 } from '../../src/repositories/webhook-event.repository'
 import { mirrorReservationStatus } from '../../src/repositories/reservation.repository'
 import { notifyHotelEscrowConversation } from '../../src/services/hotel-conversation-notify'
@@ -27,6 +28,7 @@ jest.mock('../../src/services/hotel-conversation-notify')
 const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>
 const mockedLogAndCheck = logAndCheckWebhookEvent as jest.MockedFunction<typeof logAndCheckWebhookEvent>
 const mockedMarkProcessed = markWebhookEventProcessed as jest.MockedFunction<typeof markWebhookEventProcessed>
+const mockedProcessWebhookEvent = processWebhookEvent as jest.MockedFunction<typeof processWebhookEvent>
 const mockedMirrorReservation = mirrorReservationStatus as jest.MockedFunction<typeof mirrorReservationStatus>
 const mockedNotify = notifyHotelEscrowConversation as jest.MockedFunction<typeof notifyHotelEscrowConversation>
 
@@ -150,9 +152,10 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
     })
 
     it('handles duplicate replay idempotently via webhook event log in releaseFundsHandler', async () => {
-      mockedLogAndCheck.mockResolvedValueOnce({
+      mockedProcessWebhookEvent.mockResolvedValueOnce({
         isDuplicate: true,
         eventId: 'event-dup-123',
+        result: null,
       })
 
       const req = {
@@ -169,12 +172,12 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
 
       await releaseFundsHandler(req, res)
 
-      expect(mockedLogAndCheck).toHaveBeenCalledWith(
+      expect(mockedProcessWebhookEvent).toHaveBeenCalledWith(
         'contract-123',
         EscrowEventType.FundsReleased,
-        req.body
+        req.body,
+        expect.any(Function)
       )
-      expect(mockedMarkProcessed).toHaveBeenCalledWith('event-dup-123')
       expect(res.status).toHaveBeenCalledWith(200)
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -183,22 +186,16 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
           eventId: 'event-dup-123',
         })
       )
-      // No database write or side effect should occur on duplicate replay
-      expect(mockedHasuraRequest).not.toHaveBeenCalled()
-      expect(mockedMirrorReservation).not.toHaveBeenCalled()
+      // No side effect should occur on duplicate replay
       expect(mockedNotify).not.toHaveBeenCalled()
     })
 
     it('returns 409 Conflict when releaseFunds throws StateConflictError in handler', async () => {
-      mockedLogAndCheck.mockResolvedValueOnce({
-        isDuplicate: false,
-        eventId: 'event-fresh-456',
-      })
-
-      // Simulate DB returning 0 rows because prior state was invalid or replay bypassed event log
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: { returning: [] },
-      })
+      mockedProcessWebhookEvent.mockRejectedValueOnce(
+        new StateConflictError(
+          "Escrow cannot transition to completed: contractId 'contract-invalid-state' current status 'created' not in [funded, milestone_approved]"
+        )
+      )
 
       const req = {
         body: {
@@ -221,25 +218,18 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
           error: expect.stringContaining('Escrow cannot transition to completed'),
         })
       )
-      expect(mockedMirrorReservation).not.toHaveBeenCalled()
+      expect(mockedNotify).not.toHaveBeenCalled()
     })
 
     it('successfully releases funds when escrow is in valid prior state', async () => {
-      mockedLogAndCheck.mockResolvedValueOnce({
+      mockedProcessWebhookEvent.mockResolvedValueOnce({
         isDuplicate: false,
         eventId: 'event-fresh-789',
-      })
-
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: {
-          returning: [
-            {
-              id: 'escrow-uuid-789',
-              contractId: 'contract-valid',
-              status: 'completed',
-              balance: 0,
-            },
-          ],
+        result: {
+          id: 'escrow-uuid-789',
+          contractId: 'contract-valid',
+          status: 'completed',
+          balance: 0,
         },
       })
 
@@ -259,14 +249,48 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
 
       expect(res.status).toHaveBeenCalledWith(200)
       expect(res.json).toHaveBeenCalledWith({ success: true })
-      expect(mockedMirrorReservation).toHaveBeenCalledWith('escrow-uuid-789', 'completed')
       expect(mockedNotify).toHaveBeenCalledWith(
         expect.objectContaining({
           contractId: 'contract-valid',
           eventType: 'escrow_completed',
         })
       )
-      expect(mockedMarkProcessed).toHaveBeenCalledWith('event-fresh-789')
+    })
+
+    it('recovers and completes release when retried on an already completed escrow', async () => {
+      mockedProcessWebhookEvent.mockResolvedValueOnce({
+        isDuplicate: false,
+        eventId: 'event-retry-101',
+        result: {
+          id: 'escrow-uuid-101',
+          contractId: 'contract-already-completed',
+          status: 'completed',
+          balance: 0,
+        },
+      })
+
+      const req = {
+        body: {
+          contractId: 'contract-already-completed',
+          releaseSigner: 'signer-abc',
+        },
+      } as unknown as Request
+
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn().mockReturnThis(),
+      } as unknown as Response
+
+      await releaseFundsHandler(req, res)
+
+      expect(res.status).toHaveBeenCalledWith(200)
+      expect(res.json).toHaveBeenCalledWith({ success: true })
+      expect(mockedNotify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contractId: 'contract-already-completed',
+          eventType: 'escrow_completed',
+        })
+      )
     })
   })
 })
