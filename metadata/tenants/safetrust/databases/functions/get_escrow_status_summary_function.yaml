@@ -4,7 +4,3 @@ function:
 configuration:
   exposed_as: query
 comment: |
-  Aggregated escrow lifecycle counts. Returns SETOF public.escrow_status_summary.
-permissions:
-  - role: admin
-    privilege: EXECUTE
