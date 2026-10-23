@@ -73,7 +73,9 @@ are intentionally git-ignored.
 
 - **`zk-verifier`** — retained. It performs a real UltraHonk verification with
   a pinned Barretenberg version and fails closed when the addon is unavailable.
-  The verification key can be pinned with `ZK_PROOF_OF_FUNDS_VK_SHA256`.
+  The verification key pin (`ZK_PROOF_OF_FUNDS_VK_SHA256`) is mandatory by
+  default (exempt only in explicit development or test environments) to prevent circuit
+  substitution attacks (see ADR-0001).
 - **`stellar-utils`** — retained. It is the authoritative wallet-address check
   used during auth; the JS regex is a degraded fallback only.
 - **`escrow-state-machine`** — retained. It prevents handlers from requesting
@@ -100,43 +102,39 @@ are intentionally git-ignored.
 
 ---
 
-## 4. `soroban-reconciler`: fabricated reads are disabled
+## 4. `soroban-reconciler`: validated read adapter & fabricated state removal
 
-`query_escrow_state()` has two unsafe behaviors:
+Security Review Finding F1 identified that `query_escrow_state()` previously
+fabricated on-chain escrow state by returning hardcoded values (`ACTIVE`,
+`1_000_000_000` stroops) whenever `getHealth` returned healthy, or for any `mock_`
+or `test_` prefixed identifier. When `SOROBAN_VALIDATION_ENABLED=true` was set,
+this drove automated mutations that corrupted database records.
 
-1. Contract ids starting with `mock_` or `test_` return a hardcoded
-   `ACTIVE` / `1_000_000_000` state.
-2. Every other id performs only a `getHealth` JSON-RPC call, then returns the
-   same hardcoded state. It never reads the escrow contract's ledger entry.
+Issue #659 completely removes fabricated responses and replaces them with a
+validated read adapter:
 
-If `SOROBAN_VALIDATION_ENABLED=true`, `validateSorobanDrift()` treats that
-state as chain truth and can auto-correct `trustless_work_escrows` to the
-fabricated status/balance. That is a data-integrity failure, so the behavior is
-disabled at two levels:
+- **Removal of fabrication:** `getHealth` alone never returns escrow state or
+  triggers database updates. Node reachability does not establish contract state.
+- **Prohibition of shortcuts:** Production code paths reject `mock_` and `test_`
+  identifiers. Contract IDs must be valid 56-character base32 Stellar Contract
+  StrKeys (`C...` format), verified via `stellar_strkey`.
+- **Network identity verification:** The adapter validates network passphrases
+  against canonical constants (`testnet` vs `mainnet`), rejecting cross-network
+  queries.
+- **Exact asset amounts:** All balances are parsed into exact integer Stroops
+  (10^7 Stroops = 1 token unit). Float threshold comparisons (`.abs() > 0.0001`)
+  are replaced with exact integer diffs.
+- **Bounded timeouts:** All network calls have a strict 5-second timeout.
+- **The "preserve last confirmed" rule:** When external sources are unavailable
+  or return unrecognized shapes, last confirmed DB values are preserved and
+  flagged as unresolved — never silently overwritten with defaults.
+- **Automated corrections disabled:** Automatic database mutations are disabled
+  by default (`SOROBAN_AUTO_CORRECT_ENABLED=false`).
 
-- **Compile time:** the `unvalidated-reader` Cargo feature is **not** in
-  `default`. A normal workspace build contains only the error path.
-- **Runtime:** even a build with the feature must set
-  `SOROBAN_RECONCILER_ALLOW_UNVALIDATED=true`. Otherwise the reader returns a
-  descriptive error and the service logs/skips that contract.
+For the full decision record, gap analysis between Trustless Work API and direct
+Stellar RPC reads, and adapter validation boundary diagrams, see
+[Escrow State Source](../stellar/escrow-state-source.md).
 
-`SOROBAN_VALIDATION_ENABLED=false` remains the default in
-`docker-compose.yml`. `reconcileBatch` (the pure state-diff function) is
-retained and tested; only the untrusted RPC reader is disabled.
-
-A validated replacement must:
-
-- read the escrow contract's ledger entry (for example `getLedgerEntries`) and
-  decode the contract data, not just `getHealth`;
-- pin the contract id, network, and expected contract schema/version;
-- reject a missing, stale, or unrecognized ledger entry instead of returning a
-  default;
-- expose typed status/balance/role fields and golden vectors captured from
-  testnet;
-- keep network access behind the same `SOROBAN_VALIDATION_ENABLED` gate.
-
-Rebuilding that reader is tracked as a follow-up task. It is not enabled by
-this change.
 
 ---
 
@@ -288,8 +286,8 @@ Expected invariants:
 - `verifyHmacSignature` accepts a valid signature and returns `false` for
   empty secrets, malformed signatures, and invalid UTF-8 mismatches;
 - `validateTransition('disputed', 'cancelled', 'escrow.cancelled')` is `true`;
-- `queryEscrowStateBatch` throws/returns the quarantine error unless both the
-  `unvalidated-reader` feature and `SOROBAN_RECONCILER_ALLOW_UNVALIDATED=true`
-  are set;
+- `queryEscrowStateBatch` validates contract and network identity, rejecting
+  `getHealth`-only responses, mock shortcuts, and wrong-network responses;
+
 - no x402 payment can reach `initializeEscrowHandler` while
   `X402_ENABLED=false`.

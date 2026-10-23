@@ -213,6 +213,43 @@ describe('validateEscrowInitializationPayload', () => {
       'ab'.repeat(32)
     );
   });
+
+  it('throws EscrowValidationError (500) when ZK verifier is misconfigured', () => {
+    const error = new Error('misconfigured') as Error & { code?: string };
+    error.code = 'ZK_VERIFIER_MISCONFIGURED';
+    mockedVerifyProof.mockImplementation(() => {
+      throw error;
+    });
+
+    expect(() =>
+      validateEscrowInitializationPayload(
+        validBody({
+          zk_proof: 'proof-hex',
+          zk_verification_key: 'vk-hex',
+          zk_threshold_stroops: '1000000000',
+          zk_balance_commitment: 'ab'.repeat(32),
+        })
+      )
+    ).toThrow(expect.objectContaining({
+      message: 'ZK proof verifier is misconfigured',
+      statusCode: 500,
+    }));
+  });
+
+  it('throws EscrowValidationError when ZK_ENFORCEMENT_ENABLED is true and bundle is missing', () => {
+    const originalFlag = process.env.ZK_ENFORCEMENT_ENABLED;
+    try {
+      process.env.ZK_ENFORCEMENT_ENABLED = 'true';
+      expect(() =>
+        validateEscrowInitializationPayload(validBody())
+      ).toThrow(expect.objectContaining({
+        message: 'ZK proof of funds bundle is required for escrow initialization',
+        statusCode: 400,
+      }));
+    } finally {
+      process.env.ZK_ENFORCEMENT_ENABLED = originalFlag;
+    }
+  });
 });
 
 

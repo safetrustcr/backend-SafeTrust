@@ -135,9 +135,19 @@ export function validateEscrowInitializationPayload(
     );
   }
   
-  // 3 — Optional ZK proof bundle: must be all-or-nothing; validates threshold
+  // 3 — Optional ZK proof bundle: must be all-or-nothing; validates threshold.
+  // Real-funds ZK enforcement remains disabled by default until the chosen
+  // eligibility architecture (ADR-0001) is fully implemented (blocks ZK-02 through ZK-09).
+  const isZkEnforced = process.env.ZK_ENFORCEMENT_ENABLED === 'true';
   const zkValues = [zk_proof, zk_verification_key, zk_threshold_stroops, zk_balance_commitment];
   const hasZkBundle = zkValues.some((v) => v !== undefined && v !== null);
+
+  if (isZkEnforced && !hasZkBundle) {
+    throw new EscrowValidationError(
+      'ZK proof of funds bundle is required for escrow initialization',
+      400
+    );
+  }
 
   if (hasZkBundle && process.env.ZK_ENABLED !== 'true') {
     throw new EscrowValidationError(
@@ -176,8 +186,11 @@ export function validateEscrowInitializationPayload(
       }
     } catch (err) {
       if (err instanceof EscrowValidationError) throw err;
-      const error = err as Error;
-      console.error('[escrow.service] ZK verifier unavailable:', error.message);
+      const error = err as Error & { code?: string };
+      console.error('[escrow.service] ZK verifier error:', error.message);
+      if (error.code === 'ZK_VERIFIER_MISCONFIGURED') {
+        throw new EscrowValidationError('ZK proof verifier is misconfigured', 500);
+      }
       throw new ZkVerifierUnavailableError('ZK proof verification is unavailable');
     }
   }
