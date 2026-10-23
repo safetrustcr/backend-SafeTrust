@@ -59,7 +59,8 @@ The Rust layer is organized around eight crates under the `crates/` tree. Each c
 | `stellar-utils`      | Stellar address validation    | `stellar-strkey`, `ed25519-dalek` | always on                    |
 | `chunk-processor`    | Parallel TrustlessWork HTTP   | `tokio`, `reqwest`, `futures`     | `RUST_CHUNKS_ENABLED`        |
 | `pg-bulk-upsert`     | UNNEST batch upsert           | `tokio-postgres`                  | `RUST_BULK_UPSERT_ENABLED`   |
-| `soroban-reconciler` | Soroban RPC drift detection   | `ureq`, `serde`                   | `SOROBAN_VALIDATION_ENABLED` (reader also needs the `unvalidated-reader` feature; quarantined) |
+| `soroban-reconciler` | Soroban RPC drift detection   | `ureq`, `serde`, `stellar-strkey` | `SOROBAN_VALIDATION_ENABLED` (validated read adapter; auto-correct default-off) |
+
 | `x402-processor`     | x402 payment header parsing   | `reqwest`, `base64`               | `X402_ENABLED`               |
 | `zk-verifier`        | Noir UltraHonk proof verify   | `barretenberg-rs`                 | always on; proof bundle optional |
 | `escrow-state-machine` | Escrow transition table    | `serde`, `neon`                   | always on                    |

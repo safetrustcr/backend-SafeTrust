@@ -20,7 +20,7 @@ BEGIN
         ADD COLUMN IF NOT EXISTS balance NUMERIC(20, 7) DEFAULT 0;
 
         ALTER TABLE safetrust.escrow_transactions 
-        ADD COLUMN IF NOT EXISTS network TEXT DEFAULT 'testnet';
+        ADD COLUMN IF NOT EXISTS network TEXT NULL;
 
         CREATE INDEX IF NOT EXISTS idx_escrow_transactions_ledger_seq 
         ON safetrust.escrow_transactions (ledger_seq);
@@ -38,7 +38,7 @@ BEGIN
         ADD COLUMN IF NOT EXISTS balance NUMERIC(20, 7) DEFAULT 0;
 
         ALTER TABLE public.escrow_transactions 
-        ADD COLUMN IF NOT EXISTS network TEXT DEFAULT 'testnet';
+        ADD COLUMN IF NOT EXISTS network TEXT NULL;
 
         CREATE INDEX IF NOT EXISTS idx_public_escrow_transactions_ledger_seq 
         ON public.escrow_transactions (ledger_seq);
@@ -53,7 +53,7 @@ BEGIN
         ADD COLUMN IF NOT EXISTS ledger_seq BIGINT NULL DEFAULT NULL;
 
         ALTER TABLE safetrust.trustless_work_escrows 
-        ADD COLUMN IF NOT EXISTS network TEXT DEFAULT 'testnet';
+        ADD COLUMN IF NOT EXISTS network TEXT NULL;
 
         CREATE INDEX IF NOT EXISTS idx_trustless_work_escrows_ledger_seq 
         ON safetrust.trustless_work_escrows (ledger_seq);

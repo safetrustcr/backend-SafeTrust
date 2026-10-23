@@ -16,8 +16,7 @@
 //! ### 2. The Unversioned Snapshot Policy
 //! When an incoming snapshot lacks a `ledger_seq` (e.g. legacy sources or unindexed observations),
 //! it cannot be positioned relative to the blockchain timeline. To prevent silent corruption:
-//! - Unversioned snapshots may ONLY update records in pending states (`created`, `pending_funding`,
-//!   `deploying`, `pending_signature`).
+//! - Unversioned snapshots may ONLY update records in pending states (`created`, `pending_funding`).
 //! - Unversioned snapshots must NEVER update confirmed or terminal records (`completed`, `resolved`,
 //!   `cancelled`, `funded`, `active`, `milestone_approved`).
 //! - Exact token amounts must be preserved: unversioned snapshots must NEVER zero out or reduce
@@ -60,24 +59,36 @@ pub mod validator;
 
 pub const SELECT_LOCK_SQL: &str = "
     SELECT ledger_seq, status, balance::text, network
-    FROM escrow_transactions
+    FROM safetrust.trustless_work_escrows
     WHERE id::text = $1 OR contract_id = $1
     FOR UPDATE
 ";
 
+pub const BATCH_SELECT_LOCK_SQL: &str = "
+    SELECT id::text, contract_id, ledger_seq, status, balance::text, network
+    FROM safetrust.trustless_work_escrows
+    WHERE id::text = ANY($1) OR contract_id = ANY($1)
+    FOR UPDATE
+";
+
 pub const UPDATE_ROW_SQL: &str = "
-    UPDATE escrow_transactions
+    UPDATE safetrust.trustless_work_escrows
     SET status = $2,
-        balance = $3::numeric,
-        ledger_seq = $4,
+        amount = $3::numeric,
+        balance = $4::numeric,
+        marker = $5,
+        approver = $6,
+        releaser = $7,
+        escrow_type = $8,
+        ledger_seq = $9,
         updated_at = NOW()
     WHERE id::text = $1 OR contract_id = $1
 ";
 
 pub const INSERT_ROW_SQL: &str = "
-    INSERT INTO escrow_transactions
-      (contract_id, status, amount, balance, ledger_seq, updated_at, tenant_id)
-    VALUES ($1, $2, $3::numeric, $4::numeric, $5, NOW(), 'safetrust')
+    INSERT INTO safetrust.trustless_work_escrows
+      (contract_id, status, amount, balance, marker, approver, releaser, escrow_type, ledger_seq, updated_at, tenant_id)
+    VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NOW(), 'safetrust')
     ON CONFLICT (contract_id) DO NOTHING
 ";
 
@@ -313,7 +324,7 @@ pub fn evaluate_observation(
     if incoming.ledger_seq.is_none() {
         let is_stored_pending = matches!(
             stored_status_norm.as_str(),
-            "created" | "pending_funding" | "deploying" | "pending_signature"
+            "created" | "pending_funding"
         );
         if !is_stored_pending {
             return EvaluationOutcome::RejectUnversionedForConfirmed {
@@ -468,6 +479,46 @@ async fn run_bulk_upsert(
     let mut rows_affected: u64 = 0;
     let mut unchanged: u64 = 0;
 
+    // Set-based locked read: lock all batch rows in one roundtrip
+    let keys: Vec<String> = updates
+        .iter()
+        .flat_map(|u| {
+            let mut v = vec![u.contract_id.clone()];
+            if let Some(ref id) = u.id {
+                if !id.is_empty() {
+                    v.push(id.clone());
+                }
+            }
+            v
+        })
+        .collect();
+
+    let locked_rows = tx
+        .query(BATCH_SELECT_LOCK_SQL, &[&keys])
+        .await
+        .map_err(|e| format!("Batch SELECT FOR UPDATE failed: {e}"))?;
+
+    let mut stored_map: std::collections::HashMap<String, StoredEscrowRow> =
+        std::collections::HashMap::new();
+    for row in locked_rows {
+        let id_str: String = row.get(0);
+        let contract_id: String = row.get(1);
+        let seq: Option<i64> = row.get(2);
+        let status: String = row.get(3);
+        let balance: String = row.get(4);
+        let network: Option<String> = row.get(5);
+        let stored = StoredEscrowRow {
+            id: id_str.clone(),
+            contract_id: contract_id.clone(),
+            status,
+            balance,
+            ledger_seq: seq,
+            network,
+        };
+        stored_map.insert(id_str, stored.clone());
+        stored_map.insert(contract_id, stored);
+    }
+
     for u in updates {
         let key = if let Some(ref id) = u.id {
             if !id.is_empty() {
@@ -479,38 +530,40 @@ async fn run_bulk_upsert(
             u.contract_id.as_str()
         };
 
-        // Atomic row lock via SELECT ... FOR UPDATE
-        let row_opt = tx
-            .query_opt(SELECT_LOCK_SQL, &[&key])
-            .await
-            .map_err(|e| format!("SELECT FOR UPDATE failed: {e}"))?;
+        let stored = stored_map.get(key).or_else(|| stored_map.get(&u.contract_id));
 
-        let stored = row_opt.as_ref().map(|row| {
-            let seq: Option<i64> = row.get(0);
-            let status: String = row.get(1);
-            let balance: String = row.get(2);
-            let network: Option<String> = row.get(3);
-            StoredEscrowRow {
-                id: key.to_string(),
-                contract_id: u.contract_id.clone(),
-                status,
-                balance,
-                ledger_seq: seq,
-                network,
-            }
-        });
-
-        match evaluate_observation(stored.as_ref(), u) {
+        match evaluate_observation(stored, u) {
             EvaluationOutcome::Write {
                 new_status,
                 new_balance,
                 new_ledger_seq,
             } => {
+                let escrow_type = if u.escrow_type.is_empty() {
+                    "single_release"
+                } else {
+                    u.escrow_type.as_str()
+                };
+                let amount = if u.amount.is_empty() {
+                    "0"
+                } else {
+                    u.amount.as_str()
+                };
+
                 if stored.is_some() {
                     let rows = tx
                         .execute(
                             UPDATE_ROW_SQL,
-                            &[&key, &new_status, &new_balance, &new_ledger_seq],
+                            &[
+                                &key,
+                                &new_status,
+                                &amount,
+                                &new_balance,
+                                &u.marker,
+                                &u.approver,
+                                &u.releaser,
+                                &escrow_type,
+                                &new_ledger_seq,
+                            ],
                         )
                         .await
                         .map_err(|e| format!("UPDATE failed: {e}"))?;
@@ -522,8 +575,12 @@ async fn run_bulk_upsert(
                             &[
                                 &u.contract_id,
                                 &new_status,
-                                &u.amount,
+                                &amount,
                                 &new_balance,
+                                &u.marker,
+                                &u.approver,
+                                &u.releaser,
+                                &escrow_type,
                                 &new_ledger_seq,
                             ],
                         )

@@ -22,6 +22,7 @@ import {
   isPendingStatus,
   canTransitionStatus,
   balancesEqual,
+  CANONICAL_TRANSITIONS,
   StoredEscrowState,
   IncomingEscrowObservation,
 } from '../../lib/escrow-freshness'
@@ -204,14 +205,14 @@ describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
     it('newer seq with valid transition succeeds along full lifecycle', () => {
       let current: StoredEscrowState = {
         contractId: 'C_LIFECYCLE',
-        status: 'created',
+        status: 'pending_funding',
         balance: '0.0000000',
         ledgerSeq: 100n,
         network: 'testnet',
       }
 
       const steps: Array<{ status: string; balance: string; seq: bigint }> = [
-        { status: 'pending_funding', balance: '0.0000000', seq: 101n },
+        { status: 'created', balance: '0.0000000', seq: 101n },
         { status: 'funded', balance: '1000.5000000', seq: 102n },
         { status: 'active', balance: '1000.5000000', seq: 103n },
         { status: 'milestone_approved', balance: '1000.5000000', seq: 104n },
@@ -420,7 +421,7 @@ describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
 
       const incoming: IncomingEscrowObservation = {
         contractId: 'C_PENDING',
-        status: 'pending_funding',
+        status: 'funded',
         balance: '0.0000000', // unversioned source provides 0 balance
         ledgerSeq: null,
         network: 'testnet',
@@ -429,7 +430,7 @@ describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
       const outcome = evaluateFreshness(stored, incoming)
       expect(outcome.type).toBe('WRITE')
       if (outcome.type === 'WRITE') {
-        expect(outcome.status).toBe('pending_funding')
+        expect(outcome.status).toBe('funded')
         // Preserves stored nonzero balance!
         expect(outcome.balance).toBe('100.0000000')
       }
@@ -571,6 +572,62 @@ describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
       expect(queryLog).toContain('SELECT')
       expect(queryLog).not.toContain('UPDATE')
       expect(queryLog).toContain('COMMIT')
+    })
+
+    it('rejects observation when stored row does not exist rather than creating placeholder identity', async () => {
+      const fakeClient = {
+        query: jest.fn(async (sql: string) => {
+          if (sql.includes('SELECT') && sql.includes('FOR UPDATE')) {
+            return { rows: [] } // no matching row
+          }
+          return { rows: [] }
+        }),
+        release: jest.fn(),
+      }
+
+      const outcome = await updateEscrowWithFreshness(
+        'C_MISSING',
+        {
+          status: 'completed',
+          balance: '0.0000000',
+          ledgerSeq: 500n,
+          network: 'testnet',
+        },
+        fakeClient as any
+      )
+
+      expect(outcome.type).toBe('REJECT_INVALID_TRANSITION')
+    })
+  })
+
+  // ─── 10. Canonical State Machine Parity ────────────────────────────────────
+  describe('10. Canonical State Machine Parity across all status pairs', () => {
+    const ALL_STATUSES = [
+      'created',
+      'pending_funding',
+      'funded',
+      'active',
+      'milestone_approved',
+      'completed',
+      'disputed',
+      'resolved',
+      'cancelled',
+    ]
+
+    it('verifies canTransitionStatus matches canonical transition rules for all 81 status pairs', () => {
+      for (const from of ALL_STATUSES) {
+        for (const to of ALL_STATUSES) {
+          const result = canTransitionStatus(from, to)
+          if (from === to) {
+            expect(result).toBe(true)
+          } else if (isTerminalStatus(from)) {
+            expect(result).toBe(false)
+          } else {
+            const expected = CANONICAL_TRANSITIONS[from]?.includes(to) ?? false
+            expect(result).toBe(expected)
+          }
+        }
+      }
     })
   })
 })

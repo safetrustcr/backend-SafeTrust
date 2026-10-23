@@ -50,7 +50,10 @@ export async function syncWalletHandler(
   req: AuthenticatedRequest & { body: Partial<SyncWalletPayload> },
   res: Response
 ): Promise<Response> {
-  const { uid } = req.user!
+  const uid = req.context?.uid || req.user?.uid
+  if (!uid) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
   const { wallet_address, chain_type, is_primary = false } = req.body
 
   if (!wallet_address || typeof wallet_address !== 'string') {

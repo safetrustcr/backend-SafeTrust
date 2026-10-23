@@ -332,12 +332,12 @@ const UPSERT_ESCROW_SQL = `
     AND (
       safetrust.trustless_work_escrows.status = EXCLUDED.status
       OR (
-        (safetrust.trustless_work_escrows.status = 'created' AND EXCLUDED.status IN ('pending_funding', 'funded', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'pending_funding' AND EXCLUDED.status IN ('funded', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'funded' AND EXCLUDED.status IN ('active', 'milestone_approved', 'completed', 'disputed', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'active' AND EXCLUDED.status IN ('milestone_approved', 'completed', 'disputed')) OR
-        (safetrust.trustless_work_escrows.status = 'milestone_approved' AND EXCLUDED.status IN ('completed', 'disputed', 'milestone_approved')) OR
-        (safetrust.trustless_work_escrows.status = 'disputed' AND EXCLUDED.status IN ('resolved', 'completed'))
+        (safetrust.trustless_work_escrows.status = 'created' AND EXCLUDED.status IN ('funded', 'cancelled')) OR
+        (safetrust.trustless_work_escrows.status = 'pending_funding' AND EXCLUDED.status IN ('created', 'funded', 'cancelled')) OR
+        (safetrust.trustless_work_escrows.status = 'funded' AND EXCLUDED.status IN ('active', 'milestone_approved', 'disputed', 'cancelled')) OR
+        (safetrust.trustless_work_escrows.status = 'active' AND EXCLUDED.status IN ('milestone_approved', 'disputed')) OR
+        (safetrust.trustless_work_escrows.status = 'milestone_approved' AND EXCLUDED.status IN ('completed', 'disputed')) OR
+        (safetrust.trustless_work_escrows.status = 'disputed' AND EXCLUDED.status IN ('resolved', 'cancelled'))
       )
     )
     -- 4. Value difference check: unchanged values produce no write
@@ -396,12 +396,12 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     AND (
       safetrust.trustless_work_escrows.status = EXCLUDED.status
       OR (
-        (safetrust.trustless_work_escrows.status = 'created' AND EXCLUDED.status IN ('pending_funding', 'funded', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'pending_funding' AND EXCLUDED.status IN ('funded', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'funded' AND EXCLUDED.status IN ('active', 'milestone_approved', 'completed', 'disputed', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'active' AND EXCLUDED.status IN ('milestone_approved', 'completed', 'disputed')) OR
-        (safetrust.trustless_work_escrows.status = 'milestone_approved' AND EXCLUDED.status IN ('completed', 'disputed', 'milestone_approved')) OR
-        (safetrust.trustless_work_escrows.status = 'disputed' AND EXCLUDED.status IN ('resolved', 'completed'))
+        (safetrust.trustless_work_escrows.status = 'created' AND EXCLUDED.status IN ('funded', 'cancelled')) OR
+        (safetrust.trustless_work_escrows.status = 'pending_funding' AND EXCLUDED.status IN ('created', 'funded', 'cancelled')) OR
+        (safetrust.trustless_work_escrows.status = 'funded' AND EXCLUDED.status IN ('active', 'milestone_approved', 'disputed', 'cancelled')) OR
+        (safetrust.trustless_work_escrows.status = 'active' AND EXCLUDED.status IN ('milestone_approved', 'disputed')) OR
+        (safetrust.trustless_work_escrows.status = 'milestone_approved' AND EXCLUDED.status IN ('completed', 'disputed')) OR
+        (safetrust.trustless_work_escrows.status = 'disputed' AND EXCLUDED.status IN ('resolved', 'cancelled'))
       )
     )
     -- 4. Value difference check: unchanged values produce no write
@@ -885,10 +885,13 @@ export async function reconcileEscrowAtomic(
       FOR UPDATE
     `
     let storedRow: any = null
+    await executeQuery('SAVEPOINT sp_select')
     try {
       const res = await executeQuery(selectSql, [escrow.contractId])
       storedRow = res.rows[0]
+      await executeQuery('RELEASE SAVEPOINT sp_select')
     } catch {
+      await executeQuery('ROLLBACK TO SAVEPOINT sp_select')
       const fallbackSql = `
         SELECT contract_id, status, balance::text, ledger_seq, network
         FROM trustless_work_escrows
@@ -927,6 +930,7 @@ export async function reconcileEscrowAtomic(
           SET status = $2, balance = $3::numeric, ledger_seq = $4, updated_at = NOW()
           WHERE contract_id = $1
         `
+        await executeQuery('SAVEPOINT sp_update')
         try {
           await executeQuery(updateSql, [
             escrow.contractId,
@@ -934,7 +938,9 @@ export async function reconcileEscrowAtomic(
             outcome.balance,
             outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
           ])
+          await executeQuery('RELEASE SAVEPOINT sp_update')
         } catch {
+          await executeQuery('ROLLBACK TO SAVEPOINT sp_update')
           const fallbackUpdate = `
             UPDATE trustless_work_escrows
             SET status = $2, balance = $3::numeric, ledger_seq = $4, updated_at = NOW()
@@ -956,6 +962,7 @@ export async function reconcileEscrowAtomic(
             $1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NOW(), 'safetrust'
           )
         `
+        await executeQuery('SAVEPOINT sp_insert')
         try {
           await executeQuery(insertSql, [
             escrow.contractId,
@@ -968,7 +975,9 @@ export async function reconcileEscrowAtomic(
             escrow.escrowType ?? 'single_release',
             outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
           ])
+          await executeQuery('RELEASE SAVEPOINT sp_insert')
         } catch {
+          await executeQuery('ROLLBACK TO SAVEPOINT sp_insert')
           const fallbackInsert = `
             INSERT INTO trustless_work_escrows (
               contract_id, status, amount, balance, marker, approver, releaser,

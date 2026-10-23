@@ -3,20 +3,26 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type * as NativeVerifier from '../../../crates/zk-verifier';
 
-export type ZkVerifierError = Error & { code: 'ZK_VERIFIER_UNAVAILABLE' | 'ZK_VERIFIER_MISCONFIGURED' };
+export type ZkVerifierError = Error & {
+  code: 'ZK_FEATURE_DISABLED' | 'ZK_VERIFIER_UNAVAILABLE' | 'ZK_VERIFIER_MISCONFIGURED';
+};
 
-let nativeVerifier: typeof NativeVerifier | null = null;
-let nativeLoadError: unknown = null;
-
-try {
-  nativeVerifier = require('../../../crates/zk-verifier');
-} catch (error) {
-  nativeLoadError = error;
+function createZkError(
+  message: string,
+  code: ZkVerifierError['code'],
+  cause?: unknown
+): ZkVerifierError {
+  const error = new Error(message) as ZkVerifierError;
+  error.code = code;
+  if (cause !== undefined) error.cause = cause;
+  return error;
 }
+
+let nativeVerifier: typeof NativeVerifier | null | undefined = undefined;
 
 /**
  * Verify a proof-of-funds proof with the Rust UltraHonk addon.
- * The addon is optional for non-ZK requests, but ZK requests fail closed.
+ * ZK is opt-in and the native addon is loaded only when explicitly enabled.
  */
 export function verifyProofOfFunds(
   proofHex: string,
@@ -24,18 +30,53 @@ export function verifyProofOfFunds(
   thresholdStroops: string,
   balanceCommitmentHex: string
 ) {
-  if (!nativeVerifier) {
-    const error = new Error('ZK proof verifier is unavailable') as ZkVerifierError;
-    error.code = 'ZK_VERIFIER_UNAVAILABLE';
-    error.cause = nativeLoadError;
-    throw error;
+  if (process.env.ZK_ENABLED !== 'true') {
+    throw createZkError(
+      'ZK proof verification is disabled',
+      'ZK_FEATURE_DISABLED'
+    );
+  }
+
+  let verifier = nativeVerifier;
+
+  if (verifier === undefined) {
+    try {
+      // Do not load the experimental native addon during normal application startup.
+      verifier = require('../../../crates/zk-verifier');
+    } catch (cause) {
+      throw createZkError(
+        'ZK proof verifier is unavailable',
+        'ZK_VERIFIER_UNAVAILABLE',
+        cause
+      );
+    }
+  }
+
+  if (!verifier) {
+    throw createZkError(
+      'ZK proof verifier is unavailable',
+      'ZK_VERIFIER_UNAVAILABLE'
+    );
   }
 
   // A proof only establishes the statement encoded by its verification key.
-  // Pin the SafeTrust circuit key in production so a valid proof for an
-  // attacker-controlled circuit cannot be substituted. The pin is optional
-  // to keep local circuit development frictionless.
+  // Pin the SafeTrust circuit key so a valid proof for an attacker-controlled
+  // circuit cannot be substituted. By default, this pin is mandatory in all
+  // environments (including production, staging, or unset NODE_ENV) to fail closed;
+  // it is exempt only when NODE_ENV is explicitly 'development' or 'test' to keep
+  // local circuit development frictionless.
+  const isDevOrTest =
+    process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
   const expectedKeyHash = process.env.ZK_PROOF_OF_FUNDS_VK_SHA256;
+
+  if (!isDevOrTest && !expectedKeyHash) {
+    const error = new Error(
+      'ZK verification key hash pin (ZK_PROOF_OF_FUNDS_VK_SHA256) is mandatory in production and non-development environments'
+    ) as ZkVerifierError;
+    error.code = 'ZK_VERIFIER_MISCONFIGURED';
+    throw error;
+  }
+
   if (expectedKeyHash) {
     if (!/^[0-9a-fA-F]{64}$/.test(expectedKeyHash)) {
       const error = new Error('ZK verification key hash is misconfigured') as ZkVerifierError;
@@ -53,11 +94,19 @@ export function verifyProofOfFunds(
     if (!timingSafeEqual(actual, expected)) return false;
   }
 
-  return nativeVerifier.verifyProofOfFunds(
+  return verifier.verifyProofOfFunds(
     proofHex,
     verificationKeyHex,
     thresholdStroops,
     balanceCommitmentHex
   );
 }
+
+/**
+ * Test-only utility to mock or reset the native verifier.
+ */
+export function _setNativeVerifierForTesting(verifier: typeof NativeVerifier | null): void {
+  nativeVerifier = verifier;
+}
+
 

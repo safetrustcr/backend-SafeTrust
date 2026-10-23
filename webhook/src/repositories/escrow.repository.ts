@@ -18,29 +18,29 @@
  *    - It is strictly REJECTED for any confirmed or terminal record (`funded`, `completed`, etc.).
  *    - Nonzero stored balances are never zeroed out by unversioned snapshots.
  *
- * 3. The Four Conflict Cases & Outcomes:
- *    - Incoming newer (incoming_seq > stored_seq or stored is NULL): Write status, balance, ledger_seq.
- *    - Incoming older (incoming_seq < stored_seq): Reject silently; no write, no error.
- *    - Equal seq (incoming_seq == stored_seq), same values: Idempotent no-op; no write, no error.
- *    - Equal seq (incoming_seq == stored_seq), different values: Preserve stored confirmed state, log conflict.
+ * 3. The Four Conflict Cases & Invariant Enforcement:
+ *    - Case 1: Incoming newer (incoming_seq > stored_seq or stored is NULL): Write succeeds
+ *              if state machine transition and terminal state rules allow.
+ *    - Case 2: Incoming older (incoming_seq < stored_seq): Rejected silently; no write, no error.
+ *    - Case 3: Duplicate/replay (same seq, same values): Idempotent no-op; no write, no error.
+ *    - Case 4: Equal seq, different values: Preserve stored confirmed state; emit conflict log.
  *
- * 4. Why Terminal States Must NOT Be Ordered by Numeric Status Rank:
- *    Escrow states represent a directed transition graph. Terminal states (`completed`, `resolved`,
- *    `cancelled`) signify permanent funds settlement. Ordering by numeric status rank could allow
- *    a later sequence or numerical status to overwrite or resurrect a terminal escrow (e.g. moving
- *    from `completed` to `cancelled`). Terminal states are strictly immutable and absorbing.
+ * 4. Terminal State Protection (Absorbing States):
+ *    Terminal states (`completed`, `resolved`, `cancelled`) represent legally and financially
+ *    final settlement. Once reached, an escrow is permanently closed. Terminal states must
+ *    NEVER transition or be overwritten by any subsequent observation regardless of sequence
+ *    number or numeric status ranking.
  */
 
 import { hasuraRequest } from '../services/hasura'
-import db, { connect } from '../services/db'
-import type { PoolClient } from 'pg'
+import { PoolClient } from 'pg'
+import { query, connect } from '../services/db'
 import {
   evaluateFreshness,
   formatExactBalance,
-  parseLedgerSeq,
   FreshnessOutcome,
-  StoredEscrowState,
   IncomingEscrowObservation,
+  StoredEscrowState,
 } from '../lib/escrow-freshness'
 
 export type EscrowStatus =
@@ -286,6 +286,38 @@ export async function fundEscrow(
   }
 }
 
+export async function fundEscrowInTransaction(
+  client: PoolClient,
+  contractId: string,
+  amount: number,
+  validStates: string[]
+): Promise<TrustlessWorkEscrow | null> {
+  const result = await client.query<{
+    id: string
+    contract_id: string
+    status: string
+    balance: number
+  }>(
+    `UPDATE safetrust.trustless_work_escrows
+     SET status = 'funded', balance = $1, updated_at = NOW()
+     WHERE contract_id = $2
+       AND tenant_id = 'safetrust'
+       AND status = ANY($3::varchar[])
+     RETURNING id, contract_id, status, balance`,
+    [amount, contractId, validStates]
+  )
+
+  const updated = result.rows[0]
+  return updated
+    ? {
+        id: updated.id,
+        contractId: updated.contract_id,
+        status: updated.status,
+        balance: updated.balance,
+      }
+    : null
+}
+
 export async function releaseFunds(
   contractId: string
 ): Promise<TrustlessWorkEscrow | null> {
@@ -320,6 +352,37 @@ export async function releaseFunds(
     status: updated.status,
     balance: updated.balance,
   }
+}
+
+export async function releaseFundsInTransaction(
+  client: PoolClient,
+  contractId: string,
+  validStates: string[]
+): Promise<TrustlessWorkEscrow | null> {
+  const result = await client.query<{
+    id: string
+    contract_id: string
+    status: string
+    balance: number
+  }>(
+    `UPDATE safetrust.trustless_work_escrows
+     SET status = 'completed', balance = 0, updated_at = NOW()
+     WHERE contract_id = $1
+       AND tenant_id = 'safetrust'
+       AND status = ANY($2::varchar[])
+     RETURNING id, contract_id, status, balance`,
+    [contractId, validStates]
+  )
+
+  const updated = result.rows[0]
+  return updated
+    ? {
+        id: updated.id,
+        contractId: updated.contract_id,
+        status: updated.status,
+        balance: updated.balance,
+      }
+    : null
 }
 
 export async function disputeEscrow(
@@ -462,7 +525,7 @@ export async function updateEscrowWithFreshness(
     if (client) {
       return client.query(sql, params)
     }
-    return db.query(sql, params)
+    return query(sql, params)
   }
 
   let txOpen = false
@@ -479,10 +542,13 @@ export async function updateEscrowWithFreshness(
       FOR UPDATE
     `
     let storedRow: any = null
+    await executeQuery('SAVEPOINT sp_select')
     try {
       const res = await executeQuery(selectSql, [idOrContractId])
       storedRow = res.rows[0]
+      await executeQuery('RELEASE SAVEPOINT sp_select')
     } catch {
+      await executeQuery('ROLLBACK TO SAVEPOINT sp_select')
       // Fall back to unqualified escrow_transactions table if safetrust schema is not configured
       const fallbackSql = `
         SELECT id, contract_id, status, balance::text, ledger_seq, network
@@ -514,75 +580,43 @@ export async function updateEscrowWithFreshness(
       network: observation.network,
     }
 
-    const outcome = evaluateFreshness(storedState, incoming)
+    // CodeRabbit review comment: Reject missing-row observations instead of inserting placeholders
+    const outcome: FreshnessOutcome = storedRow
+      ? evaluateFreshness(storedState, incoming)
+      : {
+          type: 'REJECT_INVALID_TRANSITION',
+          reason: 'Cannot create an escrow row without an existing escrow identity',
+        }
 
-    if (outcome.type === 'WRITE') {
-      if (storedRow) {
-        // Update existing row
-        const updateSql = `
-          UPDATE safetrust.escrow_transactions
+    if (outcome.type === 'WRITE' && storedRow) {
+      // Update existing row
+      const updateSql = `
+        UPDATE safetrust.escrow_transactions
+        SET status = $2, balance = $3::numeric, ledger_seq = $4, updated_at = NOW()
+        WHERE id::text = $1 OR contract_id = $1
+      `
+      await executeQuery('SAVEPOINT sp_update')
+      try {
+        await executeQuery(updateSql, [
+          idOrContractId,
+          outcome.status,
+          outcome.balance,
+          outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+        ])
+        await executeQuery('RELEASE SAVEPOINT sp_update')
+      } catch {
+        await executeQuery('ROLLBACK TO SAVEPOINT sp_update')
+        const fallbackUpdate = `
+          UPDATE escrow_transactions
           SET status = $2, balance = $3::numeric, ledger_seq = $4, updated_at = NOW()
           WHERE id::text = $1 OR contract_id = $1
         `
-        try {
-          await executeQuery(updateSql, [
-            idOrContractId,
-            outcome.status,
-            outcome.balance,
-            outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
-          ])
-        } catch {
-          const fallbackUpdate = `
-            UPDATE escrow_transactions
-            SET status = $2, balance = $3::numeric, ledger_seq = $4, updated_at = NOW()
-            WHERE id::text = $1 OR contract_id = $1
-          `
-          await executeQuery(fallbackUpdate, [
-            idOrContractId,
-            outcome.status,
-            outcome.balance,
-            outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
-          ])
-        }
-      } else {
-        // Insert new row
-        const insertSql = `
-          INSERT INTO safetrust.escrow_transactions (
-            contract_id, engagement_id, property_id, sender_address, receiver_address,
-            amount, balance, status, ledger_seq, network, created_at, updated_at
-          ) VALUES (
-            $1, $1, 'default', 'G_UNKNOWN', 'G_UNKNOWN',
-            $2::numeric, $3::numeric, $4, $5, $6, NOW(), NOW()
-          )
-        `
-        try {
-          await executeQuery(insertSql, [
-            idOrContractId,
-            observation.amount ? formatExactBalance(observation.amount) : outcome.balance,
-            outcome.balance,
-            outcome.status,
-            outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
-            observation.network ?? 'testnet',
-          ])
-        } catch {
-          const fallbackInsert = `
-            INSERT INTO escrow_transactions (
-              contract_id, engagement_id, property_id, sender_address, receiver_address,
-              amount, balance, status, ledger_seq, network, created_at, updated_at
-            ) VALUES (
-              $1, $1, 'default', 'G_UNKNOWN', 'G_UNKNOWN',
-              $2::numeric, $3::numeric, $4, $5, $6, NOW(), NOW()
-            )
-          `
-          await executeQuery(fallbackInsert, [
-            idOrContractId,
-            observation.amount ? formatExactBalance(observation.amount) : outcome.balance,
-            outcome.balance,
-            outcome.status,
-            outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
-            observation.network ?? 'testnet',
-          ])
-        }
+        await executeQuery(fallbackUpdate, [
+          idOrContractId,
+          outcome.status,
+          outcome.balance,
+          outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+        ])
       }
     }
 

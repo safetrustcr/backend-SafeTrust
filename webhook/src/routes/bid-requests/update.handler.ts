@@ -55,7 +55,7 @@ export const updateBidRequestHandler = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<Response> => {
-  const { uid } = req.user || {}
+  const uid = req.context?.uid || req.user?.uid
   const { id } = req.params as { id: string }
   const { status: newStatus } = (req.body || {}) as UpdateBidRequestPayload
 

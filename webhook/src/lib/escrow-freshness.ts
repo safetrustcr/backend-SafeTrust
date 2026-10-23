@@ -104,6 +104,29 @@ export function isPendingStatus(status: string | null | undefined): boolean {
   return s === 'created' || s === 'pending_funding'
 }
 
+let nativeStateMachine: any = null
+try {
+  nativeStateMachine = require('../../../../crates/escrow-state-machine')
+} catch {
+  // Addon not available, using canonical TS table
+}
+
+/**
+ * Canonical transition table defining all legal target statuses reachable from
+ * each source status, matching crates/escrow-state-machine/src/transitions.rs.
+ */
+export const CANONICAL_TRANSITIONS: Record<string, readonly string[]> = {
+  created: ['funded', 'cancelled'],
+  pending_funding: ['created', 'funded', 'cancelled'],
+  funded: ['active', 'milestone_approved', 'disputed', 'cancelled'],
+  active: ['milestone_approved', 'disputed'],
+  milestone_approved: ['completed', 'disputed'],
+  disputed: ['resolved', 'cancelled'],
+  completed: [],
+  resolved: [],
+  cancelled: [],
+} as const
+
 /**
  * Validates whether transitioning from `fromStatus` to `toStatus` is legal
  * according to SafeTrust state machine rules.
@@ -128,28 +151,17 @@ export function canTransitionStatus(
   // Same status is always valid (idempotent)
   if (from === to) return true
 
-  switch (from) {
-    case 'created':
-      return to === 'pending_funding' || to === 'funded' || to === 'cancelled'
-    case 'pending_funding':
-      return to === 'funded' || to === 'cancelled'
-    case 'funded':
-      return (
-        to === 'active' ||
-        to === 'milestone_approved' ||
-        to === 'completed' ||
-        to === 'disputed' ||
-        to === 'cancelled'
-      )
-    case 'active':
-      return to === 'milestone_approved' || to === 'completed' || to === 'disputed'
-    case 'milestone_approved':
-      return to === 'completed' || to === 'disputed' || to === 'milestone_approved'
-    case 'disputed':
-      return to === 'resolved' || to === 'completed'
-    default:
-      return false
+  // Delegate to native state machine if loaded
+  if (nativeStateMachine && typeof nativeStateMachine.canTransition === 'function') {
+    try {
+      return nativeStateMachine.canTransition(from, to)
+    } catch {
+      // Fall through to canonical table
+    }
   }
+
+  const allowed = CANONICAL_TRANSITIONS[from]
+  return allowed ? allowed.includes(to) : false
 }
 
 /**
