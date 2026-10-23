@@ -162,9 +162,13 @@ if [[ "$url" == */v1/metadata ]]; then
             body=$(cat "$state/export.json")
             ;;
         replace_metadata)
+            jq -c '{type:"replace_metadata", args:.args}' <<<"$data" >> "$state/replace-payloads.jsonl"
             if [[ -f "$state/fail-replace" ]]; then
                 code=400
                 body=$(cat "$state/fail-replace")
+            elif [[ -f "$state/conflict-replace" ]]; then
+                code=409
+                body='{"error":"metadata resource version referenced (1) did not match current version","code":"conflict","path":"$"}'
             else
                 jq -c '.args.metadata' <<<"$data" > "$state/applied.json"
                 printf '%s\n' "$data" >> "$state/replace-calls.jsonl"
@@ -417,6 +421,7 @@ reset_state() {
     : > "$STATE/graphql-roles.log"
     : > "$STATE/replace-calls.jsonl"
     rm -f "$STATE"/applied.json "$STATE"/fail-replace "$STATE"/inconsistent.json \
+        "$STATE"/conflict-replace "$STATE"/replace-payloads.jsonl \
         "$STATE"/fail-graphql-role-*
     reset_build
 }
@@ -575,6 +580,34 @@ if [[ ! -f "$STATE/applied.json" ]]; then
 else
     fail_test "failed replace_metadata does not record applied metadata"
 fi
+
+# 5b. The replacement is pinned to the exported resource_version, so a
+#     concurrent write between export and replace fails instead of being
+#     silently overwritten.
+reset_state
+run_deploy safetrust "$TMP_ROOT/out-5b-a.log"
+assert_eq 0 "$STATUS" "deploy with optimistic concurrency succeeds"
+if jq -e '.args.resource_version == 1' "$STATE/replace-payloads.jsonl" >/dev/null 2>&1; then
+    pass "replacement carries the exported resource_version"
+else
+    fail_test "replacement carries the exported resource_version"
+fi
+
+reset_state
+cat > "$STATE/conflict-replace" <<'JSON'
+{}
+JSON
+run_deploy safetrust "$TMP_ROOT/out-5b.log"
+
+if [[ "$STATUS" -ne 0 ]]; then
+    pass "a resource_version conflict exits non-zero"
+else
+    fail_test "a resource_version conflict exits non-zero"
+fi
+assert_contains "$TMP_ROOT/out-5b.log" "did not match current version" \
+    "conflict diagnostics include the server message"
+assert_contains "$TMP_ROOT/out-5b.log" "re-run the deployment" \
+    "conflict diagnostics explain how to recover"
 
 # 6. Pending migrations block dependent metadata before any replacement.
 reset_state

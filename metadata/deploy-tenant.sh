@@ -427,15 +427,19 @@ deploy_full_metadata() {
     local source_definition="$3"
     local table_definitions="$4"
     local function_definitions="$5"
-    local exported merged payload consistency table_count function_count
+    local exported merged payload consistency table_count function_count resource_version
 
     table_count=$(jq 'length' <<<"$table_definitions")
     function_count=$(jq 'length' <<<"$function_definitions")
 
     echo "📤 [$tenant] Exporting current metadata from $HASURA_ENDPOINT..." >&2
-    if ! exported=$(metadata_api "export_metadata" '{"type":"export_metadata","args":{}}'); then
+    if ! exported=$(metadata_api "export_metadata" '{"type":"export_metadata","version":2,"args":{}}'); then
         return 1
     fi
+    # Optimistic concurrency: pin the replacement to the version we exported.
+    # Another writer (another host, the console) between export and replace is
+    # reported as a 409 conflict instead of being silently overwritten.
+    resource_version=$(jq -r '.resource_version // empty' <<<"$exported" 2>/dev/null || true)
 
     if ! merged=$(merge_metadata_document \
         "$exported" \
@@ -454,10 +458,14 @@ deploy_full_metadata() {
     echo "🧩 [$tenant] Applying complete metadata for source '$source_name' (${table_count} table(s), ${function_count} function(s))..." >&2
     payload=$(jq -cn \
         --argjson metadata "$merged" \
-        '{type: "replace_metadata", args: {metadata: $metadata, allow_inconsistent_metadata: false}}')
+        --arg resource_version "$resource_version" '
+        {type: "replace_metadata", args: ({metadata: $metadata, allow_inconsistent_metadata: false}
+            + (if $resource_version == "" then {} else {resource_version: ($resource_version | tonumber)} end))}'
+        )
 
     if ! metadata_api "replace_metadata" "$payload" >/dev/null; then
         echo "❌ [$tenant] Metadata replacement failed; the endpoint keeps its previous metadata." >&2
+        echo "   A 'conflict' error means the metadata changed after export (another deploy or the console); re-run the deployment." >&2
         return 1
     fi
 

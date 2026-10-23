@@ -53,17 +53,21 @@ flowchart TD
    first. If any migration is `Pending` or `Not Present`, deployment stops
    before metadata is touched. Applying permissions to a table that has not
    been migrated produces inconsistent metadata.
-2. **Export** — `export_metadata` captures all sources, shared metadata
-   (`actions`, `cron_triggers`, and so on), and every tenant.
+2. **Export** — `export_metadata` (API v2) captures all sources, shared
+   metadata (`actions`, `cron_triggers`, and so on), every tenant, and the
+   endpoint's `resource_version`.
 3. **Merge** — the tenant's source, tables, and functions from
    `metadata/build/<tenant>/` replace their counterparts (each table/function
    entry is replaced in full, never merged key by key). Tables/functions not
    defined for this tenant are preserved, and every other source plus all
    shared metadata stays in the document.
 4. **Replace** — `replace_metadata` is called with
-   `allow_inconsistent_metadata: false`. A failed API response is reported with
-   the operation name and server body; the endpoint keeps its previous
-   metadata.
+   `allow_inconsistent_metadata: false` and the exported `resource_version`.
+   If anything wrote to the endpoint after the export (another deploy on a
+   different host, the Hasura console), Hasura returns `409 conflict` and the
+   deployment fails instead of silently overwriting that change. A failed API
+   response is reported with the operation name and server body; the endpoint
+   keeps its previous metadata.
 5. **Consistency** — `get_inconsistent_metadata` must return
    `is_consistent: true` with no objects. Anything else fails the deployment.
 6. **Role verification** — the script introspects the schema as each
@@ -83,8 +87,11 @@ metadata. The merge step prevents that:
 - only the target source is replaced,
 - all other sources and shared metadata are left intact,
 - whole-document replacements are serialized with a per-endpoint lock, so two
-  parallel tenant deploys cannot export the same stale state and overwrite each
-  other.
+  parallel tenant deploys on the same host cannot export the same stale state
+  and overwrite each other,
+- the replacement is pinned to the exported `resource_version`, so a write from
+  another deployment host or from the Hasura console between export and replace
+  fails with a `409 conflict` instead of being overwritten.
 
 ## Local deployment
 
@@ -151,7 +158,8 @@ The deployer fails loudly when:
 - `hasura migrate status` cannot be read or reports pending migrations,
 - source/table/function YAML cannot be read,
 - `export_metadata`, `replace_metadata`, or `get_inconsistent_metadata`
-  returns a non-2xx response or an `error` body,
+  returns a non-2xx response or an `error` body — including a `conflict` when
+  metadata changed between export and replacement,
 - metadata is inconsistent after replacement,
 - a representative role schema or query fails.
 
@@ -175,6 +183,7 @@ Coverage includes:
   configuration) removed on re-deploy,
 - unchanged re-run idempotency,
 - failed `replace_metadata` diagnostics,
+- `resource_version` conflict on a concurrent write,
 - pending migration gating,
 - inconsistent metadata detection,
 - role-verification failure handling,
