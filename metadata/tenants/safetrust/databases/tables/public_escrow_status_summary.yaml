@@ -1,3 +1,16 @@
 table:
   name: escrow_status_summary
   schema: safetrust
+select_permissions:
+  - role: host
+    permission:
+      columns:
+        - total_escrows
+        - active_escrows
+        - completed_escrows
+        - disputed_escrows
+        - total_value_usdc
+        - pending_value_usdc
+      filter: {}
+      query_root_fields: []
+      subscription_root_fields: []
