@@ -238,7 +238,7 @@ export function evaluateFreshness(
   if (stored.network && incoming.network) {
     const sNet = stored.network.trim().replace(/^stellar:/i, '').toLowerCase()
     const iNet = incoming.network.trim().replace(/^stellar:/i, '').toLowerCase()
-    if (sNet === 'mainnet' && iNet === 'testnet') {
+    if (sNet && iNet && sNet !== iNet) {
       return {
         type: 'REJECT_NETWORK_MISMATCH',
         reason: `Network mismatch: stored=${stored.network}, incoming=${incoming.network}`,
