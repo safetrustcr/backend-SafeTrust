@@ -86,11 +86,8 @@ Scenario: Diagram 2 - Anonymous role request is rejected (missing credentials)
     }
     """
     When method POST
-    # Hasura dev-mode returns HTTP 200 with an errors[] body for unauthenticated requests.
-    # Accept any of: HTTP 4xx, or a 200 with errors, or a 200 with an error field.
-    Then assert responseStatus == 400 || responseStatus == 401 \
-        || karate.match(response, { errors: '#present' }).pass \
-        || karate.match(response, { error: '#present' }).pass
+    # Hasura DEV_MODE returns HTTP 200 with errors[] for unauthenticated requests (not 4xx)
+    Then assert responseStatus == 400 || responseStatus == 401 || karate.match(response, { errors: '#present' }).pass || karate.match(response, { error: '#present' }).pass
 
 Scenario: Diagram 2 - Explicit anonymous role impersonation is rejected by GraphQL engine
     * configure headers = { 'Content-Type': 'application/json', 'x-hasura-admin-secret': adminSecret, 'x-hasura-role': 'anonymous' }
@@ -102,7 +99,6 @@ Scenario: Diagram 2 - Explicit anonymous role impersonation is rejected by Graph
     }
     """
     When method POST
-    # Hasura dev-mode returns HTTP 200 with an errors[] body for unknown/unregistered roles.
-    Then assert responseStatus == 400 || responseStatus == 401 \
-        || karate.match(response, { errors: '#present' }).pass \
-        || karate.match(response, { error: '#present' }).pass
+    # Hasura DEV_MODE returns HTTP 200 with errors[] for unknown/unregistered roles (not 4xx)
+    Then assert responseStatus == 400 || responseStatus == 401 || karate.match(response, { errors: '#present' }).pass || karate.match(response, { error: '#present' }).pass
+

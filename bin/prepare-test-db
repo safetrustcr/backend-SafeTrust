@@ -24,67 +24,36 @@ done
 metadata/setup-tenant.sh safetrust hotel_industry --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
 
 echo "[migrate-test] Ensuring analytics functions and permissions are tracked (idempotent)..."
+# Each curl is fired independently with || true so an "already exists/tracked" error
+# on pg_track_function never aborts the script before pg_create_function_permission runs.
 
-# Helper: call Hasura metadata API, ignore "already exists" / "already tracked" errors,
-# but surface any other failure to stderr.
-hasura_meta_call() {
-  local desc="$1"
-  local payload="$2"
-  local resp
-  resp=$(curl -sS -X POST "$ENDPOINT/v1/metadata" \
-    -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
-    -H 'Content-Type: application/json' \
-    -d "$payload")
-  local err
-  err=$(echo "$resp" | jq -r '.error // ""' 2>/dev/null || true)
-  if [ -n "$err" ] && \
-     ! echo "$err" | grep -qi "already exists" && \
-     ! echo "$err" | grep -qi "already tracked"; then
-    echo "[migrate-test] WARNING: $desc: $resp" >&2
-  else
-    echo "[migrate-test] OK: $desc"
-  fi
-}
+echo "[migrate-test] (1/4) Tracking get_escrow_analytics_by_day..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_track_function","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_analytics_by_day"},"configuration":{"custom_name":"getEscrowAnalyticsByDay","exposed_as":"query"}}}' \
+  >&2 || true
 
-# 1. Track get_escrow_analytics_by_day (idempotent — ignored if already tracked)
-hasura_meta_call "track get_escrow_analytics_by_day" "$(jq -cn '{
-  type: "pg_track_function",
-  args: {
-    source: "safetrust",
-    function: { schema: "safetrust", name: "get_escrow_analytics_by_day" },
-    configuration: { custom_name: "getEscrowAnalyticsByDay", exposed_as: "query" }
-  }
-}')"
+echo "[migrate-test] (2/4) Granting host permission on get_escrow_analytics_by_day..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_create_function_permission","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_analytics_by_day"},"role":"host"}}' \
+  >&2 || true
 
-# 2. Grant host permission on get_escrow_analytics_by_day (idempotent)
-hasura_meta_call "grant host perm on get_escrow_analytics_by_day" "$(jq -cn '{
-  type: "pg_create_function_permission",
-  args: {
-    source: "safetrust",
-    function: { schema: "safetrust", name: "get_escrow_analytics_by_day" },
-    role: "host"
-  }
-}')"
+echo "[migrate-test] (3/4) Tracking get_escrow_status_summary..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_track_function","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_status_summary"},"configuration":{"exposed_as":"query"}}}' \
+  >&2 || true
 
-# 3. Track get_escrow_status_summary (idempotent — ignored if already tracked)
-hasura_meta_call "track get_escrow_status_summary" "$(jq -cn '{
-  type: "pg_track_function",
-  args: {
-    source: "safetrust",
-    function: { schema: "safetrust", name: "get_escrow_status_summary" },
-    configuration: { exposed_as: "query" }
-  }
-}')"
-
-# 4. Grant host permission on get_escrow_status_summary (idempotent)
-hasura_meta_call "grant host perm on get_escrow_status_summary" "$(jq -cn '{
-  type: "pg_create_function_permission",
-  args: {
-    source: "safetrust",
-    function: { schema: "safetrust", name: "get_escrow_status_summary" },
-    role: "host"
-  }
-}')"
+echo "[migrate-test] (4/4) Granting host permission on get_escrow_status_summary..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_create_function_permission","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_status_summary"},"role":"host"}}' \
+  >&2 || true
 
 echo "[migrate-test] Reloading Hasura metadata cache..."
 curl -fsS -X POST "$ENDPOINT/v1/metadata" \
