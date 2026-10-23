@@ -3,7 +3,7 @@ Feature: Open Dispute Action
 
 Background:
     * url baseUrl
-    * header x-hasura-admin-secret = 'myadminsecretkey'
+    * header x-hasura-admin-secret = adminSecret
     * def uuid = function() { return java.util.UUID.randomUUID() + '' }
     * def login = read('classpath:auth/login.feature')
     

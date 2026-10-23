@@ -3,7 +3,7 @@ Feature: Apartment Images Management
 
 Background:
     * url baseUrl
-    * header x-hasura-admin-secret = 'myadminsecretkey'
+    * header x-hasura-admin-secret = adminSecret
     * def uuid = function() { return java.util.UUID.randomUUID() + '' } 
     * def apartment_created_response = callonce read('./create-apartment.feature')
     * def apartment_created_id = apartment_created_response["response"]["data"]["insert_apartments_one"]["id"]
@@ -39,7 +39,7 @@ Scenario: Check apartment_images schema
     * print 'Schema:', response.data.__type
 
 Scenario: Create new apartment image
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {
@@ -153,7 +153,7 @@ Scenario: Verify apartment_images table exists
     * print 'Schema:', response.data.__type
 
 Scenario: Query apartment image by ID
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {
@@ -176,7 +176,7 @@ Scenario: Query apartment image by ID
     * def apartmentImage = response.data.insert_apartment_images_one.id
 
     # Query with header
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {
@@ -198,7 +198,7 @@ Scenario: Query apartment image by ID
 Scenario: Update apartment image
 
     # Query with header
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {
@@ -214,7 +214,7 @@ Scenario: Update apartment image
     And match response.errors == '#notpresent'
     * def oneApartmentImage = response.data.apartment_images[0].id
 
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {
@@ -265,7 +265,7 @@ Scenario: List apartment images
 
 Scenario: Delete apartment image
     # Query with header
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {
@@ -281,7 +281,7 @@ Scenario: Delete apartment image
     And match response.errors == '#notpresent'
     * def oneApartmentImage = response.data.apartment_images[0].id
 
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {

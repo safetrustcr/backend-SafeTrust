@@ -11,7 +11,7 @@ export const createReservationHandler = async (
   req: AuthenticatedRequest,
   res: Response<CreateReservationResponse>
 ): Promise<Response<CreateReservationResponse>> => {
-  const guestId = req.user?.uid
+  const guestId = req.context?.uid || req.user?.uid
   const { apartment_id, check_in_date, check_out_date, total_amount, asset_code } = req.body || {}
 
   // 1 — Validate required fields

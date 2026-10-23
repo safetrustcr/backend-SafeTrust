@@ -1,4 +1,5 @@
 import { hasuraRequest } from '../services/hasura'
+import { PoolClient } from 'pg'
 
 export type EscrowStatus =
   | 'created'
@@ -243,6 +244,38 @@ export async function fundEscrow(
   }
 }
 
+export async function fundEscrowInTransaction(
+  client: PoolClient,
+  contractId: string,
+  amount: number,
+  validStates: string[]
+): Promise<TrustlessWorkEscrow | null> {
+  const result = await client.query<{
+    id: string
+    contract_id: string
+    status: string
+    balance: number
+  }>(
+    `UPDATE safetrust.trustless_work_escrows
+     SET status = 'funded', balance = $1, updated_at = NOW()
+     WHERE contract_id = $2
+       AND tenant_id = 'safetrust'
+       AND status = ANY($3::varchar[])
+     RETURNING id, contract_id, status, balance`,
+    [amount, contractId, validStates]
+  )
+
+  const updated = result.rows[0]
+  return updated
+    ? {
+        id: updated.id,
+        contractId: updated.contract_id,
+        status: updated.status,
+        balance: updated.balance,
+      }
+    : null
+}
+
 export async function releaseFunds(
   contractId: string
 ): Promise<TrustlessWorkEscrow | null> {
@@ -277,6 +310,37 @@ export async function releaseFunds(
     status: updated.status,
     balance: updated.balance,
   }
+}
+
+export async function releaseFundsInTransaction(
+  client: PoolClient,
+  contractId: string,
+  validStates: string[]
+): Promise<TrustlessWorkEscrow | null> {
+  const result = await client.query<{
+    id: string
+    contract_id: string
+    status: string
+    balance: number
+  }>(
+    `UPDATE safetrust.trustless_work_escrows
+     SET status = 'completed', balance = 0, updated_at = NOW()
+     WHERE contract_id = $1
+       AND tenant_id = 'safetrust'
+       AND status = ANY($2::varchar[])
+     RETURNING id, contract_id, status, balance`,
+    [contractId, validStates]
+  )
+
+  const updated = result.rows[0]
+  return updated
+    ? {
+        id: updated.id,
+        contractId: updated.contract_id,
+        status: updated.status,
+        balance: updated.balance,
+      }
+    : null
 }
 
 export async function disputeEscrow(

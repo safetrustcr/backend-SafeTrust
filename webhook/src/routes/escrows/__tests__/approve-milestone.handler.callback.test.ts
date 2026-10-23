@@ -45,7 +45,7 @@ describe('approveMilestoneHandler', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    process.env.HASURA_GRAPHQL_ADMIN_SECRET = 'test-secret';
+    process.env.HASURA_ADMIN_SECRET = 'test-secret';
     process.env.HASURA_GRAPHQL_ENDPOINT =
       'http://graphql-engine-test:8080';
 
