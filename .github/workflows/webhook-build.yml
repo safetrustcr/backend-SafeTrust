@@ -65,6 +65,37 @@ jobs:
             console.log('addon smoke test OK - exports and validation behave as expected');
           "
 
+  webhook-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: webhook/package-lock.json
+
+      - name: Install webhook dependencies
+        run: npm ci --prefix webhook
+
+      - name: Type-check webhook and tests
+        run: npm --prefix webhook run type-check
+
+      - name: Run reconciliation tests
+        run: >-
+          npm --prefix webhook test -- --runTestsByPath
+          src/lib/__tests__/reconciliation.test.ts
+          src/lib/__tests__/reconciliation-parallel.test.ts
+          src/lib/__tests__/reconciliation-bulk.test.ts
+          src/lib/native-adapters/__tests__/rust-chunk.adapter.test.ts
+          src/lib/native-adapters/__tests__/rust-upsert.adapter.test.ts
+          src/lib/source-adapters/__tests__/soroban.adapter.test.ts
+          src/lib/source-adapters/__tests__/tw.adapter.test.ts
+          src/repositories/__tests__/reconciliation.repository.test.ts
+          src/services/__tests__/reconciliation.service.test.ts
+          src/routes/reconciliation/__tests__/sync-escrows.handler.test.ts
+
   cargo-test:
     runs-on: ubuntu-latest
     permissions:

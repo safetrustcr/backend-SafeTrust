@@ -6,14 +6,124 @@
  *              Soroban drift validation, and stale detection.
  */
 
-import db from './db'
-import { hasuraRequest } from './hasura'
+import { fetchEscrowsByContractIds } from '../lib/source-adapters/tw.adapter'
 import {
-  syncAllChunks,
-  chunkArray,
-  CHUNK_SIZE,
+  isRustChunkProcessingEnabled,
+  processChunksWithRust,
+} from '../lib/native-adapters/rust-chunk.adapter'
+import {
+  hasSorobanReconciler,
+  querySorobanEscrow,
+  reconcileSorobanState,
+  setSorobanReconcilerAddon,
+} from '../lib/source-adapters/soroban.adapter'
+import {
+  fetchEscrowContractIds as loadEscrowContractIds,
+  fetchSorobanEscrowRows,
   findStaleEscrows,
-} from '../lib/reconciliation'
+  upsertEscrowBatch,
+} from '../repositories/reconciliation.repository'
+import type {
+  ChunkResult,
+  ChunkSyncResult,
+  ReconciliationEscrowRow,
+  SyncAllResult,
+  UpsertResult,
+} from '../lib/reconciliation.types'
+
+export { setSorobanReconcilerAddon }
+
+export const CHUNK_SIZE = 50
+
+export function chunkArray<T>(arr: T[], size: number): T[][] {
+  if (!Array.isArray(arr)) throw new TypeError('chunkArray: arr must be an array')
+  if (!Number.isInteger(size) || size < 1) {
+    throw new RangeError('chunkArray: size must be a positive integer')
+  }
+
+  const chunks: T[][] = []
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size))
+  }
+  return chunks
+}
+
+export async function syncChunk(contractIds: string[]): Promise<UpsertResult> {
+  const escrows = await fetchEscrowsByContractIds(contractIds)
+  return upsertEscrowBatch(escrows)
+}
+
+export async function syncChunksParallel(chunks: string[][]): Promise<ChunkSyncResult> {
+  const resultsJson = await processChunksWithRust(chunks)
+  const chunkResults: ChunkResult[] = JSON.parse(resultsJson)
+
+  let updated = 0
+  let unchanged = 0
+  let skipped = 0
+  const errors: string[] = []
+
+  for (const result of chunkResults) {
+    if (result.error) {
+      errors.push(`chunk_${result.chunk_index}: ${result.error}`)
+      continue
+    }
+    const counts = await upsertEscrowBatch(result.escrows || [])
+    updated += counts.updated
+    unchanged += counts.unchanged
+    skipped += counts.skipped
+    console.log(
+      `[reconciliation]   chunk ${result.chunk_index + 1}/${chunks.length}` +
+        ` (${chunks[result.chunk_index]?.length ?? 0} ids, ${result.duration_ms}ms) —` +
+        ` updated: ${counts.updated}, unchanged: ${counts.unchanged}, skipped: ${counts.skipped}`
+    )
+  }
+
+  return { updated, unchanged, skipped, errors }
+}
+
+export async function syncAllChunks(contractIds: string[]): Promise<SyncAllResult> {
+  const chunks = chunkArray(contractIds, CHUNK_SIZE)
+  if (chunks.length === 0) {
+    return { chunks: 0, updated: 0, unchanged: 0, skipped: 0, errors: [] }
+  }
+
+  if (isRustChunkProcessingEnabled()) {
+    try {
+      const result = await syncChunksParallel(chunks)
+      return { chunks: chunks.length, ...result }
+    } catch (err) {
+      console.error(
+        `[reconciliation] ⚠️  Parallel chunk path failed, using sequential: ${(err as Error).message}`
+      )
+    }
+  }
+
+  let updated = 0
+  let unchanged = 0
+  let skipped = 0
+  const errors: string[] = []
+
+  for (let i = 0; i < chunks.length; i++) {
+    try {
+      const result = await syncChunk(chunks[i])
+      updated += result.updated
+      unchanged += result.unchanged
+      skipped += result.skipped
+      console.log(
+        `[reconciliation]   chunk ${i + 1}/${chunks.length}` +
+          ` (${chunks[i].length} ids) — updated: ${result.updated}, unchanged: ${result.unchanged}, skipped: ${result.skipped}`
+      )
+    } catch (chunkError) {
+      const errMsg = (chunkError as Error).message || String(chunkError)
+      console.error(
+        `[reconciliation] ⚠️  Chunk ${i + 1}/${chunks.length} failed: ${errMsg}`
+      )
+      errors.push(`chunk_${i}: ${errMsg}`)
+    }
+  }
+
+  return { chunks: chunks.length, updated, unchanged, skipped, errors }
+}
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -79,40 +189,6 @@ export interface ReconciliationReport {
   discrepancies: Discrepancy[]
 }
 
-// ─── Native Soroban Addon ─────────────────────────────────────────────────────
-
-let queryEscrowStateBatch: ((contractId: string, network: string) => string) | null = null
-let reconcileBatch: ((onChainJson: string, dbJson: string) => string) | null = null
-
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const sorobanReconciler = require('../../../crates/soroban-reconciler')
-  queryEscrowStateBatch = sorobanReconciler.queryEscrowStateBatch
-  reconcileBatch = sorobanReconciler.reconcileBatch
-} catch (err) {
-  const error = err as Error
-  console.warn(
-    '[reconciliation] ⚠️ soroban-reconciler native addon unavailable:',
-    error.message
-  )
-}
-
-/**
- * Allows injecting or replacing Soroban native addon implementations (e.g. for testing).
- */
-export function setSorobanReconcilerAddon(addon: {
-  queryEscrowStateBatch?: ((contractId: string, network: string) => string) | null
-  reconcileBatch?: ((onChainJson: string, dbJson: string) => string) | null
-} | null): void {
-  if (addon) {
-    queryEscrowStateBatch = addon.queryEscrowStateBatch ?? null
-    reconcileBatch = addon.reconcileBatch ?? null
-  } else {
-    queryEscrowStateBatch = null
-    reconcileBatch = null
-  }
-}
-
 // ─── Extracted Functions ──────────────────────────────────────────────────────
 
 /**
@@ -124,13 +200,7 @@ export function setSorobanReconcilerAddon(addon: {
 export async function fetchEscrowContractIds(
   tenantId: string = 'safetrust'
 ): Promise<string[]> {
-  const { rows } = await db.query<{ contract_id: string }>(
-    `SELECT contract_id
-       FROM safetrust.trustless_work_escrows
-      WHERE tenant_id = $1`,
-    [tenantId]
-  )
-  return rows.map((r) => r.contract_id)
+  return loadEscrowContractIds(tenantId)
 }
 
 /**
@@ -182,7 +252,7 @@ export async function runSorobanValidation(
   let corrected = 0
   let unresolved = 0
 
-  if (!queryEscrowStateBatch || !reconcileBatch) {
+  if (!hasSorobanReconciler()) {
     throw new Error('soroban-reconciler native addon is not available')
   }
 
@@ -293,11 +363,7 @@ export async function validateSorobanDrift(
     }
   }
 
-  const { rows: currentRows } = await db.query<EscrowDbRow>(
-    `SELECT contract_id, id, status, balance, marker, approver
-       FROM safetrust.trustless_work_escrows
-      WHERE tenant_id = 'safetrust'`
-  )
+  const currentRows = await fetchSorobanEscrowRows()
   const dbStateMap = Object.fromEntries(
     currentRows.map((r) => [r.contract_id, r])
   )
