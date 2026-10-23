@@ -15,7 +15,8 @@ default = []
 unvalidated-reader = []
 
 [dependencies]
-neon       = { version = "0.10", default-features = false, features = ["napi-6"] }
-serde      = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-ureq       = { version = "2.12", features = ["json"] }
+neon           = { version = "0.10", default-features = false, features = ["napi-6"] }
+serde          = { version = "1.0", features = ["derive"] }
+serde_json     = "1.0"
+stellar-strkey = "0.0.8"
+ureq           = { version = "2.12", features = ["json"] }
