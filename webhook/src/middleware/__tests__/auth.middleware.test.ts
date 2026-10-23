@@ -123,6 +123,54 @@ describe('authMiddleware', () => {
     expect(next).toHaveBeenCalled()
   })
 
+  describe('tenant resolution', () => {
+    const verify = (claims: Record<string, unknown>) =>
+      (getAuth as jest.Mock).mockReturnValue({
+        verifyIdToken: jest.fn().mockResolvedValue({ uid: 'u-1', ...claims }),
+      })
+
+    it('ignores an unverified x-tenant-id header that does not match the session', async () => {
+      req.headers['authorization'] = 'Bearer valid-token'
+      req.headers['x-tenant-id'] = 'attacker-tenant'
+      verify({})
+
+      await authMiddleware(req, res, next)
+      expect(res.status).toHaveBeenCalledWith(403)
+      expect(next).not.toHaveBeenCalled()
+      expect(req.context).toBeUndefined()
+    })
+
+    it('accepts x-tenant-id when it matches the verified tenant claim', async () => {
+      req.headers['authorization'] = 'Bearer valid-token'
+      req.headers['x-tenant-id'] = 'tenant-a'
+      verify({ tenant_id: 'tenant-a' })
+
+      await authMiddleware(req, res, next)
+      expect(next).toHaveBeenCalled()
+      expect(req.context.tenantId).toBe('tenant-a')
+    })
+
+    it('uses the Firebase multi-tenancy tenant when present', async () => {
+      req.headers['authorization'] = 'Bearer valid-token'
+      verify({ firebase: { tenant: 'tenant-b' } })
+
+      await authMiddleware(req, res, next)
+      expect(req.context.tenantId).toBe('tenant-b')
+    })
+
+    it('falls back to PLATFORM_TENANT_ID when the token has no tenant claim', async () => {
+      const previous = process.env.PLATFORM_TENANT_ID
+      process.env.PLATFORM_TENANT_ID = 'platform-x'
+      req.headers['authorization'] = 'Bearer valid-token'
+      verify({})
+
+      await authMiddleware(req, res, next)
+      expect(req.context.tenantId).toBe('platform-x')
+      if (previous === undefined) delete process.env.PLATFORM_TENANT_ID
+      else process.env.PLATFORM_TENANT_ID = previous
+    })
+  })
+
   describe('mock-token bypass', () => {
     const OLD_ENV = process.env.NODE_ENV
 

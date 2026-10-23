@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { getAuth } from "firebase-admin/auth";
 import db from "../services/db";
+import { getPlatformTenantId } from "../config/tenant";
 
 export interface RequestContext {
   uid: string;
@@ -35,6 +36,24 @@ export interface AuthenticatedRequest extends Request {
   };
 }
 export type AuthRequest = AuthenticatedRequest;
+
+/**
+ * Resolve the tenant from verified token data only. A Firebase custom claim
+ * (`tenant_id` / `tenantId`) or a Firebase multi-tenancy tenant wins; with no
+ * claim the caller belongs to the platform tenant. The `x-tenant-id` header is
+ * never trusted on its own: it is only accepted when it matches.
+ */
+export function resolveVerifiedTenantId(
+  decodedToken: Record<string, any>
+): string {
+  const claim =
+    decodedToken.tenant_id ??
+    decodedToken.tenantId ??
+    decodedToken.firebase?.tenant;
+  return typeof claim === "string" && claim.trim().length > 0
+    ? claim.trim()
+    : getPlatformTenantId();
+}
 
 export async function authMiddleware(
   req: Request,
@@ -80,7 +99,16 @@ export async function authMiddleware(
     );
     const roles = result.rows.map((row: { name: string }) => row.name);
     const role = ["admin", "host", "guest"].find((value) => roles.includes(value)) || "guest";
-    const tenantId = (req.headers["x-tenant-id"] as string) || "safetrust";
+    const tenantId = resolveVerifiedTenantId(decodedToken);
+    const requestedTenant = req.headers["x-tenant-id"];
+    if (
+      typeof requestedTenant === "string" &&
+      requestedTenant.length > 0 &&
+      requestedTenant !== tenantId
+    ) {
+      res.status(403).json({ error: "Forbidden", message: "Tenant not permitted for this session" });
+      return;
+    }
 
     const context: RequestContext = {
       uid: decodedToken.uid,

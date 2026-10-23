@@ -63,7 +63,11 @@ export const resolveDisputeHandler = async (
     const escrowId = updated.id;
 
     // 3 — Mirror status to safetrust.reservations
-    await mirrorReservationStatus(escrowId, 'resolved');
+    // Scope the mirror to the tenant that owns the escrow record.
+    if (!updated.tenantId) {
+      throw new Error(`Escrow ${escrowId} has no tenant; refusing to mirror reservation status`);
+    }
+    await mirrorReservationStatus(escrowId, 'resolved', updated.tenantId);
 
     // 4 — Store resolution note in escrow_metadata if provided
     if (resolutionNote) {

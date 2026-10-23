@@ -13,6 +13,7 @@ import {
 } from '../../repositories/reservation.repository';
 import { verifyProofOfFunds } from '../../lib/zk-verifier';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
+import { getPlatformTenantId } from '../../config/tenant';
 
 const EVENT_TYPE = EscrowEventType.Initialized;
 const STROOPS_PER_UNIT = 10_000_000n;
@@ -171,7 +172,10 @@ export const initializeEscrowHandler = async (
       return duplicate(res, eventId);
     }
 
-    // 5 — Persist to safetrust.trustless_work_escrows via repository
+    // 5 — Persist to safetrust.trustless_work_escrows via repository.
+    // Signed webhooks have no user session; the tenant is the deployment's
+    // platform tenant and the reservation link below is scoped to it.
+    const escrowTenantId = getPlatformTenantId();
     const escrow = await createEscrow({
       contractId: contract_id,
       marker,
@@ -188,7 +192,7 @@ export const initializeEscrowHandler = async (
       roomId: room_id || null,
       hotelId: hotel_id || null,
       guestId: guest_id || null,
-      tenantId: 'safetrust',
+      tenantId: escrowTenantId,
       escrowMetadata: req.body,
       bookingMetadata: booking_metadata || null,
     });
@@ -200,7 +204,7 @@ export const initializeEscrowHandler = async (
     // 6 — Link escrow to reservation AFTER escrow is confirmed to exist
     const reservationId = booking_metadata?.reservation_id;
     if (reservationId) {
-      await linkEscrowToReservation(reservationId, escrow.id);
+      await linkEscrowToReservation(reservationId, escrow.id, escrowTenantId);
       console.log(`[escrow/initialize] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrow.id}`);
     }
 

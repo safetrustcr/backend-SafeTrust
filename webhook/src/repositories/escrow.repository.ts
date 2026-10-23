@@ -16,6 +16,7 @@ export interface TrustlessWorkEscrow {
   status: EscrowStatus
   balance?: number
   createdAt?: string
+  tenantId?: string
 }
 
 export interface CreateEscrowInput {
@@ -358,14 +359,14 @@ export async function disputeEscrow(
           status: "disputed"
         }
       ) {
-        returning { id contractId status }
+        returning { id contractId status tenantId }
       }
     }
   `
 
   const data = await hasuraRequest<{
     update_trustless_work_escrows?: {
-      returning: Array<{ id: string; contractId: string; status: string }>
+      returning: Array<{ id: string; contractId: string; status: string; tenantId?: string }>
     }
   }>(mutation, { contractId, validStates })
 
@@ -378,6 +379,7 @@ export async function disputeEscrow(
     id: updated.id,
     contractId: updated.contractId,
     status: updated.status,
+    tenantId: updated.tenantId,
   }
 }
 
@@ -397,14 +399,14 @@ export async function resolveDispute(
           balance: 0
         }
       ) {
-        returning { id contractId status balance }
+        returning { id contractId status balance tenantId }
       }
     }
   `
 
   const data = await hasuraRequest<{
     update_trustless_work_escrows?: {
-      returning: Array<{ id: string; contractId: string; status: string; balance: number }>
+      returning: Array<{ id: string; contractId: string; status: string; balance: number; tenantId?: string }>
     }
   }>(mutation, { contractId, validStates })
 
@@ -418,6 +420,7 @@ export async function resolveDispute(
     contractId: updated.contractId,
     status: updated.status,
     balance: updated.balance,
+    tenantId: updated.tenantId,
   }
 }
 

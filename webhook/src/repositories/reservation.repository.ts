@@ -1,6 +1,19 @@
-import { hasuraRequest } from '../services/hasura'
+import { hasuraAdminRequest } from '../services/hasura'
 import { query } from '../services/db'
 import { PoolClient } from 'pg'
+
+/**
+ * DISPOSITION: `reservation.total_amount` is a NON-BINDING QUOTE.
+ *
+ * The value originates from the client payload at reservation creation and is
+ * persisted as a display/estimate figure only. It is NOT trusted for billing,
+ * escrow funding, or any financial settlement. Any billable total MUST be
+ * derived server-side from pricing and availability at the point of charge
+ * (see escrow/pricing services), never echoed from the browser.
+ *
+ * This repository reads `total_amount` for display purposes only. Do not use
+ * it to compute charges, refunds, or escrow amounts.
+ */
 
 export interface ReservationRow {
   id: string
@@ -22,37 +35,56 @@ export interface ReservationRow {
 
 export async function linkEscrowToReservation(
   reservationId: string,
-  escrowId: string
+  escrowId: string,
+  tenantId: string
 ): Promise<void> {
+  if (!tenantId) {
+    throw new Error('linkEscrowToReservation: tenantId is required')
+  }
+
+  // Tenant-scoped update: the reservation is only linked when it belongs to
+  // the same tenant as the verified caller / escrow record.
   const mutation = `
-    mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!) {
-      update_reservations_by_pk: update_safetrust_reservations_by_pk(
-        pk_columns: { id: $reservationId }
+    mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!, $tenantId: String!) {
+      update_reservations: update_safetrust_reservations(
+        where: {
+          id: { _eq: $reservationId }
+          tenantId: { _eq: $tenantId }
+        }
         _set: {
           escrowId: $escrowId,
           status: "escrow_created",
           updatedAt: "now()"
         }
       ) {
-        id status escrowId
+        returning { id status escrowId }
       }
     }
   `
 
-  await hasuraRequest(mutation, {
+  await hasuraAdminRequest(tenantId, mutation, {
     reservationId,
     escrowId,
+    tenantId,
   })
 }
 
 export async function mirrorReservationStatus(
   escrowId: string,
-  status: string
+  status: string,
+  tenantId: string
 ): Promise<void> {
+  if (!tenantId) {
+    throw new Error('mirrorReservationStatus: tenantId is required')
+  }
+
   const mutation = `
-    mutation MirrorStatusToReservation($escrowId: uuid!, $status: String!) {
+    mutation MirrorStatusToReservation($escrowId: uuid!, $status: String!, $tenantId: String!) {
       update_reservations: update_safetrust_reservations(
-        where: { escrowId: { _eq: $escrowId } }
+        where: {
+          escrowId: { _eq: $escrowId }
+          tenantId: { _eq: $tenantId }
+        }
         _set: {
           status: $status
           updatedAt: "now()"
@@ -63,7 +95,7 @@ export async function mirrorReservationStatus(
     }
   `
 
-  await hasuraRequest(mutation, { escrowId, status })
+  await hasuraAdminRequest(tenantId, mutation, { escrowId, status, tenantId })
 }
 
 export async function mirrorReservationStatusInTransaction(
@@ -74,7 +106,10 @@ export async function mirrorReservationStatusInTransaction(
   await client.query(
     `UPDATE safetrust.reservations
      SET status = $1, updated_at = NOW()
-     WHERE escrow_id = $2 AND tenant_id = 'safetrust'`,
+     WHERE escrow_id = $2
+       AND tenant_id = (
+         SELECT e.tenant_id FROM safetrust.trustless_work_escrows e WHERE e.id = $2
+       )`,
     [status, escrowId]
   )
 }
