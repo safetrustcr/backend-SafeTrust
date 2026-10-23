@@ -48,6 +48,7 @@ import {
   FreshnessOutcome,
   StoredEscrowState,
   IncomingEscrowObservation,
+  CANONICAL_TRANSITIONS,
 } from './escrow-freshness'
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
@@ -297,6 +298,14 @@ export function __resetBulkUpsertForTests(): void {
  *   booking_metadata, created_at, tenant_id, escrow_type, asset_code,
  *   asset_issuer, resolver
  */
+const SQL_TRANSITION_RULES = Object.entries(CANONICAL_TRANSITIONS)
+  .filter(([_, targets]) => targets.length > 0)
+  .map(
+    ([from, targets]) =>
+      `(safetrust.trustless_work_escrows.status = '${from}' AND EXCLUDED.status IN (${targets.map(t => `'${t}'`).join(', ')}))`
+  )
+  .join(' OR\n        ')
+
 const UPSERT_ESCROW_SQL = `
   INSERT INTO safetrust.trustless_work_escrows (
     contract_id,
@@ -307,9 +316,10 @@ const UPSERT_ESCROW_SQL = `
     approver,
     releaser,
     escrow_type,
+    network,
     updated_at,
     tenant_id
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'safetrust')
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'safetrust')
   ON CONFLICT (contract_id)
   DO UPDATE SET
     status     = EXCLUDED.status,
@@ -322,6 +332,7 @@ const UPSERT_ESCROW_SQL = `
     marker     = EXCLUDED.marker,
     approver   = EXCLUDED.approver,
     releaser   = EXCLUDED.releaser,
+    network    = COALESCE(safetrust.trustless_work_escrows.network, EXCLUDED.network),
     updated_at = NOW()
   WHERE (
     -- 1. Terminal state protection: completed, resolved, cancelled cannot be overwritten
@@ -332,12 +343,7 @@ const UPSERT_ESCROW_SQL = `
     AND (
       safetrust.trustless_work_escrows.status = EXCLUDED.status
       OR (
-        (safetrust.trustless_work_escrows.status = 'created' AND EXCLUDED.status IN ('funded', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'pending_funding' AND EXCLUDED.status IN ('created', 'funded', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'funded' AND EXCLUDED.status IN ('active', 'milestone_approved', 'disputed', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'active' AND EXCLUDED.status IN ('milestone_approved', 'disputed')) OR
-        (safetrust.trustless_work_escrows.status = 'milestone_approved' AND EXCLUDED.status IN ('completed', 'disputed')) OR
-        (safetrust.trustless_work_escrows.status = 'disputed' AND EXCLUDED.status IN ('resolved', 'cancelled'))
+        ${SQL_TRANSITION_RULES}
       )
     )
     -- 4. Value difference check: unchanged values produce no write
@@ -371,9 +377,10 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     releaser,
     escrow_type,
     ledger_seq,
+    network,
     updated_at,
     tenant_id
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'safetrust')
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust')
   ON CONFLICT (contract_id)
   DO UPDATE SET
     status     = EXCLUDED.status,
@@ -383,6 +390,7 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     approver   = EXCLUDED.approver,
     releaser   = EXCLUDED.releaser,
     ledger_seq = EXCLUDED.ledger_seq,
+    network    = COALESCE(safetrust.trustless_work_escrows.network, EXCLUDED.network),
     updated_at = NOW()
   WHERE (
     -- 1. Terminal state protection: completed, resolved, cancelled cannot be overwritten
@@ -396,12 +404,7 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     AND (
       safetrust.trustless_work_escrows.status = EXCLUDED.status
       OR (
-        (safetrust.trustless_work_escrows.status = 'created' AND EXCLUDED.status IN ('funded', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'pending_funding' AND EXCLUDED.status IN ('created', 'funded', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'funded' AND EXCLUDED.status IN ('active', 'milestone_approved', 'disputed', 'cancelled')) OR
-        (safetrust.trustless_work_escrows.status = 'active' AND EXCLUDED.status IN ('milestone_approved', 'disputed')) OR
-        (safetrust.trustless_work_escrows.status = 'milestone_approved' AND EXCLUDED.status IN ('completed', 'disputed')) OR
-        (safetrust.trustless_work_escrows.status = 'disputed' AND EXCLUDED.status IN ('resolved', 'cancelled'))
+        ${SQL_TRANSITION_RULES}
       )
     )
     -- 4. Value difference check: unchanged values produce no write
@@ -563,6 +566,7 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
           escrow.roles?.releaser ?? '',        // $7 releaser
           escrow.escrowType ?? 'single_release', // $8 escrow_type
           parsedSeq,                           // $9 ledger_seq
+          escrow.network ?? null,              // $10 network
         ])
       } else {
         result = await db.query<{ contract_id: string }>(UPSERT_ESCROW_SQL, [
@@ -574,6 +578,7 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
           escrow.roles?.approver ?? '',        // $6 approver
           escrow.roles?.releaser ?? '',        // $7 releaser
           escrow.escrowType ?? 'single_release', // $8 escrow_type
+          escrow.network ?? null,              // $9 network
         ])
       }
 
@@ -582,6 +587,33 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
         updated++
       } else {
         unchanged++
+        if (seq !== undefined && seq !== null) {
+          try {
+            const checkRes = await db.query<{ ledger_seq: string | null; status: string; balance: string }>(
+              `SELECT ledger_seq, status, balance::text FROM safetrust.trustless_work_escrows WHERE contract_id = $1`,
+              [escrow.contractId]
+            )
+            if (checkRes && checkRes.rows.length > 0) {
+              const stored = checkRes.rows[0]
+              const incomingSeq = typeof seq === 'bigint' ? seq.toString() : String(seq)
+              if (stored.ledger_seq !== null && stored.ledger_seq.toString() === incomingSeq) {
+                const incStatus = (escrow.status ?? 'created').trim().toLowerCase()
+                const storedStatus = (stored.status ?? '').trim().toLowerCase()
+                const incBal = escrow.balance !== undefined ? String(escrow.balance) : '0'
+                const storedBal = stored.balance !== undefined ? String(stored.balance) : '0'
+                if (incStatus !== storedStatus || incBal !== storedBal) {
+                  console.warn(
+                    `[reconciliation] ⚠️  Equal-sequence conflict on contract "${escrow.contractId}" at seq ${incomingSeq}: ` +
+                    `stored status="${stored.status}", balance="${stored.balance}"; ` +
+                    `incoming status="${escrow.status}", balance="${escrow.balance}". Preserving stored confirmed state.`
+                  )
+                }
+              }
+            }
+          } catch {
+            // Ignore check error; record counted as unchanged
+          }
+        }
       }
     } catch (rowError) {
       // Isolate per-row errors — log and count as skipped.
@@ -927,7 +959,9 @@ export async function reconcileEscrowAtomic(
       if (storedRow) {
         const updateSql = `
           UPDATE safetrust.trustless_work_escrows
-          SET status = $2, balance = $3::numeric, ledger_seq = $4, updated_at = NOW()
+          SET status = $2, balance = $3::numeric, ledger_seq = $4,
+              network = COALESCE(safetrust.trustless_work_escrows.network, $5),
+              updated_at = NOW()
           WHERE contract_id = $1
         `
         await executeQuery('SAVEPOINT sp_update')
@@ -937,13 +971,16 @@ export async function reconcileEscrowAtomic(
             outcome.status,
             outcome.balance,
             outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+            escrow.network ?? null,
           ])
           await executeQuery('RELEASE SAVEPOINT sp_update')
         } catch {
           await executeQuery('ROLLBACK TO SAVEPOINT sp_update')
           const fallbackUpdate = `
             UPDATE trustless_work_escrows
-            SET status = $2, balance = $3::numeric, ledger_seq = $4, updated_at = NOW()
+            SET status = $2, balance = $3::numeric, ledger_seq = $4,
+                network = COALESCE(trustless_work_escrows.network, $5),
+                updated_at = NOW()
             WHERE contract_id = $1
           `
           await executeQuery(fallbackUpdate, [
@@ -951,15 +988,16 @@ export async function reconcileEscrowAtomic(
             outcome.status,
             outcome.balance,
             outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+            escrow.network ?? null,
           ])
         }
       } else {
         const insertSql = `
           INSERT INTO safetrust.trustless_work_escrows (
             contract_id, status, amount, balance, marker, approver, releaser,
-            escrow_type, ledger_seq, updated_at, tenant_id
+            escrow_type, ledger_seq, network, updated_at, tenant_id
           ) VALUES (
-            $1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NOW(), 'safetrust'
+            $1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust'
           )
         `
         await executeQuery('SAVEPOINT sp_insert')
@@ -974,6 +1012,7 @@ export async function reconcileEscrowAtomic(
             escrow.roles?.releaser ?? '',
             escrow.escrowType ?? 'single_release',
             outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+            escrow.network ?? null,
           ])
           await executeQuery('RELEASE SAVEPOINT sp_insert')
         } catch {
@@ -981,9 +1020,9 @@ export async function reconcileEscrowAtomic(
           const fallbackInsert = `
             INSERT INTO trustless_work_escrows (
               contract_id, status, amount, balance, marker, approver, releaser,
-              escrow_type, ledger_seq, updated_at, tenant_id
+              escrow_type, ledger_seq, network, updated_at, tenant_id
             ) VALUES (
-              $1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NOW(), 'safetrust'
+              $1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust'
             )
           `
           await executeQuery(fallbackInsert, [
@@ -996,6 +1035,7 @@ export async function reconcileEscrowAtomic(
             escrow.roles?.releaser ?? '',
             escrow.escrowType ?? 'single_release',
             outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+            escrow.network ?? null,
           ])
         }
       }

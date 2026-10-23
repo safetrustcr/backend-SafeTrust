@@ -81,14 +81,15 @@ pub const UPDATE_ROW_SQL: &str = "
         releaser = $7,
         escrow_type = $8,
         ledger_seq = $9,
+        network = COALESCE(safetrust.trustless_work_escrows.network, $10),
         updated_at = NOW()
     WHERE id::text = $1 OR contract_id = $1
 ";
 
 pub const INSERT_ROW_SQL: &str = "
     INSERT INTO safetrust.trustless_work_escrows
-      (contract_id, status, amount, balance, marker, approver, releaser, escrow_type, ledger_seq, updated_at, tenant_id)
-    VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NOW(), 'safetrust')
+      (contract_id, status, amount, balance, marker, approver, releaser, escrow_type, ledger_seq, network, updated_at, tenant_id)
+    VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust')
     ON CONFLICT (contract_id) DO NOTHING
 ";
 
@@ -424,7 +425,18 @@ pub fn dedupe_last_wins(updates: Vec<EscrowUpdate>) -> Vec<EscrowUpdate> {
     let mut result: Vec<EscrowUpdate> = Vec::with_capacity(updates.len());
     for u in updates {
         match position.get(&u.contract_id) {
-            Some(&i) => result[i] = u,
+            Some(&i) => {
+                let prev = &result[i];
+                let should_replace = match (prev.ledger_seq, u.ledger_seq) {
+                    (Some(prev_seq), Some(curr_seq)) => curr_seq >= prev_seq,
+                    (Some(_), None) => false,
+                    (None, Some(_)) => true,
+                    (None, None) => true,
+                };
+                if should_replace {
+                    result[i] = u;
+                }
+            }
             None => {
                 position.insert(u.contract_id.clone(), result.len());
                 result.push(u);
@@ -505,7 +517,11 @@ async fn run_bulk_upsert(
         let contract_id: String = row.get(1);
         let seq: Option<i64> = row.get(2);
         let status: String = row.get(3);
-        let balance: String = row.get(4);
+        let balance: String = match row.try_get::<_, Option<String>>(4) {
+            Ok(Some(b)) => b,
+            Ok(None) => return Err(format!("escrow balance for contract {contract_id} is NULL")),
+            Err(e) => return Err(format!("failed to get balance for contract {contract_id}: {e}")),
+        };
         let network: Option<String> = row.get(5);
         let stored = StoredEscrowRow {
             id: id_str.clone(),
@@ -563,6 +579,7 @@ async fn run_bulk_upsert(
                                 &u.releaser,
                                 &escrow_type,
                                 &new_ledger_seq,
+                                &u.network,
                             ],
                         )
                         .await
@@ -582,6 +599,7 @@ async fn run_bulk_upsert(
                                 &u.releaser,
                                 &escrow_type,
                                 &new_ledger_seq,
+                                &u.network,
                             ],
                         )
                         .await
@@ -927,6 +945,45 @@ mod tests {
         assert_eq!(deduped[0].contract_id, "C1");
         assert_eq!(deduped[0].balance, "9.0000000");
         assert_eq!(deduped[0].ledger_seq, Some(30));
+    }
+
+    #[test]
+    fn dedupe_last_wins_respects_ledger_seq_priority() {
+        // Later arrival with lower seq does NOT overwrite earlier arrival with higher seq
+        let a_high = sample("C1", "active", "9.0000000", Some(50));
+        let a_low = sample("C1", "funded", "1.0000000", Some(20));
+        let deduped = dedupe_last_wins(vec![a_high, a_low]);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].status, "active");
+        assert_eq!(deduped[0].ledger_seq, Some(50));
+
+        // Equal sequences retain later arrival
+        let a_eq1 = sample("C2", "funded", "1.0000000", Some(40));
+        let a_eq2 = sample("C2", "active", "1.0000000", Some(40));
+        let deduped2 = dedupe_last_wins(vec![a_eq1, a_eq2]);
+        assert_eq!(deduped2.len(), 1);
+        assert_eq!(deduped2[0].status, "active");
+
+        // Versioned update replaces unversioned
+        let unversioned = sample("C3", "created", "0.0000000", None);
+        let versioned = sample("C3", "funded", "100.0000000", Some(10));
+        let deduped3 = dedupe_last_wins(vec![unversioned, versioned]);
+        assert_eq!(deduped3.len(), 1);
+        assert_eq!(deduped3[0].ledger_seq, Some(10));
+
+        // Unversioned update does NOT replace versioned
+        let versioned2 = sample("C4", "funded", "100.0000000", Some(10));
+        let unversioned2 = sample("C4", "created", "0.0000000", None);
+        let deduped4 = dedupe_last_wins(vec![versioned2, unversioned2]);
+        assert_eq!(deduped4.len(), 1);
+        assert_eq!(deduped4[0].ledger_seq, Some(10));
+
+        // Both unversioned retain later arrival
+        let unv1 = sample("C5", "created", "0.0000000", None);
+        let unv2 = sample("C5", "pending_funding", "0.0000000", None);
+        let deduped5 = dedupe_last_wins(vec![unv1, unv2]);
+        assert_eq!(deduped5.len(), 1);
+        assert_eq!(deduped5[0].status, "pending_funding");
     }
 
     #[test]

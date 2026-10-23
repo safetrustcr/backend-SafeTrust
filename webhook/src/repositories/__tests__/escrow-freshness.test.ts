@@ -529,6 +529,7 @@ describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
         'funded',
         '250.0000000',
         '110',
+        'testnet',
       ])
     })
 

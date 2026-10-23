@@ -592,7 +592,9 @@ export async function updateEscrowWithFreshness(
       // Update existing row
       const updateSql = `
         UPDATE safetrust.escrow_transactions
-        SET status = $2, balance = $3::numeric, ledger_seq = $4, updated_at = NOW()
+        SET status = $2, balance = $3::numeric, ledger_seq = $4,
+            network = COALESCE(safetrust.escrow_transactions.network, $5),
+            updated_at = NOW()
         WHERE id::text = $1 OR contract_id = $1
       `
       await executeQuery('SAVEPOINT sp_update')
@@ -602,13 +604,16 @@ export async function updateEscrowWithFreshness(
           outcome.status,
           outcome.balance,
           outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+          incoming.network ?? null,
         ])
         await executeQuery('RELEASE SAVEPOINT sp_update')
       } catch {
         await executeQuery('ROLLBACK TO SAVEPOINT sp_update')
         const fallbackUpdate = `
           UPDATE escrow_transactions
-          SET status = $2, balance = $3::numeric, ledger_seq = $4, updated_at = NOW()
+          SET status = $2, balance = $3::numeric, ledger_seq = $4,
+              network = COALESCE(escrow_transactions.network, $5),
+              updated_at = NOW()
           WHERE id::text = $1 OR contract_id = $1
         `
         await executeQuery(fallbackUpdate, [
@@ -616,6 +621,7 @@ export async function updateEscrowWithFreshness(
           outcome.status,
           outcome.balance,
           outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+          incoming.network ?? null,
         ])
       }
     }

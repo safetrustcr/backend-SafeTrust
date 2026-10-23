@@ -106,7 +106,7 @@ export function isPendingStatus(status: string | null | undefined): boolean {
 
 let nativeStateMachine: any = null
 try {
-  nativeStateMachine = require('../../../../crates/escrow-state-machine')
+  nativeStateMachine = require('../../../crates/escrow-state-machine')
 } catch {
   // Addon not available, using canonical TS table
 }

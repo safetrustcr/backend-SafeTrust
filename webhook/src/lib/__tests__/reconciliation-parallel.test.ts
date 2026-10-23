@@ -97,10 +97,29 @@ describe('upsertEscrows', () => {
 
     const params = db.query.mock.calls[0][1];
     // $1 contract_id, $2 status, $3 amount, $4 balance, $5 marker, $6 approver,
-    // $7 releaser, $8 escrow_type
+    // $7 releaser, $8 escrow_type, $9 network
     expect(params).toEqual([
-      'C1', 'funded', '100.0000000', '50.0000000', 'M', 'A', 'R', 'single_release',
+      'C1', 'funded', '100.0000000', '50.0000000', 'M', 'A', 'R', 'single_release', null,
     ]);
+  });
+
+  it('detects and logs equal-sequence conflicts when upsert affects zero rows', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    db.query
+      .mockResolvedValueOnce({ rows: [] }) // zero rows affected on versioned upsert
+      .mockResolvedValueOnce({
+        rows: [{ ledger_seq: '100', status: 'funded', balance: '100.0000000' }],
+      }); // stored check
+
+    const result = await upsertEscrows([
+      makeEscrow({ contractId: 'C1', ledgerSeq: 100n, status: 'cancelled', balance: '0.0000000' }),
+    ]);
+
+    expect(result).toEqual({ updated: 0, unchanged: 1, skipped: 0 });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Equal-sequence conflict on contract "C1" at seq 100')
+    );
+    warnSpy.mockRestore();
   });
 
   it('isolates a per-row DB error as skipped', async () => {
