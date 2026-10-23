@@ -54,7 +54,7 @@ export const releaseFundsHandler = async (
         const escrow = await releaseFundsInTransaction(client, contractId, validStates);
         if (escrow) {
           await mirrorReservationStatusInTransaction(client, escrow.id, 'completed');
-          return escrow;
+          return { escrow, alreadyCompleted: false };
         }
 
         // Retry after partial failure or recovery: check current escrow in DB
@@ -79,10 +79,13 @@ export const releaseFundsHandler = async (
           // Escrow is already completed: reuse its ID, mirror reservation status, and return it
           await mirrorReservationStatusInTransaction(client, current.id, 'completed');
           return {
-            id: current.id,
-            contractId: current.contract_id,
-            status: current.status,
-            balance: current.balance,
+            escrow: {
+              id: current.id,
+              contractId: current.contract_id,
+              status: current.status,
+              balance: current.balance,
+            },
+            alreadyCompleted: true,
           };
         }
 
@@ -101,6 +104,11 @@ export const releaseFundsHandler = async (
       return notFound(res, {
         error: `Escrow not found for contractId: ${contractId}`
       });
+    }
+
+    if (updated.alreadyCompleted) {
+      // Replay of a completed escrow: reservation is mirrored, so skip redundant guest notification
+      return ok(res);
     }
 
     // 2 — Notify hotel conversation after the state transaction commits

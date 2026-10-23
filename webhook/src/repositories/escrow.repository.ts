@@ -107,7 +107,7 @@ export async function updateEscrowStatus(
   status: EscrowStatus,
   validPriorStates?: string[]
 ): Promise<void> {
-  const hasGuard = Array.isArray(validPriorStates) && validPriorStates.length > 0
+  const hasGuard = Array.isArray(validPriorStates)
 
   const mutation = hasGuard
     ? `

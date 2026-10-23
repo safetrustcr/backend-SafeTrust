@@ -16,9 +16,13 @@ import {
   markWebhookEventProcessed,
   processWebhookEvent,
 } from '../../src/repositories/webhook-event.repository'
-import { mirrorReservationStatus } from '../../src/repositories/reservation.repository'
+import {
+  mirrorReservationStatus,
+  mirrorReservationStatusInTransaction,
+} from '../../src/repositories/reservation.repository'
 import { notifyHotelEscrowConversation } from '../../src/services/hotel-conversation-notify'
 import { Request, Response } from 'express'
+import type { PoolClient } from 'pg'
 
 jest.mock('../../src/services/hasura')
 jest.mock('../../src/repositories/webhook-event.repository')
@@ -30,6 +34,8 @@ const mockedLogAndCheck = logAndCheckWebhookEvent as jest.MockedFunction<typeof 
 const mockedMarkProcessed = markWebhookEventProcessed as jest.MockedFunction<typeof markWebhookEventProcessed>
 const mockedProcessWebhookEvent = processWebhookEvent as jest.MockedFunction<typeof processWebhookEvent>
 const mockedMirrorReservation = mirrorReservationStatus as jest.MockedFunction<typeof mirrorReservationStatus>
+const mockedMirrorReservationInTx =
+  mirrorReservationStatusInTransaction as jest.MockedFunction<typeof mirrorReservationStatusInTransaction>
 const mockedNotify = notifyHotelEscrowConversation as jest.MockedFunction<typeof notifyHotelEscrowConversation>
 
 describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
@@ -226,10 +232,13 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
         isDuplicate: false,
         eventId: 'event-fresh-789',
         result: {
-          id: 'escrow-uuid-789',
-          contractId: 'contract-valid',
-          status: 'completed',
-          balance: 0,
+          escrow: {
+            id: 'escrow-uuid-789',
+            contractId: 'contract-valid',
+            status: 'completed',
+            balance: 0,
+          },
+          alreadyCompleted: false,
         },
       })
 
@@ -258,16 +267,34 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
     })
 
     it('recovers and completes release when retried on an already completed escrow', async () => {
-      mockedProcessWebhookEvent.mockResolvedValueOnce({
-        isDuplicate: false,
-        eventId: 'event-retry-101',
-        result: {
-          id: 'escrow-uuid-101',
-          contractId: 'contract-already-completed',
-          status: 'completed',
-          balance: 0,
-        },
-      })
+      const fakeClient = {
+        query: jest
+          .fn()
+          // First query: releaseFundsInTransaction UPDATE matches 0 rows
+          .mockResolvedValueOnce({ rows: [] })
+          // Second query: lookup returns an already-completed escrow
+          .mockResolvedValueOnce({
+            rows: [
+              {
+                id: 'escrow-uuid-101',
+                contract_id: 'contract-already-completed',
+                status: 'completed',
+                balance: 0,
+              },
+            ],
+          }),
+      } as unknown as PoolClient
+
+      mockedProcessWebhookEvent.mockImplementationOnce(
+        async (_cid, _etype, _payload, callback) => {
+          const result = await callback(fakeClient)
+          return {
+            isDuplicate: false,
+            eventId: 'event-retry-101',
+            result,
+          }
+        }
+      )
 
       const req = {
         body: {
@@ -285,12 +312,67 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
 
       expect(res.status).toHaveBeenCalledWith(200)
       expect(res.json).toHaveBeenCalledWith({ success: true })
-      expect(mockedNotify).toHaveBeenCalledWith(
+      expect(mockedMirrorReservationInTx).toHaveBeenCalledWith(
+        fakeClient,
+        'escrow-uuid-101',
+        'completed'
+      )
+      // Notification is skipped on replay of already-completed escrow
+      expect(mockedNotify).not.toHaveBeenCalled()
+    })
+
+    it('throws StateConflictError in callback when retried escrow is in an invalid prior state (created)', async () => {
+      const fakeClient = {
+        query: jest
+          .fn()
+          // First query: releaseFundsInTransaction UPDATE matches 0 rows
+          .mockResolvedValueOnce({ rows: [] })
+          // Second query: lookup returns an escrow in 'created' state
+          .mockResolvedValueOnce({
+            rows: [
+              {
+                id: 'escrow-uuid-created',
+                contract_id: 'contract-created',
+                status: 'created',
+                balance: 100,
+              },
+            ],
+          }),
+      } as unknown as PoolClient
+
+      mockedProcessWebhookEvent.mockImplementationOnce(
+        async (_cid, _etype, _payload, callback) => {
+          const result = await callback(fakeClient)
+          return {
+            isDuplicate: false,
+            eventId: 'event-fail',
+            result,
+          }
+        }
+      )
+
+      const req = {
+        body: {
+          contractId: 'contract-created',
+          releaseSigner: 'signer-abc',
+        },
+      } as unknown as Request
+
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn().mockReturnThis(),
+      } as unknown as Response
+
+      await releaseFundsHandler(req, res)
+
+      expect(res.status).toHaveBeenCalledWith(409)
+      expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          contractId: 'contract-already-completed',
-          eventType: 'escrow_completed',
+          success: false,
+          error: expect.stringContaining('Escrow cannot transition to completed'),
         })
       )
+      expect(mockedNotify).not.toHaveBeenCalled()
     })
   })
 })

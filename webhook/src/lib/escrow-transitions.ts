@@ -50,9 +50,15 @@ function loadBindings(): EscrowStateMachineBindings {
     _bindings = require('../../../crates/escrow-state-machine')
     return _bindings!
   } catch (err) {
-    throw new Error(
-      `Failed to load escrow-state-machine transition engine: ${(err as Error).message}`
-    )
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      _bindings = require('../../../crates/escrow-state-machine/index.js')
+      return _bindings!
+    } catch {
+      throw new Error(
+        `Failed to load escrow-state-machine transition engine: ${(err as Error).message}`
+      )
+    }
   }
 }
 

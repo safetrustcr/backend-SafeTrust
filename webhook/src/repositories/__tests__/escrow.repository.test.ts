@@ -107,6 +107,25 @@ describe('escrow.repository', () => {
         updateEscrowStatus('contract-123', 'completed', ['milestone_approved'])
       ).rejects.toBeInstanceOf(StateConflictError)
     })
+
+    it('throws StateConflictError when empty validStates array is supplied and 0 rows affected', async () => {
+      mockedHasuraRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: { affected_rows: 0 },
+      })
+
+      await expect(
+        updateEscrowStatus('contract-123', 'completed', [])
+      ).rejects.toBeInstanceOf(StateConflictError)
+
+      expect(mockedHasuraRequest).toHaveBeenCalledWith(
+        expect.stringContaining('UpdateEscrowStatusWithGuard'),
+        {
+          contractId: 'contract-123',
+          status: 'completed',
+          validStates: [],
+        }
+      )
+    })
   })
 
   describe('createEscrow', () => {
