@@ -495,6 +495,7 @@ export async function executeEscrowLifecycleTransition(
 
     // 5 — Idempotent completion check: if already at target status, mark processed and return
     if (currentStatus === targetStatus) {
+      await mirrorReservationStatus(escrowId, reservationStatus, client);
       await client.query(
         `UPDATE safetrust.trustless_work_webhook_events
          SET processed = true,
@@ -503,7 +504,7 @@ export async function executeEscrowLifecycleTransition(
         [eventId]
       );
       return {
-        isDuplicate: false,
+        isDuplicate: true,
         eventId,
         escrowId,
       };
