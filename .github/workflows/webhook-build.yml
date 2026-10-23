@@ -18,6 +18,7 @@ on:
       # here must rebuild CI even though it lives outside webhook/.
       - 'tsconfig.crates.json'
       - 'crates/**'
+      - 'tests/karate/**'
       - '.github/workflows/webhook-build.yml'
   pull_request:
     paths:
@@ -27,6 +28,7 @@ on:
       - 'webhook/Dockerfile'
       - 'tsconfig.crates.json'
       - 'crates/**'
+      - 'tests/karate/**'
       - '.github/workflows/webhook-build.yml'
 
 jobs:
