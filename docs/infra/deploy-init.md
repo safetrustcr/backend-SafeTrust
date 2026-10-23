@@ -55,14 +55,22 @@ Example measurements:
 output instead of suppressing it. A non-zero status fails the run, so CI logs
 show the actual Hasura error rather than a misleading success line.
 
+Source registration checks the HTTP status as well as the response body:
+`curl` exits 0 on a 4xx/5xx response, so a gateway error such as `503
+{"message":"Service Unavailable"}` would otherwise look like a registered
+source. `already exists` responses still count as success so re-runs stay
+idempotent.
+
 Metadata deployment now applies a complete document per tenant and takes a
 per-endpoint lock, so parallel tenants preserve each other's sources and shared
 metadata. See [Metadata deployment](metadata-deployment.md).
 
 ## Cloud endpoints
 
-The script defaults to `http://localhost:8080`. For Hasura Cloud or another
-remote target, set the endpoint explicitly; there is no implicit Cloud default:
+The script defaults to `http://localhost:8080` (or `http://localhost:$HASURA_PORT`
+when only the port is set). An explicit `HASURA_ENDPOINT` overrides that
+default, so the example below deploys to the Cloud project. There is no
+implicit Cloud fallback:
 
 ```bash
 HASURA_ENDPOINT=https://<project>.hasura.app \

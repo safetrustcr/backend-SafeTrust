@@ -27,8 +27,8 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Defaults
-ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-}"
+# Defaults (same local fallback as deploy-tenant.sh)
+ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
 ENDPOINT="${HASURA_ENDPOINT:-http://localhost:8080}"
 TENANTS=()
 

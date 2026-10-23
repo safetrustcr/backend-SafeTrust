@@ -27,7 +27,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
 HASURA_PORT="${HASURA_PORT:-8080}"
-HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
+HASURA_ENDPOINT="${HASURA_ENDPOINT:-http://localhost:${HASURA_PORT}}"
 
 PARALLEL_DEPLOY="${PARALLEL_DEPLOY:-true}"
 USE_INIT_SQL="${USE_INIT_SQL:-false}"
@@ -85,7 +85,7 @@ echo "🔌 Registering database sources..."
 SOURCE_START=$SECONDS
 
 for TENANT in "${TENANTS[@]}"; do
-  SOURCE_RESPONSE=$(curl -sS -X POST "${HASURA_ENDPOINT}/v1/metadata" \
+  SOURCE_RESULT=$(curl -sS -w '\n%{http_code}' -X POST "${HASURA_ENDPOINT}/v1/metadata" \
     -H "X-Hasura-Admin-Secret: $HASURA_ADMIN_SECRET" \
     -H "Content-Type: application/json" \
     -d "{
@@ -105,20 +105,26 @@ for TENANT in "${TENANTS[@]}"; do
     exit 1
   }
 
+  SOURCE_HTTP_CODE="${SOURCE_RESULT##*$'\n'}"
+  SOURCE_RESPONSE="${SOURCE_RESULT%$'\n'*}"
+
   if ! jq -e . >/dev/null 2>&1 <<< "$SOURCE_RESPONSE"; then
-    echo "❌ Invalid source registration response for $TENANT"
+    echo "❌ Invalid source registration response for $TENANT (HTTP $SOURCE_HTTP_CODE)"
     echo "$SOURCE_RESPONSE"
     exit 1
   fi
 
-  if jq -e 'type == "object" and has("error")' >/dev/null 2>&1 <<< "$SOURCE_RESPONSE"; then
-    if grep -qi 'already exists' <<< "$SOURCE_RESPONSE"; then
-      echo " ℹ️ Source already exists: $TENANT"
-    else
-      echo "❌ Failed to register source: $TENANT"
-      echo "$SOURCE_RESPONSE"
-      exit 1
-    fi
+  if grep -qi 'already exists' <<< "$SOURCE_RESPONSE"; then
+    echo " ℹ️ Source already exists: $TENANT"
+  elif [[ ! "$SOURCE_HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
+    # curl exits 0 on 4xx/5xx, and a gateway error body has no top-level error.
+    echo "❌ Source registration failed for $TENANT (HTTP $SOURCE_HTTP_CODE)"
+    echo "$SOURCE_RESPONSE"
+    exit 1
+  elif jq -e 'type == "object" and has("error")' >/dev/null 2>&1 <<< "$SOURCE_RESPONSE"; then
+    echo "❌ Failed to register source: $TENANT"
+    echo "$SOURCE_RESPONSE"
+    exit 1
   else
     echo " ✅ Source registered: $TENANT"
   fi

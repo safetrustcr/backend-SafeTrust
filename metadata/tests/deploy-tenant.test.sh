@@ -191,8 +191,15 @@ elif [[ "$url" == */v1/graphql ]]; then
     if [[ -f "$state/fail-graphql-role-$role" ]]; then
         body=$(cat "$state/fail-graphql-role-$role")
     elif [[ "$query" == *"__schema"* ]]; then
-        body=$(jq -cn --arg role "$role" \
-            '{data:{__schema:{queryType:{fields:[{name:("role_" + $role + "_items"),args:[]}]}}}}')
+        # Decoy fields mirror what a real schema exposes: a scalar field and an
+        # action field without `limit`. Only the list-of-objects field with a
+        # `limit` argument is queryable with `limit: 0`.
+        body=$(jq -cn --arg role "$role" '
+            {data:{__schema:{queryType:{fields:[
+                {name:"search_hotels", type:{kind:"SCALAR"}, args:[{name:"limit", type:{kind:"INT"}, defaultValue:null}]},
+                {name:"run_action", type:{kind:"SCALAR"}, args:[]},
+                {name:("role_" + $role + "_items"), type:{kind:"LIST", ofType:{kind:"OBJECT"}}, args:[{name:"limit", type:{kind:"INT"}, defaultValue:null}]}
+            ]}}}}')
     else
         body='{"data":{"__typename":"query_root"}}'
     fi
@@ -468,6 +475,8 @@ assert_jq "shared actions and cron triggers are preserved" \
 assert_contains "$STATE/graphql-roles.log" "guest" "guest role operation is exercised"
 assert_contains "$STATE/graphql-roles.log" "host" "host role operation is exercised"
 assert_contains "$STATE/graphql-queries.log" "RoleOperation" "role operation is a real GraphQL query"
+assert_contains "$STATE/graphql-queries.log" "role_guest_items(limit: 0)" \
+    "role operation targets a limit-taking object field, not a scalar or action"
 assert_not_contains "$TMP_ROOT/out-1.log" "test-admin-secret" "admin secret is not logged"
 
 # 2. Re-deploying over already-tracked tables applies configuration changes.
@@ -498,6 +507,37 @@ after_hash=$(jq -S . "$STATE/applied.json" | cksum)
 
 assert_eq 0 "$STATUS" "unchanged re-run succeeds"
 assert_eq "$before_hash" "$after_hash" "unchanged re-run produces identical metadata"
+
+# 3b. Keys removed from YAML disappear on re-deploy (revocation is applied).
+cat > "$FIXTURES/table-public_apartments.revoked.json" <<'JSON'
+{
+  "table": {"name": "apartments", "schema": "safetrust"},
+  "configuration": {"custom_name": "safetrust_apartments_v3"}
+}
+JSON
+jq -n --slurpfile metadata "$STATE/applied.json" \
+    '{resource_version: 4, metadata: $metadata[0]}' > "$STATE/export.json"
+rm -f "$STATE/applied.json"
+cp "$FIXTURES/table-public_apartments.revoked.json" \
+    "$FIXTURES/table-public_apartments.json"
+run_deploy safetrust "$TMP_ROOT/out-3b.log"
+
+assert_eq 0 "$STATUS" "re-deploy after revocation succeeds"
+assert_jq "removed select permissions are no longer deployed" \
+    '([.sources[] | select(.name=="safetrust")][0].tables | map(select(.table.name=="apartments"))[0] | has("select_permissions") | not)' \
+    "$STATE/applied.json"
+assert_jq "removed insert permissions are no longer deployed" \
+    '([.sources[] | select(.name=="safetrust")][0].tables | map(select(.table.name=="apartments"))[0] | has("insert_permissions") | not)' \
+    "$STATE/applied.json"
+assert_jq "removed relationships are no longer deployed" \
+    '([.sources[] | select(.name=="safetrust")][0].tables | map(select(.table.name=="apartments"))[0] | ((has("object_relationships") | not) and (has("array_relationships") | not)))' \
+    "$STATE/applied.json"
+assert_jq "removed event triggers are no longer deployed" \
+    '([.sources[] | select(.name=="safetrust")][0].tables | map(select(.table.name=="apartments"))[0] | has("event_triggers") | not)' \
+    "$STATE/applied.json"
+assert_jq "configuration keys removed from YAML are no longer deployed" \
+    '([.sources[] | select(.name=="safetrust")][0].tables | map(select(.table.name=="apartments"))[0] | .configuration.custom_name == "safetrust_apartments_v3" and (.configuration | has("column_config") | not))' \
+    "$STATE/applied.json"
 
 # 4. Deploying one tenant preserves the other tenant's applied metadata.
 reset_state

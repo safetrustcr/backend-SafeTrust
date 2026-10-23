@@ -165,7 +165,8 @@ metadata/
 ```
 
 `deploy-tenant.sh` validates migrations first, merges the tenant into the
-endpoint's exported metadata document, replaces it atomically, checks
+endpoint's exported metadata document (matching tables/functions are replaced,
+so removals in YAML take effect), replaces it atomically, checks
 `get_inconsistent_metadata`, and verifies representative guest/host queries.
 See [Metadata deployment](docs/infra/metadata-deployment.md) for the sequence,
 Cloud endpoint usage, and failure behavior.

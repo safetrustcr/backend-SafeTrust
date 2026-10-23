@@ -369,16 +369,10 @@ merge_metadata_document() {
         --argjson desired_tables "$table_definitions" \
         --argjson desired_functions "$function_definitions" '
         def merge_tables($existing; $desired):
-            ($desired | map(
-                . as $d
-                | (($existing // [])[]?
-                    | select(
-                        .table.name == $d.table.name
-                        and ((.table.schema // "public") == ($d.table.schema // "public"))
-                      )
-                    | . * $d)
-                // $d
-            )) as $updated
+            # The table YAML is the complete definition, so a matching entry is
+            # replaced rather than merged: keys removed from YAML (a revoked
+            # permission, an event trigger, a relationship) must disappear.
+            $desired as $updated
             | $updated + (($existing // []) | map(
                 . as $e
                 | select(
@@ -392,16 +386,9 @@ merge_metadata_document() {
               ));
 
         def merge_functions($existing; $desired):
-            ($desired | map(
-                . as $d
-                | (($existing // [])[]?
-                    | select(
-                        .function.name == $d.function.name
-                        and ((.function.schema // "public") == ($d.function.schema // "public"))
-                      )
-                    | . * $d)
-                // $d
-            )) as $updated
+            # Same rule as tables: the YAML is the complete function definition,
+            # so a matching entry is replaced instead of deep-merged.
+            $desired as $updated
             | $updated + (($existing // []) | map(
                 . as $e
                 | select(
@@ -496,7 +483,7 @@ deploy_full_metadata() {
 verify_role_operations() {
     local tenant="$1"
     local verified=0
-    local role field schema_response operation_response
+    local role field schema_response
 
     if [[ -z "${HASURA_VERIFY_ROLES// /}" ]]; then
         echo "⚠️  [$tenant] Role verification disabled (HASURA_VERIFY_ROLES is empty)." >&2
@@ -507,7 +494,7 @@ verify_role_operations() {
 
     for role in $HASURA_VERIFY_ROLES; do
         if ! schema_response=$(graphql_as_role "$role" \
-            'query RoleSchema { __schema { queryType { fields { name args { name type { kind } defaultValue } } } } }'); then
+            'query RoleSchema { __schema { queryType { fields { name type { kind ofType { kind ofType { kind ofType { kind } } } } args { name type { kind } defaultValue } } } } }'); then
             echo "❌ [$tenant] Could not introspect the schema as role '$role'." >&2
             return 1
         fi
@@ -516,9 +503,21 @@ verify_role_operations() {
             [
                 .data.__schema.queryType.fields[]?
                 | select(.name | startswith("__") | not)
+                # Only fields that accept `limit` can be probed with limit: 0.
+                | select(any(.args[]?; .name == "limit"))
                 | select(
                     [.args[]? | select(.type.kind == "NON_NULL" and .defaultValue == null)]
                     | length == 0
+                  )
+                # A selection set is only valid on composite (object) results;
+                # scalar fields, actions rows aside, would make the query invalid.
+                | select(
+                    (def leaf_kind:
+                        if (.ofType // null) == null then .kind
+                        else (.ofType | leaf_kind)
+                        end;
+                     .type | leaf_kind) as $kind
+                    | $kind == "OBJECT" or $kind == "INTERFACE"
                   )
                 | .name
             ]
@@ -535,8 +534,8 @@ verify_role_operations() {
             return 1
         fi
 
-        if ! operation_response=$(graphql_as_role "$role" \
-            "query RoleOperation { ${field}(limit: 0) { __typename } }"); then
+        if ! graphql_as_role "$role" \
+            "query RoleOperation { ${field}(limit: 0) { __typename } }" >/dev/null; then
             echo "❌ [$tenant] Role '$role' operation on '$field' failed." >&2
             return 1
         fi

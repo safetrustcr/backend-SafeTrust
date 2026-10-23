@@ -27,6 +27,12 @@ built definitions into it, and replaces the document atomically. Already-
 tracked objects are updated, not skipped. Re-running with unchanged YAML
 produces the same document and is idempotent.
 
+A table or function defined in YAML **replaces** its exported counterpart
+wholesale instead of being deep-merged into it. Removing a `select_permissions`
+entry, a relationship, an event trigger, or a `configuration` key from YAML
+therefore removes it on the endpoint on the next deploy — revoking access in
+the YAML takes effect, which a recursive merge would silently keep alive.
+
 ## Deployment sequence
 
 ```mermaid
@@ -50,7 +56,8 @@ flowchart TD
 2. **Export** — `export_metadata` captures all sources, shared metadata
    (`actions`, `cron_triggers`, and so on), and every tenant.
 3. **Merge** — the tenant's source, tables, and functions from
-   `metadata/build/<tenant>/` replace their counterparts. Tables/functions not
+   `metadata/build/<tenant>/` replace their counterparts (each table/function
+   entry is replaced in full, never merged key by key). Tables/functions not
    defined for this tenant are preserved, and every other source plus all
    shared metadata stays in the document.
 4. **Replace** — `replace_metadata` is called with
@@ -61,8 +68,10 @@ flowchart TD
    `is_consistent: true` with no objects. Anything else fails the deployment.
 6. **Role verification** — the script introspects the schema as each
    representative role (`guest` and `host` by default), then runs a real
-   `limit: 0` query against a field visible to that role. This exercises role
-   permissions rather than relying only on admin introspection.
+   `limit: 0` query against a field visible to that role that accepts `limit`
+   and returns an object type (scalar and action fields are skipped, since a
+   selection set would not be valid on them). This exercises role permissions
+   rather than relying only on admin introspection.
 
 ## Multi-tenant preservation
 
@@ -162,6 +171,8 @@ Coverage includes:
 
 - omitted permissions/relationships/event triggers applied on a fresh deploy,
 - changed configuration/permissions/relationships applied on re-deploy,
+- keys removed from YAML (permissions, relationships, event triggers,
+  configuration) removed on re-deploy,
 - unchanged re-run idempotency,
 - failed `replace_metadata` diagnostics,
 - pending migration gating,
