@@ -18,7 +18,7 @@ import disputeRoute from './escrows/dispute.route'
 import resolveDisputeRoute from './escrows/resolve-dispute.route'
 
 import authRoutes from './auth'
-import apartmentRoutes from './apartments/list.route'
+import apartmentRoutes from './apartments'
 import bidRequestsRoute from './bid-requests'
 import reservationsRoute from './reservations'
 import escrowClaimsRoute from './escrow-claims/claims.route'

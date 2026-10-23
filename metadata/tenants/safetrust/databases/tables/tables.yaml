@@ -9,6 +9,7 @@
 - "!include public_escrow_transactions.yaml"
 - "!include public_geography_columns.yaml"
 - "!include public_geometry_columns.yaml"
+- "!include public_listing_reports.yaml"
 - "!include public_messages.yaml"
 - "!include public_pricing_overrides.yaml"
 - "!include public_pricing_rules.yaml"
