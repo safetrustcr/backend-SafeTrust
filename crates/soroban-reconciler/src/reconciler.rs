@@ -1,5 +1,13 @@
 use crate::types::{DbEscrowState, Discrepancy, ReconciliationReport, SorobanEscrowState};
 
+/// Convert a token amount to exact Stroops (10^7 per unit) avoiding representation artifacts.
+pub fn decimal_to_exact_stroops(amount: f64) -> u64 {
+    if amount <= 0.0 {
+        return 0;
+    }
+    (amount * 10_000_000.0).round() as u64
+}
+
 /// Reconcile state between Soroban blockchain ground truth and local database.
 pub fn reconcile_escrow(on_chain: &SorobanEscrowState, db: &DbEscrowState) -> ReconciliationReport {
     let mut discrepancies = Vec::new();
@@ -14,16 +22,22 @@ pub fn reconcile_escrow(on_chain: &SorobanEscrowState, db: &DbEscrowState) -> Re
         });
     }
 
-    // 2. Balance comparison (Critical) — convert Stroops (10^7 per unit) to XLM standard float
-    let on_chain_xlm = (on_chain.balance as f64) / 10_000_000.0;
-    if (db.balance - on_chain_xlm).abs() > 0.0001 {
+    // 2. Balance comparison (Critical) — exact integer stroops comparison (no float rounding / estimation)
+    let db_stroops = db
+        .balance_stroops
+        .unwrap_or_else(|| decimal_to_exact_stroops(db.balance));
+
+    if db_stroops != on_chain.balance {
+        let db_xlm = (db_stroops as f64) / 10_000_000.0;
+        let on_chain_xlm = (on_chain.balance as f64) / 10_000_000.0;
         discrepancies.push(Discrepancy {
             field: "balance".to_string(),
-            in_database: db.balance.to_string(),
+            in_database: db_xlm.to_string(),
             on_chain: on_chain_xlm.to_string(),
             severity: "critical".to_string(),
         });
     }
+
 
     // 3. Marker comparison (Warning)
     let on_chain_marker = on_chain.marker.as_deref().unwrap_or("");

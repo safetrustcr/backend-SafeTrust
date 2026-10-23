@@ -1,6 +1,8 @@
 'use strict'
 
 import { Request, Response } from 'express'
+import { PoolClient } from 'pg'
+import type { TrustlessWorkEscrow } from '../../src/repositories/escrow.repository'
 
 // Native escrow state machine is not available in the unit-test runtime.
 jest.mock(
@@ -12,17 +14,16 @@ jest.mock(
 )
 
 jest.mock('../../src/repositories/webhook-event.repository', () => ({
-  logAndCheckWebhookEvent: jest.fn(),
-  markWebhookEventProcessed: jest.fn(),
+  processWebhookEvent: jest.fn(),
 }))
 
 jest.mock('../../src/repositories/escrow.repository', () => ({
-  fundEscrow: jest.fn(),
-  releaseFunds: jest.fn(),
+  fundEscrowInTransaction: jest.fn(),
+  releaseFundsInTransaction: jest.fn(),
 }))
 
 jest.mock('../../src/repositories/reservation.repository', () => ({
-  mirrorReservationStatus: jest.fn(),
+  mirrorReservationStatusInTransaction: jest.fn(),
 }))
 
 jest.mock('../../src/services/hotel-conversation-notify', () => ({
@@ -32,32 +33,21 @@ jest.mock('../../src/services/hotel-conversation-notify', () => ({
 
 import { fundEscrowHandler } from '../../src/routes/escrows/fund.handler'
 import { releaseFundsHandler } from '../../src/routes/escrows/release-funds.handler'
+import { processWebhookEvent } from '../../src/repositories/webhook-event.repository'
 import {
-  logAndCheckWebhookEvent,
-  markWebhookEventProcessed,
-} from '../../src/repositories/webhook-event.repository'
-import {
-  fundEscrow,
-  releaseFunds,
+  fundEscrowInTransaction,
+  releaseFundsInTransaction,
 } from '../../src/repositories/escrow.repository'
-import { mirrorReservationStatus } from '../../src/repositories/reservation.repository'
+import { mirrorReservationStatusInTransaction } from '../../src/repositories/reservation.repository'
 import {
   notifyHotelEscrowConversation,
 } from '../../src/services/hotel-conversation-notify'
 
-const mockedLogAndCheck = logAndCheckWebhookEvent as jest.MockedFunction<
-  typeof logAndCheckWebhookEvent
->
-const mockedMarkProcessed = markWebhookEventProcessed as jest.MockedFunction<
-  typeof markWebhookEventProcessed
->
-const mockedFundEscrow = fundEscrow as jest.MockedFunction<typeof fundEscrow>
-const mockedReleaseFunds = releaseFunds as jest.MockedFunction<typeof releaseFunds>
-const mockedMirrorReservationStatus =
-  mirrorReservationStatus as jest.MockedFunction<typeof mirrorReservationStatus>
-const mockedNotify = notifyHotelEscrowConversation as jest.MockedFunction<
-  typeof notifyHotelEscrowConversation
->
+const mockedProcessWebhookEvent = processWebhookEvent as jest.Mock
+const mockedFundEscrow = fundEscrowInTransaction as jest.Mock
+const mockedReleaseFunds = releaseFundsInTransaction as jest.Mock
+const mockedMirrorReservationStatus = mirrorReservationStatusInTransaction as jest.Mock
+const mockedNotify = notifyHotelEscrowConversation as jest.Mock
 
 function makeRequest(body: Record<string, unknown>): Request {
   return { body } as Request
@@ -79,8 +69,16 @@ describe('lifecycle notification failure isolation', () => {
   beforeEach(() => {
     jest.clearAllMocks()
 
-    mockedLogAndCheck.mockResolvedValue({ isDuplicate: false, eventId: 'event-1' })
-    mockedMarkProcessed.mockResolvedValue(undefined)
+    mockedProcessWebhookEvent.mockImplementation(
+      async (...args: unknown[]) => {
+        const process = args[3] as (
+          client: PoolClient
+        ) => Promise<TrustlessWorkEscrow | null>
+        const result = await process({} as PoolClient)
+        return { isDuplicate: false, eventId: 'event-1', result }
+      }
+    )
+
     mockedFundEscrow.mockResolvedValue({
       id: 'escrow-1',
       contractId: 'contract-1',
@@ -106,13 +104,19 @@ describe('lifecycle notification failure isolation', () => {
     await flushNotificationDispatch()
 
     expect(response).toBe(res)
+    expect(mockedProcessWebhookEvent).toHaveBeenCalledTimes(1)
     expect(mockedFundEscrow).toHaveBeenCalledTimes(1)
-    expect(mockedFundEscrow).toHaveBeenCalledWith('contract-1', 2500, [
-      'created',
-      'pending_funding',
-    ])
-    expect(mockedMirrorReservationStatus).toHaveBeenCalledWith('escrow-1', 'funded')
-    expect(mockedMarkProcessed).toHaveBeenCalledWith('event-1')
+    expect(mockedFundEscrow).toHaveBeenCalledWith(
+      expect.anything(),
+      'contract-1',
+      2500,
+      ['created', 'pending_funding']
+    )
+    expect(mockedMirrorReservationStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      'escrow-1',
+      'funded'
+    )
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({ success: true })
     expect(res.status).not.toHaveBeenCalledWith(500)
@@ -129,9 +133,13 @@ describe('lifecycle notification failure isolation', () => {
     await flushNotificationDispatch()
 
     expect(response).toBe(res)
+    expect(mockedProcessWebhookEvent).toHaveBeenCalledTimes(1)
     expect(mockedReleaseFunds).toHaveBeenCalledTimes(1)
-    expect(mockedMirrorReservationStatus).toHaveBeenCalledWith('escrow-1', 'completed')
-    expect(mockedMarkProcessed).toHaveBeenCalledWith('event-1')
+    expect(mockedMirrorReservationStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      'escrow-1',
+      'completed'
+    )
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({ success: true })
     expect(res.status).not.toHaveBeenCalledWith(500)
@@ -182,6 +190,6 @@ describe('lifecycle notification failure isolation', () => {
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({ success: true })
-    expect(mockedMarkProcessed).toHaveBeenCalledWith('event-1')
+    expect(mockedProcessWebhookEvent).toHaveBeenCalledTimes(1)
   })
 })
