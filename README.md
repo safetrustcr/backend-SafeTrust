@@ -67,6 +67,9 @@ Fill in `.env` before running anything:
 ```dotenv
 POSTGRES_PASSWORD=your_postgres_password
 
+# Required. Generate a strong random value; never commit a real secret.
+HASURA_ADMIN_SECRET=
+
 # Must be valid JSON, key ≥ 32 characters for HS256
 HASURA_GRAPHQL_JWT_SECRET={"type":"HS256","key":"replace-with-min-32-char-secret-here"}
 
@@ -75,6 +78,8 @@ HASURA_EVENT_SECRET=your_event_secret
 ```
 
 > ⚠️ `HASURA_GRAPHQL_JWT_SECRET` must be valid JSON with a key of at least 32 characters. `start` will fail if this is malformed.
+>
+> ⚠️ `HASURA_ADMIN_SECRET` is required and has no default. `bin/start`, the webhook, and the metadata scripts fail closed when it is missing. In CI and production, inject it from the GitHub Actions secret store or your cloud secret manager instead of `.env`.
 
 ### 2. 🔮 Start everything
 
@@ -132,14 +137,14 @@ bin/start --restart safetrust
 # Rollback safetrust migrations:
 hasura migrate apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
+  --admin-secret "$HASURA_ADMIN_SECRET" \
   --database-name safetrust \
   --down all
 
 # Rollback hotel_industry migrations:
 hasura migrate apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
+  --admin-secret "$HASURA_ADMIN_SECRET" \
   --database-name hotel_industry \
   --down all
 
@@ -213,7 +218,7 @@ breach is confirmed.
 
 ```bash
 cd metadata
-./setup-tenant.sh safetrust --endpoint http://localhost:8080 --admin-secret myadminsecretkey
+HASURA_ADMIN_SECRET="$HASURA_ADMIN_SECRET" ./setup-tenant.sh safetrust --endpoint http://localhost:8080
 
 ```
 
@@ -223,7 +228,7 @@ cd metadata
 hasura migrate apply \
   --database-name safetrust \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 ```
 
@@ -235,7 +240,7 @@ hasura migrate apply \
   --version <timestamp> \
   --type up \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 ```
 
@@ -245,7 +250,7 @@ hasura migrate apply \
 hasura seed apply \
   --database-name safetrust \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 ```
 

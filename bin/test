@@ -10,4 +10,11 @@ if [ -f .env.test ]; then
   ENV_FILE_FLAGS=(--env-file .env.test)
 fi
 
+# The test stack requires an admin secret. Never commit one: use
+# TEST_ADMIN_SECRET when supplied, otherwise generate a throwaway value.
+if [ -z "${TEST_ADMIN_SECRET:-}" ] && ! grep -q '^TEST_ADMIN_SECRET=.' .env.test 2>/dev/null; then
+  TEST_ADMIN_SECRET="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+  export TEST_ADMIN_SECRET
+fi
+
 docker compose -p safetrust-test -f docker-compose-test.yml "${ENV_FILE_FLAGS[@]}" run --rm --build karate

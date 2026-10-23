@@ -70,7 +70,29 @@ describe('authMiddleware', () => {
       roles: ['host'],
       role: 'host',
     })
+    expect(req.context).toEqual({
+      uid: mockUser.uid,
+      tenantId: 'safetrust',
+      roles: ['host'],
+      email: mockUser.email,
+    })
     expect(next).toHaveBeenCalled()
+    expect(res.status).not.toHaveBeenCalled()
+  })
+
+  it('should immediately call next() and not re-authenticate when req.context is already present', async () => {
+    req.context = {
+      uid: 'already-authenticated-user',
+      tenantId: 'safetrust',
+      roles: ['admin'],
+      email: 'admin@example.com',
+    }
+
+    await authMiddleware(req, res, next)
+
+    expect(next).toHaveBeenCalled()
+    expect(getAuth).not.toHaveBeenCalled()
+    expect(db.query).not.toHaveBeenCalled()
     expect(res.status).not.toHaveBeenCalled()
   })
 

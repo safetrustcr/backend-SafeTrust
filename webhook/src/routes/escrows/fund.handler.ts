@@ -1,15 +1,12 @@
 import { Request, Response } from 'express';
 import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
 import { FundEscrowPayload } from '@safetrust/types';
+import { processWebhookEvent } from '../../repositories/webhook-event.repository';
 import {
-  logAndCheckWebhookEvent,
-  markWebhookEventProcessed,
-} from '../../repositories/webhook-event.repository';
-import {
-  fundEscrow,
+  fundEscrowInTransaction,
 } from '../../repositories/escrow.repository';
 import {
-  mirrorReservationStatus,
+  mirrorReservationStatusInTransaction,
 } from '../../repositories/reservation.repository';
 import {
   notifyHotelEscrowConversation,
@@ -44,24 +41,33 @@ export const fundEscrowHandler = async (
   }
 
   try {
-    // 2 — Idempotency check via webhook event log
-    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    // 2 — Claim the event and apply database state changes atomically
+    const { isDuplicate, eventId, result: updated } = await processWebhookEvent(
       contractId,
       EVENT_TYPE,
-      req.body as unknown as Record<string, unknown>
+      req.body as unknown as Record<string, unknown>,
+      async (client) => {
+        const validStates: string[] = JSON.parse(
+          getValidPriorStates(EscrowStatus.Funded, EscrowEventType.Funded) as string
+        );
+        const escrow = await fundEscrowInTransaction(
+          client,
+          contractId,
+          amount,
+          validStates
+        );
+
+        if (escrow) {
+          await mirrorReservationStatusInTransaction(client, escrow.id, 'funded')
+        }
+
+        return escrow
+      }
     );
 
     if (isDuplicate) {
-      await markWebhookEventProcessed(eventId);
       return duplicate(res, eventId);
     }
-
-    // 3 — Update safetrust.trustless_work_escrows
-    const validStates: string[] = JSON.parse(
-      getValidPriorStates(EscrowStatus.Funded, EscrowEventType.Funded) as string
-    );
-
-    const updated = await fundEscrow(contractId, amount, validStates);
 
     if (!updated) {
       return notFound(res, {
@@ -71,17 +77,12 @@ export const fundEscrowHandler = async (
 
     const escrowId = updated.id;
 
-    // 4 — Mirror status to safetrust.reservations
-    await mirrorReservationStatus(escrowId, 'funded');
-
-    // 5 — Notify hotel conversation (best-effort, never fail the response)
+    // 3 — Notify hotel conversation after the state transaction commits
     await notifyHotelEscrowConversation({
       contractId,
       eventType: 'escrow_funded',
       body: 'SafeTrust: Your deposit has been confirmed on the Stellar network. Your booking is secured.',
     });
-
-    await markWebhookEventProcessed(eventId);
 
     console.log(`[escrow/fund] ✅ Escrow funded — contractId: ${contractId}`);
     return ok(res);
