@@ -85,23 +85,43 @@ export const releaseFundsHandler = async (
         const current = existing.rows[0];
 
         if (current.status === 'completed') {
-          // Escrow is already completed: reuse its ID, mirror reservation status, and return it
-          await mirrorReservationStatusInTransaction(
-            client,
-            current.id,
-            'completed',
-            getPlatformTenantId()
+          // Check if this is a retry of an earlier incomplete event for the same contract
+          const incompleteEvents = await client.query<{ id: string }>(
+            `SELECT id
+             FROM safetrust.trustless_work_webhook_events
+             WHERE tenant_id = 'safetrust'
+               AND contract_id = $1
+               AND event_type = $2
+               AND processed = false`,
+            [contractId, EVENT_TYPE]
           );
 
-          return {
-            escrow: {
-              id: current.id,
-              contractId: current.contract_id,
-              status: current.status,
-              balance: current.balance,
-            },
-            alreadyCompleted: true,
-          };
+          // The current transaction already claimed one event row (processed = false).
+          // More than 1 unprocessed event means a prior incomplete event is being retried.
+          const isRetryOfIncomplete = incompleteEvents.rows.length > 1;
+
+          if (isRetryOfIncomplete) {
+            await mirrorReservationStatusInTransaction(
+              client,
+              current.id,
+              'completed',
+              getPlatformTenantId()
+            );
+            return {
+              escrow: {
+                id: current.id,
+                contractId: current.contract_id,
+                status: current.status,
+                balance: current.balance,
+              },
+              alreadyCompleted: true,
+            };
+          }
+
+          // New release event for an already completed escrow: reject with StateConflictError
+          throw new StateConflictError(
+            `Escrow cannot transition to completed: contractId '${contractId}' current status 'completed' not in [${validStates.join(', ')}]`
+          );
         }
 
         // Real invalid prior state: throw StateConflictError so handler returns 409

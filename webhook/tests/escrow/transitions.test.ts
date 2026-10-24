@@ -266,7 +266,7 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
       )
     })
 
-    it('recovers and completes release when retried on an already completed escrow', async () => {
+    it('recovers and completes release when retried for an original incomplete event', async () => {
       const fakeClient = {
         query: jest
           .fn()
@@ -282,6 +282,10 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
                 balance: 0,
               },
             ],
+          })
+          // Third query: lookup finds a prior incomplete event awaiting recovery
+          .mockResolvedValueOnce({
+            rows: [{ id: 'prior-incomplete-event' }, { id: 'current-claimed-event' }],
           }),
       } as unknown as PoolClient
 
@@ -315,9 +319,68 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
       expect(mockedMirrorReservationInTx).toHaveBeenCalledWith(
         fakeClient,
         'escrow-uuid-101',
-        'completed'
+        'completed',
+        'safetrust'
       )
       // Notification is skipped on replay of already-completed escrow
+      expect(mockedNotify).not.toHaveBeenCalled()
+    })
+
+    it('rejects new release events for already completed escrows with 409 Conflict', async () => {
+      const fakeClient = {
+        query: jest
+          .fn()
+          // First query: releaseFundsInTransaction UPDATE matches 0 rows
+          .mockResolvedValueOnce({ rows: [] })
+          // Second query: lookup returns an already-completed escrow
+          .mockResolvedValueOnce({
+            rows: [
+              {
+                id: 'escrow-uuid-102',
+                contract_id: 'contract-already-completed-new',
+                status: 'completed',
+                balance: 0,
+              },
+            ],
+          })
+          // Third query: only the current event exists (no prior incomplete event)
+          .mockResolvedValueOnce({
+            rows: [{ id: 'current-claimed-event' }],
+          }),
+      } as unknown as PoolClient
+
+      mockedProcessWebhookEvent.mockImplementationOnce(
+        async (_cid, _etype, _payload, callback) => {
+          const result = await callback(fakeClient)
+          return {
+            isDuplicate: false,
+            eventId: 'event-new-102',
+            result,
+          }
+        }
+      )
+
+      const req = {
+        body: {
+          contractId: 'contract-already-completed-new',
+          releaseSigner: 'signer-abc',
+        },
+      } as unknown as Request
+
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn().mockReturnThis(),
+      } as unknown as Response
+
+      await releaseFundsHandler(req, res)
+
+      expect(res.status).toHaveBeenCalledWith(409)
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.stringContaining('Escrow cannot transition to completed'),
+        })
+      )
       expect(mockedNotify).not.toHaveBeenCalled()
     })
 
