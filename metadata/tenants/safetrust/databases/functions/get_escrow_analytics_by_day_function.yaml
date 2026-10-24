@@ -7,7 +7,3 @@ configuration:
 permissions:
   - role: host
 comment: |
-  Daily escrow analytics time series (UTC day buckets). GraphQL root field
-  getEscrowAnalyticsByDay(args: {p_start_date: date, p_end_date: date, p_tenant_id: String}),
-  all three required.
-  Returns SETOF safetrust.escrow_analytics_by_day. Metric definitions: docs/analytics/metrics.md.

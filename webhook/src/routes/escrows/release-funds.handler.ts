@@ -12,6 +12,7 @@ import {
   DEFAULT_NOTIFICATION_TIMEOUT_MS,
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
+import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
 const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
@@ -44,7 +45,7 @@ export const releaseFundsHandler = async (
         );
         const escrow = await releaseFundsInTransaction(client, contractId, validStates)
         if (escrow) {
-          await mirrorReservationStatusInTransaction(client, escrow.id, 'completed')
+          await mirrorReservationStatusInTransaction(client, escrow.id, 'completed', getPlatformTenantId())
         }
         return escrow
       }

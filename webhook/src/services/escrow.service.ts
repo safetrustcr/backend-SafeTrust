@@ -1,11 +1,17 @@
 import { InitializeEscrowPayload } from '@safetrust/types';
-import { hasuraRequest } from './hasura';
+import { hasuraTenantRequest, TenantMismatchError } from './tenant-scoped-hasura';
+import {
+  findReservationTenantId,
+  linkEscrowToReservation,
+} from '../repositories/reservation.repository';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
 import { amountToStroops } from '../lib/stellar-amounts';
 import { verifyProofOfFunds } from '../lib/zk-verifier';
+
+export { TenantMismatchError };
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -39,6 +45,7 @@ export interface TrustlessWorkEscrow {
   contractId: string;
   status: string;
   createdAt: string;
+  tenantId?: string;
 }
 
 // ── Validation error ───────────────────────────────────────────────────────────
@@ -219,7 +226,8 @@ export function validateEscrowInitializationPayload(
  * Returns the created escrow record.
  */
 export async function persistEscrow(
-  payload: EscrowInitPayload
+  payload: EscrowInitPayload,
+  tenantId: string
 ): Promise<TrustlessWorkEscrow> {
   const mutation = `
     mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
@@ -234,13 +242,14 @@ export async function persistEscrow(
         contractId
         status
         createdAt
+        tenantId
       }
     }
   `;
 
-  const data = await hasuraRequest<{
+  const data = await hasuraTenantRequest<{
     insert_trustless_work_escrows_one?: TrustlessWorkEscrow;
-  }>(mutation, {
+  }>(tenantId, mutation, {
     object: {
       contractId: payload.contract_id,
       marker: payload.marker,
@@ -257,7 +266,7 @@ export async function persistEscrow(
       roomId: payload.room_id,
       hotelId: payload.hotel_id,
       guestId: payload.guest_id,
-      tenantId: 'safetrust',
+      tenantId,
       escrowMetadata: payload.raw,
       bookingMetadata: payload.booking_metadata,
     },
@@ -271,30 +280,51 @@ export async function persistEscrow(
   return escrow;
 }
 
+/** Thrown when the reservation named in booking_metadata does not exist. */
+export class ReservationNotFoundError extends Error {
+  readonly statusCode = 404;
+  constructor(reservationId: string) {
+    super(`Reservation ${reservationId} not found`);
+    this.name = 'ReservationNotFoundError';
+  }
+}
+
 /**
- * Update a reservation row to link it to the created escrow.
- * No-op when reservationId is null or undefined.
+ * Resolve the tenant that owns `reservationId` before any escrow write.
+ *
+ * Throws `ReservationNotFoundError` when the reservation does not exist and
+ * `TenantMismatchError` when it belongs to a tenant other than
+ * `expectedTenantId` (the caller's verified tenant; the platform tenant for
+ * signed callbacks and x402 payments).
+ * Returns the reservation's own tenant, which callers use for both the escrow
+ * insert and the reservation link.
+ */
+export async function resolveReservationTenant(
+  reservationId: string,
+  expectedTenantId: string
+): Promise<string> {
+  const reservationTenantId = await findReservationTenantId(reservationId);
+  if (!reservationTenantId) {
+    throw new ReservationNotFoundError(reservationId);
+  }
+  if (reservationTenantId !== expectedTenantId) {
+    throw new TenantMismatchError(
+      `Reservation ${reservationId} does not belong to tenant ${expectedTenantId}`
+    );
+  }
+  return reservationTenantId;
+}
+
+/**
+ * Link a reservation row in `tenantId` to the created escrow.
+ * Throws when no reservation in that tenant matches.
  */
 export async function linkReservationToEscrow(
   reservationId: string,
-  escrowId: string
+  escrowId: string,
+  tenantId: string
 ): Promise<void> {
-  const mutation = `
-    mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!) {
-      update_reservations_by_pk(
-        pk_columns: { id: $reservationId }
-        _set: {
-          escrow_id: $escrowId,
-          status: "escrow_created",
-          updatedAt: "now()"
-        }
-      ) {
-        id status escrow_id
-      }
-    }
-  `;
-
-  await hasuraRequest(mutation, { reservationId, escrowId });
+  await linkEscrowToReservation(reservationId, escrowId, tenantId);
 
   console.log(
     `[escrow.service] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrowId}`
@@ -307,24 +337,39 @@ export async function linkReservationToEscrow(
  */
 export async function initializeEscrow(
   payload: EscrowInitPayload,
-  rawPayload: Record<string, unknown>
+  rawPayload: Record<string, unknown>,
+  tenantId: string
 ): Promise<{ isDuplicate: boolean; eventId: string; escrow?: TrustlessWorkEscrow }> {
-  const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+  const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
     payload.contract_id,
     'escrow.initialized',
     rawPayload
   );
 
-  if (isDuplicate) {
+  // Retry a duplicate whose earlier delivery failed part-way; persistEscrow
+  // upserts on contract_id, so re-running it is safe.
+  if (isDuplicate && processed !== false) {
     await markWebhookEventProcessed(eventId);
     return { isDuplicate: true, eventId };
   }
 
-  const escrow = await persistEscrow(payload);
-
   const reservationId = payload.booking_metadata?.reservation_id;
+  const escrowTenantId = reservationId
+    ? await resolveReservationTenant(reservationId, tenantId)
+    : tenantId;
+
+  const escrow = await persistEscrow(payload, escrowTenantId);
+
+  // The upsert on contract_id returns an existing row unchanged, so a row
+  // owned by another tenant must be rejected before it is linked.
+  if (escrow.tenantId !== escrowTenantId) {
+    throw new TenantMismatchError(
+      `Escrow ${payload.contract_id} does not belong to tenant ${escrowTenantId}`
+    );
+  }
+
   if (reservationId) {
-    await linkReservationToEscrow(reservationId, escrow.id);
+    await linkReservationToEscrow(reservationId, escrow.id, escrowTenantId);
   }
 
   await markWebhookEventProcessed(eventId);

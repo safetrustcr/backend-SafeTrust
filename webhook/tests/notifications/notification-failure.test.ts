@@ -115,7 +115,8 @@ describe('lifecycle notification failure isolation', () => {
     expect(mockedMirrorReservationStatus).toHaveBeenCalledWith(
       expect.anything(),
       'escrow-1',
-      'funded'
+      'funded',
+      'safetrust'
     )
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({ success: true })
@@ -138,7 +139,8 @@ describe('lifecycle notification failure isolation', () => {
     expect(mockedMirrorReservationStatus).toHaveBeenCalledWith(
       expect.anything(),
       'escrow-1',
-      'completed'
+      'completed',
+      'safetrust'
     )
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({ success: true })
