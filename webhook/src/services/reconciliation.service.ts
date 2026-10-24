@@ -13,7 +13,10 @@ import {
   chunkArray,
   CHUNK_SIZE,
   findStaleEscrows,
+  isRustBulkUpsertEnabled,
 } from '../lib/reconciliation'
+
+export { isRustBulkUpsertEnabled }
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
