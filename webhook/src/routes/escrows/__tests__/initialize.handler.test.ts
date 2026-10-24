@@ -12,6 +12,7 @@ jest.mock('../../../repositories/escrow.repository', () => ({
 }));
 
 jest.mock('../../../repositories/reservation.repository', () => ({
+  findReservationTenantId: jest.fn(),
   linkEscrowToReservation: jest.fn(),
 }));
 
@@ -28,7 +29,10 @@ const {
   createEscrow,
   getEscrowByContractId,
 } = require('../../../repositories/escrow.repository');
-const { linkEscrowToReservation } = require('../../../repositories/reservation.repository');
+const {
+  findReservationTenantId,
+  linkEscrowToReservation,
+} = require('../../../repositories/reservation.repository');
 const { verifyProofOfFunds } = require('../../../lib/zk-verifier');
 
 function makeRequest(overrides = {}) {
@@ -209,6 +213,7 @@ describe('initializeEscrowHandler tenant and retry', () => {
     delete process.env.ZK_ENABLED;
     delete process.env.PLATFORM_TENANT_ID;
     createEscrow.mockResolvedValue(escrow);
+    findReservationTenantId.mockResolvedValue('safetrust');
     linkEscrowToReservation.mockResolvedValue(undefined);
     markWebhookEventProcessed.mockResolvedValue(undefined);
   });
@@ -219,6 +224,7 @@ describe('initializeEscrowHandler tenant and retry', () => {
 
   it('writes the configured platform tenant to the escrow and reservation link', async () => {
     process.env.PLATFORM_TENANT_ID = 'tenant-b';
+    findReservationTenantId.mockResolvedValue('tenant-b');
     logAndCheckWebhookEvent.mockResolvedValue({ isDuplicate: false, eventId: 'event-1' });
 
     const res = makeResponse();
@@ -230,6 +236,55 @@ describe('initializeEscrowHandler tenant and retry', () => {
     expect(createEscrow).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 'tenant-b' }));
     expect(linkEscrowToReservation).toHaveBeenCalledWith('res-1', 'escrow-1', 'tenant-b');
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('uses the resolved reservation tenant for both the escrow and the link', async () => {
+    findReservationTenantId.mockResolvedValue('safetrust');
+    logAndCheckWebhookEvent.mockResolvedValue({ isDuplicate: false, eventId: 'event-1' });
+
+    const res = makeResponse();
+    await initializeEscrowHandler(
+      makeRequest({ booking_metadata: { reservation_id: 'res-1' } }),
+      res
+    );
+
+    expect(findReservationTenantId).toHaveBeenCalledWith('res-1');
+    expect(createEscrow).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 'safetrust' }));
+    expect(linkEscrowToReservation).toHaveBeenCalledWith('res-1', 'escrow-1', 'safetrust');
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('rejects an unknown reservation before any escrow write', async () => {
+    findReservationTenantId.mockResolvedValue(null);
+    logAndCheckWebhookEvent.mockResolvedValue({ isDuplicate: false, eventId: 'event-1' });
+
+    const res = makeResponse();
+    await initializeEscrowHandler(
+      makeRequest({ booking_metadata: { reservation_id: 'res-missing' } }),
+      res
+    );
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(createEscrow).not.toHaveBeenCalled();
+    expect(getEscrowByContractId).not.toHaveBeenCalled();
+    expect(linkEscrowToReservation).not.toHaveBeenCalled();
+    expect(markWebhookEventProcessed).not.toHaveBeenCalled();
+  });
+
+  it('rejects a reservation owned by another tenant before any escrow write', async () => {
+    findReservationTenantId.mockResolvedValue('tenant-other');
+    logAndCheckWebhookEvent.mockResolvedValue({ isDuplicate: false, eventId: 'event-1' });
+
+    const res = makeResponse();
+    await initializeEscrowHandler(
+      makeRequest({ booking_metadata: { reservation_id: 'res-1' } }),
+      res
+    );
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(createEscrow).not.toHaveBeenCalled();
+    expect(linkEscrowToReservation).not.toHaveBeenCalled();
+    expect(markWebhookEventProcessed).not.toHaveBeenCalled();
   });
 
   it('leaves the event unprocessed when the reservation link fails', async () => {

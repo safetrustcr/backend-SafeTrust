@@ -1,12 +1,17 @@
 import { InitializeEscrowPayload } from '@safetrust/types';
-import { hasuraTenantRequest } from './tenant-scoped-hasura';
-import { linkEscrowToReservation } from '../repositories/reservation.repository';
+import { hasuraTenantRequest, TenantMismatchError } from './tenant-scoped-hasura';
+import {
+  findReservationTenantId,
+  linkEscrowToReservation,
+} from '../repositories/reservation.repository';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
 import { amountToStroops } from '../lib/stellar-amounts';
 import { verifyProofOfFunds } from '../lib/zk-verifier';
+
+export { TenantMismatchError };
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -273,6 +278,41 @@ export async function persistEscrow(
   return escrow;
 }
 
+/** Thrown when the reservation named in booking_metadata does not exist. */
+export class ReservationNotFoundError extends Error {
+  readonly statusCode = 404;
+  constructor(reservationId: string) {
+    super(`Reservation ${reservationId} not found`);
+    this.name = 'ReservationNotFoundError';
+  }
+}
+
+/**
+ * Resolve the tenant that owns `reservationId` before any escrow write.
+ *
+ * Throws `ReservationNotFoundError` when the reservation does not exist and
+ * `TenantMismatchError` when it belongs to a tenant other than
+ * `expectedTenantId` (the caller's verified tenant; the platform tenant for
+ * signed callbacks and x402 payments).
+ * Returns the reservation's own tenant, which callers use for both the escrow
+ * insert and the reservation link.
+ */
+export async function resolveReservationTenant(
+  reservationId: string,
+  expectedTenantId: string
+): Promise<string> {
+  const reservationTenantId = await findReservationTenantId(reservationId);
+  if (!reservationTenantId) {
+    throw new ReservationNotFoundError(reservationId);
+  }
+  if (reservationTenantId !== expectedTenantId) {
+    throw new TenantMismatchError(
+      `Reservation ${reservationId} does not belong to tenant ${expectedTenantId}`
+    );
+  }
+  return reservationTenantId;
+}
+
 /**
  * Link a reservation row in `tenantId` to the created escrow.
  * Throws when no reservation in that tenant matches.
@@ -311,11 +351,15 @@ export async function initializeEscrow(
     return { isDuplicate: true, eventId };
   }
 
-  const escrow = await persistEscrow(payload, tenantId);
-
   const reservationId = payload.booking_metadata?.reservation_id;
+  const escrowTenantId = reservationId
+    ? await resolveReservationTenant(reservationId, tenantId)
+    : tenantId;
+
+  const escrow = await persistEscrow(payload, escrowTenantId);
+
   if (reservationId) {
-    await linkReservationToEscrow(reservationId, escrow.id, tenantId);
+    await linkReservationToEscrow(reservationId, escrow.id, escrowTenantId);
   }
 
   await markWebhookEventProcessed(eventId);

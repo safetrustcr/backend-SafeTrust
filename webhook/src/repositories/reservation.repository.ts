@@ -35,6 +35,21 @@ export interface ReservationRow {
   contract_id: string | null
 }
 
+/**
+ * Return the tenant that owns `reservationId`, or null when no such
+ * reservation exists. Read-only lookup used to resolve the tenant before an
+ * escrow is written for the reservation.
+ */
+export async function findReservationTenantId(
+  reservationId: string
+): Promise<string | null> {
+  const result = await query<{ tenant_id: string }>(
+    'SELECT tenant_id FROM safetrust.reservations WHERE id = $1',
+    [reservationId]
+  )
+  return result.rows[0]?.tenant_id ?? null
+}
+
 export async function linkEscrowToReservation(
   reservationId: string,
   escrowId: string,

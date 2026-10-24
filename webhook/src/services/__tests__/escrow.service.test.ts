@@ -5,6 +5,10 @@ jest.mock('../../services/hasura', () => ({
   hasuraRequest: jest.fn(),
 }));
 
+jest.mock('../../services/db', () => ({
+  query: jest.fn(),
+}));
+
 jest.mock('../../repositories/webhook-event.repository', () => ({
   logAndCheckWebhookEvent: jest.fn(),
   markWebhookEventProcessed: jest.fn(),
@@ -31,9 +35,12 @@ import {
   linkReservationToEscrow,
   EscrowValidationError,
   ZkVerifierUnavailableError,
+  ReservationNotFoundError,
   EscrowInitPayload,
 } from '../../services/escrow.service';
 import { hasuraRequest } from '../../services/hasura';
+import { query } from '../../services/db';
+import { TenantMismatchError } from '../../services/tenant-scoped-hasura';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
@@ -45,6 +52,7 @@ const mockedLogAndCheckWebhookEvent =
   logAndCheckWebhookEvent as jest.MockedFunction<typeof logAndCheckWebhookEvent>;
 const mockedMarkWebhookEventProcessed =
   markWebhookEventProcessed as jest.MockedFunction<typeof markWebhookEventProcessed>;
+const mockedQuery = query as jest.MockedFunction<typeof query>;
 const mockedVerifyProof = verifyProofOfFunds as jest.MockedFunction<typeof verifyProofOfFunds>;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -323,6 +331,8 @@ describe('initializeEscrow', () => {
       booking_metadata: { reservation_id: 'res-1' },
     });
 
+    mockedQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'safetrust' }] } as any);
+
     const result = await initializeEscrow(payload, validBody(), 'safetrust');
 
     expect(result).toEqual({
@@ -332,6 +342,74 @@ describe('initializeEscrow', () => {
     });
     expect(mockedHasuraRequest).toHaveBeenCalledTimes(2);
     expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-1');
+  });
+
+  it('uses the resolved reservation tenant for the escrow insert and the link', async () => {
+    mockedLogAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: false,
+      eventId: 'event-1',
+    });
+    mockedQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-b' }] } as any);
+    mockedHasuraRequest
+      .mockResolvedValueOnce({ insert_trustless_work_escrows_one: escrowResponse })
+      .mockResolvedValueOnce({ update_reservations: { affected_rows: 1 } });
+
+    await initializeEscrow(
+      validPayload({ booking_metadata: { reservation_id: 'res-1' } }),
+      validBody(),
+      'tenant-b'
+    );
+
+    expect(mockedQuery).toHaveBeenCalledWith(
+      expect.stringContaining('tenant_id'),
+      ['res-1']
+    );
+    const insertVars = mockedHasuraRequest.mock.calls[0][1] as any;
+    expect(insertVars.object.tenantId).toBe('tenant-b');
+    const linkMutation = mockedHasuraRequest.mock.calls[1][0] as string;
+    const linkVars = mockedHasuraRequest.mock.calls[1][1] as any;
+    expect(linkMutation).toContain('tenantId: { _eq: $tenantId }');
+    expect(linkVars).toEqual(
+      expect.objectContaining({ reservationId: 'res-1', tenantId: 'tenant-b' })
+    );
+  });
+
+  it('rejects an unknown reservation before any escrow write', async () => {
+    mockedLogAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: false,
+      eventId: 'event-1',
+    });
+    mockedQuery.mockResolvedValueOnce({ rows: [] } as any);
+
+    await expect(
+      initializeEscrow(
+        validPayload({ booking_metadata: { reservation_id: 'res-missing' } }),
+        validBody(),
+        'safetrust'
+      )
+    ).rejects.toBeInstanceOf(ReservationNotFoundError);
+
+    expect(mockedHasuraRequest).not.toHaveBeenCalled();
+    expect(mockedMarkWebhookEventProcessed).not.toHaveBeenCalled();
+  });
+
+  it('rejects a reservation owned by another tenant before any escrow write', async () => {
+    mockedLogAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: false,
+      eventId: 'event-1',
+    });
+    mockedQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-other' }] } as any);
+
+    await expect(
+      initializeEscrow(
+        validPayload({ booking_metadata: { reservation_id: 'res-1' } }),
+        validBody(),
+        'safetrust'
+      )
+    ).rejects.toBeInstanceOf(TenantMismatchError);
+
+    expect(mockedHasuraRequest).not.toHaveBeenCalled();
+    expect(mockedMarkWebhookEventProcessed).not.toHaveBeenCalled();
   });
 
   it('does not mark the event processed when escrow persistence fails', async () => {

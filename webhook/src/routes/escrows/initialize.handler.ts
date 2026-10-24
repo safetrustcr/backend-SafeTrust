@@ -1,5 +1,12 @@
 import { Request, Response } from 'express';
-import { badRequest, duplicate, ok, serverError, serviceUnavailable } from '../../utils/response'
+import {
+  badRequest,
+  duplicate,
+  notFound,
+  ok,
+  serverError,
+  serviceUnavailable,
+} from '../../utils/response'
 import { InitializeEscrowPayload } from '@safetrust/types';
 import {
   logAndCheckWebhookEvent,
@@ -12,6 +19,11 @@ import {
 import {
   linkEscrowToReservation,
 } from '../../repositories/reservation.repository';
+import {
+  ReservationNotFoundError,
+  resolveReservationTenant,
+  TenantMismatchError,
+} from '../../services/escrow.service';
 import { verifyProofOfFunds } from '../../lib/zk-verifier';
 import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
@@ -175,9 +187,14 @@ export const initializeEscrowHandler = async (
       return duplicate(res, eventId);
     }
 
-    // Signed server-to-server callback: no user session, so the escrow belongs
-    // to the configured platform tenant.
-    const tenantId = getPlatformTenantId();
+    // Signed server-to-server callback or x402 payment: no user session, so
+    // the expected tenant is the configured platform tenant. When the payload
+    // names a reservation, resolve its actual tenant before any escrow write
+    // and use it for both the escrow insert and the reservation link.
+    const reservationId = booking_metadata?.reservation_id;
+    const tenantId = reservationId
+      ? await resolveReservationTenant(reservationId, getPlatformTenantId())
+      : getPlatformTenantId();
 
     // 5 — Persist to safetrust.trustless_work_escrows via repository.
     // A retry reuses the escrow row an earlier attempt already created.
@@ -208,7 +225,6 @@ export const initializeEscrowHandler = async (
     }
 
     // 6 — Link escrow to reservation AFTER escrow is confirmed to exist
-    const reservationId = booking_metadata?.reservation_id;
     if (reservationId) {
       await linkEscrowToReservation(reservationId, escrow.id, tenantId);
       console.log(`[escrow/initialize] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrow.id}`);
@@ -219,6 +235,12 @@ export const initializeEscrowHandler = async (
     return ok(res);
 
   } catch (error) {
+    if (error instanceof ReservationNotFoundError) {
+      return notFound(res, { error: error.message });
+    }
+    if (error instanceof TenantMismatchError) {
+      return res.status(403).json({ success: false, error: 'Forbidden: tenant mismatch' });
+    }
     const err = error as Error & { details?: unknown };
     console.error('[escrow/initialize] ❌ Error:', err.details || err.message);
     if (err.details) {
