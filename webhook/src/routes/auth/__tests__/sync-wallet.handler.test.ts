@@ -125,6 +125,8 @@ describe('syncWalletHandler', () => {
   it('returns 500 when the database upsert fails', async () => {
     ;(query as jest.Mock).mockRejectedValue(new Error('connection refused'))
 
+    // Must be a non-Stellar address: any G…/C… strkey is rejected with 400
+    // WALLET_CHALLENGE_REQUIRED before the upsert runs.
     const req = makeRequest({
       wallet_address: '0x1234567890123456789012345678901234567890',
       chain_type: 'ETH',
