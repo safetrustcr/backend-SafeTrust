@@ -199,6 +199,11 @@ export const initializeEscrowHandler = async (
     // 5 — Persist to safetrust.trustless_work_escrows via repository.
     // A retry reuses the escrow row an earlier attempt already created.
     const existingEscrow = isDuplicate ? await getEscrowByContractId(contract_id) : null;
+    if (existingEscrow && existingEscrow.tenantId !== tenantId) {
+      throw new TenantMismatchError(
+        `Escrow ${contract_id} does not belong to tenant ${tenantId}`
+      );
+    }
     const escrow = existingEscrow ?? await createEscrow({
       contractId: contract_id,
       marker,

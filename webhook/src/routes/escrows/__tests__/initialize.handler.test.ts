@@ -206,6 +206,7 @@ describe('initializeEscrowHandler tenant and retry', () => {
     id: 'escrow-1',
     contractId: 'contract-1',
     status: 'created',
+    tenantId: 'safetrust',
   };
 
   beforeEach(() => {
@@ -319,6 +320,52 @@ describe('initializeEscrowHandler tenant and retry', () => {
     expect(linkEscrowToReservation).toHaveBeenCalledWith('res-1', 'escrow-1', 'safetrust');
     expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-1');
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('links a reused escrow whose tenant matches the resolved tenant', async () => {
+    process.env.PLATFORM_TENANT_ID = 'tenant-b';
+    findReservationTenantId.mockResolvedValue('tenant-b');
+    logAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: true,
+      eventId: 'event-1',
+      processed: false,
+    });
+    getEscrowByContractId.mockResolvedValue({ ...escrow, tenantId: 'tenant-b' });
+
+    const res = makeResponse();
+    await initializeEscrowHandler(
+      makeRequest({ booking_metadata: { reservation_id: 'res-1' } }),
+      res
+    );
+
+    expect(createEscrow).not.toHaveBeenCalled();
+    expect(linkEscrowToReservation).toHaveBeenCalledWith('res-1', 'escrow-1', 'tenant-b');
+    expect(markWebhookEventProcessed).toHaveBeenCalledWith('event-1');
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('rejects a reused escrow owned by another tenant before linking', async () => {
+    logAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: true,
+      eventId: 'event-1',
+      processed: false,
+    });
+    getEscrowByContractId.mockResolvedValue({ ...escrow, tenantId: 'tenant-other' });
+
+    const res = makeResponse();
+    await initializeEscrowHandler(
+      makeRequest({ booking_metadata: { reservation_id: 'res-1' } }),
+      res
+    );
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      error: 'Forbidden: tenant mismatch',
+    });
+    expect(createEscrow).not.toHaveBeenCalled();
+    expect(linkEscrowToReservation).not.toHaveBeenCalled();
+    expect(markWebhookEventProcessed).not.toHaveBeenCalled();
   });
 
   it('acknowledges a duplicate that was already processed', async () => {

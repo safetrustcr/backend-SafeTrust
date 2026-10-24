@@ -269,6 +269,7 @@ describe('initializeEscrow', () => {
     contractId: 'contract-1',
     status: 'created',
     createdAt: '2026-01-01T00:00:00Z',
+    tenantId: 'safetrust',
   };
 
   beforeEach(() => {
@@ -351,7 +352,9 @@ describe('initializeEscrow', () => {
     });
     mockedQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-b' }] } as any);
     mockedHasuraRequest
-      .mockResolvedValueOnce({ insert_trustless_work_escrows_one: escrowResponse })
+      .mockResolvedValueOnce({
+        insert_trustless_work_escrows_one: { ...escrowResponse, tenantId: 'tenant-b' },
+      })
       .mockResolvedValueOnce({ update_reservations: { affected_rows: 1 } });
 
     await initializeEscrow(
@@ -409,6 +412,51 @@ describe('initializeEscrow', () => {
     ).rejects.toBeInstanceOf(TenantMismatchError);
 
     expect(mockedHasuraRequest).not.toHaveBeenCalled();
+    expect(mockedMarkWebhookEventProcessed).not.toHaveBeenCalled();
+  });
+
+  it('links an existing escrow whose tenant matches on retry', async () => {
+    mockedLogAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: true,
+      eventId: 'event-retry',
+      processed: false,
+    });
+    mockedQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'safetrust' }] } as any);
+    mockedHasuraRequest
+      .mockResolvedValueOnce({ insert_trustless_work_escrows_one: escrowResponse })
+      .mockResolvedValueOnce({ update_reservations: { affected_rows: 1 } });
+
+    const result = await initializeEscrow(
+      validPayload({ booking_metadata: { reservation_id: 'res-1' } }),
+      validBody(),
+      'safetrust'
+    );
+
+    expect(result.escrow).toEqual(escrowResponse);
+    expect(mockedHasuraRequest).toHaveBeenCalledTimes(2);
+    expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-retry');
+  });
+
+  it('rejects an existing escrow owned by another tenant before linking', async () => {
+    mockedLogAndCheckWebhookEvent.mockResolvedValue({
+      isDuplicate: true,
+      eventId: 'event-retry',
+      processed: false,
+    });
+    mockedQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'safetrust' }] } as any);
+    mockedHasuraRequest.mockResolvedValueOnce({
+      insert_trustless_work_escrows_one: { ...escrowResponse, tenantId: 'tenant-other' },
+    });
+
+    await expect(
+      initializeEscrow(
+        validPayload({ booking_metadata: { reservation_id: 'res-1' } }),
+        validBody(),
+        'safetrust'
+      )
+    ).rejects.toBeInstanceOf(TenantMismatchError);
+
+    expect(mockedHasuraRequest).toHaveBeenCalledTimes(1);
     expect(mockedMarkWebhookEventProcessed).not.toHaveBeenCalled();
   });
 

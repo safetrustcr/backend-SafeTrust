@@ -45,6 +45,7 @@ export interface TrustlessWorkEscrow {
   contractId: string;
   status: string;
   createdAt: string;
+  tenantId?: string;
 }
 
 // ── Validation error ───────────────────────────────────────────────────────────
@@ -241,6 +242,7 @@ export async function persistEscrow(
         contractId
         status
         createdAt
+        tenantId
       }
     }
   `;
@@ -357,6 +359,14 @@ export async function initializeEscrow(
     : tenantId;
 
   const escrow = await persistEscrow(payload, escrowTenantId);
+
+  // The upsert on contract_id returns an existing row unchanged, so a row
+  // owned by another tenant must be rejected before it is linked.
+  if (escrow.tenantId !== escrowTenantId) {
+    throw new TenantMismatchError(
+      `Escrow ${payload.contract_id} does not belong to tenant ${escrowTenantId}`
+    );
+  }
 
   if (reservationId) {
     await linkReservationToEscrow(reservationId, escrow.id, escrowTenantId);
