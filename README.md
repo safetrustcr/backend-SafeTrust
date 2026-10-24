@@ -67,6 +67,9 @@ Fill in `.env` before running anything:
 ```dotenv
 POSTGRES_PASSWORD=your_postgres_password
 
+# Required. Generate a strong random value; never commit a real secret.
+HASURA_ADMIN_SECRET=
+
 # Must be valid JSON, key ≥ 32 characters for HS256
 HASURA_GRAPHQL_JWT_SECRET={"type":"HS256","key":"replace-with-min-32-char-secret-here"}
 
@@ -75,6 +78,8 @@ HASURA_EVENT_SECRET=your_event_secret
 ```
 
 > ⚠️ `HASURA_GRAPHQL_JWT_SECRET` must be valid JSON with a key of at least 32 characters. `start` will fail if this is malformed.
+>
+> ⚠️ `HASURA_ADMIN_SECRET` is required and has no default. `bin/start`, the webhook, and the metadata scripts fail closed when it is missing. In CI and production, inject it from the GitHub Actions secret store or your cloud secret manager instead of `.env`.
 
 ### 2. 🔮 Start everything
 
@@ -132,14 +137,14 @@ bin/start --restart safetrust
 # Rollback safetrust migrations:
 hasura migrate apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
+  --admin-secret "$HASURA_ADMIN_SECRET" \
   --database-name safetrust \
   --down all
 
 # Rollback hotel_industry migrations:
 hasura migrate apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
+  --admin-secret "$HASURA_ADMIN_SECRET" \
   --database-name hotel_industry \
   --down all
 
@@ -162,6 +167,47 @@ metadata/
 
 ```
 
+### SafeTrust user profile permissions
+
+The `host` role can read only its own user's `display_name` and `avatar_url`,
+scoped by `id = x-hasura-user-id`. Host access does not include the user's
+email, ID, host flag, or timestamps. No cross-user profile relationship is
+currently authorized; add a separately scoped permission only when its
+business rule is defined. This permission supports the host self-profile
+workflow: reading back the display name and avatar that the host can update
+on their own account. Those presentation fields are the minimum needed for
+that workflow; it does not require access to contact details, account
+identifiers, timestamps, or another user's profile. This follows the minimum
+profile-access policy in [issue #668](https://github.com/safetrustcr/backend-SafeTrust/issues/668).
+The guest role's self-only row filter is unchanged.
+
+In Hasura, `filter: {}` means all rows are permitted for that role; it does
+not mean no rows. The checked-in
+[`public_users.yaml`](./metadata/tenants/safetrust/databases/tables/public_users.yaml)
+currently has a self-only host filter, not an empty one. Its row restriction
+also applies to list, primary-key, relationship, and aggregate query paths;
+host aggregation is not enabled.
+
+The checked-in [`.env.example`](./.env.example) configures
+`HASURA_GRAPHQL_JWT_SECRET` with the Firebase issuer and Hasura claims
+namespace. [`claims.ts`](./webhook/src/services/claims.ts) constructs the
+user ID and role claims (`x-hasura-user-id`, `x-hasura-default-role`, and
+`x-hasura-allowed-roles`). These files document repository configuration and
+claim construction, but do not verify that this configuration is deployed or
+that `syncClaims` has run for issued tokens. A role name in metadata alone
+does not prove that ordinary clients cannot claim `host`: deployment must
+verify that trusted token issuance sets `X-Hasura-User-Id` to the
+authenticated user's ID and only grants `host` in the allowed-role claims to
+authorized users. Do not use an admin-secret query to validate row
+permissions; test with two actual authenticated host/guest users and their
+supported claims.
+
+Local metadata is not evidence of deployed state. Confirm the exported target
+metadata after the HAS-02 metadata-deployment fix, then test the deployed
+permissions. This repository does not establish whether the prior broader
+host field list was ever deployed or reachable, so no deployed exposure or
+breach is confirmed.
+
 ---
 
 ## 🛠️ Manual Commands (optional)
@@ -172,7 +218,7 @@ metadata/
 
 ```bash
 cd metadata
-./setup-tenant.sh safetrust --endpoint http://localhost:8080 --admin-secret myadminsecretkey
+HASURA_ADMIN_SECRET="$HASURA_ADMIN_SECRET" ./setup-tenant.sh safetrust --endpoint http://localhost:8080
 
 ```
 
@@ -182,7 +228,7 @@ cd metadata
 hasura migrate apply \
   --database-name safetrust \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 ```
 
@@ -194,7 +240,7 @@ hasura migrate apply \
   --version <timestamp> \
   --type up \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 ```
 
@@ -204,7 +250,7 @@ hasura migrate apply \
 hasura seed apply \
   --database-name safetrust \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 ```
 

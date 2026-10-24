@@ -18,66 +18,101 @@ describe('x402-payment.middleware', () => {
       json: jest.fn().mockReturnThis(),
     }
     next = jest.fn()
-    process.env.X402_ENABLED = 'true'
     delete process.env.STELLAR_NETWORK
     delete process.env.X402_FACILITATOR_URL
-    delete process.env.SAFETRUST_PLATFORM_WALLET
+    process.env.SAFETRUST_PLATFORM_WALLET = 'GTESTPLATFORMWALLET'
+    process.env.X402_ENABLED = 'true'
   })
 
   afterEach(() => {
-    delete process.env.X402_ENABLED
     jest.clearAllMocks()
   })
 
-  describe('Quarantine flag', () => {
-    it('fails closed without evaluating a payment when X402_ENABLED is not true', () => {
-      process.env.X402_ENABLED = 'false'
-      const validate = jest.fn()
-      setX402Addon({ validateX402Payment: validate, buildPaymentRequirement: jest.fn() })
-      req.headers['x-payment'] = 'x402 valid-payload'
+  it('returns 503 when x402 is disabled', () => {
+    process.env.X402_ENABLED = 'false'
+    setX402Addon(null)
 
-      const middleware = requireX402Payment(0.10)
-      middleware(req as Request, res as Response, next as NextFunction)
+    requireX402Payment(0.10)(req as Request, res as Response, next as NextFunction)
 
-      expect(res.status).toHaveBeenCalledWith(503)
-      expect(res.json).toHaveBeenCalledWith({ error: 'x402 payments are disabled' })
-      expect(validate).not.toHaveBeenCalled()
-      expect(next).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(503)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'Feature Unavailable',
+      feature: 'x402',
+    }))
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 when the platform wallet is missing', () => {
+    const mockBuildRequirement = jest.fn()
+    setX402Addon({
+      validateX402Payment: jest.fn(),
+      buildPaymentRequirement: mockBuildRequirement,
     })
+    delete process.env.SAFETRUST_PLATFORM_WALLET
+
+    requireX402Payment(0.10)(req as Request, res as Response, next as NextFunction)
+
+    expect(res.status).toHaveBeenCalledWith(503)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'Feature Unavailable',
+      feature: 'x402',
+      message: 'x402 platform wallet is not configured',
+    })
+    expect(mockBuildRequirement).not.toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 when the platform wallet contains only whitespace', () => {
+    const mockBuildRequirement = jest.fn()
+    setX402Addon({
+      validateX402Payment: jest.fn(),
+      buildPaymentRequirement: mockBuildRequirement,
+    })
+    process.env.SAFETRUST_PLATFORM_WALLET = '   '
+
+    requireX402Payment(0.10)(req as Request, res as Response, next as NextFunction)
+
+    expect(res.status).toHaveBeenCalledWith(503)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'Feature Unavailable',
+      feature: 'x402',
+      message: 'x402 platform wallet is not configured',
+    })
+    expect(mockBuildRequirement).not.toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
   })
 
   describe('Missing X-Payment Header (402 Payment Required)', () => {
-    it('returns 402 with default testnet requirement when no addon is loaded', () => {
+    it('returns 503 when no addon is loaded', () => {
       setX402Addon(null)
       const middleware = requireX402Payment(0.10)
       middleware(req as Request, res as Response, next as NextFunction)
 
-      expect(res.status).toHaveBeenCalledWith(402)
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Payment Required',
-          x402Version: 2,
-          accepts: [
-            expect.objectContaining({
-              scheme: 'exact',
-              network: 'stellar:testnet',
-              max_amount_usdc: 0.10,
-              asset: expect.objectContaining({
-                code: 'USDC',
-                contract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
-                issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
-              }),
-              facilitator_url: 'https://channels.openzeppelin.com/x402/testnet',
-            }),
-          ],
-        })
-      )
+      expect(res.status).toHaveBeenCalledWith(503)
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'Feature Unavailable',
+        feature: 'x402',
+        message: 'x402 payment processor is unavailable',
+      })
       expect(next).not.toHaveBeenCalled()
     })
 
     it('returns 402 with mainnet requirement when STELLAR_NETWORK=mainnet', () => {
       process.env.STELLAR_NETWORK = 'mainnet'
-      setX402Addon(null)
+      setX402Addon({
+        validateX402Payment: jest.fn(),
+        buildPaymentRequirement: jest.fn().mockReturnValue(JSON.stringify({
+          scheme: 'exact',
+          network: 'stellar:mainnet',
+          max_amount_usdc: 0.25,
+          asset: {
+            code: 'USDC',
+            contract: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+            issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+          },
+          facilitator_url: 'https://channels.openzeppelin.com/x402',
+        })),
+      })
       const middleware = requireX402Payment(0.25)
       middleware(req as Request, res as Response, next as NextFunction)
 
@@ -132,7 +167,7 @@ describe('x402-payment.middleware', () => {
         0.10,
         'stellar:testnet',
         'https://channels.openzeppelin.com/x402/testnet',
-        ''
+        'GTESTPLATFORMWALLET'
       )
       expect(res.status).toHaveBeenCalledWith(402)
       expect(res.json).toHaveBeenCalledWith(

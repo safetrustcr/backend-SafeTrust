@@ -11,6 +11,7 @@ import {
 import {
   mirrorReservationStatus,
 } from '../../repositories/reservation.repository';
+import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
 // Compile-time SafeTrust escrow state machine (Neon native addon).
@@ -68,7 +69,7 @@ export const disputeEscrowHandler = async (
     const escrowId = updated.id;
 
     // 3 — Mirror status to safetrust.reservations
-    await mirrorReservationStatus(escrowId, 'disputed');
+    await mirrorReservationStatus(escrowId, 'disputed', getPlatformTenantId());
 
     await markWebhookEventProcessed(eventId);
 

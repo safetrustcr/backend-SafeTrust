@@ -1,5 +1,12 @@
 import { Request, Response } from 'express';
-import { badRequest, duplicate, ok, serverError, serviceUnavailable } from '../../utils/response'
+import {
+  badRequest,
+  duplicate,
+  notFound,
+  ok,
+  serverError,
+  serviceUnavailable,
+} from '../../utils/response'
 import { InitializeEscrowPayload } from '@safetrust/types';
 import {
   logAndCheckWebhookEvent,
@@ -7,11 +14,18 @@ import {
 } from '../../repositories/webhook-event.repository';
 import {
   createEscrow,
+  getEscrowByContractId,
 } from '../../repositories/escrow.repository';
 import {
   linkEscrowToReservation,
 } from '../../repositories/reservation.repository';
+import {
+  ReservationNotFoundError,
+  resolveReservationTenant,
+  TenantMismatchError,
+} from '../../services/escrow.service';
 import { verifyProofOfFunds } from '../../lib/zk-verifier';
+import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
 const EVENT_TYPE = EscrowEventType.Initialized;
@@ -94,6 +108,9 @@ export const initializeEscrowHandler = async (
 
   // 3 — Verify an optional proof bundle before logging the event or writing
   // escrow state. Partial bundles and unavailable native verification fail closed.
+  // Real-funds ZK enforcement remains disabled by default until the chosen
+  // eligibility architecture (ADR-0001) is fully implemented (blocks ZK-02 through ZK-09).
+  const isZkEnforced = process.env.ZK_ENFORCEMENT_ENABLED === 'true';
   const zkValues = [
     zk_proof,
     zk_verification_key,
@@ -101,6 +118,21 @@ export const initializeEscrowHandler = async (
     zk_balance_commitment,
   ];
   const hasZkBundle = zkValues.some((value) => value !== undefined && value !== null);
+
+  if (isZkEnforced && !hasZkBundle) {
+    return badRequest(res, {
+      error: 'ZK proof of funds bundle is required for escrow initialization',
+    });
+  }
+
+  if (hasZkBundle && process.env.ZK_ENABLED !== 'true') {
+    return badRequest(res, {
+      error: 'Unsupported Feature',
+      feature: 'zk-proof-verification',
+      message: 'ZK proof verification is disabled',
+    });
+  }
+
   if (hasZkBundle) {
     const hasCompleteBundle =
       typeof zk_proof === 'string' && zk_proof.length > 0 &&
@@ -131,27 +163,48 @@ export const initializeEscrowHandler = async (
         return badRequest(res, { error: 'Invalid ZK proof of funds' });
       }
     } catch (error) {
-      const err = error as Error;
-      console.error('[escrow/initialize] ZK verifier unavailable:', err.message);
+      const err = error as Error & { code?: string };
+      console.error('[escrow/initialize] ZK verifier error:', err.message);
+      if (err.code === 'ZK_VERIFIER_MISCONFIGURED') {
+        return serverError(res, { error: 'ZK proof verifier is misconfigured' });
+      }
       return serviceUnavailable(res, { error: 'ZK proof verification is unavailable' });
     }
   }
 
   try {
     // 4 — Idempotency check
-    const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
       contract_id,
       EVENT_TYPE,
       req.body as unknown as Record<string, unknown>
     );
 
-    if (isDuplicate) {
+    // A duplicate whose earlier delivery failed part-way (processed = false)
+    // is retried instead of acknowledged.
+    if (isDuplicate && processed !== false) {
       await markWebhookEventProcessed(eventId);
       return duplicate(res, eventId);
     }
 
-    // 5 — Persist to safetrust.trustless_work_escrows via repository
-    const escrow = await createEscrow({
+    // Signed server-to-server callback or x402 payment: no user session, so
+    // the expected tenant is the configured platform tenant. When the payload
+    // names a reservation, resolve its actual tenant before any escrow write
+    // and use it for both the escrow insert and the reservation link.
+    const reservationId = booking_metadata?.reservation_id;
+    const tenantId = reservationId
+      ? await resolveReservationTenant(reservationId, getPlatformTenantId())
+      : getPlatformTenantId();
+
+    // 5 — Persist to safetrust.trustless_work_escrows via repository.
+    // A retry reuses the escrow row an earlier attempt already created.
+    const existingEscrow = isDuplicate ? await getEscrowByContractId(contract_id) : null;
+    if (existingEscrow && existingEscrow.tenantId !== tenantId) {
+      throw new TenantMismatchError(
+        `Escrow ${contract_id} does not belong to tenant ${tenantId}`
+      );
+    }
+    const escrow = existingEscrow ?? await createEscrow({
       contractId: contract_id,
       marker,
       approver,
@@ -167,7 +220,7 @@ export const initializeEscrowHandler = async (
       roomId: room_id || null,
       hotelId: hotel_id || null,
       guestId: guest_id || null,
-      tenantId: 'safetrust',
+      tenantId,
       escrowMetadata: req.body,
       bookingMetadata: booking_metadata || null,
     });
@@ -177,9 +230,8 @@ export const initializeEscrowHandler = async (
     }
 
     // 6 — Link escrow to reservation AFTER escrow is confirmed to exist
-    const reservationId = booking_metadata?.reservation_id;
     if (reservationId) {
-      await linkEscrowToReservation(reservationId, escrow.id);
+      await linkEscrowToReservation(reservationId, escrow.id, tenantId);
       console.log(`[escrow/initialize] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrow.id}`);
     }
 
@@ -188,6 +240,12 @@ export const initializeEscrowHandler = async (
     return ok(res);
 
   } catch (error) {
+    if (error instanceof ReservationNotFoundError) {
+      return notFound(res, { error: error.message });
+    }
+    if (error instanceof TenantMismatchError) {
+      return res.status(403).json({ success: false, error: 'Forbidden: tenant mismatch' });
+    }
     const err = error as Error & { details?: unknown };
     console.error('[escrow/initialize] ❌ Error:', err.details || err.message);
     if (err.details) {
