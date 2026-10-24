@@ -11,6 +11,7 @@ import {
 import {
   mirrorReservationStatus,
 } from '../../repositories/reservation.repository';
+import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 import { getValidPriorStates } from '../../lib/escrow-transitions';
 
@@ -73,7 +74,7 @@ export const disputeEscrowHandler = async (
     const escrowId = updated.id;
 
     // 3 — Mirror status to safetrust.reservations
-    await mirrorReservationStatus(escrowId, 'disputed');
+    await mirrorReservationStatus(escrowId, 'disputed', getPlatformTenantId());
 
     await markWebhookEventProcessed(eventId);
 

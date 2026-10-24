@@ -1,16 +1,12 @@
+
 import { Request, Response } from 'express';
 import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response';
 import { ReleaseFundsPayload } from '@safetrust/types';
 import { processWebhookEvent } from '../../repositories/webhook-event.repository';
-import {
-  releaseFundsInTransaction,
-} from '../../repositories/escrow.repository';
-import {
-  mirrorReservationStatusInTransaction,
-} from '../../repositories/reservation.repository';
-import {
-  notifyHotelEscrowConversation,
-} from '../../services/hotel-conversation-notify';
+import { releaseFundsInTransaction } from '../../repositories/escrow.repository';
+import { mirrorReservationStatusInTransaction } from '../../repositories/reservation.repository';
+import { notifyHotelEscrowConversation } from '../../services/hotel-conversation-notify';
+import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 import {
   getValidPriorStates,
@@ -36,7 +32,7 @@ export const releaseFundsHandler = async (
 
   if (!contractId || !releaseSigner) {
     return badRequest(res, {
-      error: 'Missing required fields: contractId, releaseSigner'
+      error: 'Missing required fields: contractId, releaseSigner',
     });
   }
 
@@ -51,9 +47,21 @@ export const releaseFundsHandler = async (
           EscrowStatus.Completed,
           EscrowEventType.FundsReleased
         );
-        const escrow = await releaseFundsInTransaction(client, contractId, validStates);
+
+        const escrow = await releaseFundsInTransaction(
+          client,
+          contractId,
+          validStates
+        );
+
         if (escrow) {
-          await mirrorReservationStatusInTransaction(client, escrow.id, 'completed');
+          await mirrorReservationStatusInTransaction(
+            client,
+            escrow.id,
+            'completed',
+            getPlatformTenantId()
+          );
+
           return { escrow, alreadyCompleted: false };
         }
 
@@ -75,9 +83,16 @@ export const releaseFundsHandler = async (
         }
 
         const current = existing.rows[0];
+
         if (current.status === 'completed') {
           // Escrow is already completed: reuse its ID, mirror reservation status, and return it
-          await mirrorReservationStatusInTransaction(client, current.id, 'completed');
+          await mirrorReservationStatusInTransaction(
+            client,
+            current.id,
+            'completed',
+            getPlatformTenantId()
+          );
+
           return {
             escrow: {
               id: current.id,
@@ -102,7 +117,7 @@ export const releaseFundsHandler = async (
 
     if (!updated) {
       return notFound(res, {
-        error: `Escrow not found for contractId: ${contractId}`
+        error: `Escrow not found for contractId: ${contractId}`,
       });
     }
 
@@ -118,20 +133,37 @@ export const releaseFundsHandler = async (
       body: 'SafeTrust: Funds have been released. Thank you for booking with us.',
     });
 
-    console.log(`[escrow/release-funds] ✅ Funds released — contractId: ${contractId}`);
-    return ok(res);
+    console.log(
+      `[escrow/release-funds] ✅ Funds released — contractId: ${contractId}`
+    );
 
+    return ok(res);
   } catch (error) {
     const err = error as Error & { details?: unknown };
+
     if (err instanceof StateConflictError) {
-      console.warn(`[escrow/release-funds] ⚠️ State conflict: ${err.message}`);
+      console.warn(
+        `[escrow/release-funds] ⚠️ State conflict: ${err.message}`
+      );
+
       return conflict(res, { error: err.message });
     }
 
-    console.error('[escrow/release-funds] ❌ error:', err.details || err.message);
+    console.error(
+      '[escrow/release-funds] ❌ error:',
+      err.details || err.message
+    );
+
     if (err.details) {
-      return serverError(res, { error: 'Failed to update escrow status', details: err.details });
+      return serverError(res, {
+        error: 'Failed to update escrow status',
+        details: err.details,
+      });
     }
-    return serverError(res, { error: 'Internal server error', details: err.message });
+
+    return serverError(res, {
+      error: 'Internal server error',
+      details: err.message,
+    });
   }
 };

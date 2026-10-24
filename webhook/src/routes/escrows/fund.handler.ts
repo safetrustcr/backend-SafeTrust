@@ -11,6 +11,7 @@ import {
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
+import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 import { getValidPriorStates } from '../../lib/escrow-transitions';
 
@@ -63,7 +64,7 @@ export const fundEscrowHandler = async (
         );
 
         if (escrow) {
-          await mirrorReservationStatusInTransaction(client, escrow.id, 'funded')
+          await mirrorReservationStatusInTransaction(client, escrow.id, 'funded', getPlatformTenantId())
         }
 
         return escrow

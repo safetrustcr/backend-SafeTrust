@@ -12,6 +12,7 @@ import {
 import {
   mirrorReservationStatus,
 } from '../../repositories/reservation.repository';
+import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 import { getValidPriorStates } from '../../lib/escrow-transitions';
 
@@ -68,7 +69,7 @@ export const resolveDisputeHandler = async (
     const escrowId = updated.id;
 
     // 3 — Mirror status to safetrust.reservations
-    await mirrorReservationStatus(escrowId, 'resolved');
+    await mirrorReservationStatus(escrowId, 'resolved', getPlatformTenantId());
 
     // 4 — Store resolution note in escrow_metadata if provided
     if (resolutionNote) {

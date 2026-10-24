@@ -24,6 +24,7 @@ export interface TrustlessWorkEscrow {
   status: EscrowStatus
   balance?: number
   createdAt?: string
+  tenantId?: string
 }
 
 export interface CreateEscrowInput {
@@ -64,6 +65,7 @@ export async function getEscrowByContractId(
         status
         balance
         createdAt
+        tenantId
       }
     }
   `
@@ -75,6 +77,7 @@ export async function getEscrowByContractId(
       status: string
       balance?: number
       createdAt?: string
+      tenantId?: string
     }>
   }>(query, { contractId })
 
@@ -89,6 +92,7 @@ export async function getEscrowByContractId(
     status: escrow.status,
     balance: escrow.balance,
     createdAt: escrow.createdAt,
+    tenantId: escrow.tenantId,
   }
 }
 

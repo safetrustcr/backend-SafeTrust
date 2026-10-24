@@ -34,6 +34,7 @@ describe('escrow.repository', () => {
             status: 'funded',
             balance: 500,
             createdAt: '2026-01-01T00:00:00Z',
+            tenantId: 'safetrust',
           },
         ],
       })
@@ -50,6 +51,7 @@ describe('escrow.repository', () => {
         status: 'funded',
         balance: 500,
         createdAt: '2026-01-01T00:00:00Z',
+        tenantId: 'safetrust',
       })
     })
 
