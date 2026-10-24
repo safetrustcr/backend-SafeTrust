@@ -335,9 +335,17 @@ function httpGet(
   url: string,
   headers: Record<string, string> = {},
   retries = 3,
-  delayMs = 250
+  delayMs = 250,
+  maxTotalTimeoutMs = 45_000
 ): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + maxTotalTimeoutMs
+
   const attempt = (attemptsLeft: number, currentDelay: number): Promise<Record<string, unknown>> => {
+    const remainingTime = deadline - Date.now()
+    if (remainingTime <= 0) {
+      return Promise.reject(new Error(`TrustlessWork API request exceeded total budget of ${maxTotalTimeoutMs} ms`))
+    }
+
     return new Promise((resolve, reject) => {
       const parsed = new URL(url)
       const transport = parsed.protocol === 'https:' ? https : http
@@ -354,13 +362,15 @@ function httpGet(
         },
       }
 
+      const reqTimeout = Math.min(30_000, Math.max(1_000, remainingTime))
+
       const req = transport.request(options, (res) => {
         let raw = ''
         res.setEncoding('utf8')
         res.on('data', (chunk: string) => { raw += chunk })
         res.on('end', () => {
           const status = res.statusCode || 0
-          if (status >= 500 && attemptsLeft > 0) {
+          if (status >= 500 && attemptsLeft > 0 && Date.now() + currentDelay < deadline) {
             return setTimeout(() => {
               attempt(attemptsLeft - 1, currentDelay * 2).then(resolve, reject)
             }, currentDelay)
@@ -382,7 +392,7 @@ function httpGet(
       })
 
       req.on('error', (err) => {
-        if (attemptsLeft > 0) {
+        if (attemptsLeft > 0 && Date.now() + currentDelay < deadline) {
           setTimeout(() => {
             attempt(attemptsLeft - 1, currentDelay * 2).then(resolve, reject)
           }, currentDelay)
@@ -391,8 +401,8 @@ function httpGet(
         }
       })
 
-      req.setTimeout(30_000, () => {
-        req.destroy(new Error('TrustlessWork API request timed out after 30 s'))
+      req.setTimeout(reqTimeout, () => {
+        req.destroy(new Error(`TrustlessWork API request timed out after ${reqTimeout} ms`))
       })
       req.end()
     })

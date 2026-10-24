@@ -5,7 +5,7 @@ const { performance } = require('node:perf_hooks')
  * Benchmark for Bulk Upsert: pg-bulk-upsert (Rust / Neon) vs TypeScript production fallback (node-postgres row-by-row).
  *
  * Workload:
- * - 1,000-row upsert into escrow_transactions / trustless_work_escrows table
+ * - 1,000-row upsert into safetrust.trustless_work_escrows table
  * - TypeScript path: the production `upsertEscrows` row-by-row UPSERT (same SQL used by upsertEscrowBatch fallback)
  * - Rust path: single UNNEST statement via pg-bulk-upsert Neon addon
  * - Records latency distribution: p50, p95, p99, mean, min, max
@@ -81,7 +81,7 @@ function generateRows(count: number, balance = '100.0000000') {
 // ── SQL Definitions ───────────────────────────────────────────────────────────
 const CREATE_TABLE_SQL = `
   CREATE SCHEMA IF NOT EXISTS safetrust;
-  CREATE TABLE IF NOT EXISTS safetrust.escrow_transactions (
+  CREATE TABLE IF NOT EXISTS safetrust.trustless_work_escrows (
     contract_id VARCHAR(255) PRIMARY KEY,
     marker      VARCHAR(255) NOT NULL,
     approver    VARCHAR(255) NOT NULL,
@@ -98,11 +98,11 @@ const CREATE_TABLE_SQL = `
 /**
  * The production row-by-row UPSERT statement used by `upsertEscrows` in
  * webhook/src/lib/reconciliation.ts (the TypeScript fallback called by upsertEscrowBatch).
- * Benchmarking this — not a separate UNNEST statement — gives a fair comparison
- * against the Rust addon's single-statement path.
+ * Benchmarking this on safetrust.trustless_work_escrows matches the production
+ * table targeted by pg-bulk-upsert Rust addon.
  */
 const ROW_BY_ROW_UPSERT_SQL = `
-  INSERT INTO safetrust.escrow_transactions (
+  INSERT INTO safetrust.trustless_work_escrows (
     contract_id,
     status,
     amount,
@@ -124,12 +124,12 @@ const ROW_BY_ROW_UPSERT_SQL = `
     releaser   = EXCLUDED.releaser,
     updated_at = NOW()
   WHERE (
-    safetrust.escrow_transactions.status,
-    safetrust.escrow_transactions.amount,
-    safetrust.escrow_transactions.balance,
-    safetrust.escrow_transactions.marker,
-    safetrust.escrow_transactions.approver,
-    safetrust.escrow_transactions.releaser
+    safetrust.trustless_work_escrows.status,
+    safetrust.trustless_work_escrows.amount,
+    safetrust.trustless_work_escrows.balance,
+    safetrust.trustless_work_escrows.marker,
+    safetrust.trustless_work_escrows.approver,
+    safetrust.trustless_work_escrows.releaser
   ) IS DISTINCT FROM (
     EXCLUDED.status,
     EXCLUDED.amount,
@@ -163,7 +163,7 @@ export async function runPgBulkUpsertBenchmark(): Promise<{ tsMetrics: Benchmark
 
   console.log(`\n======================================================`)
   console.log(` BENCHMARK: Bulk Upsert (pg-bulk-upsert)`)
-  console.log(` Workload: ${ROW_COUNT}-row upsert in escrow_transactions table`)
+  console.log(` Workload: ${ROW_COUNT}-row upsert in safetrust.trustless_work_escrows table`)
   console.log(` Host: ${HOST}:${PORT} | DB: ${DB}`)
   console.log(`======================================================\n`)
 
@@ -173,11 +173,9 @@ export async function runPgBulkUpsertBenchmark(): Promise<{ tsMetrics: Benchmark
     )
   }
 
-  let client: any = null
+  const client = new Client(connConfig)
   try {
-    client = new Client(connConfig)
     await client.connect()
-    await client.query(CREATE_TABLE_SQL)
   } catch (err: any) {
     throw new Error(
       `PostgreSQL is not reachable at ${HOST}:${PORT}: ${err.message}\n` +
@@ -185,114 +183,127 @@ export async function runPgBulkUpsertBenchmark(): Promise<{ tsMetrics: Benchmark
     )
   }
 
-  // 1. Benchmark production TypeScript fallback: row-by-row UPSERT (same SQL as upsertEscrows).
-  //    This is what upsertEscrowBatch calls when RUST_BULK_UPSERT_ENABLED is not set.
-  console.log(`[1/2] Running TypeScript row-by-row upsert path (${ITERATIONS} iterations)...`)
-  const tsLatencies: number[] = []
-  let totalTsDuration = 0
+  try {
+    await client.query(CREATE_TABLE_SQL)
+    // Ensure table is in a clean, consistent starting state for benchmark runs
+    await client.query('TRUNCATE TABLE safetrust.trustless_work_escrows;')
 
-  for (let iter = 0; iter < ITERATIONS; iter++) {
-    const rows = generateRows(ROW_COUNT, String(iter * 10))
-    const start = performance.now()
-
-    for (const row of rows) {
-      await client.query(ROW_BY_ROW_UPSERT_SQL, [
-        row.contract_id, row.status, row.amount, row.balance,
-        row.marker, row.approver, row.releaser, row.escrow_type,
-      ])
-    }
-
-    const duration = performance.now() - start
-    tsLatencies.push(duration)
-    totalTsDuration += duration
-  }
-
-  const tsStats = calculatePercentiles(tsLatencies)
-  const tsThroughput = ROW_COUNT / (tsStats.mean / 1000)
-
-  const tsMetrics: BenchmarkMetrics = {
-    name: 'TypeScript (row-by-row upsertEscrows)',
-    iterations: ITERATIONS,
-    totalDurationMs: totalTsDuration,
-    rowsPerSec: tsThroughput,
-    coldStartMs: 0.1,
-    minMs: tsStats.min,
-    maxMs: tsStats.max,
-    meanMs: tsStats.mean,
-    p50Ms: tsStats.p50,
-    p95Ms: tsStats.p95,
-    p99Ms: tsStats.p99
-  }
-
-  // 2. Benchmark Rust Addon Implementation.
-  //    Only record metrics when the addon is available AND the DB is live.
-  console.log(`[2/2] Running Rust native addon path...`)
-  const { addon, coldStartMs } = tryLoadRustAddon()
-  let rustMetrics: BenchmarkMetrics | null = null
-
-  if (addon && typeof addon.bulkUpsertEscrows === 'function') {
-    const rustLatencies: number[] = []
-    let totalRustDuration = 0
+    // 1. Benchmark production TypeScript fallback: row-by-row UPSERT (same SQL as upsertEscrows).
+    //    This is what upsertEscrowBatch calls when RUST_BULK_UPSERT_ENABLED is not set.
+    console.log(`[1/2] Running TypeScript row-by-row upsert path (${ITERATIONS} iterations)...`)
+    const tsLatencies: number[] = []
+    let totalTsDuration = 0
 
     for (let iter = 0; iter < ITERATIONS; iter++) {
       const rows = generateRows(ROW_COUNT, String(iter * 10))
       const start = performance.now()
-      await addon.bulkUpsertEscrows(JSON.stringify(rows), connStr)
+
+      for (const row of rows) {
+        await client.query(ROW_BY_ROW_UPSERT_SQL, [
+          row.contract_id, row.status, row.amount, row.balance,
+          row.marker, row.approver, row.releaser, row.escrow_type,
+        ])
+      }
+
       const duration = performance.now() - start
-      rustLatencies.push(duration)
-      totalRustDuration += duration
+      tsLatencies.push(duration)
+      totalTsDuration += duration
     }
 
-    const rustStats = calculatePercentiles(rustLatencies)
-    const rustThroughput = ROW_COUNT / (rustStats.mean / 1000)
+    const tsStats = calculatePercentiles(tsLatencies)
+    const tsThroughput = ROW_COUNT / (tsStats.mean / 1000)
 
-    rustMetrics = {
-      name: 'Rust (pg-bulk-upsert addon)',
+    const tsMetrics: BenchmarkMetrics = {
+      name: 'TypeScript (row-by-row upsertEscrows)',
       iterations: ITERATIONS,
-      totalDurationMs: totalRustDuration,
-      rowsPerSec: rustThroughput,
-      coldStartMs,
-      minMs: rustStats.min,
-      maxMs: rustStats.max,
-      meanMs: rustStats.mean,
-      p50Ms: rustStats.p50,
-      p95Ms: rustStats.p95,
-      p99Ms: rustStats.p99
+      totalDurationMs: totalTsDuration,
+      rowsPerSec: tsThroughput,
+      coldStartMs: 0.1,
+      minMs: tsStats.min,
+      maxMs: tsStats.max,
+      meanMs: tsStats.mean,
+      p50Ms: tsStats.p50,
+      p95Ms: tsStats.p95,
+      p99Ms: tsStats.p99
     }
-  } else {
-    // Native addon unavailable — leave rustMetrics null so no estimated data is reported.
-    // Build the addon first: npm --prefix webhook run build:rust
-    console.warn(
-      `⚠️ pg-bulk-upsert native addon not built or unavailable; Rust results skipped.\n` +
-      `  Run \`npm --prefix webhook run build:rust\` then re-run this benchmark.`
-    )
+
+    // 2. Benchmark Rust Addon Implementation.
+    //    Only record metrics when the addon is available AND the DB is live.
+    console.log(`[2/2] Running Rust native addon path...`)
+    const { addon, coldStartMs } = tryLoadRustAddon()
+    let rustMetrics: BenchmarkMetrics | null = null
+
+    if (addon && typeof addon.bulkUpsertEscrows === 'function') {
+      // Reset table to clean state before Rust runs
+      await client.query('TRUNCATE TABLE safetrust.trustless_work_escrows;')
+
+      const rustLatencies: number[] = []
+      let totalRustDuration = 0
+
+      for (let iter = 0; iter < ITERATIONS; iter++) {
+        const rows = generateRows(ROW_COUNT, String(iter * 10))
+        const start = performance.now()
+        await addon.bulkUpsertEscrows(JSON.stringify(rows), connStr)
+        const duration = performance.now() - start
+        rustLatencies.push(duration)
+        totalRustDuration += duration
+      }
+
+      const rustStats = calculatePercentiles(rustLatencies)
+      const rustThroughput = ROW_COUNT / (rustStats.mean / 1000)
+
+      rustMetrics = {
+        name: 'Rust (pg-bulk-upsert addon)',
+        iterations: ITERATIONS,
+        totalDurationMs: totalRustDuration,
+        rowsPerSec: rustThroughput,
+        coldStartMs,
+        minMs: rustStats.min,
+        maxMs: rustStats.max,
+        meanMs: rustStats.mean,
+        p50Ms: rustStats.p50,
+        p95Ms: rustStats.p95,
+        p99Ms: rustStats.p99
+      }
+    } else {
+      // Native addon unavailable — leave rustMetrics null so no estimated data is reported.
+      // Build the addon first: npm --prefix webhook run build:rust
+      console.warn(
+        `⚠️ pg-bulk-upsert native addon not built or unavailable; Rust results skipped.\n` +
+        `  Run \`npm --prefix webhook run build:rust\` then re-run this benchmark.`
+      )
+    }
+
+    console.log(`\n─── Results ───`)
+    console.table([
+      {
+        Implementation: tsMetrics.name,
+        'Cold Start (ms)': tsMetrics.coldStartMs.toFixed(2),
+        'p50 (ms)': tsMetrics.p50Ms.toFixed(2),
+        'p95 (ms)': tsMetrics.p95Ms.toFixed(2),
+        'p99 (ms)': tsMetrics.p99Ms.toFixed(2),
+        'Mean (ms)': tsMetrics.meanMs.toFixed(2),
+        'Throughput (rows/s)': tsMetrics.rowsPerSec.toFixed(0)
+      },
+      ...(rustMetrics ? [{
+        Implementation: rustMetrics.name,
+        'Cold Start (ms)': rustMetrics.coldStartMs.toFixed(2),
+        'p50 (ms)': rustMetrics.p50Ms.toFixed(2),
+        'p95 (ms)': rustMetrics.p95Ms.toFixed(2),
+        'p99 (ms)': rustMetrics.p99Ms.toFixed(2),
+        'Mean (ms)': rustMetrics.meanMs.toFixed(2),
+        'Throughput (rows/s)': rustMetrics.rowsPerSec.toFixed(0)
+      }] : [])
+    ])
+
+    return { tsMetrics, rustMetrics }
+  } finally {
+    try {
+      await client.end()
+    } catch {
+      // ignore close errors on shutdown
+    }
   }
-
-  await client.end()
-
-  console.log(`\n─── Results ───`)
-  console.table([
-    {
-      Implementation: tsMetrics.name,
-      'Cold Start (ms)': tsMetrics.coldStartMs.toFixed(2),
-      'p50 (ms)': tsMetrics.p50Ms.toFixed(2),
-      'p95 (ms)': tsMetrics.p95Ms.toFixed(2),
-      'p99 (ms)': tsMetrics.p99Ms.toFixed(2),
-      'Mean (ms)': tsMetrics.meanMs.toFixed(2),
-      'Throughput (rows/s)': tsMetrics.rowsPerSec.toFixed(0)
-    },
-    ...(rustMetrics ? [{
-      Implementation: rustMetrics.name,
-      'Cold Start (ms)': rustMetrics.coldStartMs.toFixed(2),
-      'p50 (ms)': rustMetrics.p50Ms.toFixed(2),
-      'p95 (ms)': rustMetrics.p95Ms.toFixed(2),
-      'p99 (ms)': rustMetrics.p99Ms.toFixed(2),
-      'Mean (ms)': rustMetrics.meanMs.toFixed(2),
-      'Throughput (rows/s)': rustMetrics.rowsPerSec.toFixed(0)
-    }] : [])
-  ])
-
-  return { tsMetrics, rustMetrics }
 }
 
 if (require.main === module) {
