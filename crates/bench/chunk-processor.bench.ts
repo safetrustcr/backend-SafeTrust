@@ -5,13 +5,15 @@ const { performance } = require('node:perf_hooks')
  * Benchmark for HTTP chunked streaming: chunk-processor (Rust / Neon) vs TypeScript fallback.
  *
  * Workload:
- * - 10 MB total webhook payload / 100 concurrent requests (or configurable via env vars)
+ * - ~10 MB total webhook payload / 100 concurrent requests (configurable via env vars)
+ * - CHUNK_COUNT=100 chunks of IDS_PER_CHUNK=200 IDs each, ~200 KB per chunk response ≈ 20 MB per iteration
  * - Records latency distribution: p50, p95, p99, mean, min, max
  * - Records throughput in MB/s
  * - Records cold start cost (native module require time)
  *
  * Run:
- *   node crates/bench/chunk-processor.bench.ts
+ *   npm --prefix webhook run build:tooling
+ *   node crates/bench/chunk-processor.bench.js
  */
 
 export interface ChunkSyncResult {
@@ -37,10 +39,12 @@ export interface BenchmarkMetrics {
 }
 
 // ── Environment & Config ──────────────────────────────────────────────────────
+// CHUNK_COUNT must be ≥ CONCURRENCY so that all 100 workers are actually busy.
+// 100 chunks × 200 IDs/chunk × ~1 KB per escrow record ≈ 20 MB per iteration.
 const CONCURRENCY = Number(process.env.BENCH_CONCURRENCY || 100)
 const ITERATIONS = Number(process.env.BENCH_ITERATIONS || 5)
-const CHUNK_COUNT = Number(process.env.BENCH_CHUNKS || 20)
-const IDS_PER_CHUNK = Number(process.env.BENCH_CHUNK_SIZE || 50)
+const CHUNK_COUNT = Number(process.env.BENCH_CHUNKS || 100)
+const IDS_PER_CHUNK = Number(process.env.BENCH_CHUNK_SIZE || 200)
 const SERVER_LATENCY_MS = Number(process.env.BENCH_SERVER_LATENCY_MS || 10)
 
 function calculatePercentiles(latencies: number[]): { p50: number; p95: number; p99: number; min: number; max: number; mean: number } {
@@ -159,7 +163,24 @@ async function runRustPath(addon: any, baseUrl: string, chunks: string[][], conc
     5000
   )
   const results: ChunkSyncResult[] = JSON.parse(json)
+
+  // Reject the run if any chunk has a non-null error — do not record latency for partial data.
+  const failed = results.filter((r) => r.error !== null)
+  if (failed.length > 0) {
+    throw new Error(
+      `chunk-processor: ${failed.length} of ${results.length} chunks failed: ` +
+      failed.map((r) => `chunk_${r.chunk_index}: ${r.error}`).join(', ')
+    )
+  }
+
   const fetched = results.reduce((sum, r) => sum + r.fetched, 0)
+  const expectedFetched = chunks.length * IDS_PER_CHUNK
+  if (fetched !== expectedFetched) {
+    throw new Error(
+      `chunk-processor: expected ${expectedFetched} total escrows but got ${fetched}`
+    )
+  }
+
   return { durationMs: performance.now() - start, fetched }
 }
 
@@ -240,25 +261,12 @@ export async function runChunkProcessorBenchmark(): Promise<{ tsMetrics: Benchma
       p99Ms: rustStats.p99
     }
   } else {
-    // If native addon is unbuilt on this platform, estimate based on measured I/O bound network behavior:
-    // HTTP networking is network-bound; Rust Tokio and Node libuv perform within 3-8% for HTTP I/O,
-    // with Rust having a ~30ms native addon cold-start overhead.
-    const coldStartEstimated = 32.4
-    const simLatencies = tsLatencies.map((l) => l * 0.96) // Tokio concurrency ~4% faster on HTTP pooling
-    const simStats = calculatePercentiles(simLatencies)
-    rustMetrics = {
-      name: 'Rust (chunk-processor - measured/modeled)',
-      iterations: ITERATIONS,
-      totalDurationMs: simLatencies.reduce((a, b) => a + b, 0),
-      throughputMBs: (totalBytesPerRun / 1024 / 1024) / (simStats.mean / 1000),
-      coldStartMs: coldStartEstimated,
-      minMs: simStats.min,
-      maxMs: simStats.max,
-      meanMs: simStats.mean,
-      p50Ms: simStats.p50,
-      p95Ms: simStats.p95,
-      p99Ms: simStats.p99
-    }
+    // Native addon unavailable — leave rustMetrics null so no estimated data is reported.
+    // Build the addon first: npm --prefix webhook run build:rust
+    console.warn(
+      `⚠️ chunk-processor native addon not built or unavailable; Rust results skipped.\n` +
+      `  Run \`npm --prefix webhook run build:rust\` then re-run this benchmark.`
+    )
   }
 
   server.close()

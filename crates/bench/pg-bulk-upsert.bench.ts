@@ -2,16 +2,20 @@ const path = require('node:path')
 const { performance } = require('node:perf_hooks')
 
 /**
- * Benchmark for Bulk Upsert: pg-bulk-upsert (Rust / Neon) vs TypeScript fallback (node-postgres).
+ * Benchmark for Bulk Upsert: pg-bulk-upsert (Rust / Neon) vs TypeScript production fallback (node-postgres row-by-row).
  *
  * Workload:
  * - 1,000-row upsert into escrow_transactions / trustless_work_escrows table
+ * - TypeScript path: the production `upsertEscrows` row-by-row UPSERT (same SQL used by upsertEscrowBatch fallback)
+ * - Rust path: single UNNEST statement via pg-bulk-upsert Neon addon
  * - Records latency distribution: p50, p95, p99, mean, min, max
- * - Records throughput in ops/sec or MB/s
+ * - Records throughput in rows/sec
  * - Records cold start cost (native module require time)
+ * - Requires a live PostgreSQL instance; benchmark aborts if DB is unreachable
  *
  * Run:
- *   node crates/bench/pg-bulk-upsert.bench.ts
+ *   npm --prefix webhook run build:tooling
+ *   node crates/bench/pg-bulk-upsert.bench.js
  */
 
 export interface BenchmarkMetrics {
@@ -91,20 +95,33 @@ const CREATE_TABLE_SQL = `
   );
 `
 
-const TS_BULK_UPSERT_SQL = `
-  INSERT INTO safetrust.escrow_transactions
-    (contract_id, status, amount, balance, marker, approver, releaser, escrow_type, tenant_id, updated_at)
-  SELECT u.contract_id, u.status, u.amount::numeric, u.balance::numeric,
-         u.marker, u.approver, u.releaser, u.escrow_type, 'safetrust', NOW()
-  FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[])
-    AS u(contract_id, status, amount, balance, marker, approver, releaser, escrow_type)
-  ON CONFLICT (contract_id) DO UPDATE SET
-    status = EXCLUDED.status,
-    amount = EXCLUDED.amount,
-    balance = EXCLUDED.balance,
-    marker = EXCLUDED.marker,
-    approver = EXCLUDED.approver,
-    releaser = EXCLUDED.releaser,
+/**
+ * The production row-by-row UPSERT statement used by `upsertEscrows` in
+ * webhook/src/lib/reconciliation.ts (the TypeScript fallback called by upsertEscrowBatch).
+ * Benchmarking this — not a separate UNNEST statement — gives a fair comparison
+ * against the Rust addon's single-statement path.
+ */
+const ROW_BY_ROW_UPSERT_SQL = `
+  INSERT INTO safetrust.escrow_transactions (
+    contract_id,
+    status,
+    amount,
+    balance,
+    marker,
+    approver,
+    releaser,
+    escrow_type,
+    updated_at,
+    tenant_id
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'safetrust')
+  ON CONFLICT (contract_id)
+  DO UPDATE SET
+    status     = EXCLUDED.status,
+    amount     = EXCLUDED.amount,
+    balance    = EXCLUDED.balance,
+    marker     = EXCLUDED.marker,
+    approver   = EXCLUDED.approver,
+    releaser   = EXCLUDED.releaser,
     updated_at = NOW()
   WHERE (
     safetrust.escrow_transactions.status,
@@ -121,6 +138,7 @@ const TS_BULK_UPSERT_SQL = `
     EXCLUDED.approver,
     EXCLUDED.releaser
   )
+  RETURNING contract_id, (xmax = 0) AS inserted
 `
 
 // ── Native Rust Addon Loader ──────────────────────────────────────────────────
@@ -149,23 +167,27 @@ export async function runPgBulkUpsertBenchmark(): Promise<{ tsMetrics: Benchmark
   console.log(` Host: ${HOST}:${PORT} | DB: ${DB}`)
   console.log(`======================================================\n`)
 
-  let client: any = null
-  let dbAvailable = false
-  if (Client) {
-    try {
-      client = new Client(connConfig)
-      await client.connect()
-      await client.query(CREATE_TABLE_SQL)
-      dbAvailable = true
-    } catch (err: any) {
-      console.warn(`⚠️ PostgreSQL is not reachable at ${HOST}:${PORT} (${err.message}). Using simulated network round-trip for benchmark timing.`)
-    }
-  } else {
-    console.warn(`⚠️ pg client module not found. Using simulated network round-trip for benchmark timing.`)
+  if (!Client) {
+    throw new Error(
+      'pg client module not found. Install pg or run from the webhook directory.'
+    )
   }
 
-  // 1. Benchmark TypeScript Implementation (node-postgres parameterized UNNEST query)
-  console.log(`[1/2] Running TypeScript bulk upsert path (${ITERATIONS} iterations)...`)
+  let client: any = null
+  try {
+    client = new Client(connConfig)
+    await client.connect()
+    await client.query(CREATE_TABLE_SQL)
+  } catch (err: any) {
+    throw new Error(
+      `PostgreSQL is not reachable at ${HOST}:${PORT}: ${err.message}\n` +
+      `Set PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE to point at a live instance.`
+    )
+  }
+
+  // 1. Benchmark production TypeScript fallback: row-by-row UPSERT (same SQL as upsertEscrows).
+  //    This is what upsertEscrowBatch calls when RUST_BULK_UPSERT_ENABLED is not set.
+  console.log(`[1/2] Running TypeScript row-by-row upsert path (${ITERATIONS} iterations)...`)
   const tsLatencies: number[] = []
   let totalTsDuration = 0
 
@@ -173,22 +195,11 @@ export async function runPgBulkUpsertBenchmark(): Promise<{ tsMetrics: Benchmark
     const rows = generateRows(ROW_COUNT, String(iter * 10))
     const start = performance.now()
 
-    if (dbAvailable && client) {
-      await client.query(TS_BULK_UPSERT_SQL, [
-        rows.map((r: any) => r.contract_id),
-        rows.map((r: any) => r.status),
-        rows.map((r: any) => r.amount),
-        rows.map((r: any) => r.balance),
-        rows.map((r: any) => r.marker),
-        rows.map((r: any) => r.approver),
-        rows.map((r: any) => r.releaser),
-        rows.map((r: any) => r.escrow_type)
+    for (const row of rows) {
+      await client.query(ROW_BY_ROW_UPSERT_SQL, [
+        row.contract_id, row.status, row.amount, row.balance,
+        row.marker, row.approver, row.releaser, row.escrow_type,
       ])
-    } else {
-      // Simulate equivalent in-process JSON serialization + single client query latency
-      const json = JSON.stringify(rows)
-      JSON.parse(json)
-      await new Promise((r) => setTimeout(r, 12 + Math.random() * 4))
     }
 
     const duration = performance.now() - start
@@ -200,7 +211,7 @@ export async function runPgBulkUpsertBenchmark(): Promise<{ tsMetrics: Benchmark
   const tsThroughput = ROW_COUNT / (tsStats.mean / 1000)
 
   const tsMetrics: BenchmarkMetrics = {
-    name: 'TypeScript (node-postgres UNNEST)',
+    name: 'TypeScript (row-by-row upsertEscrows)',
     iterations: ITERATIONS,
     totalDurationMs: totalTsDuration,
     rowsPerSec: tsThroughput,
@@ -213,7 +224,8 @@ export async function runPgBulkUpsertBenchmark(): Promise<{ tsMetrics: Benchmark
     p99Ms: tsStats.p99
   }
 
-  // 2. Benchmark Rust Addon Implementation
+  // 2. Benchmark Rust Addon Implementation.
+  //    Only record metrics when the addon is available AND the DB is live.
   console.log(`[2/2] Running Rust native addon path...`)
   const { addon, coldStartMs } = tryLoadRustAddon()
   let rustMetrics: BenchmarkMetrics | null = null
@@ -225,12 +237,7 @@ export async function runPgBulkUpsertBenchmark(): Promise<{ tsMetrics: Benchmark
     for (let iter = 0; iter < ITERATIONS; iter++) {
       const rows = generateRows(ROW_COUNT, String(iter * 10))
       const start = performance.now()
-      if (dbAvailable) {
-        await addon.bulkUpsertEscrows(JSON.stringify(rows), connStr)
-      } else {
-        // Rust tokio-postgres overhead
-        await new Promise((r) => setTimeout(r, 11 + Math.random() * 3))
-      }
+      await addon.bulkUpsertEscrows(JSON.stringify(rows), connStr)
       const duration = performance.now() - start
       rustLatencies.push(duration)
       totalRustDuration += duration
@@ -253,31 +260,15 @@ export async function runPgBulkUpsertBenchmark(): Promise<{ tsMetrics: Benchmark
       p99Ms: rustStats.p99
     }
   } else {
-    // If native addon is unbuilt on this platform, estimate based on measured I/O bound database behavior:
-    // Bulk SQL performance is overwhelmingly bottlenecked by PostgreSQL WAL logging, table locks, and disk I/O.
-    // Client-side statement generation in Rust Tokio vs Node.js shows only 3-5% difference, but Rust imposes
-    // a 30-40ms native addon cold-start penalty.
-    const simulatedColdStart = 34.2
-    const simLatencies = tsLatencies.map((l) => l * 0.96) // Tokio postgres serialization ~4% faster
-    const simStats = calculatePercentiles(simLatencies)
-    rustMetrics = {
-      name: 'Rust (pg-bulk-upsert - measured/modeled)',
-      iterations: ITERATIONS,
-      totalDurationMs: simLatencies.reduce((a, b) => a + b, 0),
-      rowsPerSec: ROW_COUNT / (simStats.mean / 1000),
-      coldStartMs: simulatedColdStart,
-      minMs: simStats.min,
-      maxMs: simStats.max,
-      meanMs: simStats.mean,
-      p50Ms: simStats.p50,
-      p95Ms: simStats.p95,
-      p99Ms: simStats.p99
-    }
+    // Native addon unavailable — leave rustMetrics null so no estimated data is reported.
+    // Build the addon first: npm --prefix webhook run build:rust
+    console.warn(
+      `⚠️ pg-bulk-upsert native addon not built or unavailable; Rust results skipped.\n` +
+      `  Run \`npm --prefix webhook run build:rust\` then re-run this benchmark.`
+    )
   }
 
-  if (client) {
-    await client.end()
-  }
+  await client.end()
 
   console.log(`\n─── Results ───`)
   console.table([

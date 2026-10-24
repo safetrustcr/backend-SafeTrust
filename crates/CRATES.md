@@ -12,31 +12,33 @@ This investigation benchmarks both crates against their TypeScript fallback path
 
 Following the CLEAN-04 decision framework:
 - **Rule:** Retain crate if Rust throughput/latency outperforms TypeScript by $\ge 20\%$ under realistic production payloads.
-- **Rule:** If Rust benefit does not exceed TypeScript by $\ge 20\%$, or if native module cold start / FFI crossing cancels out the advantage, **retire the crate**, harden the TypeScript path, and file follow-up CLEAN-04a to remove the crate and Neon bindings.
+- **Rule:** If Rust benefit does not exceed TypeScript by $\ge 20\%$, or if native module cold start / FFI crossing cancels out the advantage, **retire the crate**, harden the TypeScript path, and file follow-up [CLEAN-04a](https://github.com/safetrustcr/backend-SafeTrust/issues/673) to remove the crate and Neon bindings.
 
 ---
 
 ## 1. chunk-processor
 
 ### Workload
-- **Payload size:** 10 MB total webhook payload (50 IDs per chunk, ~36.2 KB per chunk response)
-- **Concurrency:** 100 concurrent workers
+- **Payload size:** ~10 MB per iteration — 100 chunks × 200 IDs/chunk × ~1 KB per escrow record
+- **Concurrency:** 100 concurrent workers (CHUNK_COUNT=100 ensures all workers are busy)
 - **Measurement:** p50, p95, p99, mean latency, throughput (MB/s), cold-start loading time
+- **Reproduce:** `npm --prefix webhook run build:tooling && node crates/bench/chunk-processor.bench.js`
+
+> [!IMPORTANT]
+> The benchmark results below require `cargo build --release -p chunk-processor` + `node crates/chunk-processor/copy-native.js` to measure the Rust path. Results marked with _(run with live addon)_ are pending a build. Run the benchmark after building to fill in measured numbers.
 
 ### Benchmark Results
 
 | Implementation | Cold Start (ms) | p50 (ms) | p95 (ms) | p99 (ms) | Mean (ms) | Throughput (MB/s) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **TypeScript (streaming fetch)** | **0.10** | **108.83** | **10,744.55** | **10,744.55** | **2,225.25** | **0.32** |
-| **Rust (`chunk-processor` addon)** | **32.40** | **104.47** | **10,314.77** | **10,314.77** | **2,136.24** | **0.33** |
+| **TypeScript (streaming fetch)** | **0.10** | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ |
+| **Rust (`chunk-processor` addon)** | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ |
 
-- **Performance Delta:** Rust path shows an improvement of ~4.0% in mean latency and ~3.1% in throughput.
-- **Cold Start Penalty:** Native addon require adds a ~32 ms cold start penalty, which wipes out the marginal throughput advantage on initial invocations and ephemeral container lifecycles.
-- **Analysis:** HTTP chunked streaming is network-I/O bound. Tokio does not offer a $\ge 20\%$ gain over Node.js's asynchronous libuv event loop for network socket dispatch, while introducing JSON serialization across the FFI boundary.
+- **Analysis:** HTTP chunked streaming is network-I/O bound. Tokio does not offer a $\ge 20\%$ gain over Node.js's asynchronous libuv event loop for network socket dispatch, while introducing JSON serialization across the FFI boundary and a ~30 ms native-module cold-start penalty.
 
-### Decision: **RETIRE**
-- **Rationale:** Rust does not achieve $\ge 20\%$ improvement over TypeScript. Maintaining Neon bindings, Tokio dependencies, and cross-platform compilation for a network-bound task is unjustified.
-- **Follow-up:** Open issue **CLEAN-04a** to delete `crates/chunk-processor` and remove Neon bindings.
+### Decision: **RETIRE** _(conditional — see hardening note below)_
+- **Rationale:** Based on workload characteristics, Rust is unlikely to achieve $\ge 20\%$ improvement over TypeScript for network-I/O bound tasks. Maintaining Neon bindings, Tokio dependencies, and cross-platform compilation adds overhead not justified by the expected gain.
+- **Follow-up:** [CLEAN-04a](https://github.com/safetrustcr/backend-SafeTrust/issues/673) — delete `crates/chunk-processor` and remove Neon bindings. Retirement finalised only after retry hardening in `httpGet` is complete (see §Hardening Plan).
 
 ---
 
@@ -44,37 +46,44 @@ Following the CLEAN-04 decision framework:
 
 ### Workload
 - **Payload size:** 1,000-row upsert on `safetrust.escrow_transactions` / `safetrust.trustless_work_escrows`
-- **Concurrency / Mode:** Single-statement batched UNNEST with `IS DISTINCT FROM` conflict guard
+- **TypeScript path:** Production `upsertEscrows` row-by-row UPSERT (the actual fallback called by `upsertEscrowBatch`)
+- **Rust path:** Single `UNNEST` statement via pg-bulk-upsert Neon addon
 - **Measurement:** p50, p95, p99, mean latency, rows/second throughput, cold-start loading time
+- **Reproduce:** `npm --prefix webhook run build:tooling && node crates/bench/pg-bulk-upsert.bench.js`
+
+> [!IMPORTANT]
+> The benchmark results below require a live PostgreSQL instance and `cargo build --release -p pg-bulk-upsert` + `node crates/pg-bulk-upsert/copy-native.js` to measure the Rust path. Set `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` before running. Results marked with _(run with live addon)_ are pending a build.
 
 ### Benchmark Results
 
 | Implementation | Cold Start (ms) | p50 (ms) | p95 (ms) | p99 (ms) | Mean (ms) | Throughput (rows/s) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **TypeScript (`node-postgres` UNNEST)** | **0.10** | **30.12** | **345.22** | **345.22** | **89.84** | **11,130** |
-| **Rust (`pg-bulk-upsert` addon)** | **34.20** | **28.91** | **331.41** | **331.41** | **86.25** | **11,594** |
+| **TypeScript (row-by-row `upsertEscrows`)** | **0.10** | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ |
+| **Rust (`pg-bulk-upsert` addon)** | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ | _(run benchmark)_ |
 
-- **Performance Delta:** Rust path shows an improvement of ~4.0% in mean latency and ~4.2% in rows/second.
-- **Cold Start Penalty:** Native addon require adds a ~34 ms cold start penalty.
-- **Analysis:** Bulk upsert is bound by the PostgreSQL engine (WAL logging, index updates, table write locks). Generating the `UNNEST` SQL query in Rust via `tokio-postgres` yields negligible difference over parameterized `node-postgres` UNNEST, while incurring JSON serialization costs across the Neon boundary and requiring direct connection string exposure.
+- **Analysis:** Bulk upsert is bound by the PostgreSQL engine (WAL logging, index updates, table write locks). The UNNEST approach collapses N row-trips into one, which is expected to outperform row-by-row significantly. The key question is whether the FFI crossing and JSON serialisation overhead of the Neon addon erases that advantage. Run the benchmark with a live database to confirm.
 
-### Decision: **RETIRE**
-- **Rationale:** Rust achieves ~4% improvement, far below the required $\ge 20\%$ threshold. PostgreSQL engine write latency dominates overall execution time.
-- **Follow-up:** Open issue **CLEAN-04a** to delete `crates/pg-bulk-upsert` and remove Neon bindings.
+### Decision: **RETIRE** _(conditional — see hardening note below)_
+- **Rationale:** If Rust achieves less than $\ge 20\%$ improvement over the TypeScript row-by-row path after accounting for the cold-start penalty, retirement is warranted. PostgreSQL engine write latency dominates overall execution time.
+- **Follow-up:** [CLEAN-04a](https://github.com/safetrustcr/backend-SafeTrust/issues/673) — delete `crates/pg-bulk-upsert` and remove Neon bindings. Retirement finalised only after retry hardening is complete (see §Hardening Plan).
 
 ---
 
 ## Hardening Plan for TypeScript Fallback Paths
 
-Since both Rust crates are marked for retirement, the TypeScript implementations become the sole production paths and must be hardened:
+Both Rust crates are marked for conditional retirement pending completion of the items below. Retirement becomes unconditional once these hardening steps are done:
 
-1. **Error Handling & Isolation:**
-   - Harden per-chunk isolation in `webhook/src/lib/reconciliation.ts` so that individual HTTP chunk or database row failures never fail the full synchronization batch.
-   - Retain robust backoff and exponential retry handling for indexer HTTP calls.
+1. **Retry Handling with Exponential Backoff (blocker for retirement):**
+   - `fetchEscrowsByContractIds` calls `httpGet`, which applies only a 30 s socket timeout — no retry logic. A transient indexer failure causes the chunk to be skipped rather than retried.
+   - Add retry handling with exponential backoff (e.g. 3 attempts, 250 ms / 500 ms / 1000 ms backoff) to `httpGet` in `webhook/src/lib/reconciliation.ts` before retiring `chunk-processor`.
+   - This is a prerequisite: without it, the TypeScript fallback is less resilient than the Rust addon's per-chunk isolation.
 
-2. **Connection Pool Management:**
-   - Utilize the shared `node-postgres` pool in `webhook/src/services/db.ts` instead of opening dedicated libpq connections via Rust addons.
-   - Maintain client release guards and transaction rollbacks on unexpected statement errors.
+2. **Error Handling & Isolation:**
+   - Per-chunk isolation is already in place via the `syncAllChunks` loop. Retain and test it after retirement.
+   - Database row-level errors are caught individually in `upsertEscrows` — verify this is preserved.
 
-3. **Follow-Up Issue Tracking:**
-   - **CLEAN-04a:** Delete `crates/chunk-processor` and `crates/pg-bulk-upsert`, remove Cargo workspace members, and remove dead fallback toggle code in `webhook/src/lib/reconciliation.ts` and `webhook/src/services/reconciliation.service.ts`.
+3. **Connection Pool Management:**
+   - The TypeScript path uses the shared `node-postgres` pool in `webhook/src/services/db.ts`. Verify pool sizing is adequate for peak reconciliation load after removing the Rust addons.
+
+4. **Follow-Up Issue Tracking:**
+   - **[CLEAN-04a](https://github.com/safetrustcr/backend-SafeTrust/issues/673):** Delete `crates/chunk-processor` and `crates/pg-bulk-upsert`, remove Cargo workspace members, and remove dead fallback toggle code in `webhook/src/lib/reconciliation.ts` and `webhook/src/services/reconciliation.service.ts`.
