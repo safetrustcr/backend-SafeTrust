@@ -1,5 +1,6 @@
 import app from './app'
 import { getHasuraAdminSecret } from './services/hasura'
+import { initializeFirebaseAdmin } from './config/firebase-admin'
 
 const rawPort = process.env.WEBHOOK_PORT ?? process.env.PORT
 const port = rawPort === undefined ? 3001 : Number(rawPort)
@@ -13,6 +14,13 @@ try {
   getHasuraAdminSecret()
 } catch (error) {
   console.error(`❌ ${error instanceof Error ? error.message : String(error)}`)
+  process.exit(1)
+}
+
+try {
+  initializeFirebaseAdmin()
+} catch (error) {
+  console.error(`❌ Firebase Admin initialization failed: ${error instanceof Error ? error.message : String(error)}`)
   process.exit(1)
 }
 
