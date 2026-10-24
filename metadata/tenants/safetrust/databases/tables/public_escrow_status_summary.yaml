@@ -1,3 +1,13 @@
 table:
   name: escrow_status_summary
   schema: safetrust
+configuration:
+  custom_name: escrow_status_summary
+  custom_root_fields: {}
+  column_config: {}
+select_permissions:
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+      allow_aggregations: true

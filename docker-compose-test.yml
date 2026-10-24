@@ -29,7 +29,7 @@ services:
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
       HASURA_GRAPHQL_DEV_MODE: "true"
       HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
-      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
     depends_on:
       postgres_test:
         condition: service_healthy
@@ -52,7 +52,8 @@ services:
     environment:
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine-test:8080
       PG_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
-      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
+      HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       CONSOLE_PORT: 9696
     working_dir: /app
     ports:
@@ -76,7 +77,7 @@ services:
     environment:
       - NODE_ENV=test
       - WEBHOOK_PORT=3001
-      - HASURA_GRAPHQL_ADMIN_SECRET=${TEST_ADMIN_SECRET:-myadminsecretkey}
+      - HASURA_ADMIN_SECRET=${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       - HASURA_GRAPHQL_ENDPOINT=http://graphql-engine-test:8080/v1/graphql
       - POSTGRES_HOST=postgres_test
       - POSTGRES_PORT=5432
@@ -109,7 +110,7 @@ services:
     environment:
       baseUrl: http://graphql-engine-test:8080/v1/graphql
       webhookUrl: http://webhook:3001
-      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
+      HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       JWT_SECRET: ${TEST_JWT_SECRET:-testsecret}
       TRUSTLESSWORK_WEBHOOK_SECRET: ${TEST_WEBHOOK_SECRET:-dev-secret}
     command: >
@@ -139,7 +140,8 @@ services:
       dockerfile: Dockerfile
     environment:
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine-test:8080
-      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
+      HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
     working_dir: /app
     command: ["bash", "bin/prepare-test-db"]
     depends_on:

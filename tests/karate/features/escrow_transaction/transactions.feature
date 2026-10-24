@@ -3,7 +3,7 @@ Feature: Escrow Transactions Management
 
 Background:
     * url baseUrl
-    * header x-hasura-admin-secret = 'myadminsecretkey'
+    * header x-hasura-admin-secret = adminSecret
     * def uuid = function() { return java.util.UUID.randomUUID() + '' }
     * def testEscrowTransaction =
       """
@@ -17,7 +17,7 @@ Background:
 
 @create
 Scenario: Create and Delete Escrow Transaction
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {
@@ -41,7 +41,7 @@ Scenario: Create and Delete Escrow Transaction
     * def createdEscrowId = response.data.insert_escrow_transactions_one.id
 
     # Cleanup - Add header again as Karate resets between steps
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {
@@ -61,7 +61,7 @@ Scenario: Create and Delete Escrow Transaction
 
 @query
 Scenario: Query Escrow Transaction by ID
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {
@@ -80,7 +80,7 @@ Scenario: Query Escrow Transaction by ID
     * def escrowId = response.data.insert_escrow_transactions_one.id
 
     # Query with header
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {
@@ -103,7 +103,7 @@ Scenario: Query Escrow Transaction by ID
     And match response.errors == '#notpresent'
 
     # Cleanup
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     And request
     """
     {
@@ -122,7 +122,7 @@ Scenario: Query Escrow Transaction by ID
 
 @validation
 Scenario: Create with Negative Amount (Invalid)
-    Given header x-hasura-admin-secret = 'myadminsecretkey'
+    Given header x-hasura-admin-secret = adminSecret
     * def invalidEscrow = { transaction_type: "CREATE_ESCROW", status: "PENDING", amount: -100.00 }
     And request
     """

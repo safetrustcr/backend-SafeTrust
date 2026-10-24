@@ -15,6 +15,14 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Multi-Tenant Architecture](architecture/multi-tenant.md) | Two-tenant isolation model (`safetrust` and `hotel_industry`), schema routing, and RBAC rules |
 | [Rust Crates in SafeTrust](architecture/rust-crates.md) | High-assurance native extensions via Neon bindings for cryptography and blockchain operations |
 | [Crate Boundaries](architecture/crate-boundaries.md) | Consumers, exports, fallbacks, dispositions, and quarantine gates for all eight Rust crates |
+| [Escrow Claims API](architecture/escrow-claims-api.md) | Request and response contract, error codes, idempotency and rate limit for claims on released escrows |
+| [Reservations API](architecture/reservations-api.md) | Lifecycle, allowed actions computation, read endpoints, and safe cancellation protocol |
+| [Wallet Registry API](architecture/wallets-api.md) | Verified wallet management lifecycle (list, unlink, and atomic set-primary endpoints) |
+
+### 📜 Architecture Decision Records (ADRs)
+| Document | Description |
+|---|---|
+| [ADR-0001: ZK Eligibility Statement and Trust Model](adr/0001-zk-eligibility-statement-and-trust-model.md) | Predicate specification, trust boundaries, feasibility trade-offs, and verification key pinning for escrow admission |
 
 ### 🔐 Stellar & Escrow Flows
 | Document | Description |
@@ -24,7 +32,9 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Approve Milestone](stellar/approve-milestone.md) | Milestone verification and approval lifecycle for escrow funds |
 | [Release Funds](stellar/release-funds.md) | Payout release mechanisms and on-chain settlement execution |
 | [Dispute & Resolve](stellar/dispute-resolve.md) | Two-phase XDR dispute lifecycle, Soroban roles, status transitions, and indexer synchronization |
+| [Escrow State Source](stellar/escrow-state-source.md) | Authoritative state source selection, removal of fabricated reads, and adapter validation |
 | [x402 Protocol](stellar/x402-protocol.md) | Agentic payments on Stellar using Soroban authorization entries and USDC SEP-41 |
+
 
 ### 🐘 Database & Migrations
 | Document | Description |

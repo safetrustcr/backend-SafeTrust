@@ -94,4 +94,7 @@ crates/target/
 # The verifier fallback is required at runtime when the native addon fails to
 # load, so its generated compatibility output is checked in with index.js.
 !/crates/webhook-verifier/fallback.js
+# Native crate postbuild hooks run this compiled helper without the webhook
+# tooling build, so keep it available in standalone package builds.
+!/crates/scripts/copy-native.js
 /tests/karate/src/test/resources/**/*.js
