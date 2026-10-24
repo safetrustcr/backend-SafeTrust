@@ -46,8 +46,14 @@ export function getHasuraAdminSecret(): string {
 // ── Core request ───────────────────────────────────────────────────────────────
 
 /**
- * Execute a Hasura GraphQL query or mutation.
+ * Execute a Hasura GraphQL query or mutation with the admin secret.
  * Throws a typed error with `details` when Hasura returns errors.
+ *
+ * This client bypasses Hasura role permissions. Only services and
+ * repositories may import it; route handlers call service methods instead
+ * (enforced by `routes/__tests__/admin-client-boundary.test.ts`). Writes that
+ * carry tenant data go through `hasuraTenantRequest` in
+ * `tenant-scoped-hasura.ts`.
  */
 export async function hasuraRequest<T = Record<string, unknown>>(
   query: string,
