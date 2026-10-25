@@ -376,3 +376,33 @@ export async function initializeEscrow(
 
   return { isDuplicate: false, eventId, escrow };
 }
+
+// ── Transaction Confirmation Lifecycle Exports ────────────────────────────────
+
+export {
+  LifecycleStage,
+  EscrowAction,
+  SubmissionPath,
+  StellarNetwork,
+  ConfirmationResult,
+  ConfirmationRetryRecord,
+  processHelperSubmission,
+  processExternalSubmission,
+  processPendingConfirmationRetries,
+  verifyStellarTransaction,
+  updateTWIndexerFromTxHash,
+  sendTransactionViaTWHelper,
+} from './confirmation.service';
+
+/**
+ * Validates that an unsubmitted signed XDR cannot advance escrow status or create records.
+ * Wallet signing is purely client-side and unpersisted in DB.
+ */
+export function assertSignedXdrCannotAdvanceStatus(signedXdr: string): void {
+  if (signedXdr && typeof signedXdr === 'string') {
+    throw new EscrowValidationError(
+      'Client-side wallet signing cannot advance escrow status; transaction must be submitted with a txHash',
+      400
+    );
+  }
+}

@@ -95,14 +95,14 @@ Feature: POST /api/escrows/initialize — TrustlessWork initialize callback
     And match response.error == 'Failed to persist escrow record'
     And match response.details[0].message contains 'duplicate key value violates unique constraint'
 
-  Scenario: Missing signature header returns 401
+  Scenario: Missing signature header returns 402 (x402 payment required)
     * def body = { "contract_id": "STELLAR_CONTRACT_TEST_001", "marker": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "approver": "GAPPROVER111WALLETADDRESS111111111111111111111111111111111", "releaser": "GRELEASER111WALLETADDRESS111111111111111111111111111111111", "amount": 2500.00, "escrow_type": "single_release" }
     Given path '/api/escrows/initialize'
     And header Content-Type = 'application/json'
     And request body
     When method POST
-    Then status 401
-    And match response.error == 'Missing x-trustlesswork-signature header'
+    Then status 402
+    And match response.error == 'Payment Required'
 
   Scenario: Incorrect signature returns 401
     * def body = { "contract_id": "STELLAR_CONTRACT_TEST_001", "marker": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "approver": "GAPPROVER111WALLETADDRESS111111111111111111111111111111111", "releaser": "GRELEASER111WALLETADDRESS111111111111111111111111111111111", "amount": 2500.00, "escrow_type": "single_release" }

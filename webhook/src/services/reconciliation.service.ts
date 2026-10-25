@@ -4,6 +4,32 @@
  * @file src/services/reconciliation.service.ts
  * @description Core reconciliation service functions for escrow synchronization,
  *              Soroban drift validation, and stale detection.
+ *
+ * ARCHITECTURAL OVERRIDE RATIONALE (ARCH-A5 / ESC-04):
+ * ───────────────────────────────────────────────────
+ * SafeTrust lifecycle writers (fund, dispute, resolve, release, approve-milestone)
+ * strictly enforce single-step state transition guards via the canonical
+ * escrow-state-machine module (e.g., UPDATE ... WHERE status IN ($validStates)),
+ * rejecting invalid transitions with StateConflictError.
+ *
+ * The reconciliation synchronization path (syncAllChunks / UPSERT_ESCROW_SQL in
+ * lib/reconciliation.ts) is an EXPLICIT, AUTHORITATIVE OVERRIDE of single-step
+ * transition validation.
+ *
+ * Written Rationale:
+ * 1. Authoritative Ledger Truth: Reconciliation ingests state directly from the
+ *    authoritative TrustlessWork indexer and Soroban RPC.
+ * 2. Multi-Step Convergence: During service downtime, network partitions, or initial
+ *    backfills, an escrow contract on Stellar may advance across multiple states
+ *    (e.g., created -> funded -> milestone_approved -> completed) while webhooks
+ *    were unreceived or processed out-of-order. If reconciliation enforced single-step
+ *    transition guards, it would fail to sync, permanently stranding the local
+ *    database in stale state and preventing drift convergence.
+ * 3. Idempotent Write Protection: The reconciliation UPSERT employs PostgreSQL
+ *    IS DISTINCT FROM to ensure identical records produce zero writes (rows_affected = 0)
+ *    and prevents overwriting SafeTrust-owned metadata.
+ * 4. Guard Isolation: Soroban validation detects discrepancies between DB and on-chain
+ *    state without uncontrolled mutations until authoritative read adapters are active.
  */
 
 import db from './db'
@@ -13,7 +39,14 @@ import {
   chunkArray,
   CHUNK_SIZE,
   findStaleEscrows,
+  isRustBulkUpsertEnabled,
 } from '../lib/reconciliation'
+import {
+  processPendingConfirmationRetries,
+  ProcessRetriesSummary,
+} from './confirmation.service'
+
+export { isRustBulkUpsertEnabled }
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -50,6 +83,7 @@ export interface ReconciliationResponse {
   sorobanCorrected: number
   sorobanUnresolved?: number
   durationMs: number
+  confirmationRetries?: ProcessRetriesSummary
 }
 
 
@@ -364,21 +398,30 @@ export async function detectStaleEscrows(
 }
 
 /**
- * Step 5: Pure function that formats reconciliation summary results into standard response shape.
+ * Step 5: Background sweep that processes durable confirmation retries.
+ */
+export async function reconcileConfirmationRetries(): Promise<ProcessRetriesSummary> {
+  return processPendingConfirmationRetries()
+}
+
+/**
+ * Step 6: Pure function that formats reconciliation summary results into standard response shape.
  *
  * @param sync - Results from syncing with the indexer
  * @param drift - Results from Soroban on-chain drift validation
  * @param stale - Array of stale contract IDs
  * @param elapsed - Duration in milliseconds
+ * @param retries - Summary of processed confirmation retries (optional)
  * @returns Formatted reconciliation response object
  */
 export function formatReconciliationSummary(
   sync: SyncSummary,
   drift: DriftSummary,
   stale: string[],
-  elapsed: number
+  elapsed: number,
+  retries?: ProcessRetriesSummary
 ): ReconciliationResponse {
-  const totalErrors = (sync.errors?.length ?? 0) + (drift.errors?.length ?? 0)
+  const totalErrors = (sync.errors?.length ?? 0) + (drift.errors?.length ?? 0) + (retries?.errors?.length ?? 0)
   const isNoEscrows = sync.totalEscrows === 0
 
   const response: ReconciliationResponse = {
@@ -396,6 +439,7 @@ export function formatReconciliationSummary(
     sorobanCorrected: drift.corrected,
     sorobanUnresolved: drift.unresolved ?? 0,
     durationMs: elapsed,
+    ...(retries ? { confirmationRetries: retries } : {}),
   }
 
   if (isNoEscrows) {
