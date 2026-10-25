@@ -32,16 +32,34 @@ DROP FUNCTION IF EXISTS safetrust.get_escrow_analytics_by_day(DATE, DATE, VARCHA
 CREATE OR REPLACE FUNCTION safetrust.get_escrow_analytics_by_day(
   p_start_date DATE,
   p_end_date   DATE,
-  p_tenant_id  VARCHAR DEFAULT 'safetrust'
+  p_tenant_id  VARCHAR(255)
 )
 RETURNS SETOF safetrust.escrow_analytics_by_day
 LANGUAGE plpgsql
 STABLE
 AS $$
 DECLARE
-  range_start TIMESTAMPTZ := (p_start_date::text || ' 00:00:00+00')::timestamptz;
-  range_end   TIMESTAMPTZ := ((p_end_date + 1)::text || ' 00:00:00+00')::timestamptz;
+  range_start TIMESTAMPTZ;
+  range_end   TIMESTAMPTZ;
 BEGIN
+  IF p_start_date IS NULL OR p_end_date IS NULL OR NULLIF(btrim(p_tenant_id), '') IS NULL THEN
+    RAISE EXCEPTION 'p_start_date, p_end_date and p_tenant_id are required'
+      USING ERRCODE = '22004';
+  END IF;
+
+  IF p_end_date < p_start_date THEN
+    RAISE EXCEPTION 'p_end_date (%) must not be before p_start_date (%)', p_end_date, p_start_date
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_end_date - p_start_date > 366 THEN
+    RAISE EXCEPTION 'date range must not exceed 366 days'
+      USING ERRCODE = '22023';
+  END IF;
+
+  range_start := p_start_date::timestamp AT TIME ZONE 'UTC';
+  range_end   := (p_end_date + 1)::timestamp AT TIME ZONE 'UTC';
+
   RETURN QUERY
   WITH date_series AS (
     SELECT generate_series(p_start_date, p_end_date, INTERVAL '1 day')::date AS day
@@ -57,14 +75,11 @@ BEGIN
     GROUP BY 1
   ),
   lifecycle_first_seen AS (
-    SELECT
-      contract_id,
-      event_type,
-      MIN(created_at) AS first_received_at
+    SELECT MIN(created_at) AS first_received_at
     FROM safetrust.trustless_work_webhook_events
     WHERE tenant_id = p_tenant_id
       AND created_at < range_end
-    GROUP BY contract_id, event_type
+    GROUP BY COALESCE(contract_id, id::text), event_type
   ),
   lifecycle_by_day AS (
     SELECT

@@ -1,5 +1,6 @@
 -- Migration: enforce tenant boundary for analytics functions
 -- Prevents non-admin roles (e.g. host) from accessing foreign-tenant analytics data
+-- Preserves all validation rules and metric semantics from ANA-03
 
 DROP FUNCTION IF EXISTS safetrust.get_escrow_status_summary(VARCHAR);
 
@@ -64,20 +65,38 @@ DROP FUNCTION IF EXISTS safetrust.get_escrow_analytics_by_day(DATE, DATE, VARCHA
 CREATE OR REPLACE FUNCTION safetrust.get_escrow_analytics_by_day(
   p_start_date DATE,
   p_end_date   DATE,
-  p_tenant_id  VARCHAR DEFAULT 'safetrust'
+  p_tenant_id  VARCHAR(255)
 )
 RETURNS SETOF safetrust.escrow_analytics_by_day
 LANGUAGE plpgsql
 STABLE
 AS $$
 DECLARE
-  range_start TIMESTAMPTZ := (p_start_date::text || ' 00:00:00+00')::timestamptz;
-  range_end   TIMESTAMPTZ := ((p_end_date + 1)::text || ' 00:00:00+00')::timestamptz;
+  range_start TIMESTAMPTZ;
+  range_end   TIMESTAMPTZ;
   v_hasura_user JSON;
   v_role TEXT;
   v_session_tenant TEXT;
   v_target_tenant TEXT;
 BEGIN
+  IF p_start_date IS NULL OR p_end_date IS NULL OR NULLIF(btrim(p_tenant_id), '') IS NULL THEN
+    RAISE EXCEPTION 'p_start_date, p_end_date and p_tenant_id are required'
+      USING ERRCODE = '22004';
+  END IF;
+
+  IF p_end_date < p_start_date THEN
+    RAISE EXCEPTION 'p_end_date (%) must not be before p_start_date (%)', p_end_date, p_start_date
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_end_date - p_start_date > 366 THEN
+    RAISE EXCEPTION 'date range must not exceed 366 days'
+      USING ERRCODE = '22023';
+  END IF;
+
+  range_start := p_start_date::timestamp AT TIME ZONE 'UTC';
+  range_end   := (p_end_date + 1)::timestamp AT TIME ZONE 'UTC';
+
   BEGIN
     v_hasura_user := NULLIF(current_setting('hasura.user', true), '')::json;
   EXCEPTION WHEN OTHERS THEN
@@ -89,6 +108,7 @@ BEGIN
     v_session_tenant := v_hasura_user ->> 'x-hasura-tenant-id';
   END IF;
 
+  -- Non-admin roles (such as host) are strictly restricted to their authenticated session tenant.
   IF v_role IS NOT NULL AND v_role <> 'admin' AND v_session_tenant IS NOT NULL THEN
     IF p_tenant_id IS NOT NULL AND p_tenant_id <> v_session_tenant THEN
       v_target_tenant := '__isolated_unauthorized__';
@@ -96,13 +116,14 @@ BEGIN
       v_target_tenant := v_session_tenant;
     END IF;
   ELSE
-    v_target_tenant := COALESCE(p_tenant_id, 'safetrust');
+    v_target_tenant := p_tenant_id;
   END IF;
 
   RETURN QUERY
   WITH date_series AS (
     SELECT generate_series(p_start_date, p_end_date, INTERVAL '1 day')::date AS day
   ),
+  -- Every stored webhook row, duplicates and redeliveries included.
   records_by_day AS (
     SELECT
       (created_at AT TIME ZONE 'UTC')::date AS day,
@@ -113,15 +134,15 @@ BEGIN
       AND created_at <  range_end
     GROUP BY 1
   ),
+  -- One lifecycle event per (contract_id, event_type), the key the webhook
+  -- handler deduplicates on, counted on the day it was first received.
+  -- Rows without a contract_id cannot be deduplicated and count individually.
   lifecycle_first_seen AS (
-    SELECT
-      contract_id,
-      event_type,
-      MIN(created_at) AS first_received_at
+    SELECT MIN(created_at) AS first_received_at
     FROM safetrust.trustless_work_webhook_events
     WHERE tenant_id = v_target_tenant
       AND created_at < range_end
-    GROUP BY contract_id, event_type
+    GROUP BY COALESCE(contract_id, id::text), event_type
   ),
   lifecycle_by_day AS (
     SELECT
@@ -131,6 +152,8 @@ BEGIN
     WHERE first_received_at >= range_start
     GROUP BY 1
   ),
+  -- Bucketed by when processing succeeded, so a late retry adds to the day it
+  -- succeeded instead of rewriting the day the webhook arrived.
   processed_by_day AS (
     SELECT
       (processed_at AT TIME ZONE 'UTC')::date AS day,
@@ -142,6 +165,9 @@ BEGIN
       AND processed_at <  range_end
     GROUP BY 1
   ),
+  -- users.last_seen is mutable: a user is counted only on their most recent
+  -- activity day and moves forward when they return. safetrust.users is
+  -- tenant-scoped by schema and has no tenant_id column.
   users_by_day AS (
     SELECT
       (last_seen AT TIME ZONE 'UTC')::date AS day,
@@ -151,6 +177,8 @@ BEGIN
       AND last_seen <  range_end
     GROUP BY 1
   ),
+  -- Creation cohort: escrows created on the day, and how many of that cohort
+  -- are active now. Not a point-in-time count of active escrows.
   escrows_by_day AS (
     SELECT
       (created_at AT TIME ZONE 'UTC')::date AS day,
