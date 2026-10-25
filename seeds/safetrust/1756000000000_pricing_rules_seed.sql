@@ -46,7 +46,8 @@ INSERT INTO pricing_rules
 INSERT INTO pricing_rules 
 (rule_name, rule_type, token, base_amount, percentage, min_amount, max_amount, priority) VALUES
 ('High Volume USDC', 'PERCENTAGE_FEE', 'USDC', 0.0, 0.0100, 1.00, 50.00, 60),
-('Enterprise XLM Rate', 'PERCENTAGE_FEE', 'XLM', 0.0, 0.0075, 0.50, 25.00, 55);
+('Enterprise XLM Rate', 'PERCENTAGE_FEE', 'XLM', 0.0, 0.0075, 0.50, 25.00, 55)
+ON CONFLICT DO NOTHING;
 
 -- Update timestamps randomly (demo realism)
 UPDATE pricing_rules SET 

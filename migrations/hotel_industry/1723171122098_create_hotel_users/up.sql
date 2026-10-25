@@ -31,7 +31,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_hotel_users_updated_at
+CREATE OR REPLACE TRIGGER update_hotel_users_updated_at
     BEFORE UPDATE ON hotel_industry.users
     FOR EACH ROW
     EXECUTE FUNCTION hotel_industry.update_users_updated_at();

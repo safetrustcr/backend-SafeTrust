@@ -1,6 +1,6 @@
 table:
   name: apartment_images
-  schema: public
+  schema: safetrust
   
 object_relationships:
   - name: apartment

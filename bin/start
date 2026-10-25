@@ -1,17 +1,84 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-HASURA_ADMIN_SECRET="myadminsecretkey"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
 
-if [[ $# -eq 0 ]]; then
-  echo "❌ Error: At least one tenant name is required."
-  echo ""
-  echo "Usage:   bin/start <tenant1> [tenant2 ...]"
-  echo "Example: bin/start safetrust hotel_industry"
+# Let Compose parse .env so JSON quotes and spaces survive unchanged.
+# The same resolved values are used by Compose and the deployment commands.
+if [ -f .env ]; then
+  COMPOSE_ENV=$(docker compose config --environment)
+  while IFS= read -r ENV_ENTRY; do
+    if [[ "$ENV_ENTRY" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]]; then
+      export "$ENV_ENTRY"
+    fi
+  done <<< "$COMPOSE_ENV"
+  unset COMPOSE_ENV ENV_ENTRY
+fi
+
+HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
+HASURA_PORT="${HASURA_PORT:-8080}"
+POSTGRES_PORT="${POSTGRES_PORT:-5433}"
+WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
+HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
+
+RESET_DATABASE=false
+RESTART_CONTAINERS=false
+TENANTS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --reset)
+      RESET_DATABASE=true
+      shift
+      ;;
+    --restart)
+      RESTART_CONTAINERS=true
+      shift
+      ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: bin/start [--reset] [--restart] <tenant1> [tenant2 ...]
+
+Options:
+  --reset    Stop the stack and remove its volumes before starting.
+  --restart  Recreate the containers while preserving volumes.
+  -h, --help Show this help.
+USAGE
+      exit 0
+      ;;
+    -* )
+      echo "❌ Error: Unknown option: $1"
+      echo "   Run 'bin/start --help' for usage."
+      exit 1
+      ;;
+    *)
+      TENANTS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ "$RESET_DATABASE" == "true" && "$RESTART_CONTAINERS" == "true" ]]; then
+  echo "❌ Error: --reset and --restart cannot be used together."
   exit 1
 fi
 
-TENANTS=("$@")
+if [[ "${#TENANTS[@]}" -eq 0 ]]; then
+  cat <<'USAGE'
+Usage: bin/start [--reset] [--restart] <tenant1> [tenant2 ...]
+
+Options:
+  --reset    Stop the stack and remove its volumes before starting.
+  --restart  Recreate the containers while preserving volumes.
+  -h, --help Show this help.
+
+Example:
+  bin/start --restart safetrust hotel_industry
+USAGE
+  exit 0
+fi
 
 TRACK_SAFETRUST_TIMINGS=false
 if [[ "${#TENANTS[@]}" -eq 1 && "${TENANTS[0]}" == "safetrust" ]]; then
@@ -24,29 +91,45 @@ echo "🚀 Starting SafeTrust backend..."
 echo "   Tenants to deploy: ${TENANTS[*]}"
 echo ""
 
+
 # ── 1. Start containers ───────────────────────────────────────────────────────
+if [[ "$RESET_DATABASE" == "true" ]]; then
+  echo "🧹 Resetting containers and database volumes..."
+  docker compose down -v
+elif [[ "$RESTART_CONTAINERS" == "true" ]]; then
+  echo "🔄 Restarting containers (preserving database volumes)..."
+  docker compose down
+fi
+
 echo "📦 Starting containers..."
-docker compose up -d
+docker compose up -d --build
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
   TIMING_DOCKER_UP=$((SECONDS - TIMER_START))
 fi
 
 # ── 2. Wait for Hasura to be healthy ─────────────────────────────────────────
-echo "⏳ Waiting for Hasura to be healthy..."
+echo "⏳ Waiting for Hasura to be healthy on ${HASURA_ENDPOINT}..."
 
-max_attempts=90
-attempt=1
-until curl -sf http://localhost:8080/healthz > /dev/null; do
-  if [[ "$attempt" -ge "$max_attempts" ]]; then
-    echo "❌ Hasura health check timed out after $((max_attempts * 2)) seconds"
+MAX_WAIT_SECONDS=120
+POLL_INTERVAL=0.5
+START_TS=$SECONDS
+until curl -sf "${HASURA_ENDPOINT}/healthz" > /dev/null 2>&1; do
+  ELAPSED=$((SECONDS - START_TS))
+  if [[ "$ELAPSED" -ge "$MAX_WAIT_SECONDS" ]]; then
+    echo "❌ Hasura health check timed out after ${MAX_WAIT_SECONDS}s"
+    echo "   Last Hasura response:"
+    curl -s "${HASURA_ENDPOINT}/healthz" || true
     exit 1
   fi
-  attempt=$((attempt + 1))
-  sleep 2
+  # Progress indicator every 5 seconds
+  if (( ELAPSED % 5 == 0 && ELAPSED > 0 )); then
+    echo "   ⏳ Still waiting... (${ELAPSED}s elapsed)"
+  fi
+  sleep "$POLL_INTERVAL"
 done
-
-echo "✅ Hasura is healthy"
+HASURA_READY_AT=$((SECONDS - START_TS))
+echo "✅ Hasura is healthy (ready in ${HASURA_READY_AT}s)"
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
   TIMING_HASURA_HEALTH=$((SECONDS - TIMER_START))
@@ -60,7 +143,7 @@ echo ""
 echo "🔌 Registering database sources..."
 for TENANT in "${TENANTS[@]}"; do
   echo "   ▶ Registering source: $TENANT"
-  curl -sf -X POST http://localhost:8080/v1/metadata \
+  curl -sf -X POST "${HASURA_ENDPOINT}/v1/metadata" \
     -H "X-Hasura-Admin-Secret: $HASURA_ADMIN_SECRET" \
     -H "Content-Type: application/json" \
     -d "{
@@ -85,18 +168,26 @@ echo ""
 
 # ── 4. Apply migrations for each tenant ──────────────────────────────────────
 # Tables are created here — must run before metadata deploy.
-echo "📂 Applying migrations..."
-for TENANT in "${TENANTS[@]}"; do
-  echo "   ▶ Migrating tenant: $TENANT"
-  hasura migrate apply \
-    --endpoint http://localhost:8080 \
-    --admin-secret "$HASURA_ADMIN_SECRET" \
-    --database-name "$TENANT"
-  echo "   ✅ Migrations applied for $TENANT"
-done
+if [[ "$RESTART_CONTAINERS" != "true" ]]; then
+  echo "📂 Applying migrations..."
 
-if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
+  # Sources share Hasura CLI catalog state. Concurrent migration commands can
+  # overwrite each other's applied versions, so apply tenants sequentially.
+  for TENANT in "${TENANTS[@]}"; do
+    echo "   ▶ Migrating tenant: $TENANT"
+    hasura migrate apply \
+      --endpoint "${HASURA_ENDPOINT}" \
+      --admin-secret "$HASURA_ADMIN_SECRET" \
+      --database-name "$TENANT"
+    echo "   ✅ Migrations applied for $TENANT"
+  done
+
+  if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+    TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
+  fi
+else
+  echo "⏭️  --restart: skipping migrations (schema unchanged)"
+  TIMING_MIGRATIONS_SAFETRUST=0
 fi
 
 echo ""
@@ -104,11 +195,54 @@ echo ""
 # ── 5. Deploy tenant metadata AFTER migrations ────────────────────────────────
 # Tables now exist in the DB so Hasura can track them successfully.
 echo "🏗️  Deploying tenant metadata: ${TENANTS[*]}"
-cd metadata
-./setup-tenant.sh "${TENANTS[@]}" \
-  --endpoint http://localhost:8080 \
-  --admin-secret "$HASURA_ADMIN_SECRET"
-cd ..
+
+if [[ "${#TENANTS[@]}" -eq 1 ]]; then
+  # Single tenant — call setup-tenant.sh directly, no parallelization
+  cd metadata
+  ./setup-tenant.sh "${TENANTS[0]}" \
+    --endpoint "${HASURA_ENDPOINT}" \
+    --admin-secret "$HASURA_ADMIN_SECRET"
+  cd ..
+else
+  # Multiple tenants — deploy metadata in parallel background jobs
+  # setup-tenant.sh uses mktemp -d internally so parallel runs are safe
+  METADATA_PIDS=()
+  METADATA_LOGS=$(mktemp -d)
+
+  for TENANT in "${TENANTS[@]}"; do
+    (
+      cd metadata
+      ./setup-tenant.sh "$TENANT" \
+        --endpoint "${HASURA_ENDPOINT}" \
+        --admin-secret "$HASURA_ADMIN_SECRET" \
+        > "$METADATA_LOGS/$TENANT.log" 2>&1
+      cd ..
+    ) &
+    METADATA_PIDS+=($!)
+    echo "   ▶ Deploying metadata for $TENANT (pid ${METADATA_PIDS[-1]})"
+  done
+
+  METADATA_FAILED=()
+  for i in "${!METADATA_PIDS[@]}"; do
+    TENANT="${TENANTS[$i]}"
+    if wait "${METADATA_PIDS[$i]}"; then
+      # Stream the log output after completion so it appears in order
+      cat "$METADATA_LOGS/$TENANT.log"
+      echo "   ✅ Metadata deployed for $TENANT"
+    else
+      cat "$METADATA_LOGS/$TENANT.log"
+      echo "   ❌ Metadata deployment failed for $TENANT"
+      METADATA_FAILED+=("$TENANT")
+    fi
+  done
+
+  rm -rf "$METADATA_LOGS"
+
+  if [[ ${#METADATA_FAILED[@]} -gt 0 ]]; then
+    echo "❌ Metadata deployment failed for: ${METADATA_FAILED[*]}"
+    exit 1
+  fi
+fi
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
   TIMING_METADATA_DEPLOY_SAFETRUST=$((SECONDS - TIMER_START))
@@ -119,7 +253,7 @@ echo ""
 # ── 6. Reload metadata after deploy ──────────────────────────────────────────
 echo "📋 Reloading metadata..."
 hasura metadata reload \
-  --endpoint http://localhost:8080 \
+  --endpoint "${HASURA_ENDPOINT}" \
   --admin-secret "$HASURA_ADMIN_SECRET"
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
@@ -129,42 +263,49 @@ fi
 echo ""
 
 # ── 7. Apply seeds for each tenant ───────────────────────────────────────────
-echo "🌱 Applying seeds..."
-for TENANT in "${TENANTS[@]}"; do
-  echo "   ▶ Seeding tenant: $TENANT"
-  hasura seed apply \
-    --endpoint http://localhost:8080 \
-    --admin-secret "$HASURA_ADMIN_SECRET" \
-    --database-name "$TENANT"
-  echo "   ✅ Seeds applied for $TENANT"
-done
+if [[ "$RESTART_CONTAINERS" != "true" ]]; then
+  echo "🌱 Applying seeds..."
+  for TENANT in "${TENANTS[@]}"; do
+    echo "   ▶ Seeding tenant: $TENANT"
+    hasura seed apply \
+      --endpoint "${HASURA_ENDPOINT}" \
+      --admin-secret "$HASURA_ADMIN_SECRET" \
+      --database-name "$TENANT"
+    echo "   ✅ Seeds applied for $TENANT"
+  done
+
+  if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
+    TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
+    TIMING_TOTAL=$((SECONDS - TIMER_START))
+  fi
+else
+  echo "⏭️  --restart: skipping seeds (data unchanged)"
+  TIMING_SEEDS_SAFETRUST=0
+  TIMING_TOTAL=$((SECONDS - TIMER_START))
+fi
 
 if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
-  TIMING_TOTAL=$((SECONDS - TIMER_START))
-
   mkdir -p tests/results
-  node -e "
-const t = {
-  docker_up: ${TIMING_DOCKER_UP},
-  hasura_health: ${TIMING_HASURA_HEALTH},
-  migrations_safetrust: ${TIMING_MIGRATIONS_SAFETRUST},
-  metadata_deploy_safetrust: ${TIMING_METADATA_DEPLOY_SAFETRUST},
-  metadata_reload: ${TIMING_METADATA_RELOAD},
-  seeds_safetrust: ${TIMING_SEEDS_SAFETRUST},
-  total: ${TIMING_TOTAL}
-};
-console.log(JSON.stringify(t, null, 2));
-" > tests/results/dc-prep-timings.json
+  cat > tests/results/dc-prep-timings.json <<EOF
+{
+  "docker_up": ${TIMING_DOCKER_UP},
+  "hasura_health": ${TIMING_HASURA_HEALTH},
+  "migrations_safetrust": ${TIMING_MIGRATIONS_SAFETRUST},
+  "metadata_deploy_safetrust": ${TIMING_METADATA_DEPLOY_SAFETRUST},
+  "metadata_reload": ${TIMING_METADATA_RELOAD},
+  "seeds_safetrust": ${TIMING_SEEDS_SAFETRUST},
+  "total": ${TIMING_TOTAL}
+}
+EOF
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "✅ SafeTrust backend ready"
 echo "   Tenants deployed: ${TENANTS[*]}"
-echo "   GraphQL:          http://localhost:8080/v1/graphql"
-echo "   PostgreSQL:       localhost:5433"
-echo "   Webhook:          http://localhost:3000"
+echo "   GraphQL:          ${HASURA_ENDPOINT}/v1/graphql"
+echo "   PostgreSQL:       localhost:${POSTGRES_PORT}"
+echo "   Webhook:          http://localhost:${WEBHOOK_PORT}"
 echo ""
 echo "👉 To open Hasura console:"
-echo "   hasura console --endpoint http://localhost:8080 --admin-secret $HASURA_ADMIN_SECRET"
+echo "   hasura console --endpoint ${HASURA_ENDPOINT} --admin-secret $HASURA_ADMIN_SECRET"

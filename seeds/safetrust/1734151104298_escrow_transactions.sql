@@ -1,10 +1,10 @@
 -- Seed for escrow_transactions table
--- Using public.escrow_transactions (canonical escrow table)
+-- Using safetrust.escrow_transactions (canonical escrow table)
 
 -- Clear existing seed data (development only)
-TRUNCATE public.escrow_transactions RESTART IDENTITY CASCADE;
+TRUNCATE safetrust.escrow_transactions RESTART IDENTITY CASCADE;
 
-INSERT INTO public.escrow_transactions (
+INSERT INTO safetrust.escrow_transactions (
     id,
     contract_id,
     engagement_id,
@@ -30,7 +30,7 @@ INSERT INTO public.escrow_transactions (
     'pending_signature',
     NULL,
     'safetrust',
-    NOW() - INTERVAL '2 days',
+    NOW() - INTERVAL '4 days',
     NOW() - INTERVAL '1 day'
 ),
 -- Scenario 2: Funded

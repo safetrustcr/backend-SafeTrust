@@ -5,3 +5,41 @@ object_relationships:
   - name: reservation
     using:
       foreign_key_constraint_on: reservation_id
+
+select_permissions:
+  - role: guest
+    permission:
+      columns:
+        - id
+        - reservation_id
+        - type
+        - amount
+        - status
+        - refund_status
+        - created_at
+        - updated_at
+      filter:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-Tenant-Id
+          - reservation:
+              guest_id:
+                _eq: X-Hasura-User-Id
+  - role: host
+    permission:
+      columns:
+        - id
+        - reservation_id
+        - type
+        - amount
+        - status
+        - refund_status
+        - created_at
+        - updated_at
+      filter:
+        _and:
+          - tenant_id:
+              _eq: X-Hasura-Tenant-Id
+          - reservation:
+              host_id:
+                _eq: X-Hasura-User-Id

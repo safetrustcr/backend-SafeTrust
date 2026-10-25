@@ -25,4 +25,5 @@ SELECT
     '201',
     (SELECT id FROM hotel_industry.room_types WHERE name = 'Suite'),
     200.00, TRUE, 4
-FROM hotel_industry.hotels h WHERE h.name = 'Cozy Inn';
+FROM hotel_industry.hotels h WHERE h.name = 'Cozy Inn'
+ON CONFLICT DO NOTHING;

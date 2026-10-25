@@ -1,18 +1,18 @@
 function:
-  schema: public
+  schema: safetrust
   name: find_nearby_apartments
 definition: |
-  CREATE OR REPLACE FUNCTION public.find_nearby_apartments(
+  CREATE OR REPLACE FUNCTION safetrust.find_nearby_apartments(
     lat FLOAT,
     lng FLOAT,
     radius_meters FLOAT DEFAULT 5000
   )
-  RETURNS SETOF public.apartments
+  RETURNS SETOF safetrust.apartments
   LANGUAGE sql
   STABLE
   AS $$
     SELECT a.*
-    FROM public.apartments a
+    FROM safetrust.apartments a
     WHERE
       a.deleted_at IS NULL
       AND a.is_available = true

@@ -4,10 +4,10 @@
 -- Idempotent: delete the demo threads before inserting them again.
 -- ============================================================================
 
-DELETE FROM public.messages
+DELETE FROM safetrust.messages
 WHERE conversation_id IN (
   SELECT id
-  FROM public.conversations
+  FROM safetrust.conversations
   WHERE tenant_id = 'safetrust'
     AND apartment_id IN (
       '550e8400-e29b-41d4-a716-446655440001'::uuid,
@@ -19,7 +19,7 @@ WHERE conversation_id IN (
     )
 );
 
-DELETE FROM public.conversations
+DELETE FROM safetrust.conversations
 WHERE tenant_id = 'safetrust'
   AND apartment_id IN (
     '550e8400-e29b-41d4-a716-446655440001'::uuid,
@@ -31,7 +31,7 @@ WHERE tenant_id = 'safetrust'
   );
 
 -- Conversation 1: pre-booking inquiry (no escrow yet).
-INSERT INTO public.conversations (
+INSERT INTO safetrust.conversations (
   id,
   apartment_id,
   host_id,
@@ -45,9 +45,10 @@ INSERT INTO public.conversations (
   'demo-tenant-uid-001',
   'active',
   'safetrust'
-);
+)
+ON CONFLICT DO NOTHING;
 
-INSERT INTO public.messages (
+INSERT INTO safetrust.messages (
   conversation_id,
   sender_id,
   body,
@@ -81,7 +82,7 @@ INSERT INTO public.messages (
   );
 
 -- Conversation 2: active booking with escrow lifecycle messages.
-INSERT INTO public.conversations (
+INSERT INTO safetrust.conversations (
   id,
   apartment_id,
   host_id,
@@ -98,11 +99,11 @@ SELECT
   twe.id,
   'active',
   'safetrust'
-FROM public.trustless_work_escrows AS twe
+FROM safetrust.trustless_work_escrows AS twe
 WHERE twe.contract_id = 'CAATN5DTEST00002'
   AND twe.tenant_id = 'safetrust';
 
-INSERT INTO public.messages (
+INSERT INTO safetrust.messages (
   conversation_id,
   sender_id,
   body,

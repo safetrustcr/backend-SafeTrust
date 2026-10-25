@@ -5,10 +5,11 @@ import { query } from './db'
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface HotelEscrowParties {
-  apartmentId: string
-  hostId:      string
-  guestId:     string
-  escrowId:    string
+  reservationId: string
+  apartmentId:   string
+  hostId:        string
+  guestId:       string
+  escrowId:      string
 }
 
 interface NotifyHotelEscrowConversationParams {
@@ -18,14 +19,12 @@ interface NotifyHotelEscrowConversationParams {
 }
 
 interface ConversationPayload {
-  apartmentId: string
-  hostId:      string
-  guestId:     string
-  senderId:    string
-  body:        string
-  isAutomated: boolean
-  eventType:   string
-  escrowId:    string
+  reservation_id:         string
+  escrow_transaction_id?: string
+  sender_id:              string
+  body:                   string
+  is_automated?:          boolean
+  event_type?:            string
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -38,17 +37,19 @@ export async function resolveHotelEscrowParties(
   contractId: string
 ): Promise<HotelEscrowParties | null> {
   const result = await query<{
+    reservation_id:        string
     escrow_transaction_id: string
     apartment_id:          string
     host_id:               string
     guest_id:              string
   }>(
     `SELECT
+       res.id          AS reservation_id,
        et.id           AS escrow_transaction_id,
        r.apartment_id,
        host_u.id       AS host_id,
        guest_u.id      AS guest_id
-     FROM public.escrow_transactions et
+     FROM safetrust.escrow_transactions et
      JOIN hotel_industry.reservations res
        ON et.reservation_id = res.id
      JOIN hotel_industry.rooms r
@@ -69,15 +70,16 @@ export async function resolveHotelEscrowParties(
   )
 
   const row = result.rows[0]
-  if (!row?.apartment_id || !row?.host_id || !row?.guest_id) {
+  if (!row?.reservation_id || !row?.apartment_id || !row?.host_id || !row?.guest_id) {
     return null
   }
 
   return {
-    apartmentId: row.apartment_id,
-    hostId:      row.host_id,
-    guestId:     row.guest_id,
-    escrowId:    row.escrow_transaction_id,
+    reservationId: row.reservation_id,
+    apartmentId:   row.apartment_id,
+    hostId:        row.host_id,
+    guestId:       row.guest_id,
+    escrowId:      row.escrow_transaction_id,
   }
 }
 
@@ -109,14 +111,12 @@ export async function notifyHotelEscrowConversation({
     }
 
     const payload: ConversationPayload = {
-      apartmentId: parties.apartmentId,
-      hostId:      parties.hostId,
-      guestId:     parties.guestId,
-      senderId:    parties.guestId,
+      reservation_id:        parties.reservationId,
+      escrow_transaction_id: parties.escrowId,
+      sender_id:             parties.guestId,
       body,
-      isAutomated: true,
-      eventType,
-      escrowId:    parties.escrowId,
+      is_automated:          true,
+      event_type:            eventType,
     }
 
     const internalSecret = process.env.INTERNAL_SERVICE_SECRET

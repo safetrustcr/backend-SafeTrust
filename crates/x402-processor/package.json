@@ -1,0 +1,15 @@
+{
+  "name": "x402-processor",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.node",
+  "types": "index.d.ts",
+  "files": [
+    "index.node",
+    "index.d.ts"
+  ],
+  "scripts": {
+    "build": "cargo build --release -p x402-processor",
+    "postbuild": "node ../scripts/copy-native.js --crate=x402-processor"
+  }
+}

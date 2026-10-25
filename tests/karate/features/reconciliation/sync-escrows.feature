@@ -4,7 +4,7 @@ Feature: Reconciliation — POST /reconciliation/sync-escrows
   # Integration tests for the reconciliation endpoint.
   #
   # The webhook service must be running and connected to the test database.
-  # Seed data (at least one row in public.trustless_work_escrows) must be
+  # Seed data (at least one row in safetrust.trustless_work_escrows) must be
   # present for the "happy path" scenario.
   #
   # The TrustlessWork indexer is called live; if unavailable the service
@@ -25,15 +25,18 @@ Feature: Reconciliation — POST /reconciliation/sync-escrows
     When method POST
     Then status 200
     And match response.success == true
-    And match response.totalEscrows == '#number'
-    And match response.chunks == '#number'
-    And match response.updated == '#number'
-    And match response.unchanged == '#number'
-    And match response.skipped == '#number'
-    And match response.staleCount == '#number'
-    And match response.staleContractIds == '#[]'
-    And match response.errors == '#number'
-    And match response.durationMs == '#number'
+    And match response.data.totalEscrows == '#number'
+    And match response.data.chunks == '#number'
+    And match response.data.updated == '#number'
+    And match response.data.unchanged == '#number'
+    And match response.data.skipped == '#number'
+    And match response.data.staleCount == '#number'
+    And match response.data.staleContractIds == '#[]'
+    And match response.data.errors == '#number'
+    And match response.data.sorobanEnabled == false
+    And match response.data.sorobanDrift == 0
+    And match response.data.sorobanCorrected == 0
+    And match response.data.durationMs == '#number'
 
   # ───────────────────────────────────────────────────────────────────────────
   # Scenario 2: Idempotency — calling twice returns updated: 0 on the second call
@@ -48,7 +51,7 @@ Feature: Reconciliation — POST /reconciliation/sync-escrows
     Given path '/reconciliation/sync-escrows'
     When method POST
     Then status 200
-    And match response.updated == 0
+    And match response.data.updated == 0
 
   # ───────────────────────────────────────────────────────────────────────────
   # Scenario 3: Wrong method — GET is not registered
@@ -80,7 +83,7 @@ Feature: Reconciliation — POST /reconciliation/sync-escrows
     When method POST
     Then status 200
     And match response.success == true
-    And match response.totalEscrows == 0
-    And match response.updated == 0
-    And match response.staleCount == 0
-    And match response.staleContractIds == []
+    And match response.data.totalEscrows == 0
+    And match response.data.updated == 0
+    And match response.data.staleCount == 0
+    And match response.data.staleContractIds == []

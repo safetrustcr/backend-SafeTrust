@@ -1,0 +1,5 @@
+# Built Neon addon (platform-specific artifact — always compiled from source)
+/native/
+
+# Cargo build output (root .gitignore also covers target/)
+/target/

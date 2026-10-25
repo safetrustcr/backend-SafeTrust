@@ -3,9 +3,9 @@
 -- contract_id values use CAATN5DTEST... prefix for test data
 
 -- Idempotency: clear existing webhook events
-TRUNCATE public.trustless_work_webhook_events CASCADE;
+TRUNCATE safetrust.trustless_work_webhook_events CASCADE;
 
-INSERT INTO public.trustless_work_webhook_events (
+INSERT INTO safetrust.trustless_work_webhook_events (
   contract_id, event_type, payload, signature,
   processed, processed_at, error_message,
   retry_count, max_retries, next_retry_at, tenant_id
@@ -103,4 +103,5 @@ INSERT INTO public.trustless_work_webhook_events (
   }'::jsonb,
   'sha256=abc123signature006',
   TRUE, NOW() - INTERVAL '6 hours', NULL, 0, 3, NULL, 'safetrust'
-);
+)
+ON CONFLICT DO NOTHING;

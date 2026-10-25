@@ -2,7 +2,7 @@
 -- id must be TEXT (Firebase UID format), not UUID
 -- On conflict: skip — safe for repeated seed apply runs
 
-INSERT INTO public.users (
+INSERT INTO safetrust.users (
     id,
     firebase_uid,
     email,

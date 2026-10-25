@@ -1,5 +1,5 @@
 table:
-  schema: public
+  schema: safetrust
   name: pricing_rules
 select_permissions:
   - role: anonymous

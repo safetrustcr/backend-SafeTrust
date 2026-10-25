@@ -1,3 +1,9 @@
-node_modules
-target
+.git
+.env
+**/node_modules
+**/target
+**/dist
 tests/results
+*.node
+.env.test
+.docker-cache
