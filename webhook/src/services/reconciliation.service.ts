@@ -40,6 +40,10 @@ import {
   CHUNK_SIZE,
   findStaleEscrows,
 } from '../lib/reconciliation'
+import {
+  processPendingConfirmationRetries,
+  ProcessRetriesSummary,
+} from './confirmation.service'
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -76,6 +80,7 @@ export interface ReconciliationResponse {
   sorobanCorrected: number
   sorobanUnresolved?: number
   durationMs: number
+  confirmationRetries?: ProcessRetriesSummary
 }
 
 
@@ -390,21 +395,30 @@ export async function detectStaleEscrows(
 }
 
 /**
- * Step 5: Pure function that formats reconciliation summary results into standard response shape.
+ * Step 5: Background sweep that processes durable confirmation retries.
+ */
+export async function reconcileConfirmationRetries(): Promise<ProcessRetriesSummary> {
+  return processPendingConfirmationRetries()
+}
+
+/**
+ * Step 6: Pure function that formats reconciliation summary results into standard response shape.
  *
  * @param sync - Results from syncing with the indexer
  * @param drift - Results from Soroban on-chain drift validation
  * @param stale - Array of stale contract IDs
  * @param elapsed - Duration in milliseconds
+ * @param retries - Summary of processed confirmation retries (optional)
  * @returns Formatted reconciliation response object
  */
 export function formatReconciliationSummary(
   sync: SyncSummary,
   drift: DriftSummary,
   stale: string[],
-  elapsed: number
+  elapsed: number,
+  retries?: ProcessRetriesSummary
 ): ReconciliationResponse {
-  const totalErrors = (sync.errors?.length ?? 0) + (drift.errors?.length ?? 0)
+  const totalErrors = (sync.errors?.length ?? 0) + (drift.errors?.length ?? 0) + (retries?.errors?.length ?? 0)
   const isNoEscrows = sync.totalEscrows === 0
 
   const response: ReconciliationResponse = {
@@ -422,6 +436,7 @@ export function formatReconciliationSummary(
     sorobanCorrected: drift.corrected,
     sorobanUnresolved: drift.unresolved ?? 0,
     durationMs: elapsed,
+    ...(retries ? { confirmationRetries: retries } : {}),
   }
 
   if (isNoEscrows) {
