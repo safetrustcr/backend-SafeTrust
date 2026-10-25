@@ -1,15 +1,21 @@
 import { PoolClient } from 'pg';
-import { connect } from './db';
+import { withTransaction } from './db';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
 import { EscrowEventType, EscrowStatus } from '../types/escrow.types';
 import { InitializeEscrowPayload } from '@safetrust/types';
-import { hasuraRequest } from './hasura';
+import { hasuraTenantRequest, TenantMismatchError } from './tenant-scoped-hasura';
+import {
+  findReservationTenantId,
+  linkEscrowToReservation,
+} from '../repositories/reservation.repository';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
 import { amountToStroops } from '../lib/stellar-amounts';
 import { verifyProofOfFunds } from '../lib/zk-verifier';
+
+export { TenantMismatchError };
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -43,6 +49,7 @@ export interface TrustlessWorkEscrow {
   contractId: string;
   status: string;
   createdAt: string;
+  tenantId?: string;
 }
 
 // ── Validation error ───────────────────────────────────────────────────────────
@@ -156,9 +163,19 @@ export function validateEscrowInitializationPayload(
     );
   }
   
-  // 3 — Optional ZK proof bundle: must be all-or-nothing; validates threshold
+  // 3 — Optional ZK proof bundle: must be all-or-nothing; validates threshold.
+  // Real-funds ZK enforcement remains disabled by default until the chosen
+  // eligibility architecture (ADR-0001) is fully implemented (blocks ZK-02 through ZK-09).
+  const isZkEnforced = process.env.ZK_ENFORCEMENT_ENABLED === 'true';
   const zkValues = [zk_proof, zk_verification_key, zk_threshold_stroops, zk_balance_commitment];
   const hasZkBundle = zkValues.some((v) => v !== undefined && v !== null);
+
+  if (isZkEnforced && !hasZkBundle) {
+    throw new EscrowValidationError(
+      'ZK proof of funds bundle is required for escrow initialization',
+      400
+    );
+  }
 
   if (hasZkBundle && process.env.ZK_ENABLED !== 'true') {
     throw new EscrowValidationError(
@@ -197,8 +214,11 @@ export function validateEscrowInitializationPayload(
       }
     } catch (err) {
       if (err instanceof EscrowValidationError) throw err;
-      const error = err as Error;
-      console.error('[escrow.service] ZK verifier unavailable:', error.message);
+      const error = err as Error & { code?: string };
+      console.error('[escrow.service] ZK verifier error:', error.message);
+      if (error.code === 'ZK_VERIFIER_MISCONFIGURED') {
+        throw new EscrowValidationError('ZK proof verifier is misconfigured', 500);
+      }
       throw new ZkVerifierUnavailableError('ZK proof verification is unavailable');
     }
   }
@@ -227,7 +247,8 @@ export function validateEscrowInitializationPayload(
  * Returns the created escrow record.
  */
 export async function persistEscrow(
-  payload: EscrowInitPayload
+  payload: EscrowInitPayload,
+  tenantId: string
 ): Promise<TrustlessWorkEscrow> {
   const mutation = `
     mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
@@ -242,13 +263,14 @@ export async function persistEscrow(
         contractId
         status
         createdAt
+        tenantId
       }
     }
   `;
 
-  const data = await hasuraRequest<{
+  const data = await hasuraTenantRequest<{
     insert_trustless_work_escrows_one?: TrustlessWorkEscrow;
-  }>(mutation, {
+  }>(tenantId, mutation, {
     object: {
       contractId: payload.contract_id,
       marker: payload.marker,
@@ -265,7 +287,7 @@ export async function persistEscrow(
       roomId: payload.room_id,
       hotelId: payload.hotel_id,
       guestId: payload.guest_id,
-      tenantId: 'safetrust',
+      tenantId,
       escrowMetadata: payload.raw,
       bookingMetadata: payload.booking_metadata,
     },
@@ -279,30 +301,51 @@ export async function persistEscrow(
   return escrow;
 }
 
+/** Thrown when the reservation named in booking_metadata does not exist. */
+export class ReservationNotFoundError extends Error {
+  readonly statusCode = 404;
+  constructor(reservationId: string) {
+    super(`Reservation ${reservationId} not found`);
+    this.name = 'ReservationNotFoundError';
+  }
+}
+
 /**
- * Update a reservation row to link it to the created escrow.
- * No-op when reservationId is null or undefined.
+ * Resolve the tenant that owns `reservationId` before any escrow write.
+ *
+ * Throws `ReservationNotFoundError` when the reservation does not exist and
+ * `TenantMismatchError` when it belongs to a tenant other than
+ * `expectedTenantId` (the caller's verified tenant; the platform tenant for
+ * signed callbacks and x402 payments).
+ * Returns the reservation's own tenant, which callers use for both the escrow
+ * insert and the reservation link.
+ */
+export async function resolveReservationTenant(
+  reservationId: string,
+  expectedTenantId: string
+): Promise<string> {
+  const reservationTenantId = await findReservationTenantId(reservationId);
+  if (!reservationTenantId) {
+    throw new ReservationNotFoundError(reservationId);
+  }
+  if (reservationTenantId !== expectedTenantId) {
+    throw new TenantMismatchError(
+      `Reservation ${reservationId} does not belong to tenant ${expectedTenantId}`
+    );
+  }
+  return reservationTenantId;
+}
+
+/**
+ * Link a reservation row in `tenantId` to the created escrow.
+ * Throws when no reservation in that tenant matches.
  */
 export async function linkReservationToEscrow(
   reservationId: string,
-  escrowId: string
+  escrowId: string,
+  tenantId: string
 ): Promise<void> {
-  const mutation = `
-    mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!) {
-      update_reservations_by_pk(
-        pk_columns: { id: $reservationId }
-        _set: {
-          escrow_id: $escrowId,
-          status: "escrow_created",
-          updatedAt: "now()"
-        }
-      ) {
-        id status escrow_id
-      }
-    }
-  `;
-
-  await hasuraRequest(mutation, { reservationId, escrowId });
+  await linkEscrowToReservation(reservationId, escrowId, tenantId);
 
   console.log(
     `[escrow.service] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrowId}`
@@ -315,24 +358,39 @@ export async function linkReservationToEscrow(
  */
 export async function initializeEscrow(
   payload: EscrowInitPayload,
-  rawPayload: Record<string, unknown>
+  rawPayload: Record<string, unknown>,
+  tenantId: string
 ): Promise<{ isDuplicate: boolean; eventId: string; escrow?: TrustlessWorkEscrow }> {
-  const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+  const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
     payload.contract_id,
     'escrow.initialized',
     rawPayload
   );
 
-  if (isDuplicate) {
+  // Retry a duplicate whose earlier delivery failed part-way; persistEscrow
+  // upserts on contract_id, so re-running it is safe.
+  if (isDuplicate && processed !== false) {
     await markWebhookEventProcessed(eventId);
     return { isDuplicate: true, eventId };
   }
 
-  const escrow = await persistEscrow(payload);
-
   const reservationId = payload.booking_metadata?.reservation_id;
+  const escrowTenantId = reservationId
+    ? await resolveReservationTenant(reservationId, tenantId)
+    : tenantId;
+
+  const escrow = await persistEscrow(payload, escrowTenantId);
+
+  // The upsert on contract_id returns an existing row unchanged, so a row
+  // owned by another tenant must be rejected before it is linked.
+  if (escrow.tenantId !== escrowTenantId) {
+    throw new TenantMismatchError(
+      `Escrow ${payload.contract_id} does not belong to tenant ${escrowTenantId}`
+    );
+  }
+
   if (reservationId) {
-    await linkReservationToEscrow(reservationId, escrow.id);
+    await linkReservationToEscrow(reservationId, escrow.id, escrowTenantId);
   }
 
   await markWebhookEventProcessed(eventId);
@@ -373,34 +431,6 @@ export async function initializeEscrow(
 //   - Aborting a valid state change if a notification provider encounters a temporary glitch.
 // Thus, notifications are dispatched strictly AFTER commit, and any failure is caught and
 // logged as non-fatal.
-
-/**
- * Shared transaction helper modeled on milestone.service.ts:148-205.
- *
- * Acquires a client from the connection pool, begins a transaction, invokes
- * the callback, and commits on success. If an error is thrown, the transaction
- * is rolled back and the error is rethrown. Always releases the client.
- */
-export async function withTransaction<T>(
-  fn: (client: PoolClient) => Promise<T>
-): Promise<T> {
-  const client = await connect();
-  try {
-    await client.query('BEGIN');
-    const result = await fn(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK');
-    } catch (rollbackError) {
-      console.error('[escrow.service] Failed to rollback transaction:', rollbackError);
-    }
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
 export interface EscrowLifecycleParams {
   contractId: string;
@@ -495,7 +525,7 @@ export async function executeEscrowLifecycleTransition(
 
     // 5 — Idempotent completion check: if already at target status, mark processed and return
     if (currentStatus === targetStatus) {
-      await mirrorReservationStatus(escrowId, reservationStatus, client);
+      await mirrorReservationStatus(escrowId, reservationStatus, tenantId, client);
       await client.query(
         `UPDATE safetrust.trustless_work_webhook_events
          SET processed = true,
@@ -547,7 +577,7 @@ export async function executeEscrowLifecycleTransition(
     }
 
     // 8 — Mirror status to safetrust.reservations within the SAME transaction client
-    await mirrorReservationStatus(escrowId, reservationStatus, client);
+    await mirrorReservationStatus(escrowId, reservationStatus, tenantId, client);
 
     // 9 — Mark webhook event as processed within the transaction
     await client.query(
@@ -619,4 +649,34 @@ export async function releaseFundsTransactional(
     validPriorStates: validStates,
     rawPayload,
   });
+}
+
+// ── Transaction Confirmation Lifecycle Exports ────────────────────────────────
+
+export {
+  LifecycleStage,
+  EscrowAction,
+  SubmissionPath,
+  StellarNetwork,
+  ConfirmationResult,
+  ConfirmationRetryRecord,
+  processHelperSubmission,
+  processExternalSubmission,
+  processPendingConfirmationRetries,
+  verifyStellarTransaction,
+  updateTWIndexerFromTxHash,
+  sendTransactionViaTWHelper,
+} from './confirmation.service';
+
+/**
+ * Validates that an unsubmitted signed XDR cannot advance escrow status or create records.
+ * Wallet signing is purely client-side and unpersisted in DB.
+ */
+export function assertSignedXdrCannotAdvanceStatus(signedXdr: string): void {
+  if (signedXdr && typeof signedXdr === 'string') {
+    throw new EscrowValidationError(
+      'Client-side wallet signing cannot advance escrow status; transaction must be submitted with a txHash',
+      400
+    );
+  }
 }

@@ -10,6 +10,15 @@ import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
 
+/**
+  * Handles the escrow funded webhook event.
+  * Claims the event atomically, transitions the escrow to 'funded' if allowed,
+  * mirrors reservation status, and notifies the hotel conversation.
+  *
+  * @param req - Express request containing the FundEscrowPayload
+  * @param res - Express response object
+  * @returns Express response indicating success, duplicate, or error
+  */
 export const fundEscrowHandler = async (
   req: Request<{}, {}, FundEscrowPayload>,
   res: Response

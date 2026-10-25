@@ -14,7 +14,7 @@ export const getReservationHandler = async (
   req: AuthenticatedRequest,
   res: Response<GetReservationResponse>
 ): Promise<Response<GetReservationResponse>> => {
-  const userId = req.user?.uid
+  const userId = req.context?.uid || req.user?.uid
   if (!userId) {
     return res.status(401).json({ error: 'Unauthorized' })
   }

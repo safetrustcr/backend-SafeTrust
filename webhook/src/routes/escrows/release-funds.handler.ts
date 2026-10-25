@@ -1,3 +1,4 @@
+
 import { Request, Response } from 'express';
 import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response';
 import { ReleaseFundsPayload } from '@safetrust/types';
@@ -10,6 +11,15 @@ import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
 
+/**
+ * Handles the escrow release-funds webhook event.
+ * Atomically transitions the escrow to 'completed', mirrors reservation status,
+ * and notifies hotel conversation. Supports idempotent retry if already completed.
+ *
+ * @param req - Express request containing ReleaseFundsPayload
+ * @param res - Express response object
+ * @returns Express response indicating success, duplicate, conflict, or error
+ */
 export const releaseFundsHandler = async (
   req: Request<{}, {}, ReleaseFundsPayload>,
   res: Response
@@ -59,10 +69,22 @@ export const releaseFundsHandler = async (
     }
 
     const err = error as Error & { details?: unknown };
-    console.error('[escrow/release-funds] ❌ error:', err.details || err.message);
+
+    console.error(
+      '[escrow/release-funds] ❌ error:',
+      err.details || err.message
+    );
+
     if (err.details) {
-      return serverError(res, { error: 'Failed to update escrow status', details: err.details });
+      return serverError(res, {
+        error: 'Failed to update escrow status',
+        details: err.details,
+      });
     }
-    return serverError(res, { error: 'Internal server error', details: err.message });
+
+    return serverError(res, {
+      error: 'Internal server error',
+      details: err.message,
+    });
   }
 };

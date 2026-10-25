@@ -1,10 +1,13 @@
-import { withTransaction } from './escrow.service';
 import { hasuraRequest } from './hasura';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
-import { connect } from './db';
+import { withTransaction } from './db';
+import {
+  getValidPriorStates,
+  StateConflictError,
+} from '../lib/escrow-transitions';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -32,8 +35,9 @@ export class EscrowNotFoundError extends Error {
   }
 }
 
-export class EscrowStateConflictError extends Error {
-  readonly statusCode = 409;
+export { StateConflictError };
+
+export class EscrowStateConflictError extends StateConflictError {
   constructor(message: string) {
     super(message);
     this.name = 'EscrowStateConflictError';
@@ -114,13 +118,10 @@ export async function approveMilestoneAndUpdateReservation(
 ): Promise<void> {
   const approvedAt = new Date().toISOString();
 
-  // Resolve valid prior states before any DB write.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
-    getValidPriorStates: (to: string, event: string) => string;
-  };
-  const validStates: string[] = JSON.parse(
-    getValidPriorStates('milestone_approved', 'milestone.approved') as string
+  // Resolve valid prior states before any DB write via canonical shared module.
+  const validStates: string[] = getValidPriorStates(
+    'milestone_approved',
+    'milestone.approved'
   );
 
   const reservationStatus =
@@ -185,16 +186,23 @@ export async function approveMilestoneAndUpdateReservation(
       [approver, approvedAt, escrowId, milestoneId]
     );
 
-    await client.query(
+    const updateEscrowResult = await client.query(
       `
         UPDATE safetrust.trustless_work_escrows
         SET
           status = 'milestone_approved',
           updated_at = $1
         WHERE id = $2
+          AND status = ANY($3)
       `,
-      [approvedAt, escrowId]
+      [approvedAt, escrowId, validStates]
     );
+
+    if (updateEscrowResult && updateEscrowResult.rowCount === 0) {
+      throw new EscrowStateConflictError(
+        'Escrow cannot transition to milestone_approved: current status not in valid states'
+      );
+    }
 
     await client.query(
       `
