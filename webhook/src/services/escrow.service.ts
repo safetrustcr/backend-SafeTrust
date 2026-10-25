@@ -1,5 +1,6 @@
 import { PoolClient } from 'pg';
 import { withTransaction } from './db';
+import { getPlatformTenantId } from '../config/tenant';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
 import { EscrowEventType, EscrowStatus } from '../types/escrow.types';
 import { InitializeEscrowPayload } from '@safetrust/types';
@@ -464,7 +465,7 @@ export async function executeEscrowLifecycleTransition(
     rawPayload,
     amount,
     validPriorStates,
-    tenantId = 'safetrust',
+    tenantId = getPlatformTenantId(),
   } = params;
 
   return withTransaction(async (client) => {

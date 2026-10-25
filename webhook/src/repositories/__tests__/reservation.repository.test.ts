@@ -102,7 +102,7 @@ describe('reservation.repository', () => {
       expect(mockClient.query).toHaveBeenCalledTimes(1)
       expect(mockClient.query).toHaveBeenCalledWith(
         expect.stringContaining('UPDATE safetrust.reservations'),
-        ['funded', 'escrow-1']
+        ['funded', 'escrow-1', 'safetrust']
       )
       expect(mockedHasuraRequest).not.toHaveBeenCalled()
     })

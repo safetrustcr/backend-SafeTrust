@@ -106,8 +106,9 @@ export async function mirrorReservationStatus(
           status = $1,
           updated_at = NOW()
         WHERE escrow_id = $2
+          AND tenant_id = $3
       `,
-      [status, escrowId]
+      [status, escrowId, tenantId]
     )
     return
   }
