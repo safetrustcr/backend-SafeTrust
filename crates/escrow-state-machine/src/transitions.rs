@@ -6,28 +6,32 @@ use crate::states::{EscrowStatus, WebhookEvent};
 /// table without allocation. Every legal transition is listed exactly once;
 /// any transition NOT in `transition_table()` is INVALID by definition.
 pub struct TransitionRule {
-    pub from:   &'static [EscrowStatus],
-    pub to:     EscrowStatus,
-    pub event:  WebhookEvent,
+    pub from: &'static [EscrowStatus],
+    pub to: EscrowStatus,
+    pub event: WebhookEvent,
     pub reason: &'static str,
 }
 
 // `from` slices are referenced by `TransitionRule` and must outlive the table,
 // so they are declared as `'static` constants here.
-const FROM_PENDING_FUNDING:       &[EscrowStatus] = &[EscrowStatus::PendingFunding];
-const FROM_CREATED_OR_PENDING:    &[EscrowStatus] = &[EscrowStatus::Created, EscrowStatus::PendingFunding];
-const FROM_FUNDED:                &[EscrowStatus] = &[EscrowStatus::Funded];
-const FROM_ACTIVE_OR_FUNDED:      &[EscrowStatus] = &[EscrowStatus::Active, EscrowStatus::Funded];
+const FROM_PENDING_FUNDING: &[EscrowStatus] = &[EscrowStatus::PendingFunding];
+const FROM_CREATED_OR_PENDING: &[EscrowStatus] =
+    &[EscrowStatus::Created, EscrowStatus::PendingFunding];
+const FROM_FUNDED: &[EscrowStatus] = &[EscrowStatus::Funded];
+const FROM_ACTIVE_OR_FUNDED: &[EscrowStatus] = &[EscrowStatus::Active, EscrowStatus::Funded];
 const FROM_FUNDED_OR_MILESTONE_APPROVED: &[EscrowStatus] =
     &[EscrowStatus::Funded, EscrowStatus::MilestoneApproved];
-const FROM_FUNDED_ACTIVE_MILESTONE: &[EscrowStatus] =
-    &[EscrowStatus::Funded, EscrowStatus::Active, EscrowStatus::MilestoneApproved];
-const FROM_DISPUTED:              &[EscrowStatus] = &[EscrowStatus::Disputed];
+const FROM_FUNDED_ACTIVE_MILESTONE: &[EscrowStatus] = &[
+    EscrowStatus::Funded,
+    EscrowStatus::Active,
+    EscrowStatus::MilestoneApproved,
+];
+const FROM_DISPUTED: &[EscrowStatus] = &[EscrowStatus::Disputed];
 // A dispute has two legal terminal outcomes: `resolved` (funds split or
 // released) or `cancelled` (funds returned to the tenant). Both values are
 // permitted by the database `valid_escrow_status` CHECK constraint, so the
 // local state machine must permit both before an XDR is requested.
-const FROM_CANCELLABLE:           &[EscrowStatus] = &[
+const FROM_CANCELLABLE: &[EscrowStatus] = &[
     EscrowStatus::Created,
     EscrowStatus::PendingFunding,
     EscrowStatus::Funded,
@@ -48,9 +52,9 @@ pub fn transition_table() -> Vec<TransitionRule> {
     for target in all_statuses() {
         match target {
             Created => rules.push(TransitionRule {
-                from:   FROM_PENDING_FUNDING,
-                to:     Created,
-                event:  WebhookEvent::EscrowInitialized,
+                from: FROM_PENDING_FUNDING,
+                to: Created,
+                event: WebhookEvent::EscrowInitialized,
                 reason: "Escrow deployed on Stellar — awaiting guest funding",
             }),
             // `pending_funding` is the pre-creation onboarding state and has
@@ -58,15 +62,15 @@ pub fn transition_table() -> Vec<TransitionRule> {
             PendingFunding => {}
             Funded => {
                 rules.push(TransitionRule {
-                    from:   FROM_CREATED_OR_PENDING,
-                    to:     Funded,
-                    event:  WebhookEvent::EscrowFunded,
+                    from: FROM_CREATED_OR_PENDING,
+                    to: Funded,
+                    event: WebhookEvent::EscrowFunded,
                     reason: "Guest deposited USDC — funds locked in escrow contract",
                 });
                 rules.push(TransitionRule {
-                    from:   FROM_FUNDED,
-                    to:     Active,
-                    event:  WebhookEvent::EscrowFunded,
+                    from: FROM_FUNDED,
+                    to: Active,
+                    event: WebhookEvent::EscrowFunded,
                     reason: "Escrow fully funded — booking is confirmed and active",
                 });
             }
@@ -74,33 +78,33 @@ pub fn transition_table() -> Vec<TransitionRule> {
             // inbound event transition is modeled.
             Active => {}
             MilestoneApproved => rules.push(TransitionRule {
-                from:   FROM_ACTIVE_OR_FUNDED,
-                to:     MilestoneApproved,
-                event:  WebhookEvent::MilestoneApproved,
+                from: FROM_ACTIVE_OR_FUNDED,
+                to: MilestoneApproved,
+                event: WebhookEvent::MilestoneApproved,
                 reason: "Host approved milestone (check-in or check-out)",
             }),
             Completed => rules.push(TransitionRule {
-                from:   FROM_FUNDED_OR_MILESTONE_APPROVED,
-                to:     Completed,
-                event:  WebhookEvent::FundsReleased,
+                from: FROM_FUNDED_OR_MILESTONE_APPROVED,
+                to: Completed,
+                event: WebhookEvent::FundsReleased,
                 reason: "Funds released to host (single-release or all milestones approved)",
             }),
             Disputed => rules.push(TransitionRule {
-                from:   FROM_FUNDED_ACTIVE_MILESTONE,
-                to:     Disputed,
-                event:  WebhookEvent::DisputeRaised,
+                from: FROM_FUNDED_ACTIVE_MILESTONE,
+                to: Disputed,
+                event: WebhookEvent::DisputeRaised,
                 reason: "Guest or host raised a dispute",
             }),
             Resolved => rules.push(TransitionRule {
-                from:   FROM_DISPUTED,
-                to:     Resolved,
-                event:  WebhookEvent::DisputeResolved,
+                from: FROM_DISPUTED,
+                to: Resolved,
+                event: WebhookEvent::DisputeResolved,
                 reason: "Dispute resolved by arbitrator",
             }),
             Cancelled => rules.push(TransitionRule {
-                from:   FROM_CANCELLABLE,
-                to:     Cancelled,
-                event:  WebhookEvent::EscrowCancelled,
+                from: FROM_CANCELLABLE,
+                to: Cancelled,
+                event: WebhookEvent::EscrowCancelled,
                 reason: "Booking cancelled, or disputed funds returned to the tenant",
             }),
         }

@@ -7,14 +7,12 @@ pub fn parse_x_payment_header(header: &str) -> Result<X402PaymentHeader, String>
     let header = header.trim();
 
     // Must start with "x402 " scheme prefix
-    let payload_b64 = header
-        .strip_prefix("x402 ")
-        .ok_or_else(|| {
-            format!(
-                "Invalid X-Payment header format — must start with 'x402 ', got: '{}'",
-                &header[..header.len().min(20)]
-            )
-        })?;
+    let payload_b64 = header.strip_prefix("x402 ").ok_or_else(|| {
+        format!(
+            "Invalid X-Payment header format — must start with 'x402 ', got: '{}'",
+            &header[..header.len().min(20)]
+        )
+    })?;
 
     let payload_bytes = general_purpose::STANDARD
         .decode(payload_b64.trim())

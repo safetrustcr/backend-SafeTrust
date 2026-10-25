@@ -62,11 +62,18 @@ curl -sS -X POST "$ENDPOINT/v1/metadata" \
   -d '{"type":"pg_track_function","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_status_summary"},"configuration":{"exposed_as":"query"}}}' \
   >&2 || true
 
-echo "[migrate-test] (6/6) Granting host permission on get_escrow_status_summary..."
+echo "[migrate-test] (6/7) Granting host permission on get_escrow_status_summary..."
 curl -sS -X POST "$ENDPOINT/v1/metadata" \
   -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
   -H 'Content-Type: application/json' \
   -d '{"type":"pg_create_function_permission","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_status_summary"},"role":"host"}}' \
+  >&2 || true
+
+echo "[migrate-test] (7/7) Tracking get_webhook_health_summary..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_track_function","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_webhook_health_summary"},"configuration":{"custom_name":"get_webhook_health_summary","exposed_as":"query","session_argument":"hasura_session"}}}' \
   >&2 || true
 
 echo "[migrate-test] Reloading Hasura metadata cache..."
