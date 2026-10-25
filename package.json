@@ -5,7 +5,7 @@
   "main": "webhook/dist/index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "npm --prefix webhook run start",
+    "start": "npm --prefix webhook run build && npm --prefix webhook run start",
     "dev": "npm --prefix webhook run dev",
     "build": "npm --prefix webhook run build",
     "type-check": "npm --prefix webhook run type-check",
