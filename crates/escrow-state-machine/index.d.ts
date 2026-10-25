@@ -16,3 +16,10 @@ export function getValidPriorStates(
 
 /// Returns the complete SafeTrust transition table as a JSON string.
 export function getTransitionTable(): string
+
+/// Check if transition from_status -> to_status is legal.
+export function canTransition(from: string, to: string): boolean
+
+/// Check if a status string represents a terminal status (completed, resolved, cancelled).
+export function isTerminal(status: string): boolean
+

@@ -24,6 +24,12 @@ configuration:
       custom_name: updatedAt
     tenant_id:
       custom_name: tenantId
+    cancelled_by:
+      custom_name: cancelledBy
+    cancelled_at:
+      custom_name: cancelledAt
+    cancel_reason:
+      custom_name: cancelReason
 object_relationships:
   - name: apartment
     using:
@@ -34,3 +40,69 @@ object_relationships:
   - name: escrow
     using:
       foreign_key_constraint_on: escrow_id
+select_permissions:
+  - role: guest
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - guest_id
+        - escrow_id
+        - check_in_date
+        - check_out_date
+        - total_amount
+        - asset_code
+        - status
+        - created_at
+        - updated_at
+        - tenant_id
+        - cancelled_by
+        - cancelled_at
+        - cancel_reason
+      filter:
+        guest_id:
+          _eq: X-Hasura-User-Id
+    comment: "Guests can view their own reservations"
+  - role: host
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - guest_id
+        - escrow_id
+        - check_in_date
+        - check_out_date
+        - total_amount
+        - asset_code
+        - status
+        - created_at
+        - updated_at
+        - tenant_id
+        - cancelled_by
+        - cancelled_at
+        - cancel_reason
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+    comment: "Hosts can view reservations for their owned apartments"
+  - role: admin
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - guest_id
+        - escrow_id
+        - check_in_date
+        - check_out_date
+        - total_amount
+        - asset_code
+        - status
+        - created_at
+        - updated_at
+        - tenant_id
+        - cancelled_by
+        - cancelled_at
+        - cancel_reason
+      filter: {}
+    comment: "Admins can view all reservations"
