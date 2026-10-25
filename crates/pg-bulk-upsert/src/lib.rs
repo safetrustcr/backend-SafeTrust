@@ -71,15 +71,19 @@ pub const BATCH_SELECT_LOCK_SQL: &str = "
     FOR UPDATE
 ";
 
+// On UPDATE, an observation that omits amount/roles/escrow_type (empty string)
+// must preserve the stored value rather than clobber it with a placeholder.
+// Raw values are bound here (no caller-side defaults); defaults apply on INSERT
+// only. This mirrors the preservation already applied to `network`.
 pub const UPDATE_ROW_SQL: &str = "
     UPDATE safetrust.trustless_work_escrows
     SET status = $2,
-        amount = $3::numeric,
+        amount = COALESCE(NULLIF($3, '')::numeric, safetrust.trustless_work_escrows.amount),
         balance = $4::numeric,
-        marker = $5,
-        approver = $6,
-        releaser = $7,
-        escrow_type = $8,
+        marker = COALESCE(NULLIF($5, ''), safetrust.trustless_work_escrows.marker),
+        approver = COALESCE(NULLIF($6, ''), safetrust.trustless_work_escrows.approver),
+        releaser = COALESCE(NULLIF($7, ''), safetrust.trustless_work_escrows.releaser),
+        escrow_type = COALESCE(NULLIF($8, ''), safetrust.trustless_work_escrows.escrow_type),
         ledger_seq = $9,
         network = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM($10), '')),
         updated_at = NOW()
@@ -321,13 +325,20 @@ pub fn evaluate_observation(
     let stored_status_norm = stored.status.trim().to_lowercase();
     let incoming_status_norm = incoming.status.trim().to_lowercase();
 
-    if stored_status_norm == "completed" || stored_status_norm == "resolved" {
-        return EvaluationOutcome::RejectTerminal {
-            stored_status: stored.status.clone(),
-        };
-    }
-
-    if stored_status_norm == "cancelled" && incoming_status_norm != "cancelled" {
+    // `cancelled` is terminal too: an out-of-order observation (even one with a
+    // higher ledger_seq) must never overwrite balance/roles/ledger_seq on a
+    // finalized record. An identical terminal observation is idempotent; any
+    // divergence is rejected. This mirrors the TypeScript evaluator in
+    // `escrow-freshness.ts`.
+    if matches!(
+        stored_status_norm.as_str(),
+        "completed" | "resolved" | "cancelled"
+    ) {
+        if stored_status_norm == incoming_status_norm
+            && balances_equal(&stored.balance, &incoming.balance)
+        {
+            return EvaluationOutcome::IdempotentUnchanged;
+        }
         return EvaluationOutcome::RejectTerminal {
             stored_status: stored.status.clone(),
         };
@@ -614,12 +625,12 @@ async fn run_bulk_upsert(
                             &[
                                 &key,
                                 &new_status,
-                                &amount,
+                                &u.amount,
                                 &new_balance,
                                 &u.marker,
                                 &u.approver,
                                 &u.releaser,
-                                &escrow_type,
+                                &u.escrow_type,
                                 &new_ledger_seq,
                                 &u.network,
                             ],
@@ -684,12 +695,12 @@ async fn run_bulk_upsert(
                                             &[
                                                 &u.contract_id,
                                                 &new_status,
-                                                &amount,
+                                                &u.amount,
                                                 &new_balance,
                                                 &u.marker,
                                                 &u.approver,
                                                 &u.releaser,
-                                                &escrow_type,
+                                                &u.escrow_type,
                                                 &new_ledger_seq,
                                                 &u.network,
                                             ],
@@ -999,6 +1010,35 @@ mod tests {
 
         assert!(matches!(
             evaluate_observation(Some(&stored), &incoming),
+            EvaluationOutcome::RejectTerminal { .. }
+        ));
+    }
+
+    #[test]
+    fn terminal_state_cancelled_is_protected_like_other_terminals() {
+        let stored = stored_row("C1", "cancelled", "25.0000000", Some(100));
+
+        // A later cancelled observation with a higher seq must NOT overwrite the
+        // terminal record (no balance/ledger_seq churn): identical status +
+        // balance is idempotent.
+        let incoming_same = sample("C1", "cancelled", "25.0000000", Some(300));
+        assert_eq!(
+            evaluate_observation(Some(&stored), &incoming_same),
+            EvaluationOutcome::IdempotentUnchanged
+        );
+
+        // A cancelled observation that diverges (different balance) is rejected,
+        // never written.
+        let incoming_diverged = sample("C1", "cancelled", "99.0000000", Some(300));
+        assert!(matches!(
+            evaluate_observation(Some(&stored), &incoming_diverged),
+            EvaluationOutcome::RejectTerminal { .. }
+        ));
+
+        // A different status cannot be reached from cancelled.
+        let incoming_other = sample("C1", "funded", "100.0000000", Some(300));
+        assert!(matches!(
+            evaluate_observation(Some(&stored), &incoming_other),
             EvaluationOutcome::RejectTerminal { .. }
         ));
     }

@@ -435,6 +435,47 @@ describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
         expect(outcome.balance).toBe('100.0000000')
       }
     })
+
+    it('unversioned snapshot cannot create a new confirmed/terminal record', () => {
+      // No stored row + no ledger_seq + non-pending status must be rejected,
+      // matching the Rust evaluator (evaluate_observation, stored == None).
+      const incoming: IncomingEscrowObservation = {
+        contractId: 'C_NEW_TERMINAL',
+        status: 'completed',
+        balance: '0.0000000',
+        ledgerSeq: null,
+        network: 'testnet',
+      }
+
+      const outcome = evaluateFreshness(null, incoming)
+      expect(outcome.type).toBe('REJECT_UNVERSIONED_FOR_CONFIRMED')
+    })
+
+    it('unversioned snapshot may create a new pending record', () => {
+      const incoming: IncomingEscrowObservation = {
+        contractId: 'C_NEW_PENDING',
+        status: 'pending_funding',
+        balance: '0.0000000',
+        ledgerSeq: null,
+        network: 'testnet',
+      }
+
+      const outcome = evaluateFreshness(null, incoming)
+      expect(outcome.type).toBe('WRITE')
+    })
+
+    it('versioned snapshot may create a new confirmed record', () => {
+      const incoming: IncomingEscrowObservation = {
+        contractId: 'C_NEW_VERSIONED',
+        status: 'funded',
+        balance: '500.0000000',
+        ledgerSeq: 42n,
+        network: 'testnet',
+      }
+
+      const outcome = evaluateFreshness(null, incoming)
+      expect(outcome.type).toBe('WRITE')
+    })
   })
 
   // ─── 8. Exact token amounts ───────────────────────────────────────────────

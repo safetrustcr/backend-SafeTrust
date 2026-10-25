@@ -51,6 +51,18 @@ import { EscrowStatus as CanonicalStatus, EscrowEventType } from '../types/escro
 
 export { StateConflictError, StaleStateError }
 
+/**
+ * True only for PostgreSQL errors where retrying against the unqualified table
+ * name is a legitimate recovery: `42P01` (undefined_table) or `3F000`
+ * (invalid_schema_name). Any other error (lock/statement timeout, deadlock,
+ * constraint violation) must propagate so the original cause is not masked by a
+ * misleading "relation does not exist" from the fallback query.
+ */
+function isUndefinedTableError(err: unknown): boolean {
+  const code = (err as { code?: string } | null | undefined)?.code
+  return code === '42P01' || code === '3F000'
+}
+
 export type EscrowStatus =
   | 'created'
   | 'funded'
@@ -686,8 +698,9 @@ export async function updateEscrowWithFreshness(
       const res = await executeQuery(selectSql, [idOrContractId])
       storedRow = res.rows[0]
       await executeQuery('RELEASE SAVEPOINT sp_select')
-    } catch {
+    } catch (err) {
       await executeQuery('ROLLBACK TO SAVEPOINT sp_select')
+      if (!isUndefinedTableError(err)) throw err
       // Fall back to unqualified escrow_transactions table if safetrust schema is not configured
       const fallbackSql = `
         SELECT id, contract_id, status, balance::text, ledger_seq, network
@@ -746,8 +759,9 @@ export async function updateEscrowWithFreshness(
           incoming.network ?? null,
         ])
         await executeQuery('RELEASE SAVEPOINT sp_update')
-      } catch {
+      } catch (err) {
         await executeQuery('ROLLBACK TO SAVEPOINT sp_update')
+        if (!isUndefinedTableError(err)) throw err
         const fallbackUpdate = `
           UPDATE escrow_transactions
           SET status = $2, balance = $3::numeric, ledger_seq = $4,

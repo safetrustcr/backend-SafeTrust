@@ -231,8 +231,17 @@ export function evaluateFreshness(
   const incomingSeq = parseLedgerSeq(incoming.ledgerSeq)
   const incomingBalanceFormatted = formatExactBalance(incoming.balance)
 
-  // Case 0: New record (no stored row yet)
+  // Case 0: New record (no stored row yet).
+  // An unversioned observation (no ledger_seq) cannot create an initial
+  // confirmed/terminal record — only pending records may be created unversioned.
+  // Mirrors the Rust evaluator (`evaluate_observation`, stored == None branch).
   if (!stored) {
+    if (incomingSeq === null && !isPendingStatus(incomingStatusNorm)) {
+      return {
+        type: 'REJECT_UNVERSIONED_FOR_CONFIRMED',
+        reason: `Unversioned snapshot cannot create a record in state '${incomingStatusNorm}'`,
+      }
+    }
     return {
       type: 'WRITE',
       status: incomingStatusNorm,

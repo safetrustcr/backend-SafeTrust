@@ -330,9 +330,9 @@ const UPSERT_ESCROW_SQL = `
         THEN safetrust.trustless_work_escrows.balance
       ELSE EXCLUDED.balance
     END,
-    marker     = EXCLUDED.marker,
-    approver   = EXCLUDED.approver,
-    releaser   = EXCLUDED.releaser,
+    marker     = COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+    approver   = COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+    releaser   = COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser),
     network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
     updated_at = NOW()
   WHERE (
@@ -368,9 +368,9 @@ const UPSERT_ESCROW_SQL = `
       EXCLUDED.status,
       EXCLUDED.amount,
       EXCLUDED.balance,
-      EXCLUDED.marker,
-      EXCLUDED.approver,
-      EXCLUDED.releaser
+      COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+      COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+      COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser)
     )
   )
   RETURNING contract_id, (xmax = 0) AS inserted
@@ -396,9 +396,9 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     status     = EXCLUDED.status,
     amount     = EXCLUDED.amount,
     balance    = EXCLUDED.balance,
-    marker     = EXCLUDED.marker,
-    approver   = EXCLUDED.approver,
-    releaser   = EXCLUDED.releaser,
+    marker     = COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+    approver   = COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+    releaser   = COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser),
     ledger_seq = EXCLUDED.ledger_seq,
     network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
     updated_at = NOW()
@@ -440,9 +440,9 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
       EXCLUDED.status,
       EXCLUDED.amount,
       EXCLUDED.balance,
-      EXCLUDED.marker,
-      EXCLUDED.approver,
-      EXCLUDED.releaser
+      COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+      COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+      COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser)
     )
   )
   RETURNING contract_id, (xmax = 0) AS inserted
@@ -932,6 +932,18 @@ export async function findStaleEscrows(staleDays = 7): Promise<string[]> {
 }
 
 /**
+ * True only for PostgreSQL errors where retrying against the unqualified table
+ * name is a legitimate recovery: `42P01` (undefined_table) or `3F000`
+ * (invalid_schema_name). Every other error — lock/statement timeout, deadlock,
+ * constraint violation — must propagate unchanged so the original cause is not
+ * masked by a misleading "relation does not exist" from the fallback query.
+ */
+function isUndefinedTableError(err: unknown): boolean {
+  const code = (err as { code?: string } | null | undefined)?.code
+  return code === '42P01' || code === '3F000'
+}
+
+/**
  * Atomic freshness reconciliation for a single escrow record using explicit row-level locking.
  *
  * Implements the atomic transaction pattern:
@@ -978,8 +990,9 @@ export async function reconcileEscrowAtomic(
       const res = await executeQuery(selectSql, [escrow.contractId])
       storedRow = res.rows[0]
       await executeQuery('RELEASE SAVEPOINT sp_select')
-    } catch {
+    } catch (err) {
       await executeQuery('ROLLBACK TO SAVEPOINT sp_select')
+      if (!isUndefinedTableError(err)) throw err
       const fallbackSql = `
         SELECT contract_id, status, balance::text, ledger_seq, network
         FROM trustless_work_escrows
@@ -1010,6 +1023,87 @@ export async function reconcileEscrowAtomic(
     }
 
     const outcome = evaluateFreshness(storedState, incoming)
+    // Effective outcome returned to the caller. Reassigned only when a losing
+    // insert race (below) forces a re-evaluation against the winner's row.
+    let finalOutcome: FreshnessOutcome = outcome
+
+    // Re-read the winner's row under lock after losing an insert race, then
+    // reconcile the losing observation against it (apply an UPDATE only if the
+    // re-evaluation still calls for a WRITE).
+    const reconcileLostInsertRace = async (): Promise<FreshnessOutcome> => {
+      let raceRow: any = null
+      await executeQuery('SAVEPOINT sp_race_select')
+      try {
+        const res = await executeQuery(
+          `SELECT contract_id, status, balance::text, ledger_seq, network
+             FROM safetrust.trustless_work_escrows
+            WHERE contract_id = $1 FOR UPDATE`,
+          [escrow.contractId]
+        )
+        raceRow = res.rows[0]
+        await executeQuery('RELEASE SAVEPOINT sp_race_select')
+      } catch (err) {
+        await executeQuery('ROLLBACK TO SAVEPOINT sp_race_select')
+        if (!isUndefinedTableError(err)) throw err
+        const res = await executeQuery(
+          `SELECT contract_id, status, balance::text, ledger_seq, network
+             FROM trustless_work_escrows
+            WHERE contract_id = $1 FOR UPDATE`,
+          [escrow.contractId]
+        )
+        raceRow = res.rows[0]
+      }
+
+      if (!raceRow) {
+        // Row vanished between the failed insert and the re-read (e.g. rolled
+        // back by the winner). Nothing to reconcile.
+        return { type: 'IDEMPOTENT_UNCHANGED' }
+      }
+
+      const raceStored: StoredEscrowState = {
+        contractId: raceRow.contract_id,
+        status: raceRow.status,
+        balance: raceRow.balance ?? '0.0000000',
+        ledgerSeq: raceRow.ledger_seq,
+        network: raceRow.network,
+      }
+      const raceOutcome = evaluateFreshness(raceStored, incoming)
+      if (raceOutcome.type !== 'WRITE') {
+        return raceOutcome
+      }
+
+      const raceUpdateParams = [
+        escrow.contractId,
+        raceOutcome.status,
+        raceOutcome.balance,
+        raceOutcome.ledgerSeq ? raceOutcome.ledgerSeq.toString() : null,
+        escrow.network ?? null,
+      ]
+      await executeQuery('SAVEPOINT sp_race_update')
+      try {
+        await executeQuery(
+          `UPDATE safetrust.trustless_work_escrows
+              SET status = $2, balance = $3::numeric, ledger_seq = $4,
+                  network = COALESCE(safetrust.trustless_work_escrows.network, $5),
+                  updated_at = NOW()
+            WHERE contract_id = $1`,
+          raceUpdateParams
+        )
+        await executeQuery('RELEASE SAVEPOINT sp_race_update')
+      } catch (err) {
+        await executeQuery('ROLLBACK TO SAVEPOINT sp_race_update')
+        if (!isUndefinedTableError(err)) throw err
+        await executeQuery(
+          `UPDATE trustless_work_escrows
+              SET status = $2, balance = $3::numeric, ledger_seq = $4,
+                  network = COALESCE(trustless_work_escrows.network, $5),
+                  updated_at = NOW()
+            WHERE contract_id = $1`,
+          raceUpdateParams
+        )
+      }
+      return raceOutcome
+    }
 
     if (outcome.type === 'WRITE') {
       if (storedRow) {
@@ -1030,8 +1124,9 @@ export async function reconcileEscrowAtomic(
             escrow.network ?? null,
           ])
           await executeQuery('RELEASE SAVEPOINT sp_update')
-        } catch {
+        } catch (err) {
           await executeQuery('ROLLBACK TO SAVEPOINT sp_update')
+          if (!isUndefinedTableError(err)) throw err
           const fallbackUpdate = `
             UPDATE trustless_work_escrows
             SET status = $2, balance = $3::numeric, ledger_seq = $4,
@@ -1048,6 +1143,23 @@ export async function reconcileEscrowAtomic(
           ])
         }
       } else {
+        // No stored row yet. SELECT ... FOR UPDATE locked nothing, so two
+        // concurrent first-observations can both reach this INSERT. Make it
+        // conflict-tolerant: the loser gets zero rows back and must re-read the
+        // winner's row and reconcile against it, rather than blindly retrying
+        // the insert (issue #661: safe handling of concurrent writers).
+        const insertParams = [
+          escrow.contractId,
+          outcome.status,
+          escrow.amount ? formatExactBalance(escrow.amount) : outcome.balance,
+          outcome.balance,
+          escrow.roles?.marker ?? '',
+          escrow.roles?.approver ?? '',
+          escrow.roles?.releaser ?? '',
+          escrow.escrowType ?? 'single_release',
+          outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+          escrow.network ?? null,
+        ]
         const insertSql = `
           INSERT INTO safetrust.trustless_work_escrows (
             contract_id, status, amount, balance, marker, approver, releaser,
@@ -1055,24 +1167,17 @@ export async function reconcileEscrowAtomic(
           ) VALUES (
             $1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust'
           )
+          ON CONFLICT (contract_id) DO NOTHING
+          RETURNING contract_id
         `
+        let insertRes: { rows: any[] }
         await executeQuery('SAVEPOINT sp_insert')
         try {
-          await executeQuery(insertSql, [
-            escrow.contractId,
-            outcome.status,
-            escrow.amount ? formatExactBalance(escrow.amount) : outcome.balance,
-            outcome.balance,
-            escrow.roles?.marker ?? '',
-            escrow.roles?.approver ?? '',
-            escrow.roles?.releaser ?? '',
-            escrow.escrowType ?? 'single_release',
-            outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
-            escrow.network ?? null,
-          ])
+          insertRes = await executeQuery(insertSql, insertParams)
           await executeQuery('RELEASE SAVEPOINT sp_insert')
-        } catch {
+        } catch (err) {
           await executeQuery('ROLLBACK TO SAVEPOINT sp_insert')
+          if (!isUndefinedTableError(err)) throw err
           const fallbackInsert = `
             INSERT INTO trustless_work_escrows (
               contract_id, status, amount, balance, marker, approver, releaser,
@@ -1080,26 +1185,24 @@ export async function reconcileEscrowAtomic(
             ) VALUES (
               $1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust'
             )
+            ON CONFLICT (contract_id) DO NOTHING
+            RETURNING contract_id
           `
-          await executeQuery(fallbackInsert, [
-            escrow.contractId,
-            outcome.status,
-            escrow.amount ? formatExactBalance(escrow.amount) : outcome.balance,
-            outcome.balance,
-            escrow.roles?.marker ?? '',
-            escrow.roles?.approver ?? '',
-            escrow.roles?.releaser ?? '',
-            escrow.escrowType ?? 'single_release',
-            outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
-            escrow.network ?? null,
-          ])
+          insertRes = await executeQuery(fallbackInsert, insertParams)
+        }
+
+        if (insertRes.rows.length === 0) {
+          // Lost the insert race: a concurrent writer created the row first.
+          // Re-read it under lock and reconcile the losing observation against
+          // the winner's state instead of dropping it.
+          finalOutcome = await reconcileLostInsertRace()
         }
       }
     }
 
     await executeQuery('COMMIT')
     txOpen = false
-    return outcome
+    return finalOutcome
   } catch (err) {
     if (txOpen) {
       try {
