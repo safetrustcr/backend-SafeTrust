@@ -18,7 +18,8 @@ const FROM_PENDING_FUNDING:       &[EscrowStatus] = &[EscrowStatus::PendingFundi
 const FROM_CREATED_OR_PENDING:    &[EscrowStatus] = &[EscrowStatus::Created, EscrowStatus::PendingFunding];
 const FROM_FUNDED:                &[EscrowStatus] = &[EscrowStatus::Funded];
 const FROM_ACTIVE_OR_FUNDED:      &[EscrowStatus] = &[EscrowStatus::Active, EscrowStatus::Funded];
-const FROM_MILESTONE_APPROVED:    &[EscrowStatus] = &[EscrowStatus::MilestoneApproved];
+const FROM_FUNDED_OR_MILESTONE_APPROVED: &[EscrowStatus] =
+    &[EscrowStatus::Funded, EscrowStatus::MilestoneApproved];
 const FROM_FUNDED_ACTIVE_MILESTONE: &[EscrowStatus] =
     &[EscrowStatus::Funded, EscrowStatus::Active, EscrowStatus::MilestoneApproved];
 const FROM_DISPUTED:              &[EscrowStatus] = &[EscrowStatus::Disputed];
@@ -79,10 +80,10 @@ pub fn transition_table() -> Vec<TransitionRule> {
                 reason: "Host approved milestone (check-in or check-out)",
             }),
             Completed => rules.push(TransitionRule {
-                from:   FROM_MILESTONE_APPROVED,
+                from:   FROM_FUNDED_OR_MILESTONE_APPROVED,
                 to:     Completed,
                 event:  WebhookEvent::FundsReleased,
-                reason: "All milestones approved — funds released to host",
+                reason: "Funds released to host (single-release or all milestones approved)",
             }),
             Disputed => rules.push(TransitionRule {
                 from:   FROM_FUNDED_ACTIVE_MILESTONE,

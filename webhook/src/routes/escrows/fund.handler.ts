@@ -11,16 +11,21 @@ import {
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
+import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
-
-// Compile-time SafeTrust escrow state machine (Neon native addon).
-// Replaces hardcoded status arrays with the authoritative transition table.
-const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
-  getValidPriorStates: (to: string, event: string) => string
-}
+import { getValidPriorStates } from '../../lib/escrow-transitions';
 
 const EVENT_TYPE = EscrowEventType.Funded;
 
+/**
+  * Handles the escrow funded webhook event.
+  * Claims the event atomically, transitions the escrow to 'funded' if allowed,
+  * mirrors reservation status, and notifies the hotel conversation.
+  *
+  * @param req - Express request containing the FundEscrowPayload
+  * @param res - Express response object
+  * @returns Express response indicating success, duplicate, or error
+  */
 export const fundEscrowHandler = async (
   req: Request<{}, {}, FundEscrowPayload>,
   res: Response
@@ -47,8 +52,9 @@ export const fundEscrowHandler = async (
       EVENT_TYPE,
       req.body as unknown as Record<string, unknown>,
       async (client) => {
-        const validStates: string[] = JSON.parse(
-          getValidPriorStates(EscrowStatus.Funded, EscrowEventType.Funded) as string
+        const validStates: string[] = getValidPriorStates(
+          EscrowStatus.Funded,
+          EscrowEventType.Funded
         );
         const escrow = await fundEscrowInTransaction(
           client,
@@ -58,7 +64,7 @@ export const fundEscrowHandler = async (
         );
 
         if (escrow) {
-          await mirrorReservationStatusInTransaction(client, escrow.id, 'funded')
+          await mirrorReservationStatusInTransaction(client, escrow.id, 'funded', getPlatformTenantId())
         }
 
         return escrow
