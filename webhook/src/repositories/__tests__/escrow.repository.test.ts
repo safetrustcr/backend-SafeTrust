@@ -9,6 +9,7 @@ import {
   disputeEscrow,
   resolveDispute,
   appendResolutionNote,
+  StateConflictError,
 } from '../escrow.repository'
 import { hasuraRequest } from '../../services/hasura'
 
@@ -33,6 +34,7 @@ describe('escrow.repository', () => {
             status: 'funded',
             balance: 500,
             createdAt: '2026-01-01T00:00:00Z',
+            tenantId: 'safetrust',
           },
         ],
       })
@@ -49,6 +51,7 @@ describe('escrow.repository', () => {
         status: 'funded',
         balance: 500,
         createdAt: '2026-01-01T00:00:00Z',
+        tenantId: 'safetrust',
       })
     })
 
@@ -67,17 +70,51 @@ describe('escrow.repository', () => {
   })
 
   describe('updateEscrowStatus', () => {
-    it('passes correct variables to hasuraRequest', async () => {
+
+    it('passes validStates when guarded and succeeds', async () => {
       mockedHasuraRequest.mockResolvedValueOnce({
         update_trustless_work_escrows: { affected_rows: 1 },
       })
 
-      await updateEscrowStatus('contract-123', 'completed')
+      await updateEscrowStatus('contract-123', 'completed', ['milestone_approved'])
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('UpdateEscrowStatus'), {
-        contractId: 'contract-123',
-        status: 'completed',
+      expect(mockedHasuraRequest).toHaveBeenCalledWith(
+        expect.stringContaining('UpdateEscrowStatusWithGuard'),
+        {
+          contractId: 'contract-123',
+          status: 'completed',
+          validStates: ['milestone_approved'],
+        }
+      )
+    })
+
+    it('throws StateConflictError when guarded and 0 rows affected', async () => {
+      mockedHasuraRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: { affected_rows: 0 },
       })
+
+      await expect(
+        updateEscrowStatus('contract-123', 'completed', ['milestone_approved'])
+      ).rejects.toBeInstanceOf(StateConflictError)
+    })
+
+    it('throws StateConflictError when empty validStates array is supplied and 0 rows affected', async () => {
+      mockedHasuraRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: { affected_rows: 0 },
+      })
+
+      await expect(
+        updateEscrowStatus('contract-123', 'completed', [])
+      ).rejects.toBeInstanceOf(StateConflictError)
+
+      expect(mockedHasuraRequest).toHaveBeenCalledWith(
+        expect.stringContaining('UpdateEscrowStatusWithGuard'),
+        {
+          contractId: 'contract-123',
+          status: 'completed',
+          validStates: [],
+        }
+      )
     })
   })
 
@@ -213,7 +250,23 @@ describe('escrow.repository', () => {
   })
 
   describe('releaseFunds', () => {
-    it('returns completed escrow data on release', async () => {
+    it('returns completed escrow data on release with valid states', async () => {
+      mockedHasuraRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: {
+          returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 }],
+        },
+      })
+
+      const result = await releaseFunds('c-1', ['milestone_approved'])
+
+      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
+        contractId: 'c-1',
+        validStates: ['milestone_approved'],
+      })
+      expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 })
+    })
+
+    it('uses default valid states when none provided', async () => {
       mockedHasuraRequest.mockResolvedValueOnce({
         update_trustless_work_escrows: {
           returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 }],
@@ -224,8 +277,31 @@ describe('escrow.repository', () => {
 
       expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
         contractId: 'c-1',
+        validStates: ['funded', 'milestone_approved'],
       })
       expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 })
+    })
+
+    it('throws StateConflictError when 0 rows updated', async () => {
+      mockedHasuraRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: { returning: [] },
+      })
+
+      await expect(releaseFunds('c-1', ['funded'])).rejects.toBeInstanceOf(StateConflictError)
+    })
+
+    it('filters out non-canonical custom states and preserves empty list', async () => {
+      mockedHasuraRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: { returning: [] },
+      })
+
+      await expect(releaseFunds('c-1', ['non_canonical_state'])).rejects.toBeInstanceOf(
+        StateConflictError
+      )
+      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
+        contractId: 'c-1',
+        validStates: [],
+      })
     })
   })
 

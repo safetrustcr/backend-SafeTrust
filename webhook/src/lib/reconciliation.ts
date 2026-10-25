@@ -2,22 +2,55 @@
 
 /**
  * @file src/lib/reconciliation.ts
- * @description Core helpers for the reconciliation service.
+ * @description Core helpers for the reconciliation service with freshness checks (Issue #661).
  *
- * Responsibilities
- * ────────────────
+ * Ordering & State Invariants Architecture:
+ * ──────────────────────────────────────────
+ * 1. Why `received_at` is NOT a valid ordering proxy:
+ *    `received_at` reflects local HTTP receipt time, which is vulnerable to network latency,
+ *    retries, and clock drift. A delayed snapshot can arrive after a newer confirmed event.
+ *    The ledger sequence number (`ledger_seq`) from the source is the only authoritative
+ *    ordering token.
+ *
+ * 2. The Unversioned Snapshot Policy:
+ *    When no `ledger_seq` is provided by the source, snapshots may ONLY update unconfirmed
+ *    pending records (`created`, `pending_funding`). Unversioned snapshots are rejected for
+ *    any confirmed records (`funded`, `completed`, `resolved`, etc.), and nonzero stored
+ *    balances must never be zeroed out.
+ *
+ * 3. The Four Conflict Cases & Outcomes:
+ *    - Incoming newer (incoming_seq > stored_seq or stored is NULL): write update.
+ *    - Incoming older (incoming_seq < stored_seq): reject silently, no write, no error.
+ *    - Equal seq (incoming_seq == stored_seq), same values: idempotent no-op, no write.
+ *    - Equal seq (incoming_seq == stored_seq), different values: preserve stored confirmed state,
+ *      produce a conflict log entry.
+ *
+ * 4. Why Terminal States Must NOT Be Ordered by Numeric Status Rank:
+ *    Escrow lifecycles are directed graphs, not linear ranks. Terminal states (`completed`,
+ *    `resolved`, `cancelled`) represent final settlement. No subsequent observation, regardless
+ *    of sequence number or rank, can overwrite or transition away from a terminal state.
+ *
+ * Responsibilities:
  *  • chunkArray  — split a flat array into sub-arrays of `size`
  *  • fetchEscrowsByContractIds — call TrustlessWork indexer API
- *  • syncChunk   — upsert one batch of escrows into the DB
+ *  • syncChunk   — upsert one batch of escrows into the DB with freshness check
  *  • findStaleEscrows — O(log n + k) stale escrow detection via updated_at index
- *
- * All functions are exported individually so they can be unit-tested
- * without requiring a live database or external API.
  */
 
 import https from 'https'
 import http from 'http'
-import db from '../services/db'
+import type { PoolClient } from 'pg'
+import db, { connect } from '../services/db'
+import {
+  evaluateFreshness,
+  formatExactBalance,
+  balancesEqual,
+  parseLedgerSeq,
+  FreshnessOutcome,
+  StoredEscrowState,
+  IncomingEscrowObservation,
+  CANONICAL_TRANSITIONS,
+} from './escrow-freshness'
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -34,6 +67,9 @@ export interface EscrowRecord {
   balance?:    string | number
   escrowType?: string
   roles?:      EscrowRoles
+  ledgerSeq?:  number | string | bigint | null
+  ledger_seq?: number | string | bigint | null
+  network?:    string | null
 }
 
 export interface UpsertResult {
@@ -87,6 +123,8 @@ interface BulkUpsertRow {
   approver:    string
   releaser:    string
   escrow_type: string
+  ledger_seq?: number | string | null
+  network?:    string | null
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -261,6 +299,14 @@ export function __resetBulkUpsertForTests(): void {
  *   booking_metadata, created_at, tenant_id, escrow_type, asset_code,
  *   asset_issuer, resolver
  */
+const SQL_TRANSITION_RULES = Object.entries(CANONICAL_TRANSITIONS)
+  .filter(([_, targets]) => targets.length > 0)
+  .map(
+    ([from, targets]) =>
+      `(safetrust.trustless_work_escrows.status = '${from}' AND EXCLUDED.status IN (${targets.map(t => `'${t}'`).join(', ')}))`
+  )
+  .join(' OR\n        ')
+
 const UPSERT_ESCROW_SQL = `
   INSERT INTO safetrust.trustless_work_escrows (
     contract_id,
@@ -271,32 +317,133 @@ const UPSERT_ESCROW_SQL = `
     approver,
     releaser,
     escrow_type,
+    network,
     updated_at,
     tenant_id
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'safetrust')
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'safetrust')
+  ON CONFLICT (contract_id)
+  DO UPDATE SET
+    status     = EXCLUDED.status,
+    amount     = EXCLUDED.amount,
+    balance    = CASE
+      WHEN safetrust.trustless_work_escrows.balance > 0 AND EXCLUDED.balance = 0
+        THEN safetrust.trustless_work_escrows.balance
+      ELSE EXCLUDED.balance
+    END,
+    marker     = COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+    approver   = COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+    releaser   = COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser),
+    network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
+    updated_at = NOW()
+  WHERE (
+    -- 1. Terminal state protection: completed, resolved, cancelled cannot be overwritten
+    safetrust.trustless_work_escrows.status NOT IN ('completed', 'resolved', 'cancelled')
+    -- 2. Unversioned snapshot policy: only write to pending records
+    AND safetrust.trustless_work_escrows.status IN ('created', 'pending_funding')
+    -- 3. Transition rules: illegal transitions rejected regardless of sequence
+    AND (
+      safetrust.trustless_work_escrows.status = EXCLUDED.status
+      OR (
+        ${SQL_TRANSITION_RULES}
+      )
+    )
+    -- 4. Network identity check: stored network (if known) must match incoming network (if known)
+    AND (
+      safetrust.trustless_work_escrows.network IS NULL
+      OR NULLIF(TRIM(safetrust.trustless_work_escrows.network), '') IS NULL
+      OR EXCLUDED.network IS NULL
+      OR NULLIF(TRIM(EXCLUDED.network), '') IS NULL
+      OR LOWER(REGEXP_REPLACE(safetrust.trustless_work_escrows.network, '^stellar:', '', 'i')) =
+         LOWER(REGEXP_REPLACE(EXCLUDED.network, '^stellar:', '', 'i'))
+    )
+    -- 5. Value difference check: unchanged values produce no write
+    AND (
+      safetrust.trustless_work_escrows.status,
+      safetrust.trustless_work_escrows.amount,
+      safetrust.trustless_work_escrows.balance,
+      safetrust.trustless_work_escrows.marker,
+      safetrust.trustless_work_escrows.approver,
+      safetrust.trustless_work_escrows.releaser
+    ) IS DISTINCT FROM (
+      EXCLUDED.status,
+      EXCLUDED.amount,
+      EXCLUDED.balance,
+      COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+      COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+      COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser)
+    )
+  )
+  RETURNING contract_id, (xmax = 0) AS inserted
+`
+
+const UPSERT_ESCROW_WITH_SEQ_SQL = `
+  INSERT INTO safetrust.trustless_work_escrows (
+    contract_id,
+    status,
+    amount,
+    balance,
+    marker,
+    approver,
+    releaser,
+    escrow_type,
+    ledger_seq,
+    network,
+    updated_at,
+    tenant_id
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust')
   ON CONFLICT (contract_id)
   DO UPDATE SET
     status     = EXCLUDED.status,
     amount     = EXCLUDED.amount,
     balance    = EXCLUDED.balance,
-    marker     = EXCLUDED.marker,
-    approver   = EXCLUDED.approver,
-    releaser   = EXCLUDED.releaser,
+    marker     = COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+    approver   = COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+    releaser   = COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser),
+    ledger_seq = EXCLUDED.ledger_seq,
+    network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
     updated_at = NOW()
   WHERE (
-    safetrust.trustless_work_escrows.status,
-    safetrust.trustless_work_escrows.amount,
-    safetrust.trustless_work_escrows.balance,
-    safetrust.trustless_work_escrows.marker,
-    safetrust.trustless_work_escrows.approver,
-    safetrust.trustless_work_escrows.releaser
-  ) IS DISTINCT FROM (
-    EXCLUDED.status,
-    EXCLUDED.amount,
-    EXCLUDED.balance,
-    EXCLUDED.marker,
-    EXCLUDED.approver,
-    EXCLUDED.releaser
+    -- 1. Terminal state protection: completed, resolved, cancelled cannot be overwritten
+    safetrust.trustless_work_escrows.status NOT IN ('completed', 'resolved', 'cancelled')
+    -- 2. Incoming newer: EXCLUDED.ledger_seq > stored or stored IS NULL
+    AND (
+      safetrust.trustless_work_escrows.ledger_seq IS NULL
+      OR EXCLUDED.ledger_seq > safetrust.trustless_work_escrows.ledger_seq
+    )
+    -- 3. Transition rules: illegal transitions rejected regardless of sequence
+    AND (
+      safetrust.trustless_work_escrows.status = EXCLUDED.status
+      OR (
+        ${SQL_TRANSITION_RULES}
+      )
+    )
+    -- 4. Network identity check: stored network (if known) must match incoming network (if known)
+    AND (
+      safetrust.trustless_work_escrows.network IS NULL
+      OR NULLIF(TRIM(safetrust.trustless_work_escrows.network), '') IS NULL
+      OR EXCLUDED.network IS NULL
+      OR NULLIF(TRIM(EXCLUDED.network), '') IS NULL
+      OR LOWER(REGEXP_REPLACE(safetrust.trustless_work_escrows.network, '^stellar:', '', 'i')) =
+         LOWER(REGEXP_REPLACE(EXCLUDED.network, '^stellar:', '', 'i'))
+    )
+    -- 5. Value difference check: unchanged values produce no write (ledger_seq advancement included)
+    AND (
+      safetrust.trustless_work_escrows.ledger_seq,
+      safetrust.trustless_work_escrows.status,
+      safetrust.trustless_work_escrows.amount,
+      safetrust.trustless_work_escrows.balance,
+      safetrust.trustless_work_escrows.marker,
+      safetrust.trustless_work_escrows.approver,
+      safetrust.trustless_work_escrows.releaser
+    ) IS DISTINCT FROM (
+      EXCLUDED.ledger_seq,
+      EXCLUDED.status,
+      EXCLUDED.amount,
+      EXCLUDED.balance,
+      COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+      COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+      COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser)
+    )
   )
   RETURNING contract_id, (xmax = 0) AS inserted
 `
@@ -331,49 +478,84 @@ export function chunkArray<T>(arr: T[], size: number): T[][] {
  * @param headers Additional request headers.
  * @returns Parsed JSON response body.
  */
-function httpGet(url: string, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url)
-    const transport = parsed.protocol === 'https:' ? https : http
+function httpGet(
+  url: string,
+  headers: Record<string, string> = {},
+  retries = 3,
+  delayMs = 250,
+  maxTotalTimeoutMs = 45_000
+): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + maxTotalTimeoutMs
 
-    const options = {
-      hostname: parsed.hostname,
-      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-      path: `${parsed.pathname}${parsed.search}`,
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(TW_API_KEY ? { 'x-api-key': TW_API_KEY } : {}),
-        ...headers,
-      },
+  const attempt = (attemptsLeft: number, currentDelay: number): Promise<Record<string, unknown>> => {
+    const remainingTime = deadline - Date.now()
+    if (remainingTime <= 0) {
+      return Promise.reject(new Error(`TrustlessWork API request exceeded total budget of ${maxTotalTimeoutMs} ms`))
     }
 
-    const req = transport.request(options, (res) => {
-      let raw = ''
-      res.setEncoding('utf8')
-      res.on('data', (chunk: string) => { raw += chunk })
-      res.on('end', () => {
-        if (res.statusCode! < 200 || res.statusCode! >= 300) {
-          return reject(
-            new Error(
-              `TrustlessWork API responded with status ${res.statusCode}: ${raw}`
+    return new Promise((resolve, reject) => {
+      const parsed = new URL(url)
+      const transport = parsed.protocol === 'https:' ? https : http
+
+      const options = {
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        path: `${parsed.pathname}${parsed.search}`,
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(TW_API_KEY ? { 'x-api-key': TW_API_KEY } : {}),
+          ...headers,
+        },
+      }
+
+      const reqTimeout = Math.min(30_000, Math.max(1_000, remainingTime))
+
+      const req = transport.request(options, (res) => {
+        let raw = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk: string) => { raw += chunk })
+        res.on('end', () => {
+          const status = res.statusCode || 0
+          if (status >= 500 && attemptsLeft > 0 && Date.now() + currentDelay < deadline) {
+            return setTimeout(() => {
+              attempt(attemptsLeft - 1, currentDelay * 2).then(resolve, reject)
+            }, currentDelay)
+          }
+
+          if (status < 200 || status >= 300) {
+            return reject(
+              new Error(
+                `TrustlessWork API responded with status ${res.statusCode}: ${raw}`
+              )
             )
-          )
-        }
-        try {
-          resolve(JSON.parse(raw))
-        } catch (e) {
-          reject(new Error(`Failed to parse TrustlessWork API response: ${(e as Error).message}`))
+          }
+          try {
+            resolve(JSON.parse(raw))
+          } catch (e) {
+            reject(new Error(`Failed to parse TrustlessWork API response: ${(e as Error).message}`))
+          }
+        })
+      })
+
+      req.on('error', (err) => {
+        if (attemptsLeft > 0 && Date.now() + currentDelay < deadline) {
+          setTimeout(() => {
+            attempt(attemptsLeft - 1, currentDelay * 2).then(resolve, reject)
+          }, currentDelay)
+        } else {
+          reject(err)
         }
       })
-    })
 
-    req.on('error', reject)
-    req.setTimeout(30_000, () => {
-      req.destroy(new Error('TrustlessWork API request timed out after 30 s'))
+      req.setTimeout(reqTimeout, () => {
+        req.destroy(new Error(`TrustlessWork API request timed out after ${reqTimeout} ms`))
+      })
+      req.end()
     })
-    req.end()
-  })
+  }
+
+  return attempt(retries, delayMs)
 }
 
 /**
@@ -426,22 +608,68 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
     }
 
     try {
-      const result = await db.query<{ contract_id: string }>(UPSERT_ESCROW_SQL, [
-        escrow.contractId,                   // $1 contract_id
-        escrow.status ?? 'created',          // $2 status
-        escrow.amount ?? 0,                  // $3 amount
-        escrow.balance ?? 0,                 // $4 balance
-        escrow.roles?.marker ?? '',          // $5 marker
-        escrow.roles?.approver ?? '',        // $6 approver
-        escrow.roles?.releaser ?? '',        // $7 releaser
-        escrow.escrowType ?? 'single_release', // $8 escrow_type
-      ])
+      const seq = escrow.ledgerSeq ?? escrow.ledger_seq
+      let result
+      if (seq !== undefined && seq !== null) {
+        const parsedSeq = typeof seq === 'bigint' ? seq.toString() : seq
+        result = await db.query<{ contract_id: string }>(UPSERT_ESCROW_WITH_SEQ_SQL, [
+          escrow.contractId,                   // $1 contract_id
+          escrow.status ?? 'created',          // $2 status
+          escrow.amount ?? 0,                  // $3 amount
+          escrow.balance ?? 0,                 // $4 balance
+          escrow.roles?.marker ?? '',          // $5 marker
+          escrow.roles?.approver ?? '',        // $6 approver
+          escrow.roles?.releaser ?? '',        // $7 releaser
+          escrow.escrowType ?? 'single_release', // $8 escrow_type
+          parsedSeq,                           // $9 ledger_seq
+          escrow.network ?? null,              // $10 network
+        ])
+      } else {
+        result = await db.query<{ contract_id: string }>(UPSERT_ESCROW_SQL, [
+          escrow.contractId,                   // $1 contract_id
+          escrow.status ?? 'created',          // $2 status
+          escrow.amount ?? 0,                  // $3 amount
+          escrow.balance ?? 0,                 // $4 balance
+          escrow.roles?.marker ?? '',          // $5 marker
+          escrow.roles?.approver ?? '',        // $6 approver
+          escrow.roles?.releaser ?? '',        // $7 releaser
+          escrow.escrowType ?? 'single_release', // $8 escrow_type
+          escrow.network ?? null,              // $9 network
+        ])
+      }
 
       // RETURNING only fires when a row was actually changed.
       if (result.rows.length > 0) {
         updated++
       } else {
         unchanged++
+        if (seq !== undefined && seq !== null) {
+          try {
+            const checkRes = await db.query<{ ledger_seq: string | null; status: string; balance: string }>(
+              `SELECT ledger_seq, status, balance::text FROM safetrust.trustless_work_escrows WHERE contract_id = $1`,
+              [escrow.contractId]
+            )
+            if (checkRes && checkRes.rows.length > 0) {
+              const stored = checkRes.rows[0]
+              const incomingSeq = typeof seq === 'bigint' ? seq.toString() : String(seq)
+              if (stored.ledger_seq !== null && stored.ledger_seq.toString() === incomingSeq) {
+                const incStatus = (escrow.status ?? 'created').trim().toLowerCase()
+                const storedStatus = (stored.status ?? '').trim().toLowerCase()
+                const incBal = escrow.balance !== undefined ? String(escrow.balance) : '0'
+                const storedBal = stored.balance !== undefined ? String(stored.balance) : '0'
+                if (incStatus !== storedStatus || !balancesEqual(incBal, storedBal)) {
+                  console.warn(
+                    `[reconciliation] ⚠️  Equal-sequence conflict on contract "${escrow.contractId}" at seq ${incomingSeq}: ` +
+                    `stored status="${stored.status}", balance="${stored.balance}"; ` +
+                    `incoming status="${escrow.status}", balance="${escrow.balance}". Preserving stored confirmed state.`
+                  )
+                }
+              }
+            }
+          } catch {
+            // Ignore check error; record counted as unchanged
+          }
+        }
       }
     } catch (rowError) {
       // Isolate per-row errors — log and count as skipped.
@@ -490,16 +718,26 @@ export async function upsertEscrowsBulk(escrows: EscrowRecord[]): Promise<Upsert
   // Map to the addon's row shape, applying the same defaults as upsertEscrows so
   // the counts match. Numeric columns are stringified to preserve DECIMAL(20,7)
   // precision across the boundary.
-  const updates: BulkUpsertRow[] = valid.map((escrow) => ({
-    contract_id: escrow.contractId,
-    status: escrow.status ?? 'created',
-    amount: String(escrow.amount ?? 0),
-    balance: String(escrow.balance ?? 0),
-    marker: escrow.roles?.marker ?? '',
-    approver: escrow.roles?.approver ?? '',
-    releaser: escrow.roles?.releaser ?? '',
-    escrow_type: escrow.escrowType ?? 'single_release',
-  }))
+  const updates: BulkUpsertRow[] = valid.map((escrow) => {
+    const row: BulkUpsertRow = {
+      contract_id: escrow.contractId,
+      status: escrow.status ?? 'created',
+      amount: String(escrow.amount ?? 0),
+      balance: String(escrow.balance ?? 0),
+      marker: escrow.roles?.marker ?? '',
+      approver: escrow.roles?.approver ?? '',
+      releaser: escrow.roles?.releaser ?? '',
+      escrow_type: escrow.escrowType ?? 'single_release',
+    }
+    const seq = escrow.ledgerSeq ?? escrow.ledger_seq
+    if (seq !== undefined && seq !== null) {
+      row.ledger_seq = typeof seq === 'bigint' ? seq.toString() : seq
+    }
+    if (escrow.network) {
+      row.network = escrow.network
+    }
+    return row
+  })
 
   // bulkUpsertEscrows returns a Promise<string> — awaiting it keeps the Node
   // event loop free while tokio-postgres runs the statement.
@@ -691,4 +929,337 @@ export async function findStaleEscrows(staleDays = 7): Promise<string[]> {
   )
 
   return rows.map((r) => r.contract_id)
+}
+
+/**
+ * True only for PostgreSQL errors where retrying against the unqualified table
+ * name is a legitimate recovery: `42P01` (undefined_table) or `3F000`
+ * (invalid_schema_name). Every other error — lock/statement timeout, deadlock,
+ * constraint violation — must propagate unchanged so the original cause is not
+ * masked by a misleading "relation does not exist" from the fallback query.
+ */
+function isUndefinedTableError(err: unknown): boolean {
+  const code = (err as { code?: string } | null | undefined)?.code
+  return code === '42P01' || code === '3F000'
+}
+
+/**
+ * Atomic freshness reconciliation for a single escrow record using explicit row-level locking.
+ *
+ * Implements the atomic transaction pattern:
+ * ```sql
+ * BEGIN;
+ * SELECT ledger_seq, status FROM escrow_transactions WHERE id = $1 FOR UPDATE;
+ * -- compare in application code
+ * UPDATE escrow_transactions SET status = $2, balance = $3, ledger_seq = $4 WHERE id = $1;
+ * COMMIT;
+ * ```
+ */
+export async function reconcileEscrowAtomic(
+  escrow: EscrowRecord,
+  providedClient?: PoolClient
+): Promise<FreshnessOutcome> {
+  const isCustomClient = Boolean(providedClient)
+  const client =
+    providedClient ?? (typeof connect === 'function' ? await connect() : null)
+
+  const executeQuery = async (
+    sql: string,
+    params: any[] = []
+  ): Promise<{ rows: any[] }> => {
+    if (client) {
+      return client.query(sql, params)
+    }
+    return db.query(sql, params)
+  }
+
+  let txOpen = false
+  try {
+    await executeQuery('BEGIN')
+    txOpen = true
+
+    const selectSql = `
+      SELECT contract_id, status, balance::text, ledger_seq, network
+      FROM safetrust.trustless_work_escrows
+      WHERE contract_id = $1
+      FOR UPDATE
+    `
+    let storedRow: any = null
+    await executeQuery('SAVEPOINT sp_select')
+    try {
+      const res = await executeQuery(selectSql, [escrow.contractId])
+      storedRow = res.rows[0]
+      await executeQuery('RELEASE SAVEPOINT sp_select')
+    } catch (err) {
+      await executeQuery('ROLLBACK TO SAVEPOINT sp_select')
+      if (!isUndefinedTableError(err)) throw err
+      const fallbackSql = `
+        SELECT contract_id, status, balance::text, ledger_seq, network
+        FROM trustless_work_escrows
+        WHERE contract_id = $1
+        FOR UPDATE
+      `
+      const res = await executeQuery(fallbackSql, [escrow.contractId])
+      storedRow = res.rows[0]
+    }
+
+    const storedState: StoredEscrowState | null = storedRow
+      ? {
+          contractId: storedRow.contract_id,
+          status: storedRow.status,
+          balance: storedRow.balance ?? '0.0000000',
+          ledgerSeq: storedRow.ledger_seq,
+          network: storedRow.network,
+        }
+      : null
+
+    const incoming: IncomingEscrowObservation = {
+      contractId: escrow.contractId,
+      status: escrow.status ?? 'created',
+      balance: escrow.balance ?? (storedState?.balance ?? '0.0000000'),
+      amount: escrow.amount,
+      ledgerSeq: escrow.ledgerSeq ?? escrow.ledger_seq,
+      network: escrow.network,
+    }
+
+    const outcome = evaluateFreshness(storedState, incoming)
+    // Effective outcome returned to the caller. Reassigned only when a losing
+    // insert race (below) forces a re-evaluation against the winner's row.
+    let finalOutcome: FreshnessOutcome = outcome
+
+    // Re-read the winner's row under lock after losing an insert race, then
+    // reconcile the losing observation against it (apply an UPDATE only if the
+    // re-evaluation still calls for a WRITE).
+    const reconcileLostInsertRace = async (): Promise<FreshnessOutcome> => {
+      let raceRow: any = null
+      await executeQuery('SAVEPOINT sp_race_select')
+      try {
+        const res = await executeQuery(
+          `SELECT contract_id, status, balance::text, ledger_seq, network
+             FROM safetrust.trustless_work_escrows
+            WHERE contract_id = $1 FOR UPDATE`,
+          [escrow.contractId]
+        )
+        raceRow = res.rows[0]
+        await executeQuery('RELEASE SAVEPOINT sp_race_select')
+      } catch (err) {
+        await executeQuery('ROLLBACK TO SAVEPOINT sp_race_select')
+        if (!isUndefinedTableError(err)) throw err
+        const res = await executeQuery(
+          `SELECT contract_id, status, balance::text, ledger_seq, network
+             FROM trustless_work_escrows
+            WHERE contract_id = $1 FOR UPDATE`,
+          [escrow.contractId]
+        )
+        raceRow = res.rows[0]
+      }
+
+      if (!raceRow) {
+        // Row vanished between the failed insert and the re-read (e.g. rolled
+        // back by the winner). Nothing to reconcile.
+        return { type: 'IDEMPOTENT_UNCHANGED' }
+      }
+
+      const raceStored: StoredEscrowState = {
+        contractId: raceRow.contract_id,
+        status: raceRow.status,
+        balance: raceRow.balance ?? '0.0000000',
+        ledgerSeq: raceRow.ledger_seq,
+        network: raceRow.network,
+      }
+      const raceOutcome = evaluateFreshness(raceStored, incoming)
+      if (raceOutcome.type !== 'WRITE') {
+        return raceOutcome
+      }
+
+      const raceUpdateParams = [
+        escrow.contractId,
+        raceOutcome.status,
+        raceOutcome.balance,
+        raceOutcome.ledgerSeq ? raceOutcome.ledgerSeq.toString() : null,
+        escrow.network ?? null,
+      ]
+      await executeQuery('SAVEPOINT sp_race_update')
+      try {
+        await executeQuery(
+          `UPDATE safetrust.trustless_work_escrows
+              SET status = $2, balance = $3::numeric, ledger_seq = $4,
+                  network = COALESCE(safetrust.trustless_work_escrows.network, $5),
+                  updated_at = NOW()
+            WHERE contract_id = $1`,
+          raceUpdateParams
+        )
+        await executeQuery('RELEASE SAVEPOINT sp_race_update')
+      } catch (err) {
+        await executeQuery('ROLLBACK TO SAVEPOINT sp_race_update')
+        if (!isUndefinedTableError(err)) throw err
+        await executeQuery(
+          `UPDATE trustless_work_escrows
+              SET status = $2, balance = $3::numeric, ledger_seq = $4,
+                  network = COALESCE(trustless_work_escrows.network, $5),
+                  updated_at = NOW()
+            WHERE contract_id = $1`,
+          raceUpdateParams
+        )
+      }
+      return raceOutcome
+    }
+
+    if (outcome.type === 'WRITE') {
+      if (storedRow) {
+        const updateSql = `
+          UPDATE safetrust.trustless_work_escrows
+          SET status = $2, balance = $3::numeric, ledger_seq = $4,
+              network = COALESCE(safetrust.trustless_work_escrows.network, $5),
+              updated_at = NOW()
+          WHERE contract_id = $1
+        `
+        await executeQuery('SAVEPOINT sp_update')
+        try {
+          await executeQuery(updateSql, [
+            escrow.contractId,
+            outcome.status,
+            outcome.balance,
+            outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+            escrow.network ?? null,
+          ])
+          await executeQuery('RELEASE SAVEPOINT sp_update')
+        } catch (err) {
+          await executeQuery('ROLLBACK TO SAVEPOINT sp_update')
+          if (!isUndefinedTableError(err)) throw err
+          const fallbackUpdate = `
+            UPDATE trustless_work_escrows
+            SET status = $2, balance = $3::numeric, ledger_seq = $4,
+                network = COALESCE(trustless_work_escrows.network, $5),
+                updated_at = NOW()
+            WHERE contract_id = $1
+          `
+          await executeQuery(fallbackUpdate, [
+            escrow.contractId,
+            outcome.status,
+            outcome.balance,
+            outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+            escrow.network ?? null,
+          ])
+        }
+      } else {
+        // No stored row yet. SELECT ... FOR UPDATE locked nothing, so two
+        // concurrent first-observations can both reach this INSERT. Make it
+        // conflict-tolerant: the loser gets zero rows back and must re-read the
+        // winner's row and reconcile against it, rather than blindly retrying
+        // the insert (issue #661: safe handling of concurrent writers).
+        const insertParams = [
+          escrow.contractId,
+          outcome.status,
+          escrow.amount ? formatExactBalance(escrow.amount) : outcome.balance,
+          outcome.balance,
+          escrow.roles?.marker ?? '',
+          escrow.roles?.approver ?? '',
+          escrow.roles?.releaser ?? '',
+          escrow.escrowType ?? 'single_release',
+          outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+          escrow.network ?? null,
+        ]
+        const insertSql = `
+          INSERT INTO safetrust.trustless_work_escrows (
+            contract_id, status, amount, balance, marker, approver, releaser,
+            escrow_type, ledger_seq, network, updated_at, tenant_id
+          ) VALUES (
+            $1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust'
+          )
+          ON CONFLICT (contract_id) DO NOTHING
+          RETURNING contract_id
+        `
+        let insertRes: { rows: any[] }
+        await executeQuery('SAVEPOINT sp_insert')
+        try {
+          insertRes = await executeQuery(insertSql, insertParams)
+          await executeQuery('RELEASE SAVEPOINT sp_insert')
+        } catch (err) {
+          await executeQuery('ROLLBACK TO SAVEPOINT sp_insert')
+          if (!isUndefinedTableError(err)) throw err
+          const fallbackInsert = `
+            INSERT INTO trustless_work_escrows (
+              contract_id, status, amount, balance, marker, approver, releaser,
+              escrow_type, ledger_seq, network, updated_at, tenant_id
+            ) VALUES (
+              $1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust'
+            )
+            ON CONFLICT (contract_id) DO NOTHING
+            RETURNING contract_id
+          `
+          insertRes = await executeQuery(fallbackInsert, insertParams)
+        }
+
+        if (insertRes.rows.length === 0) {
+          // Lost the insert race: a concurrent writer created the row first.
+          // Re-read it under lock and reconcile the losing observation against
+          // the winner's state instead of dropping it.
+          finalOutcome = await reconcileLostInsertRace()
+        }
+      }
+    }
+
+    await executeQuery('COMMIT')
+    txOpen = false
+    return finalOutcome
+  } catch (err) {
+    if (txOpen) {
+      try {
+        await executeQuery('ROLLBACK')
+      } catch {
+        // ignore rollback error
+      }
+    }
+    throw err
+  } finally {
+    if (client && !isCustomClient && typeof (client as any).release === 'function') {
+      (client as any).release()
+    }
+  }
+}
+
+// ─── Durable Retry Helpers ───────────────────────────────────────────────────
+
+/**
+ * Calculates exponential backoff bounded by maxMs.
+ * Formula: min(baseMs * 2^(attemptCount - 1), maxMs)
+ */
+export function calculateRetryBackoff(
+  attemptCount: number,
+  baseMs = 1000,
+  maxMs = 300_000
+): number {
+  if (attemptCount <= 0) return 0
+  const exp = Math.min(attemptCount - 1, 30)
+  const delay = baseMs * Math.pow(2, exp)
+  return Math.min(delay, maxMs)
+}
+
+/**
+ * Fetches pending confirmation retries that are scheduled for execution.
+ */
+export async function fetchPendingConfirmationRetries(limit = 50): Promise<Array<{
+  id: string
+  tx_hash: string
+  escrow_id: string
+  escrow_action: string
+  network: string
+  submission_path: string
+  attempt_count: number
+  max_attempts: number
+  next_retry_at: string
+  last_error: string | null
+}>> {
+  const { rows } = await db.query<any>(
+    `SELECT id, tx_hash, escrow_id, escrow_action, network, submission_path,
+            attempt_count, max_attempts, next_retry_at, last_error
+       FROM safetrust.escrow_confirmation_retries
+      WHERE status = 'retrying'
+        AND next_retry_at <= NOW()
+      ORDER BY next_retry_at ASC
+      LIMIT $1`,
+    [limit]
+  )
+  return rows
 }

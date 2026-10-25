@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+ENDPOINT="${HASURA_GRAPHQL_ENDPOINT:-http://graphql-engine-test:8080}"
+ADMIN_SECRET="${HASURA_ADMIN_SECRET:-${HASURA_GRAPHQL_ADMIN_SECRET:?Hasura admin secret is required}}"
+for ((attempt=0; ; attempt++)); do
+  if curl -fsS --connect-timeout 5 --max-time 5 "$ENDPOINT/healthz" >/dev/null; then
+    break
+  fi
+  if ((attempt >= 60)); then
+    echo '[migrate-test] Hasura health check timed out' >&2
+    exit 1
+  fi
+  sleep 2
+done
+for tenant in safetrust hotel_industry; do
+  payload=$(jq -cn --arg name "$tenant" '{type:"pg_add_source",args:{name:$name,replace_configuration:true,configuration:{connection_info:{database_url:{from_env:"PG_DATABASE_URL"},isolation_level:"read-committed"}}}}')
+  curl -fsS -X POST "$ENDPOINT/v1/metadata" \
+    -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+    -H 'Content-Type: application/json' -d "$payload" >/dev/null
+  echo "[migrate-test] Migrating tenant: $tenant"
+  hasura migrate apply --database-name "$tenant" --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
+done
+metadata/setup-tenant.sh safetrust hotel_industry --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
+
+echo "[migrate-test] Ensuring analytics functions and permissions are tracked (idempotent)..."
+# Each curl is fired independently with || true so an "already exists/tracked" error
+# on pg_track_function never aborts the script before pg_create_function_permission runs.
+
+echo "[migrate-test] (1/6) Granting host select permission on escrow_analytics_by_day..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_create_select_permission","args":{"source":"safetrust","table":{"schema":"safetrust","name":"escrow_analytics_by_day"},"role":"host","permission":{"columns":"*","filter":{}}}}' \
+  >&2 || true
+
+echo "[migrate-test] (2/6) Granting host select permission on escrow_status_summary..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_create_select_permission","args":{"source":"safetrust","table":{"schema":"safetrust","name":"escrow_status_summary"},"role":"host","permission":{"columns":"*","filter":{}}}}' \
+  >&2 || true
+
+echo "[migrate-test] (3/6) Tracking get_escrow_analytics_by_day..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_track_function","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_analytics_by_day"},"configuration":{"custom_name":"getEscrowAnalyticsByDay","exposed_as":"query"}}}' \
+  >&2 || true
+
+echo "[migrate-test] (4/6) Granting host permission on get_escrow_analytics_by_day..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_create_function_permission","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_analytics_by_day"},"role":"host"}}' \
+  >&2 || true
+
+echo "[migrate-test] (5/6) Tracking get_escrow_status_summary..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_track_function","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_status_summary"},"configuration":{"exposed_as":"query"}}}' \
+  >&2 || true
+
+echo "[migrate-test] (6/7) Granting host permission on get_escrow_status_summary..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_create_function_permission","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_escrow_status_summary"},"role":"host"}}' \
+  >&2 || true
+
+echo "[migrate-test] (7/7) Tracking get_webhook_health_summary..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_track_function","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_webhook_health_summary"},"configuration":{"custom_name":"get_webhook_health_summary","exposed_as":"query","session_argument":"hasura_session"}}}' \
+  >&2 || true
+
+echo "[migrate-test] Reloading Hasura metadata cache..."
+curl -fsS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"reload_metadata","args":{}}' >/dev/null
+
+echo "[migrate-test] Test database preparation complete!"

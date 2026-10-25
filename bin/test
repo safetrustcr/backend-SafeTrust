@@ -17,4 +17,25 @@ if [ -z "${TEST_ADMIN_SECRET:-}" ] && ! grep -q '^TEST_ADMIN_SECRET=.' .env.test
   export TEST_ADMIN_SECRET
 fi
 
+# On failure, the `karate` run only reports that a dependency (e.g. migrate-test)
+# exited non-zero — the dependency's own stdout/stderr is never attached. Dump
+# the key service logs so the real hasura/migration error is visible in CI.
+dump_logs_and_exit() {
+  local status=$1
+  echo "::group::migrate-test logs" >&2
+  docker compose -p safetrust-test -f docker-compose-test.yml "${ENV_FILE_FLAGS[@]}" logs migrate-test >&2 || true
+  echo "::endgroup::" >&2
+  echo "::group::graphql-engine-test logs" >&2
+  docker compose -p safetrust-test -f docker-compose-test.yml "${ENV_FILE_FLAGS[@]}" logs graphql-engine-test >&2 || true
+  echo "::endgroup::" >&2
+  exit "$status"
+}
+
+set +e
 docker compose -p safetrust-test -f docker-compose-test.yml "${ENV_FILE_FLAGS[@]}" run --rm --build karate
+run_status=$?
+set -e
+
+if [ "$run_status" -ne 0 ]; then
+  dump_logs_and_exit "$run_status"
+fi

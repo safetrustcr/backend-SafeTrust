@@ -14,6 +14,7 @@ jest.mock('../../../services/db', () => ({
 const VALID_STELLAR = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
 // Fabricated address with the right shape but a bad SEP-23 checksum.
 const BAD_CHECKSUM_STELLAR = 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z'
+const VALID_ETH = '0x71C845137c37D73F4085411A3194134134944111'
 
 // Whether the Rust stellar-utils addon is built in this environment. When it
 // is, validation is stricter (checksum + Ed25519-public-key-only) than the JS
@@ -125,8 +126,10 @@ describe('syncWalletHandler', () => {
   it('returns 500 when the database upsert fails', async () => {
     ;(query as jest.Mock).mockRejectedValue(new Error('connection refused'))
 
+    // Must be a non-Stellar address: any G…/C… strkey is rejected with 400
+    // WALLET_CHALLENGE_REQUIRED before the upsert runs.
     const req = makeRequest({
-      wallet_address: VALID_STELLAR,
+      wallet_address: '0x1234567890123456789012345678901234567890',
       chain_type: 'ETH',
       is_primary: false,
     })

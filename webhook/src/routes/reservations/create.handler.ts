@@ -1,7 +1,7 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
-import { hasuraRequest } from '../../services/hasura'
-import type { CreateReservationPayload, Reservation } from '@safetrust/types'
+import { createReservation, TenantMismatchError } from '../../services/reservation.service'
+import type { Reservation } from '@safetrust/types'
 
 type CreateReservationResponse =
   | { reservation: Reservation }
@@ -12,10 +12,13 @@ export const createReservationHandler = async (
   res: Response<CreateReservationResponse>
 ): Promise<Response<CreateReservationResponse>> => {
   const guestId = req.context?.uid || req.user?.uid
-  const { apartment_id, check_in_date, check_out_date, total_amount, asset_code } = req.body || {}
+  // Tenant comes from the verified session (authMiddleware), never the body.
+  const tenantId = req.context?.tenantId
+  const { apartment_id, check_in_date, check_out_date, total_amount, asset_code, tenant_id } =
+    req.body || {}
 
   // 1 — Validate required fields
-  if (!guestId) {
+  if (!guestId || !tenantId) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
 
@@ -41,39 +44,19 @@ export const createReservationHandler = async (
     })
   }
 
-  // 2 — Insert reservation via Hasura GraphQL
-  const mutation = `
-    mutation CreateReservation($object: reservations_insert_input!) {
-      insert_reservations_one(object: $object) {
-        id
-        apartment_id
-        guest_id
-        status
-        check_in_date
-        check_out_date
-        total_amount
-        asset_code
-        escrow_id
-        created_at
-      }
-    }
-  `
-
+  // 2 — Create the reservation through the service layer
   try {
-    const data = await hasuraRequest<{ insert_reservations_one: Reservation | null }>(mutation, {
-      object: {
-        apartment_id,
-        guest_id: guestId,
-        check_in_date,
-        check_out_date,
-        total_amount,
-        asset_code: asset_code || 'USDC',
-        status: 'pending',
-        tenant_id: 'safetrust',
-      },
+    const reservation = await createReservation({
+      tenantId,
+      requestedTenantId: tenant_id,
+      guestId,
+      apartmentId: apartment_id,
+      checkInDate: check_in_date,
+      checkOutDate: check_out_date,
+      totalAmount: total_amount,
+      assetCode: asset_code || 'USDC',
     })
 
-    const reservation = data?.insert_reservations_one
     if (!reservation) {
       return res.status(500).json({ error: 'Failed to create reservation' })
     }
@@ -81,6 +64,10 @@ export const createReservationHandler = async (
     console.log(`[reservations/create] ✅ Reservation created — id: ${reservation.id}`)
     return res.status(201).json({ reservation })
   } catch (error) {
+    if (error instanceof TenantMismatchError) {
+      return res.status(403).json({ error: 'Forbidden: tenant mismatch' })
+    }
+
     const err = error as Error & { details?: unknown }
     console.error('[reservations/create] ❌ error:', err.details || err.message)
     if (err.details) {
