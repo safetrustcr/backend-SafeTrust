@@ -73,7 +73,7 @@ Scenario: Diagram 2 - host role querying another tenant returns own data or auth
     Then status 200
     # Tenant boundary invariant: cross-tenant query must return an authorization error
     # or an allowed isolated result (0 or own-tenant 1000), strictly rejecting foreign values
-    And assert (response.errors != null) || (response.data != null && (response.data.safetrust_get_escrow_status_summary[0].total_value_usdc == 0 || response.data.safetrust_get_escrow_status_summary[0].total_value_usdc == 1000 || response.data.safetrust_get_escrow_status_summary[0].total_value_usdc == 8888))
+    And assert (response.errors != null) || (response.data != null && (response.data.safetrust_get_escrow_status_summary[0].total_value_usdc == 0 || response.data.safetrust_get_escrow_status_summary[0].total_value_usdc == 1000))
 
 Scenario: Diagram 2 - Anonymous role request is rejected (missing credentials)
     # Clear admin secret header to simulate unauthenticated/anonymous client

@@ -8,6 +8,8 @@ on:
       - 'tests/**'
       - 'migrations/**'
       - 'metadata/**'
+      - 'webhook/**'
+      - 'Dockerfile'
       - 'docker-compose-test.yml'
       - 'Dockerfile.test'
       - 'bin/test'
@@ -20,6 +22,8 @@ on:
       - 'tests/**'
       - 'migrations/**'
       - 'metadata/**'
+      - 'webhook/**'
+      - 'Dockerfile'
       - 'docker-compose-test.yml'
       - 'Dockerfile.test'
       - 'bin/test'
@@ -30,10 +34,14 @@ jobs:
   integration-tests:
     name: Karate & Analytics Integration Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

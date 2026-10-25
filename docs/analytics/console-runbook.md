@@ -89,13 +89,6 @@ query IntrospectAnalyticsRoots {
           ofType {
             name
             kind
-            fields {
-              name
-              type {
-                name
-                kind
-              }
-            }
           }
         }
       }
@@ -130,7 +123,9 @@ query IntrospectAnalyticsTypes {
 }
 ```
 
-### Expected Introspection Response
+### Expected Introspection Responses
+
+#### Root Fields (`IntrospectAnalyticsRootFields`)
 ```json
 {
   "data": {
@@ -143,20 +138,11 @@ query IntrospectAnalyticsTypes {
               { "name": "args" }
             ],
             "type": {
+              "name": null,
               "kind": "LIST",
               "ofType": {
                 "name": "escrow_analytics_by_day",
-                "kind": "OBJECT",
-                "fields": [
-                  { "name": "day", "type": { "name": "date" } },
-                  { "name": "webhook_records", "type": { "name": "bigint" } },
-                  { "name": "lifecycle_events", "type": { "name": "bigint" } },
-                  { "name": "processed_events", "type": { "name": "bigint" } },
-                  { "name": "last_active_users", "type": { "name": "bigint" } },
-                  { "name": "escrows_created", "type": { "name": "bigint" } },
-                  { "name": "cohort_active_escrows", "type": { "name": "bigint" } },
-                  { "name": "cohort_active_value_usdc", "type": { "name": "numeric" } }
-                ]
+                "kind": "OBJECT"
               }
             }
           },
@@ -166,23 +152,50 @@ query IntrospectAnalyticsTypes {
               { "name": "args" }
             ],
             "type": {
+              "name": null,
               "kind": "LIST",
               "ofType": {
                 "name": "escrow_status_summary",
-                "kind": "OBJECT",
-                "fields": [
-                  { "name": "total_escrows", "type": { "name": "bigint" } },
-                  { "name": "active_escrows", "type": { "name": "bigint" } },
-                  { "name": "completed_escrows", "type": { "name": "bigint" } },
-                  { "name": "disputed_escrows", "type": { "name": "bigint" } },
-                  { "name": "total_value_usdc", "type": { "name": "numeric" } },
-                  { "name": "pending_value_usdc", "type": { "name": "numeric" } }
-                ]
+                "kind": "OBJECT"
               }
             }
           }
         ]
       }
+    }
+  }
+}
+```
+
+#### Return Object Types (`IntrospectAnalyticsTypes`)
+```json
+{
+  "data": {
+    "analyticsByDay": {
+      "name": "escrow_analytics_by_day",
+      "kind": "OBJECT",
+      "fields": [
+        { "name": "day", "type": { "name": "date", "kind": "SCALAR" } },
+        { "name": "webhook_records", "type": { "name": "bigint", "kind": "SCALAR" } },
+        { "name": "lifecycle_events", "type": { "name": "bigint", "kind": "SCALAR" } },
+        { "name": "processed_events", "type": { "name": "bigint", "kind": "SCALAR" } },
+        { "name": "last_active_users", "type": { "name": "bigint", "kind": "SCALAR" } },
+        { "name": "escrows_created", "type": { "name": "bigint", "kind": "SCALAR" } },
+        { "name": "cohort_active_escrows", "type": { "name": "bigint", "kind": "SCALAR" } },
+        { "name": "cohort_active_value_usdc", "type": { "name": "numeric", "kind": "SCALAR" } }
+      ]
+    },
+    "statusSummary": {
+      "name": "escrow_status_summary",
+      "kind": "OBJECT",
+      "fields": [
+        { "name": "total_escrows", "type": { "name": "bigint", "kind": "SCALAR" } },
+        { "name": "active_escrows", "type": { "name": "bigint", "kind": "SCALAR" } },
+        { "name": "completed_escrows", "type": { "name": "bigint", "kind": "SCALAR" } },
+        { "name": "disputed_escrows", "type": { "name": "bigint", "kind": "SCALAR" } },
+        { "name": "total_value_usdc", "type": { "name": "numeric", "kind": "SCALAR" } },
+        { "name": "pending_value_usdc", "type": { "name": "numeric", "kind": "SCALAR" } }
+      ]
     }
   }
 }
@@ -309,7 +322,7 @@ query HostEscrowSummary {
 ```
 
 > [!NOTE]
-> If a `host` supplies `tenant_id_input: "hotel_industry"`, the request must either return an authorization error or return isolated data without leaking records from `hotel_industry`.
+> If a `host` supplies `tenant_id_input: "hotel_industry"`, the database function enforces the authenticated session tenant boundary (`hasura.user`): cross-tenant queries return zeroed isolated aggregates without leaking any records from `hotel_industry`.
 
 ### C. Anonymous Role (`anonymous`)
 Unauthenticated clients must be rejected by Hasura.
