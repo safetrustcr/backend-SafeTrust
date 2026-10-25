@@ -11,3 +11,15 @@ select_permissions:
       columns: "*"
       filter: {}
       allow_aggregations: true
+  - role: host
+    permission:
+      columns:
+        - total_escrows
+        - active_escrows
+        - completed_escrows
+        - disputed_escrows
+        - total_value_usdc
+        - pending_value_usdc
+      filter: {}
+      query_root_fields: []
+      subscription_root_fields: []
