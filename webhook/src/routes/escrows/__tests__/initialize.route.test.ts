@@ -1,7 +1,10 @@
 import request from 'supertest'
 import express from 'express'
+import router from '../initialize.route'
+import signatureMiddleware from '../../../middleware/trustlesswork-signature.middleware'
+import { setX402Addon } from '../../../middleware/x402-payment.middleware'
 
-jest.mock('../../../crates/x402-processor', () => ({
+const mockAddon = {
   buildPaymentRequirement: jest.fn((amountUsdc, network, facilitatorUrl, payTo) =>
     JSON.stringify({
       scheme: 'exact',
@@ -15,7 +18,7 @@ jest.mock('../../../crates/x402-processor', () => ({
   validateX402Payment: jest.fn(() =>
     JSON.stringify({ is_valid: false, invalid_reason: 'Invalid payment header' })
   ),
-}), { virtual: true })
+}
 
 jest.mock('../../../services/hasura', () => ({
   hasuraRequest: jest.fn().mockResolvedValue({}),
@@ -37,29 +40,26 @@ jest.mock('../../../middleware/trustlesswork-signature.middleware', () => ({
 
 describe('initialize.route with x402 payment gate', () => {
   const originalEnv = process.env
+  const app = express()
+  app.use(express.json())
+  app.use(router)
 
   beforeAll(() => {
-    jest.setTimeout(30000)
+    setX402Addon(mockAddon)
   })
 
   beforeEach(() => {
-    jest.resetModules()
+    jest.clearAllMocks()
     process.env = { ...originalEnv }
   })
 
   afterAll(() => {
+    setX402Addon(undefined as any)
     process.env = originalEnv
   })
 
   it('uses TrustlessWork signature verification when x402 is disabled and a signature header is present', async () => {
     process.env.X402_ENABLED = 'false'
-    const router = require('../initialize.route').default
-    const signatureMiddleware =
-      require('../../../middleware/trustlesswork-signature.middleware').default
-
-    const app = express()
-    app.use(express.json())
-    app.use(router)
 
     await request(app)
       .post('/api/escrows/initialize')
@@ -71,13 +71,7 @@ describe('initialize.route with x402 payment gate', () => {
 
   it('returns 503 when x402 is disabled and no TrustlessWork signature is present', async () => {
     process.env.X402_ENABLED = 'false'
-    const router = require('../initialize.route').default
 
-    const app = express()
-    app.use(express.json())
-    app.use(router)
-
-    // No payment or TrustlessWork signature must not reach the handler.
     const res = await request(app)
       .post('/api/escrows/initialize')
       .send({})
@@ -89,11 +83,6 @@ describe('initialize.route with x402 payment gate', () => {
 
   it('fails closed when an X-Payment header is sent while x402 is disabled', async () => {
     process.env.X402_ENABLED = 'false'
-    const router = require('../initialize.route').default
-
-    const app = express()
-    app.use(express.json())
-    app.use(router)
 
     const res = await request(app)
       .post('/api/escrows/initialize')
@@ -108,11 +97,6 @@ describe('initialize.route with x402 payment gate', () => {
   it('enforces 402 payment when X402_ENABLED is true and X-Payment is missing', async () => {
     process.env.X402_ENABLED = 'true'
     process.env.SAFETRUST_PLATFORM_WALLET = 'GTESTPLATFORMWALLET'
-    const router = require('../initialize.route').default
-
-    const app = express()
-    app.use(express.json())
-    app.use(router)
 
     const res = await request(app)
       .post('/api/escrows/initialize')
@@ -130,11 +114,6 @@ describe('initialize.route with x402 payment gate', () => {
   it('returns 402 with invalid_reason when X402_ENABLED is true and X-Payment is invalid', async () => {
     process.env.X402_ENABLED = 'true'
     process.env.SAFETRUST_PLATFORM_WALLET = 'GTESTPLATFORMWALLET'
-    const router = require('../initialize.route').default
-
-    const app = express()
-    app.use(express.json())
-    app.use(router)
 
     const res = await request(app)
       .post('/api/escrows/initialize')
@@ -143,6 +122,6 @@ describe('initialize.route with x402 payment gate', () => {
 
     expect(res.status).toBe(402)
     expect(res.body.error).toBe('Invalid x402 payment')
-    expect(res.body.invalid_reason).toBeTruthy()
+    expect(res.body.invalid_reason).toBe('Invalid payment header')
   })
 })
