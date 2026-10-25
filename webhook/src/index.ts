@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import { initializeFirebaseAdmin } from './config/firebase-admin'
 
 try {
