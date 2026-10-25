@@ -118,7 +118,7 @@ try {
 export const CANONICAL_TRANSITIONS: Record<string, readonly string[]> = {
   created: ['funded', 'cancelled'],
   pending_funding: ['created', 'funded', 'cancelled'],
-  funded: ['active', 'milestone_approved', 'disputed', 'cancelled'],
+  funded: ['active', 'milestone_approved', 'completed', 'disputed', 'cancelled'],
   active: ['milestone_approved', 'disputed'],
   milestone_approved: ['completed', 'disputed'],
   disputed: ['resolved', 'cancelled'],

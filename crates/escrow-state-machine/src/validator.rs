@@ -91,41 +91,14 @@ mod tests {
 
     #[test]
     fn valid_transitions_are_recognized() {
-        assert!(is_valid_transition(
-            &S::Created,
-            &S::Funded,
-            &E::EscrowFunded
-        ));
-        assert!(is_valid_transition(
-            &S::PendingFunding,
-            &S::Funded,
-            &E::EscrowFunded
-        ));
-        assert!(is_valid_transition(
-            &S::Funded,
-            &S::Active,
-            &E::EscrowFunded
-        ));
-        assert!(is_valid_transition(
-            &S::Funded,
-            &S::MilestoneApproved,
-            &E::MilestoneApproved
-        ));
-        assert!(is_valid_transition(
-            &S::MilestoneApproved,
-            &S::Completed,
-            &E::FundsReleased
-        ));
-        assert!(is_valid_transition(
-            &S::Funded,
-            &S::Disputed,
-            &E::DisputeRaised
-        ));
-        assert!(is_valid_transition(
-            &S::Disputed,
-            &S::Resolved,
-            &E::DisputeResolved
-        ));
+        assert!(is_valid_transition(&S::Created, &S::Funded, &E::EscrowFunded));
+        assert!(is_valid_transition(&S::PendingFunding, &S::Funded, &E::EscrowFunded));
+        assert!(is_valid_transition(&S::Funded, &S::Active, &E::EscrowFunded));
+        assert!(is_valid_transition(&S::Funded, &S::MilestoneApproved, &E::MilestoneApproved));
+        assert!(is_valid_transition(&S::MilestoneApproved, &S::Completed, &E::FundsReleased));
+        assert!(is_valid_transition(&S::Funded, &S::Completed, &E::FundsReleased));
+        assert!(is_valid_transition(&S::Funded, &S::Disputed, &E::DisputeRaised));
+        assert!(is_valid_transition(&S::Disputed, &S::Resolved, &E::DisputeResolved));
         // A dispute may end with funds returned to the tenant.
         assert!(is_valid_transition(
             &S::Disputed,
@@ -137,17 +110,9 @@ mod tests {
     #[test]
     fn illegal_transitions_are_rejected() {
         // completed → created is not a legal transition
-        assert!(!is_valid_transition(
-            &S::Completed,
-            &S::Created,
-            &E::EscrowInitialized
-        ));
-        // funded → completed is not a direct transition
-        assert!(!is_valid_transition(
-            &S::Funded,
-            &S::Completed,
-            &E::FundsReleased
-        ));
+        assert!(!is_valid_transition(&S::Completed, &S::Created, &E::EscrowInitialized));
+        // created → completed is not a direct transition
+        assert!(!is_valid_transition(&S::Created, &S::Completed, &E::FundsReleased));
         // wrong event
         assert!(!is_valid_transition(
             &S::Funded,
@@ -216,6 +181,7 @@ mod tests {
     fn can_transition_status_valid_lifecycle() {
         assert!(can_transition_status(&S::Created, &S::Funded));
         assert!(can_transition_status(&S::Funded, &S::Active));
+        assert!(can_transition_status(&S::Funded, &S::Completed));
         assert!(can_transition_status(&S::Active, &S::MilestoneApproved));
         assert!(can_transition_status(&S::MilestoneApproved, &S::Completed));
         assert!(can_transition_status(&S::Funded, &S::Disputed));

@@ -25,4 +25,5 @@ export enum EscrowEventType {
   FundsReleased = 'funds.released',
   DisputeOpened = 'dispute.raised',
   DisputeResolved = 'dispute.resolved',
+  Cancelled = 'escrow.cancelled',
 }

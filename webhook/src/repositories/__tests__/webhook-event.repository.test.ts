@@ -75,6 +75,23 @@ describe('webhook-event.repository', () => {
     expect(mockClient.query.mock.calls[1][0]).toContain('ON CONFLICT')
   })
 
+  it('reports whether a duplicate event was already processed', async () => {
+    mockClient.query
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'evt-failed', processed: false }] })
+      .mockResolvedValueOnce({})
+
+    const result = await logAndCheckWebhookEvent(
+      'contract-1',
+      'escrow.initialized',
+      { amount: 100 }
+    )
+
+    expect(result).toEqual({ isDuplicate: true, eventId: 'evt-failed', processed: false })
+    expect(mockClient.query.mock.calls[2][0]).toContain('SELECT id, processed')
+  })
+
   it('processes one state mutation for concurrent deliveries of the same event', async () => {
     const firstClient = {
       query: jest.fn()

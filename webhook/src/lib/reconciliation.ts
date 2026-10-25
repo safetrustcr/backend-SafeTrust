@@ -478,49 +478,84 @@ export function chunkArray<T>(arr: T[], size: number): T[][] {
  * @param headers Additional request headers.
  * @returns Parsed JSON response body.
  */
-function httpGet(url: string, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url)
-    const transport = parsed.protocol === 'https:' ? https : http
+function httpGet(
+  url: string,
+  headers: Record<string, string> = {},
+  retries = 3,
+  delayMs = 250,
+  maxTotalTimeoutMs = 45_000
+): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + maxTotalTimeoutMs
 
-    const options = {
-      hostname: parsed.hostname,
-      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-      path: `${parsed.pathname}${parsed.search}`,
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(TW_API_KEY ? { 'x-api-key': TW_API_KEY } : {}),
-        ...headers,
-      },
+  const attempt = (attemptsLeft: number, currentDelay: number): Promise<Record<string, unknown>> => {
+    const remainingTime = deadline - Date.now()
+    if (remainingTime <= 0) {
+      return Promise.reject(new Error(`TrustlessWork API request exceeded total budget of ${maxTotalTimeoutMs} ms`))
     }
 
-    const req = transport.request(options, (res) => {
-      let raw = ''
-      res.setEncoding('utf8')
-      res.on('data', (chunk: string) => { raw += chunk })
-      res.on('end', () => {
-        if (res.statusCode! < 200 || res.statusCode! >= 300) {
-          return reject(
-            new Error(
-              `TrustlessWork API responded with status ${res.statusCode}: ${raw}`
+    return new Promise((resolve, reject) => {
+      const parsed = new URL(url)
+      const transport = parsed.protocol === 'https:' ? https : http
+
+      const options = {
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        path: `${parsed.pathname}${parsed.search}`,
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(TW_API_KEY ? { 'x-api-key': TW_API_KEY } : {}),
+          ...headers,
+        },
+      }
+
+      const reqTimeout = Math.min(30_000, Math.max(1_000, remainingTime))
+
+      const req = transport.request(options, (res) => {
+        let raw = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk: string) => { raw += chunk })
+        res.on('end', () => {
+          const status = res.statusCode || 0
+          if (status >= 500 && attemptsLeft > 0 && Date.now() + currentDelay < deadline) {
+            return setTimeout(() => {
+              attempt(attemptsLeft - 1, currentDelay * 2).then(resolve, reject)
+            }, currentDelay)
+          }
+
+          if (status < 200 || status >= 300) {
+            return reject(
+              new Error(
+                `TrustlessWork API responded with status ${res.statusCode}: ${raw}`
+              )
             )
-          )
-        }
-        try {
-          resolve(JSON.parse(raw))
-        } catch (e) {
-          reject(new Error(`Failed to parse TrustlessWork API response: ${(e as Error).message}`))
+          }
+          try {
+            resolve(JSON.parse(raw))
+          } catch (e) {
+            reject(new Error(`Failed to parse TrustlessWork API response: ${(e as Error).message}`))
+          }
+        })
+      })
+
+      req.on('error', (err) => {
+        if (attemptsLeft > 0 && Date.now() + currentDelay < deadline) {
+          setTimeout(() => {
+            attempt(attemptsLeft - 1, currentDelay * 2).then(resolve, reject)
+          }, currentDelay)
+        } else {
+          reject(err)
         }
       })
-    })
 
-    req.on('error', reject)
-    req.setTimeout(30_000, () => {
-      req.destroy(new Error('TrustlessWork API request timed out after 30 s'))
+      req.setTimeout(reqTimeout, () => {
+        req.destroy(new Error(`TrustlessWork API request timed out after ${reqTimeout} ms`))
+      })
+      req.end()
     })
-    req.end()
-  })
+  }
+
+  return attempt(retries, delayMs)
 }
 
 /**
@@ -1081,3 +1116,47 @@ export async function reconcileEscrowAtomic(
   }
 }
 
+// ─── Durable Retry Helpers ───────────────────────────────────────────────────
+
+/**
+ * Calculates exponential backoff bounded by maxMs.
+ * Formula: min(baseMs * 2^(attemptCount - 1), maxMs)
+ */
+export function calculateRetryBackoff(
+  attemptCount: number,
+  baseMs = 1000,
+  maxMs = 300_000
+): number {
+  if (attemptCount <= 0) return 0
+  const exp = Math.min(attemptCount - 1, 30)
+  const delay = baseMs * Math.pow(2, exp)
+  return Math.min(delay, maxMs)
+}
+
+/**
+ * Fetches pending confirmation retries that are scheduled for execution.
+ */
+export async function fetchPendingConfirmationRetries(limit = 50): Promise<Array<{
+  id: string
+  tx_hash: string
+  escrow_id: string
+  escrow_action: string
+  network: string
+  submission_path: string
+  attempt_count: number
+  max_attempts: number
+  next_retry_at: string
+  last_error: string | null
+}>> {
+  const { rows } = await db.query<any>(
+    `SELECT id, tx_hash, escrow_id, escrow_action, network, submission_path,
+            attempt_count, max_attempts, next_retry_at, last_error
+       FROM safetrust.escrow_confirmation_retries
+      WHERE status = 'retrying'
+        AND next_retry_at <= NOW()
+      ORDER BY next_retry_at ASC
+      LIMIT $1`,
+    [limit]
+  )
+  return rows
+}

@@ -42,6 +42,14 @@ import {
   IncomingEscrowObservation,
   StoredEscrowState,
 } from '../lib/escrow-freshness'
+import {
+  getValidPriorStates,
+  StateConflictError,
+  StaleStateError,
+} from '../lib/escrow-transitions'
+import { EscrowStatus as CanonicalStatus, EscrowEventType } from '../types/escrow.types'
+
+export { StateConflictError, StaleStateError }
 
 export type EscrowStatus =
   | 'created'
@@ -58,6 +66,7 @@ export interface TrustlessWorkEscrow {
   status: EscrowStatus
   balance?: number
   createdAt?: string
+  tenantId?: string
 }
 
 export interface CreateEscrowInput {
@@ -81,6 +90,12 @@ export interface CreateEscrowInput {
   bookingMetadata?: unknown
 }
 
+/**
+ * Retrieves an escrow record by its on-chain contract ID.
+ *
+ * @param contractId - On-chain contract identifier
+ * @returns Escrow record if found, or null
+ */
 export async function getEscrowByContractId(
   contractId: string
 ): Promise<TrustlessWorkEscrow | null> {
@@ -92,6 +107,7 @@ export async function getEscrowByContractId(
         status
         balance
         createdAt
+        tenantId
       }
     }
   `
@@ -103,6 +119,7 @@ export async function getEscrowByContractId(
       status: string
       balance?: number
       createdAt?: string
+      tenantId?: string
     }>
   }>(query, { contractId })
 
@@ -117,17 +134,36 @@ export async function getEscrowByContractId(
     status: escrow.status,
     balance: escrow.balance,
     createdAt: escrow.createdAt,
+    tenantId: escrow.tenantId,
   }
 }
 
+/**
+ * Guarded status updater for escrow records.
+ *
+ * Audit Note (ARCH-A5):
+ * Every canonical lifecycle status mutation MUST supply validPriorStates to
+ * enforce the state machine transition table. An atomic status guard is
+ * always applied and StateConflictError is thrown if 0 rows are affected.
+ * (Reconciliation uses separate, explicitly documented UPSERT overrides.)
+ *
+ * @param contractId - On-chain contract identifier
+ * @param status - Target escrow status
+ * @param validPriorStates - Allowed prior statuses (required guard)
+ * @throws StateConflictError if 0 rows match the contractId and validPriorStates
+ */
 export async function updateEscrowStatus(
   contractId: string,
-  status: EscrowStatus
+  status: EscrowStatus,
+  validPriorStates: string[]
 ): Promise<void> {
   const mutation = `
-    mutation UpdateEscrowStatus($contractId: String!, $status: String!) {
+    mutation UpdateEscrowStatusWithGuard($contractId: String!, $status: String!, $validStates: [String!]!) {
       update_trustless_work_escrows(
-        where: { contractId: { _eq: $contractId } }
+        where: {
+          contractId: { _eq: $contractId }
+          status: { _in: $validStates }
+        }
         _set: { status: $status }
       ) {
         affected_rows
@@ -135,9 +171,25 @@ export async function updateEscrowStatus(
     }
   `
 
-  await hasuraRequest(mutation, { contractId, status })
+  const variables = { contractId, status, validStates: validPriorStates }
+
+  const data = await hasuraRequest<{
+    update_trustless_work_escrows?: { affected_rows: number }
+  }>(mutation, variables)
+
+  if (!data?.update_trustless_work_escrows?.affected_rows || data.update_trustless_work_escrows.affected_rows === 0) {
+    throw new StateConflictError(
+      `Escrow cannot transition to ${status}: contractId '${contractId}' not found or current status not in [${validPriorStates.join(', ')}]`
+    )
+  }
 }
 
+/**
+ * Inserts a new escrow record in the database.
+ *
+ * @param object - Escrow creation payload
+ * @returns The newly created escrow record, or null on failure
+ */
 export async function createEscrow(
   object: CreateEscrowInput
 ): Promise<TrustlessWorkEscrow | null> {
@@ -174,6 +226,15 @@ export async function createEscrow(
   }
 }
 
+/**
+ * Approves a specific milestone for an escrow.
+ *
+ * @param escrowId - Internal UUID of the escrow
+ * @param milestoneId - Identifier of the milestone
+ * @param approver - Address or identity of the approver
+ * @param approvedAt - ISO timestamp of approval
+ * @returns Boolean indicating whether any rows were updated
+ */
 export async function approveMilestone(
   escrowId: string,
   milestoneId: string,
@@ -211,6 +272,14 @@ export async function approveMilestone(
   return Boolean(data?.update_escrow_milestones?.affected_rows)
 }
 
+/**
+ * Transitions an escrow's status to milestone_approved with a prior-state guard.
+ *
+ * @param escrowId - Internal UUID of the escrow
+ * @param approvedAt - ISO timestamp of approval
+ * @param validStates - Allowed prior statuses
+ * @returns Boolean indicating whether any rows were updated
+ */
 export async function approveEscrowStatus(
   escrowId: string,
   approvedAt: string,
@@ -240,6 +309,14 @@ export async function approveEscrowStatus(
   return Boolean(data?.update_trustless_work_escrows?.affected_rows)
 }
 
+/**
+ * Updates an escrow status to funded with a prior-state guard via GraphQL mutation.
+ *
+ * @param contractId - On-chain contract identifier
+ * @param amount - Deposit amount to set as balance
+ * @param validStates - Allowed prior statuses
+ * @returns Updated escrow record or null
+ */
 export async function fundEscrow(
   contractId: string,
   amount: number,
@@ -286,6 +363,15 @@ export async function fundEscrow(
   }
 }
 
+/**
+ * Updates an escrow status to funded with a prior-state guard within an existing PostgreSQL transaction.
+ *
+ * @param client - PostgreSQL pool client
+ * @param contractId - On-chain contract identifier
+ * @param amount - Deposit amount to set as balance
+ * @param validStates - Allowed prior statuses
+ * @returns Updated escrow record or null
+ */
 export async function fundEscrowInTransaction(
   client: PoolClient,
   contractId: string,
@@ -318,13 +404,35 @@ export async function fundEscrowInTransaction(
     : null
 }
 
+/**
+ * Releases funds and transitions an escrow status to completed with a prior-state guard.
+ * Throws StateConflictError if no row matches the allowed prior states.
+ *
+ * @param contractId - On-chain contract identifier
+ * @param validStates - Optional allowed prior statuses; defaults to canonical valid states
+ * @returns Updated escrow record
+ * @throws StateConflictError if the escrow cannot transition to completed
+ */
 export async function releaseFunds(
-  contractId: string
-): Promise<TrustlessWorkEscrow | null> {
+  contractId: string,
+  validStates?: string[]
+): Promise<TrustlessWorkEscrow> {
+  const canonicalPriorStates = getValidPriorStates(
+    CanonicalStatus.Completed,
+    EscrowEventType.FundsReleased
+  )
+  const allowedPriorStates =
+    validStates === undefined
+      ? canonicalPriorStates
+      : validStates.filter((state) => canonicalPriorStates.includes(state))
+
   const mutation = `
-    mutation ReleaseFunds($contractId: String!) {
+    mutation ReleaseFunds($contractId: String!, $validStates: [String!]!) {
       update_trustless_work_escrows(
-        where: { contractId: { _eq: $contractId } }
+        where: {
+          contractId: { _eq: $contractId }
+          status: { _in: $validStates }
+        }
         _set: {
           status: "completed"
           balance: 0
@@ -339,11 +447,13 @@ export async function releaseFunds(
     update_trustless_work_escrows?: {
       returning: Array<{ id: string; contractId: string; status: string; balance: number }>
     }
-  }>(mutation, { contractId })
+  }>(mutation, { contractId, validStates: allowedPriorStates })
 
   const updated = data?.update_trustless_work_escrows?.returning?.[0]
   if (!updated) {
-    return null
+    throw new StateConflictError(
+      `Escrow cannot transition to completed: contractId '${contractId}' not found or current status not in [${allowedPriorStates.join(', ')}]`
+    )
   }
 
   return {
@@ -354,6 +464,14 @@ export async function releaseFunds(
   }
 }
 
+/**
+ * Releases funds and transitions an escrow to completed with a prior-state guard in a transaction.
+ *
+ * @param client - PostgreSQL pool client
+ * @param contractId - On-chain contract identifier
+ * @param validStates - Allowed prior statuses
+ * @returns Updated escrow record or null
+ */
 export async function releaseFundsInTransaction(
   client: PoolClient,
   contractId: string,
@@ -385,6 +503,13 @@ export async function releaseFundsInTransaction(
     : null
 }
 
+/**
+ * Transitions an escrow status to disputed with a prior-state guard.
+ *
+ * @param contractId - On-chain contract identifier
+ * @param validStates - Allowed prior statuses
+ * @returns Updated escrow record or null
+ */
 export async function disputeEscrow(
   contractId: string,
   validStates: string[]
@@ -423,6 +548,13 @@ export async function disputeEscrow(
   }
 }
 
+/**
+ * Transitions an escrow status to resolved with a prior-state guard.
+ *
+ * @param contractId - On-chain contract identifier
+ * @param validStates - Allowed prior statuses
+ * @returns Updated escrow record or null
+ */
 export async function resolveDispute(
   contractId: string,
   validStates: string[]
@@ -463,6 +595,13 @@ export async function resolveDispute(
   }
 }
 
+/**
+ * Appends a resolution note to an escrow's metadata.
+ *
+ * @param contractId - On-chain contract identifier
+ * @param note - Resolution note payload
+ * @returns Boolean indicating whether any rows were updated
+ */
 export async function appendResolutionNote(
   contractId: string,
   note: Record<string, unknown>

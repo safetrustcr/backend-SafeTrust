@@ -250,7 +250,7 @@ describe('syncAllChunks', () => {
       fakeReq.setTimeout = jest.fn();
       fakeReq.destroy = jest.fn();
       call += 1;
-      if (call === 2) {
+      if (call >= 2) {
         // Second chunk: emit a request error → syncChunk rejects → isolated.
         fakeReq.end = jest.fn(() =>
           process.nextTick(() => fakeReq.emit('error', new Error('ECONNREFUSED')))
