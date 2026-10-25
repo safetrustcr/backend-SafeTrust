@@ -39,11 +39,14 @@ import {
   chunkArray,
   CHUNK_SIZE,
   findStaleEscrows,
+  isRustBulkUpsertEnabled,
 } from '../lib/reconciliation'
 import {
   processPendingConfirmationRetries,
   ProcessRetriesSummary,
 } from './confirmation.service'
+
+export { isRustBulkUpsertEnabled }
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
