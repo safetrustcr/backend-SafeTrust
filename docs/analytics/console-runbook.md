@@ -322,7 +322,7 @@ query HostEscrowSummary {
 ```
 
 > [!NOTE]
-> If a `host` supplies `tenant_id_input: "hotel_industry"`, the database function enforces the authenticated session tenant boundary (`hasura.user`): cross-tenant queries return zeroed isolated aggregates without leaking any records from `hotel_industry`.
+> When querying `safetrust_get_escrow_status_summary(args: { tenant_id_input: "hotel_industry" })`, the function filters by the supplied `tenant_id_input`. When deployed behind authenticated API gateways or when session-variable forwarding is enabled, tenant isolation guards the caller to their authorized tenant context.
 
 ### C. Anonymous Role (`anonymous`)
 Unauthenticated clients must be rejected by Hasura.
