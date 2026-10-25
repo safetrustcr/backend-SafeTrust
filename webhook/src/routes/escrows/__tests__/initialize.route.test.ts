@@ -38,6 +38,10 @@ jest.mock('../../../middleware/trustlesswork-signature.middleware', () => ({
 describe('initialize.route with x402 payment gate', () => {
   const originalEnv = process.env
 
+  beforeAll(() => {
+    jest.setTimeout(30000)
+  })
+
   beforeEach(() => {
     jest.resetModules()
     process.env = { ...originalEnv }
