@@ -29,6 +29,7 @@
     "preset": "ts-jest",
     "testEnvironment": "node",
     "testTimeout": 30000,
+    "workerIdleMemoryLimit": "512MB",
     "roots": [
       "<rootDir>/src",
       "<rootDir>/tests"
