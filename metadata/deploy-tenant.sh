@@ -207,7 +207,12 @@ load_function_definitions() {
             {function: .function}
             + {
                 configuration: (
+                    # `exposed_as` is declared at the top level by most tenant
+                    # files, and inside `configuration` by others. Honor the
+                    # YAML value; forcing "query" here would silently deploy a
+                    # mutation-exposed function as a query.
                     (.configuration // {})
+                    + (if (.exposed_as? // "") == "" then {} else {exposed_as: .exposed_as} end)
                     | if has("exposed_as") then . else . + {exposed_as: "query"} end
                 )
               }
