@@ -674,6 +674,34 @@ assert_jq "fresh endpoint gains the tenant source, permissions, and relationship
     '([.sources[] | select(.name=="safetrust")] | length) == 1 and ([.sources[] | select(.name=="safetrust")][0].tables | map(select(.table.name=="apartments"))[0].select_permissions | length) == 2' \
     "$STATE/applied.json"
 
+# 10. Function metadata is deployed in the metadata API shape, and a YAML
+#     `exposed_as` is honored instead of being forced to "query".
+reset_state
+mkdir -p "$BUILD/safetrust/databases/functions"
+touch "$BUILD/safetrust/databases/functions/find_nearby_function.yaml"
+cat > "$FIXTURES/function-find_nearby_function.json" <<'JSON'
+{
+  "function": {"name": "find_nearby", "schema": "safetrust"},
+  "definition": "CREATE OR REPLACE FUNCTION safetrust.find_nearby() ...",
+  "description": "Documentation only, not a metadata field.",
+  "comment": "served as a mutation",
+  "permissions": [{"role": "user", "privilege": "EXECUTE"}],
+  "exposed_as": "mutation"
+}
+JSON
+run_deploy safetrust "$TMP_ROOT/out-10.log"
+
+assert_eq 0 "$STATUS" "function metadata deploy succeeds"
+assert_jq "YAML exposed_as is deployed instead of being forced to query" \
+    '[.sources[] | select(.name=="safetrust")][0].functions | map(select(.function.name=="find_nearby"))[0].configuration.exposed_as == "mutation"' \
+    "$STATE/applied.json"
+assert_jq "function permissions are sent in the metadata API shape" \
+    '[.sources[] | select(.name=="safetrust")][0].functions | map(select(.function.name=="find_nearby"))[0].permissions == [{"role":"user"}]' \
+    "$STATE/applied.json"
+assert_jq "SQL definition and description are not sent as metadata" \
+    '([.sources[] | select(.name=="safetrust")][0].functions | map(select(.function.name=="find_nearby"))[0] | (has("definition") or has("description") or has("exposed_as")) | not)' \
+    "$STATE/applied.json"
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 if [[ "$FAIL" -ne 0 ]]; then

@@ -15,6 +15,12 @@
 
 It does **not** stop after registering tracked tables and functions.
 
+Shared metadata files under `metadata/base/` (actions, cron triggers, query
+collections, allow list) are not written from disk by this script. They are
+taken from the endpoint's exported document and preserved, which keeps an
+existing deployment intact. Bootstrapping a brand-new endpoint that has no
+shared metadata yet is a separate `hasura metadata apply` step.
+
 ## Why the old flow drifted
 
 The previous deployer skipped any table or function that Hasura already
@@ -133,6 +139,16 @@ HASURA_GRAPHQL_ADMIN_SECRET='<cloud-admin-secret>' \
 Before a Cloud deployment, ensure the target database has all migrations
 applied. The deployer refuses to continue otherwise. Do not put the admin
 secret in command output, issue text, or committed files.
+
+### Server-side environment variables
+
+The tenant metadata contains templates that Hasura resolves against the target
+project's environment: the escrow event trigger uses `{{WEBHOOK_BASE_URL}}`
+and `value_from_env: WEBHOOK_SECRET`. Define both on the target project
+(Cloud: project settings → environment variables) before deploying.
+`replace_metadata` runs with `allow_inconsistent_metadata: false`, so a missing
+variable fails the deployment with an explicit error instead of storing a
+broken template.
 
 ## Role verification controls
 
