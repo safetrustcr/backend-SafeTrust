@@ -18,10 +18,27 @@ jest.mock('../../src/services/hotel-conversation-notify', () => ({
   notifyHotelEscrowConversation: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock('../../src/services/db', () => ({
-  connect: jest.fn(),
-  pool: { connect: jest.fn() },
-}));
+jest.mock('../../src/services/db', () => {
+  const mockConnect = jest.fn();
+  return {
+    connect: mockConnect,
+    pool: { connect: mockConnect },
+    withTransaction: async (process: (client: any) => Promise<unknown>) => {
+      const client = await mockConnect();
+      await client.query('BEGIN');
+      try {
+        const result = await process(client);
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+  };
+});
 
 jest.mock('../../../crates/escrow-state-machine', () => ({
   getValidPriorStates: jest.fn((to: string, _event: string) => {
@@ -141,6 +158,11 @@ describe('Issue #705: Atomic Escrow Lifecycle & Rollback', () => {
 
       // Asserts 500 server error was returned to caller
       expect(res.status).toHaveBeenCalledWith(500);
+      const eventInsert = queryLog.find(({ text }) =>
+        text.includes('INSERT INTO safetrust.trustless_work_webhook_events')
+      );
+      expect(eventInsert?.text).toContain('event_identity');
+      expect(eventInsert?.params?.[2]).toEqual(expect.any(String));
 
       // Asserts escrow state was NOT committed: ROLLBACK was executed, COMMIT was NEVER called
       expect(timeline).toContain('BEGIN');

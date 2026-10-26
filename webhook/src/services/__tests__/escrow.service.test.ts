@@ -10,6 +10,7 @@ jest.mock('../../services/db', () => ({
 }));
 
 jest.mock('../../repositories/webhook-event.repository', () => ({
+  getWebhookEventIdentity: jest.fn(() => 'test-event-identity'),
   logAndCheckWebhookEvent: jest.fn(),
   markWebhookEventProcessed: jest.fn(),
 }));
@@ -128,6 +129,18 @@ describe('validateEscrowInitializationPayload', () => {
   it('rejects a zero escrow amount', () => {
     expect(() =>
       validateEscrowInitializationPayload(validBody({ amount: 0 }))
+    ).toThrow(EscrowValidationError);
+  });
+
+  it.each([
+    ['a non-numeric value', 'invalid'],
+    ['a non-finite value', Number.NaN],
+    ['an infinite value', Number.POSITIVE_INFINITY],
+    ['a zero value', 0],
+    ['a negative value', -1],
+  ])('rejects %s amounts', (_description, amount) => {
+    expect(() =>
+      validateEscrowInitializationPayload(validBody({ amount }))
     ).toThrow(EscrowValidationError);
   });
 
@@ -283,7 +296,7 @@ describe('initializeEscrow', () => {
       eventId: 'event-duplicate',
     });
 
-    const result = await initializeEscrow(validPayload(), validBody(), 'safetrust');
+    const result = await initializeEscrow(validBody(), 'safetrust');
 
     expect(result).toEqual({
       isDuplicate: true,
@@ -305,7 +318,7 @@ describe('initializeEscrow', () => {
       insert_trustless_work_escrows_one: escrowResponse,
     });
 
-    const result = await initializeEscrow(validPayload(), validBody(), 'safetrust');
+    const result = await initializeEscrow(validBody(), 'safetrust');
 
     expect(result).toEqual({
       isDuplicate: false,
@@ -328,13 +341,11 @@ describe('initializeEscrow', () => {
         update_reservations: { affected_rows: 1 },
       });
 
-    const payload = validPayload({
-      booking_metadata: { reservation_id: 'res-1' },
-    });
+    const body = validBody({ booking_metadata: { reservation_id: 'res-1' } });
 
     mockedQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'safetrust' }] } as any);
 
-    const result = await initializeEscrow(payload, validBody(), 'safetrust');
+    const result = await initializeEscrow(body, 'safetrust');
 
     expect(result).toEqual({
       isDuplicate: false,
@@ -358,8 +369,7 @@ describe('initializeEscrow', () => {
       .mockResolvedValueOnce({ update_reservations: { affected_rows: 1 } });
 
     await initializeEscrow(
-      validPayload({ booking_metadata: { reservation_id: 'res-1' } }),
-      validBody(),
+      validBody({ booking_metadata: { reservation_id: 'res-1' } }),
       'tenant-b'
     );
 
@@ -386,8 +396,7 @@ describe('initializeEscrow', () => {
 
     await expect(
       initializeEscrow(
-        validPayload({ booking_metadata: { reservation_id: 'res-missing' } }),
-        validBody(),
+        validBody({ booking_metadata: { reservation_id: 'res-missing' } }),
         'safetrust'
       )
     ).rejects.toBeInstanceOf(ReservationNotFoundError);
@@ -405,8 +414,7 @@ describe('initializeEscrow', () => {
 
     await expect(
       initializeEscrow(
-        validPayload({ booking_metadata: { reservation_id: 'res-1' } }),
-        validBody(),
+        validBody({ booking_metadata: { reservation_id: 'res-1' } }),
         'safetrust'
       )
     ).rejects.toBeInstanceOf(TenantMismatchError);
@@ -427,8 +435,7 @@ describe('initializeEscrow', () => {
       .mockResolvedValueOnce({ update_reservations: { affected_rows: 1 } });
 
     const result = await initializeEscrow(
-      validPayload({ booking_metadata: { reservation_id: 'res-1' } }),
-      validBody(),
+      validBody({ booking_metadata: { reservation_id: 'res-1' } }),
       'safetrust'
     );
 
@@ -450,8 +457,7 @@ describe('initializeEscrow', () => {
 
     await expect(
       initializeEscrow(
-        validPayload({ booking_metadata: { reservation_id: 'res-1' } }),
-        validBody(),
+        validBody({ booking_metadata: { reservation_id: 'res-1' } }),
         'safetrust'
       )
     ).rejects.toBeInstanceOf(TenantMismatchError);
@@ -470,7 +476,7 @@ describe('initializeEscrow', () => {
     );
 
     await expect(
-      initializeEscrow(validPayload(), validBody(), 'safetrust')
+      initializeEscrow(validBody(), 'safetrust')
     ).rejects.toThrow('Hasura request failed');
 
     expect(mockedMarkWebhookEventProcessed).not.toHaveBeenCalled();

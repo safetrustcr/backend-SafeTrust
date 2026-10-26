@@ -144,6 +144,7 @@ function main(): void {
     console.warn(
       `copy-native: warning: native library for ${crateName} was not found; skipping copy`
     )
+    process.exitCode = 1
     return
   }
 

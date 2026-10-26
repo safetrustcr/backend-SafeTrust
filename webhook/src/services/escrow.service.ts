@@ -10,6 +10,7 @@ import {
   linkEscrowToReservation,
 } from '../repositories/reservation.repository';
 import {
+  getWebhookEventIdentity,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
@@ -152,7 +153,7 @@ export function validateEscrowInitializationPayload(
   // 2 — Runtime type validation
   if (amountToStroops(amount) === null || typeof escrow_type !== 'string') {
     throw new EscrowValidationError(
-      'amount must be a number and escrow_type must be a string'
+      'amount must be a positive finite numeric value and escrow_type must be a string'
     );
   }
 
@@ -358,14 +359,14 @@ export async function linkReservationToEscrow(
  * Processes an escrow initialization webhook with idempotency protection.
  */
 export async function initializeEscrow(
-  payload: EscrowInitPayload,
-  rawPayload: Record<string, unknown>,
+  body: unknown,
   tenantId: string
 ): Promise<{ isDuplicate: boolean; eventId: string; escrow?: TrustlessWorkEscrow }> {
+  const payload = validateEscrowInitializationPayload(body);
   const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
     payload.contract_id,
     'escrow.initialized',
-    rawPayload
+    payload.raw as unknown as Record<string, unknown>
   );
 
   // Retry a duplicate whose earlier delivery failed part-way; persistEscrow
@@ -467,6 +468,12 @@ export async function executeEscrowLifecycleTransition(
     validPriorStates,
     tenantId = getPlatformTenantId(),
   } = params;
+  const eventIdentity = getWebhookEventIdentity(
+    contractId,
+    eventType,
+    rawPayload,
+    tenantId
+  );
 
   return withTransaction(async (client) => {
     // 1 — Advisory transaction lock prevents concurrent duplicate processing for this event
@@ -478,12 +485,11 @@ export async function executeEscrowLifecycleTransition(
     const existing = await client.query<{ id: string }>(
       `SELECT id
        FROM safetrust.trustless_work_webhook_events
-       WHERE contract_id = $1
-         AND event_type  = $2
+       WHERE tenant_id      = $1
+         AND event_identity = $2
          AND processed   = true
-         AND tenant_id   = $3
        LIMIT 1`,
-      [contractId, eventType, tenantId]
+      [tenantId, eventIdentity]
     );
 
     if (existing.rows.length > 0) {
@@ -498,12 +504,13 @@ export async function executeEscrowLifecycleTransition(
       `INSERT INTO safetrust.trustless_work_webhook_events (
          contract_id,
          event_type,
-         payload,
-         processed,
-         tenant_id
-       ) VALUES ($1, $2, $3, false, $4)
-       RETURNING id`,
-      [contractId, eventType, JSON.stringify(rawPayload), tenantId]
+        event_identity,
+        payload,
+        processed,
+        tenant_id
+      ) VALUES ($1, $2, $3, $4, false, $5)
+      RETURNING id`,
+      [contractId, eventType, eventIdentity, JSON.stringify(rawPayload), tenantId]
     );
     const eventId = insertedEvent.rows[0].id;
 
