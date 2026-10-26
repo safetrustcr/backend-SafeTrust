@@ -42,6 +42,7 @@ export async function withTransaction<T>(
   fn: (client: PoolClient) => Promise<T>
 ): Promise<T> {
   const client = await connect()
+  let releaseError: Error | undefined
   try {
     await client.query('BEGIN')
     const result = await fn(client)
@@ -52,10 +53,13 @@ export async function withTransaction<T>(
       await client.query('ROLLBACK')
     } catch (rollbackError) {
       console.error('[db] Failed to rollback transaction:', rollbackError)
+      // Rollback failed: the connection may still be in an aborted transaction.
+      // Pass the error to release() so pg discards it instead of pooling it.
+      releaseError = rollbackError as Error
     }
     throw error
   } finally {
-    client.release()
+    client.release(releaseError)
   }
 }
 

@@ -36,7 +36,7 @@
     ],
     "testMatch": [
       "**/__tests__/**/*.test.ts",
-      "**/*.test.ts"
+      "**/?(*.)+(spec|test).ts"
     ],
     "transform": {
       "^.+\\.tsx?$": "ts-jest"
