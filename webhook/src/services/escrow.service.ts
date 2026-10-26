@@ -130,7 +130,7 @@ export function validateEscrowInitializationPayload(
   // 2 — Runtime type validation
   if (amountToStroops(amount) === null || typeof escrow_type !== 'string') {
     throw new EscrowValidationError(
-      'amount must be a number and escrow_type must be a string'
+      'amount must be a positive finite numeric value and escrow_type must be a string'
     );
   }
 
@@ -336,14 +336,14 @@ export async function linkReservationToEscrow(
  * Processes an escrow initialization webhook with idempotency protection.
  */
 export async function initializeEscrow(
-  payload: EscrowInitPayload,
-  rawPayload: Record<string, unknown>,
+  body: unknown,
   tenantId: string
 ): Promise<{ isDuplicate: boolean; eventId: string; escrow?: TrustlessWorkEscrow }> {
+  const payload = validateEscrowInitializationPayload(body);
   const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
     payload.contract_id,
     'escrow.initialized',
-    rawPayload
+    payload.raw as unknown as Record<string, unknown>
   );
 
   // Retry a duplicate whose earlier delivery failed part-way; persistEscrow
