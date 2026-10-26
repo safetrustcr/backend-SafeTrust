@@ -119,6 +119,7 @@ function main() {
     }
     if (!source) {
         console.warn(`copy-native: warning: native library for ${crateName} was not found; skipping copy`);
+        process.exitCode = 1;
         return;
     }
     const destination = path.join(crateDir, config.destination);

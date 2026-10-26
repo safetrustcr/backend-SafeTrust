@@ -5,7 +5,7 @@
     "dev": "nodemon --exec ts-node src/index.ts",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit && tsc -p tsconfig.test.json && tsc -p ../tsconfig.crates.json --noEmit && tsc -p ../tests/karate/tsconfig.json --noEmit && tsc -p ../tests/karate/tsconfig.helpers.json --noEmit",
-    "test": "npm run build:tooling && jest",
+    "test": "npm run build:rust && jest",
     "test:ci": "npm run build:tooling && jest --runInBand --testPathIgnorePatterns=reconciliation-parallel.test.ts && jest --runInBand --runTestsByPath src/lib/__tests__/reconciliation-parallel.test.ts",
     "test:watch": "jest --watch",
     "build:tooling": "tsc -p ../tsconfig.crates.json",
