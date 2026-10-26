@@ -51,4 +51,34 @@ export async function connect(): Promise<PoolClient> {
   return pool.connect()
 }
 
-export default { query, connect, pool }
+/**
+ * Executes a callback within an atomic PostgreSQL transaction.
+ * Automatically issues BEGIN, COMMIT on success, or ROLLBACK on error,
+ * and guarantees the client is released back to the pool.
+ */
+export async function withTransaction<T>(
+  fn: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await connect()
+  let releaseError: Error | undefined
+  try {
+    await client.query('BEGIN')
+    const result = await fn(client)
+    await client.query('COMMIT')
+    return result
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK')
+    } catch (rollbackError) {
+      console.error('[db] Failed to rollback transaction:', rollbackError)
+      // Rollback failed: the connection may still be in an aborted transaction.
+      // Pass the error to release() so pg discards it instead of pooling it.
+      releaseError = rollbackError as Error
+    }
+    throw error
+  } finally {
+    client.release(releaseError)
+  }
+}
+
+export default { query, connect, pool, withTransaction }

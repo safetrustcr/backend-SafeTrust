@@ -6,12 +6,7 @@ object_relationships:
     using:
       foreign_key_constraint_on: bid_request_id
 select_permissions:
-  - role: anonymous
-    permission:
-      columns: []
-      filter: {}
-    comment: "Anonymous users cannot access bid history"
-  - role: user
+  - role: guest
     permission:
       columns:
         - id
@@ -22,13 +17,24 @@ select_permissions:
         - created_at
       filter:
         bid_request:
-          _or:
-            - tenant_id:
-                _eq: X-Hasura-User-Id
-            - apartment:
-                owner_id:
-                  _eq: X-Hasura-User-Id
-      comment: "Users can see status history for bids they made or on their apartments"
+          tenant_id:
+            _eq: X-Hasura-User-Id
+      comment: "Guests can see status history for their own offers"
+  - role: host
+    permission:
+      columns:
+        - id
+        - bid_request_id
+        - status
+        - notes
+        - changed_by
+        - created_at
+      filter:
+        bid_request:
+          apartment:
+            owner_id:
+              _eq: X-Hasura-User-Id
+      comment: "Hosts can see status history for bids on their apartments"
   - role: admin
     permission:
       columns: "*"

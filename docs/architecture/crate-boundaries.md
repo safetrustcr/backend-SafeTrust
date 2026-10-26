@@ -1,17 +1,18 @@
 # Rust Crate Boundaries and Integration Quarantine
 
-SafeTrust loads eight Rust crates into the Node.js webhook through Neon
-(Node-API v6). They are not one product: some are small, well-tested
-primitives, and two are incomplete integrations that must not be trusted with
-production state yet.
+The Cargo workspace contains eight functional Rust crates and one feature-gate
+package. Five functional crates are included in the default webhook build;
+`zk-verifier`, `x402-processor`, and `soroban-reconciler` are excluded until
+their prerequisites are resolved.
 
 This page records, for every crate, its responsibility, consumers, exports,
 fallback, build artifact, and disposition. It is the ownership boundary for the
 `crates/` workspace. For the high-level crate story, see
 [Rust crates in SafeTrust](./rust-crates.md).
 
-**No crate is deleted by this change.** Six crates are retained and hardened;
-two are quarantined and remain buildable behind explicit, default-off gates.
+**No crate is deleted by this change.** Five functional crates remain in the
+default build; the three quarantined crates remain available behind explicit,
+default-off Cargo feature gates.
 
 ---
 
@@ -19,17 +20,17 @@ two are quarantined and remain buildable behind explicit, default-off gates.
 
 ```mermaid
 flowchart TD
-    subgraph Retain and harden
-        C1[zk-verifier\nasync verifier + real vectors]
-        C2[stellar-utils\nwallet auth primitives]
-        C3[escrow-state-machine\nenforce transitions]
-        C4[webhook-verifier\nauthenticated producers only]
-        C5[chunk-processor\nbounded sync]
-        C6[pg-bulk-upsert\nordered upsert]
+    subgraph Default build
+        C1[stellar-utils\nwallet auth primitives]
+        C2[escrow-state-machine\nenforce transitions]
+        C3[webhook-verifier\nauthenticated producers only]
+        C4[chunk-processor\nbounded sync]
+        C5[pg-bulk-upsert\nordered upsert]
     end
     subgraph Quarantine and rebuild
-        C7[soroban-reconciler\ndisable fabricated reads]
-        C8[x402-processor\nisolate from eligibility path]
+        C6[zk-verifier\nESC-05 prerequisite]
+        C7[soroban-reconciler\nESC-02 prerequisite]
+        C8[x402-processor\nESC-05 prerequisite]
     end
 ```
 
@@ -50,20 +51,21 @@ flowchart TD
 
 | Crate | Native exports | Fallback when the addon is absent | Build script / deployment artifact |
 |---|---|---|---|
-| `zk-verifier` | `verifyProofOfFunds` | **None — fail closed.** `webhook/src/lib/zk-verifier.ts` throws `ZK_VERIFIER_UNAVAILABLE`, and the init handler returns `503`. | `npm run build:rust` → `cargo build --release --workspace` + `install-bb.js` + shared `scripts/copy-native.js`; artifact `crates/zk-verifier/index.node` and `bb`. |
-| `stellar-utils` | `validateStellarAddress`, `verifyStellarEd25519` | JS regex `^G[A-Z2-7]{55}$` in `sync-wallet.handler.ts` (weaker; native path keeps CRC/version checks). | Same workspace build + shared `scripts/copy-native.js`; artifact `crates/stellar-utils/native/index.node`. |
-| `escrow-state-machine` | `validateTransition`, `getValidPriorStates`, `getTransitionTable`, `getGraphqlFilter` | JS transition table in `crates/escrow-state-machine/index.ts` (same eight rules). | Workspace build + shared `scripts/copy-native.js`; artifact `crates/escrow-state-machine/index.node`. |
-| `webhook-verifier` | `verifyHmacSignature`, `validateStellarAddress` | `crates/webhook-verifier/fallback.ts` (Node `crypto`, same raw bytes, fail closed). | Workspace build + shared `scripts/copy-native.js`; artifact `crates/webhook-verifier/index.node`. |
-| `chunk-processor` | `processChunksParallel` | Sequential JS chunk loop in `reconciliation.ts`. | Workspace build + shared `scripts/copy-native.js`; artifact `crates/chunk-processor/index.node`. |
-| `pg-bulk-upsert` | `bulkUpsertEscrows` | Row-by-row `UPSERT_ESCROW_SQL` loop in `reconciliation.ts`. | Workspace build + shared `scripts/copy-native.js`; artifact `crates/pg-bulk-upsert/index.node`. |
-| `soroban-reconciler` | `queryEscrowStateBatch`, `reconcileBatch` | **None.** The service logs and skips the contract; the reader is disabled by default (see §4). | Workspace build + shared `scripts/copy-native.js`; artifact `crates/soroban-reconciler/native/index.node`. |
-| `x402-processor` | `validateX402Payment`, `buildPaymentRequirement` | JS fallback in `crates/x402-processor/index.ts` never returns `is_valid: true`; it fails closed. | Workspace build + shared `scripts/copy-native.js`; artifact `crates/x402-processor/index.node`. |
+| `zk-verifier` | `verifyProofOfFunds` | **None — fail closed.** `webhook/src/lib/zk-verifier.ts` logs the missing addon, throws `ZK_VERIFIER_UNAVAILABLE`, and the init handler returns `503`. | Excluded from the default build. Opt in with `cargo build --manifest-path crates/Cargo.toml -p safetrust-native-gates --features zk-verifier` after ESC-05; artifact is not copied into the default image. |
+| `stellar-utils` | `validateStellarAddress`, `verifyStellarEd25519` | JS regex `^G[A-Z2-7]{55}$` in `sync-wallet.handler.ts` (weaker; native path keeps CRC/version checks). | Default build + shared `scripts/copy-native.js`; artifact `crates/stellar-utils/native/index.node`. |
+| `escrow-state-machine` | `validateTransition`, `getValidPriorStates`, `getTransitionTable`, `getGraphqlFilter` | JS transition table in `crates/escrow-state-machine/index.ts` (same eight rules). | Default build + shared `scripts/copy-native.js`; artifact `crates/escrow-state-machine/index.node`. |
+| `webhook-verifier` | `verifyHmacSignature`, `validateStellarAddress` | `crates/webhook-verifier/fallback.ts` (Node `crypto`, same raw bytes, fail closed). | Default build + shared `scripts/copy-native.js`; artifact `crates/webhook-verifier/index.node`. |
+| `chunk-processor` | `processChunksParallel` | Sequential JS chunk loop in `reconciliation.ts`. | Default build + shared `scripts/copy-native.js`; artifact `crates/chunk-processor/index.node`. |
+| `pg-bulk-upsert` | `bulkUpsertEscrows` | Row-by-row `UPSERT_ESCROW_SQL` loop in `reconciliation.ts`. | Default build + shared `scripts/copy-native.js`; artifact `crates/pg-bulk-upsert/index.node`. |
+| `soroban-reconciler` | `queryEscrowStateBatch`, `reconcileBatch` | **None.** The service logs and skips the contract; the reader is disabled by default (see §4). | Excluded from the default build. Opt in with `cargo build --manifest-path crates/Cargo.toml -p safetrust-native-gates --features soroban-reconciler` only after ESC-02; artifact is not copied into the default image. |
+| `x402-processor` | `validateX402Payment`, `buildPaymentRequirement` | JS fallback in `crates/x402-processor/index.ts` never returns `is_valid: true`; it fails closed. | Excluded from the default build. Opt in with `cargo build --manifest-path crates/Cargo.toml -p safetrust-native-gates --features x402-processor` only after ESC-05; artifact is not copied into the default image. |
 
-The workspace manifest is [`crates/Cargo.toml`](../../crates/Cargo.toml). The
-production image runs `npm run build` in [`webhook/Dockerfile`](../../webhook/Dockerfile),
-which builds the whole workspace and copies each runtime artifact into the
-final stage. `crates/**/*.node` and `crates/**/native/` are build outputs and
-are intentionally git-ignored.
+The workspace and optional dependency feature map are in
+[`crates/Cargo.toml`](../../crates/Cargo.toml).
+The production image runs `npm run build` in
+[`webhook/Dockerfile`](../../webhook/Dockerfile), which builds only the default
+members and copies only their runtime artifacts. `crates/**/*.node` and
+`crates/**/native/` are build outputs and are intentionally git-ignored.
 
 ---
 
@@ -71,9 +73,6 @@ are intentionally git-ignored.
 
 ### Retain and harden
 
-- **`zk-verifier`** — retained. It performs a real UltraHonk verification with
-  a pinned Barretenberg version and fails closed when the addon is unavailable.
-  The verification key can be pinned with `ZK_PROOF_OF_FUNDS_VK_SHA256`.
 - **`stellar-utils`** — retained. It is the authoritative wallet-address check
   used during auth; the JS regex is a degraded fallback only.
 - **`escrow-state-machine`** — retained. It prevents handlers from requesting
@@ -91,52 +90,55 @@ are intentionally git-ignored.
 
 ### Quarantine and rebuild
 
+- **`zk-verifier`** — excluded from the default image until ESC-05 is closed.
+  The TypeScript consumer requires `ZK_ENABLED=true`, loads the addon lazily,
+  and enforces `ZK_PROOF_OF_FUNDS_VK_SHA256` outside development and test
+  environments; the feature remains default-off pending the remaining ESC-05
+  prerequisites.
 - **`soroban-reconciler`** — quarantined. The current reader does not read
   contract storage; it fabricates state. The reader is disabled by default and
-  the pure diff engine is retained (see §4).
+  the pure diff engine is retained (see §4). ESC-02 must establish an
+  authoritative state source before it is re-enabled.
 - **`x402-processor`** — quarantined. Findings F2, F3, and F8 remain
   unresolved, and payment success must not grant booking eligibility. It is
   isolated from the eligibility path and settlement is default-off (see §6).
+  ESC-05 must be closed before it is re-enabled.
 
 ---
 
-## 4. `soroban-reconciler`: fabricated reads are disabled
+## 4. `soroban-reconciler`: validated read adapter & fabricated state removal
 
-`query_escrow_state()` has two unsafe behaviors:
+Security Review Finding F1 identified that `query_escrow_state()` previously
+fabricated on-chain escrow state by returning hardcoded values (`ACTIVE`,
+`1_000_000_000` stroops) whenever `getHealth` returned healthy, or for any `mock_`
+or `test_` prefixed identifier. When `SOROBAN_VALIDATION_ENABLED=true` was set,
+this drove automated mutations that corrupted database records.
 
-1. Contract ids starting with `mock_` or `test_` return a hardcoded
-   `ACTIVE` / `1_000_000_000` state.
-2. Every other id performs only a `getHealth` JSON-RPC call, then returns the
-   same hardcoded state. It never reads the escrow contract's ledger entry.
+Issue #659 completely removes fabricated responses and replaces them with a
+validated read adapter:
 
-If `SOROBAN_VALIDATION_ENABLED=true`, `validateSorobanDrift()` treats that
-state as chain truth and can auto-correct `trustless_work_escrows` to the
-fabricated status/balance. That is a data-integrity failure, so the behavior is
-disabled at two levels:
+- **Removal of fabrication:** `getHealth` alone never returns escrow state or
+  triggers database updates. Node reachability does not establish contract state.
+- **Prohibition of shortcuts:** Production code paths reject `mock_` and `test_`
+  identifiers. Contract IDs must be valid 56-character base32 Stellar Contract
+  StrKeys (`C...` format), verified via `stellar_strkey`.
+- **Network identity verification:** The adapter validates network passphrases
+  against canonical constants (`testnet` vs `mainnet`), rejecting cross-network
+  queries.
+- **Exact asset amounts:** All balances are parsed into exact integer Stroops
+  (10^7 Stroops = 1 token unit). Float threshold comparisons (`.abs() > 0.0001`)
+  are replaced with exact integer diffs.
+- **Bounded timeouts:** All network calls have a strict 5-second timeout.
+- **The "preserve last confirmed" rule:** When external sources are unavailable
+  or return unrecognized shapes, last confirmed DB values are preserved and
+  flagged as unresolved — never silently overwritten with defaults.
+- **Automated corrections disabled:** Automatic database mutations are disabled
+  by default (`SOROBAN_AUTO_CORRECT_ENABLED=false`).
 
-- **Compile time:** the `unvalidated-reader` Cargo feature is **not** in
-  `default`. A normal workspace build contains only the error path.
-- **Runtime:** even a build with the feature must set
-  `SOROBAN_RECONCILER_ALLOW_UNVALIDATED=true`. Otherwise the reader returns a
-  descriptive error and the service logs/skips that contract.
+For the full decision record, gap analysis between Trustless Work API and direct
+Stellar RPC reads, and adapter validation boundary diagrams, see
+[Escrow State Source](../stellar/escrow-state-source.md).
 
-`SOROBAN_VALIDATION_ENABLED=false` remains the default in
-`docker-compose.yml`. `reconcileBatch` (the pure state-diff function) is
-retained and tested; only the untrusted RPC reader is disabled.
-
-A validated replacement must:
-
-- read the escrow contract's ledger entry (for example `getLedgerEntries`) and
-  decode the contract data, not just `getHealth`;
-- pin the contract id, network, and expected contract schema/version;
-- reject a missing, stale, or unrecognized ledger entry instead of returning a
-  default;
-- expose typed status/balance/role fields and golden vectors captured from
-  testnet;
-- keep network access behind the same `SOROBAN_VALIDATION_ENABLED` gate.
-
-Rebuilding that reader is tracked as a follow-up task. It is not enabled by
-this change.
 
 ---
 
@@ -274,11 +276,11 @@ npm --prefix webhook run type-check
 npm --prefix webhook run build:rust
 npm --prefix webhook test -- --runInBand webhook-verifier escrow-state-machine x402
 
-# Rust ABI / pure-logic regression checks
-cargo test --workspace --manifest-path crates/Cargo.toml
-cargo build --release --workspace --manifest-path crates/Cargo.toml
+# Rust ABI / pure-logic regression checks for the default build
+cargo test --manifest-path crates/Cargo.toml
+cargo build --release --manifest-path crates/Cargo.toml
 
-# Full image smoke test (builds all eight addons inside the container)
+# Default image smoke test (builds only default members inside the container)
 docker build -t safetrust-webhook:verify -f webhook/Dockerfile .
 ```
 
@@ -288,8 +290,8 @@ Expected invariants:
 - `verifyHmacSignature` accepts a valid signature and returns `false` for
   empty secrets, malformed signatures, and invalid UTF-8 mismatches;
 - `validateTransition('disputed', 'cancelled', 'escrow.cancelled')` is `true`;
-- `queryEscrowStateBatch` throws/returns the quarantine error unless both the
-  `unvalidated-reader` feature and `SOROBAN_RECONCILER_ALLOW_UNVALIDATED=true`
-  are set;
+- `queryEscrowStateBatch` validates contract and network identity, rejecting
+  `getHealth`-only responses, mock shortcuts, and wrong-network responses;
+
 - no x402 payment can reach `initializeEscrowHandler` while
   `X402_ENABLED=false`.

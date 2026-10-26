@@ -12,10 +12,21 @@ import {
 import {
   mirrorReservationStatus,
 } from '../../repositories/reservation.repository';
+import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
+import { getValidPriorStates } from '../../lib/escrow-transitions';
 
 const EVENT_TYPE = EscrowEventType.DisputeResolved;
 
+/**
+ * Handles the escrow dispute resolved webhook event.
+ * Validates payload, checks idempotency, transitions the escrow to 'resolved',
+ * optionally records a resolution note, and mirrors the reservation status.
+ *
+ * @param req - Express request containing ResolveDisputePayload
+ * @param res - Express response object
+ * @returns Express response indicating success, duplicate, or error
+ */
 export const resolveDisputeHandler = async (
   req: Request<{}, {}, ResolveDisputePayload>,
   res: Response
@@ -42,11 +53,9 @@ export const resolveDisputeHandler = async (
     }
 
     // 2 — Update trustless_work_escrows
-    const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
-      getValidPriorStates: (to: string, event: string) => string
-    }
-    const validStates: string[] = JSON.parse(
-      getValidPriorStates(EscrowStatus.Resolved, EscrowEventType.DisputeResolved) as string
+    const validStates: string[] = getValidPriorStates(
+      EscrowStatus.Resolved,
+      EscrowEventType.DisputeResolved
     );
 
     const updated = await resolveDispute(contractId, validStates);
@@ -60,7 +69,7 @@ export const resolveDisputeHandler = async (
     const escrowId = updated.id;
 
     // 3 — Mirror status to safetrust.reservations
-    await mirrorReservationStatus(escrowId, 'resolved');
+    await mirrorReservationStatus(escrowId, 'resolved', getPlatformTenantId());
 
     // 4 — Store resolution note in escrow_metadata if provided
     if (resolutionNote) {

@@ -7,46 +7,61 @@ select_permissions:
       columns:
         - id
         - email
-        - display_name
-        - avatar_url
-        - created_at
-        - updated_at
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
+        - role
+        - last_seen
       filter:
         id:
           _eq: x-hasura-user-id
   - role: host
-    permission:
-      columns:
-        - display_name
-        - avatar_url
-      filter:
-        id:
-          _eq: x-hasura-user-id
-  - role: admin
     permission:
       columns:
         - id
         - email
-        - display_name
-        - avatar_url
-        - created_at
-        - updated_at
-        - is_host
-      filter: {}
-update_permissions:
-  - role: host
-    permission:
-      columns:
-        - display_name
-        - avatar_url
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
+        - role
+        - last_seen
       filter:
         id:
           _eq: x-hasura-user-id
   - role: admin
     permission:
-      columns:
-        - email
-        - display_name
-        - avatar_url
-        - is_host
+      columns: "*"
       filter: {}
+update_permissions:
+  - role: guest
+    permission:
+      columns:
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
+      filter:
+        id:
+          _eq: x-hasura-user-id
+      check:
+        id:
+          _eq: x-hasura-user-id
+  - role: host
+    permission:
+      columns:
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
+      filter:
+        id:
+          _eq: x-hasura-user-id
+      check:
+        id:
+          _eq: x-hasura-user-id

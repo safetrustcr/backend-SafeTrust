@@ -8,12 +8,12 @@ Background:
     * url baseUrl
     * header x-hasura-role = 'host'
     * eval db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id LIKE 'ana01-%'")
-    * eval db.execute("INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, payload, processed, created_at, tenant_id) VALUES ('ana01-c1', 'escrow.created', '{}', true, '2001-01-02 23:30+00', 'safetrust'), ('ana01-c1', 'escrow.created', '{}', false, '2001-01-02 10:00+00', 'safetrust'), ('ana01-c2', 'escrow.funded', '{}', true, '2001-01-03 00:10+00', 'safetrust')")
+    * eval db.execute("INSERT INTO safetrust.trustless_work_webhook_events (contract_id, event_type, event_identity, payload, processed, created_at, tenant_id) VALUES ('ana01-c1', 'escrow.created', 'ana01-ev1', '{}', true, '2001-01-02 23:30+00', 'safetrust'), ('ana01-c1', 'escrow.created', 'ana01-ev2', '{}', false, '2001-01-02 10:00+00', 'safetrust'), ('ana01-c2', 'escrow.funded', 'ana01-ev3', '{}', true, '2001-01-03 00:10+00', 'safetrust')")
     * text analyticsQuery =
     """
     query GetEscrowAnalytics($start_date: date!, $end_date: date!, $tenant_id: String!) {
       getEscrowAnalyticsByDay(args: { p_start_date: $start_date, p_end_date: $end_date, p_tenant_id: $tenant_id }) {
-        day event_count processed_count new_users active_escrows escrow_value
+        day webhook_records lifecycle_events processed_events last_active_users escrows_created cohort_active_escrows cohort_active_value_usdc
       }
     }
     """
@@ -43,11 +43,11 @@ Scenario: the dashboard operation returns one row per UTC day in the range
     And match response.errors == '#notpresent'
     * def rows = response.data.getEscrowAnalyticsByDay
     And match rows == '#[3]'
-    And match each rows contains { day: '#string', event_count: '#number', processed_count: '#number', new_users: '#number', active_escrows: '#number', escrow_value: '#number' }
+    And match each rows contains { day: '#string', webhook_records: '#number', lifecycle_events: '#number', processed_events: '#number', last_active_users: '#number', escrows_created: '#number', cohort_active_escrows: '#number', cohort_active_value_usdc: '#number' }
     And match karate.map(rows, function(r){ return r.day }) == ['2001-01-01', '2001-01-02', '2001-01-03']
     # 23:30Z stays on 2001-01-02 and 00:10Z lands on 2001-01-03 regardless of server time zone
-    And match rows[1] contains { event_count: 2, processed_count: 1 }
-    And match rows[2] contains { event_count: 1, processed_count: 1 }
+    And match rows[1] contains { webhook_records: 2 }
+    And match rows[2] contains { webhook_records: 1 }
 
 Scenario: omitting p_tenant_id is a schema error, not a silent default
     Given request { query: "{ getEscrowAnalyticsByDay(args: { p_start_date: \"2001-01-01\", p_end_date: \"2001-01-03\" }) { day } }" }
