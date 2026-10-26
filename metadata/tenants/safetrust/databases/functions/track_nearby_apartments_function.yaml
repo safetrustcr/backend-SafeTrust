@@ -36,8 +36,8 @@ comment: |
   The STABLE attribute indicates that the function does not modify the database and
   returns the same result for same arguments within a single query.
 permissions:
-  - role: anonymous
+  - role: guest
     privilege: EXECUTE
-  - role: user
+  - role: host
     privilege: EXECUTE
 exposed_as: query

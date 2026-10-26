@@ -8,7 +8,8 @@ actions:
         - name: x-hasura-admin-secret
           value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
     permissions:
-      - role: user
+      - role: guest
+      - role: host
     comment: Verify wallet ownership via cryptographic signature
 
   - name: initiate_escrow_funding
@@ -20,7 +21,8 @@ actions:
         - name: x-hasura-admin-secret
           value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
     permissions:
-      - role: user
+      - role: guest
+      - role: host
     comment: Prepare escrow funding transaction parameters
 
   - name: verify_blockchain_transaction
@@ -33,7 +35,8 @@ actions:
           value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
       timeout: 30
     permissions:
-      - role: user
+      - role: guest
+      - role: host
     comment: Verify on-chain transaction and update funding status
 
   - name: trigger_fund_release
@@ -59,8 +62,9 @@ actions:
           value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
       timeout: 60
     permissions:
-      - role: user
       - role: admin
+      - role: guest
+      - role: host
     comment: Process refund request with on-chain execution
 
   - name: open_dispute
@@ -72,7 +76,8 @@ actions:
         - name: x-hasura-admin-secret
           value_from_env: HASURA_GRAPHQL_ADMIN_SECRET
     permissions:
-      - role: user
+      - role: guest
+      - role: host
     comment: Open a dispute for property damage claims
 
 

@@ -8,12 +8,7 @@ object_relationships:
       foreign_key_constraint_on: base_rule_id
 
 select_permissions:
-  - role: anonymous
-    permission:
-      columns: []
-      filter: {}
-    comment: "Anonymous users cannot access pricing overrides"
-  - role: user
+  - role: guest
     permission:
       columns:
         - id
@@ -31,6 +26,24 @@ select_permissions:
         is_active:
           _eq: true
       comment: "Users can view active pricing overrides"
+  - role: host
+    permission:
+      columns:
+        - id
+        - override_name
+        - base_rule_id
+        - override_percentage
+        - override_base_amount
+        - effective_from
+        - effective_until
+        - priority
+        - is_active
+        - user_tier
+        - created_at
+      filter:
+        is_active:
+          _eq: true
+      comment: "Hosts can view active pricing overrides"
   - role: admin
     permission:
       columns: "*"
