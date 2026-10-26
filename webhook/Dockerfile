@@ -59,6 +59,9 @@ COPY --from=builder /app/crates/pg-bulk-upsert/package.json /app/crates/pg-bulk-
 COPY --from=builder /app/crates/escrow-state-machine/index.node /app/crates/escrow-state-machine/index.node
 COPY --from=builder /app/crates/escrow-state-machine/package.json /app/crates/escrow-state-machine/package.json
 COPY --from=builder /app/crates/escrow-state-machine/index.d.ts /app/crates/escrow-state-machine/index.d.ts
+# x402 payment validation is opt-in at runtime but required by the enabled integration tests.
+COPY --from=builder /app/crates/x402-processor/index.node /app/crates/x402-processor/index.node
+COPY --from=builder /app/crates/x402-processor/package.json /app/crates/x402-processor/package.json
 
 # node user/group already exists in the official Node image.
 USER node

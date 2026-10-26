@@ -10,6 +10,7 @@ jest.mock('../../services/db', () => ({
 }));
 
 jest.mock('../../repositories/webhook-event.repository', () => ({
+  getWebhookEventIdentity: jest.fn(() => 'test-event-identity'),
   logAndCheckWebhookEvent: jest.fn(),
   markWebhookEventProcessed: jest.fn(),
 }));

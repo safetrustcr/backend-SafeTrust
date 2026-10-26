@@ -158,6 +158,11 @@ describe('Issue #705: Atomic Escrow Lifecycle & Rollback', () => {
 
       // Asserts 500 server error was returned to caller
       expect(res.status).toHaveBeenCalledWith(500);
+      const eventInsert = queryLog.find(({ text }) =>
+        text.includes('INSERT INTO safetrust.trustless_work_webhook_events')
+      );
+      expect(eventInsert?.text).toContain('event_identity');
+      expect(eventInsert?.params?.[2]).toEqual(expect.any(String));
 
       // Asserts escrow state was NOT committed: ROLLBACK was executed, COMMIT was NEVER called
       expect(timeline).toContain('BEGIN');
