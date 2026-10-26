@@ -90,11 +90,29 @@ export async function linkEscrowToReservation(
   }
 }
 
+export type TransactionClient = PoolClient | { query: (text: string, params?: unknown[]) => Promise<unknown> }
+
 export async function mirrorReservationStatus(
   escrowId: string,
   status: string,
-  tenantId: string
+  tenantId: string,
+  client?: TransactionClient
 ): Promise<void> {
+  if (client) {
+    await client.query(
+      `
+        UPDATE safetrust.reservations
+        SET
+          status = $1,
+          updated_at = NOW()
+        WHERE escrow_id = $2
+          AND tenant_id = $3
+      `,
+      [status, escrowId, tenantId]
+    )
+    return
+  }
+
   const mutation = `
     mutation MirrorStatusToReservation($escrowId: uuid!, $status: String!, $tenantId: String!) {
       update_reservations: update_safetrust_reservations(

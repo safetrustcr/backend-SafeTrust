@@ -91,5 +91,20 @@ describe('reservation.repository', () => {
       expect(sql).not.toContain("'safetrust'")
       expect(params).toEqual(['funded', 'escrow-1', 'safetrust'])
     })
+
+    it('uses the provided transaction client instead of Hasura', async () => {
+      const mockClient = {
+        query: jest.fn().mockResolvedValueOnce({ rowCount: 1 }),
+      }
+
+      await mirrorReservationStatus('escrow-1', 'funded', 'safetrust', mockClient)
+
+      expect(mockClient.query).toHaveBeenCalledTimes(1)
+      expect(mockClient.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE safetrust.reservations'),
+        ['funded', 'escrow-1', 'safetrust']
+      )
+      expect(mockedHasuraRequest).not.toHaveBeenCalled()
+    })
   })
 })
