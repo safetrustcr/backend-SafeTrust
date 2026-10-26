@@ -46,7 +46,7 @@ sequenceDiagram
     HAS-->>H: Escrow updated
 
     H->>HAS: update_reservations (status → "completed")
-    H->>HC: Best-effort hotel notification
+    H-)HC: Fire-and-forget in-process notification<br/>(2s budget, no HTTP)
 
     H->>WS: markWebhookEventProcessed
     H-->>TW: 200 { received: true }
@@ -142,9 +142,21 @@ marked as processed in `trustless_work_webhook_events` to prevent re-processing.
 2. **Reservation mirror** — The `reservations` table is updated with
    `status = "completed"`.
 
-3. **Hotel conversation notification** — A best-effort automated message is sent:
+3. **Hotel conversation notification** — A best-effort automated message is written:
    *"SafeTrust: Funds have been released. Thank you for booking with us."*
-   This never blocks the response.
+
+   The message goes through the in-process `hotel-conversation-notify` shared service, not
+   an HTTP call back into this server. It is fire-and-forget and bounded by an explicit
+   2-second budget (with a PostgreSQL `statement_timeout` on the write), so a slow
+   notification can never delay the release response. Conversation creation is an
+   idempotent database upsert on `unique_hotel_conversation`.
+
+   > **Removed configuration:** the former self-HTTP contract used
+   > `POST /api/hotel/conversations/send` plus an `x-internal-secret` header. Both the
+   > endpoint and the `INTERNAL_SERVICE_SECRET` environment variable were removed, and
+   > the notification helper no longer reads `WEBHOOK_BASE_URL`. That variable is still
+   > used by unrelated Hasura event-trigger metadata. No lifecycle handler targets the
+   > same server over HTTP anymore.
 
 4. **Webhook event logging** — The event is recorded in `trustless_work_webhook_events`
    with `processed = true`.
@@ -210,10 +222,13 @@ graph LR
   is the primary guard preventing premature release.
 
 - **Hotel notification failure:** Logged but does not affect the response. The escrow
-  state update is committed regardless.
+  state update is committed regardless; the shared notification service never throws and
+  the handler does not await it.
 
 ## Test Coverage
 
+- **Unit tests:** `webhook/tests/notifications/notification-failure.test.ts` covers notification
+  failure isolation for both lifecycle handlers.
 - **Integration tests (Karate):** `tests/karate/features/escrows/release-funds.feature`
   - Successful release updates status and zeroes balance
   - Missing contractId returns 400

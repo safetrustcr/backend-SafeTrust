@@ -3,9 +3,16 @@ import { Request, Response } from 'express';
 import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response';
 import { ReleaseFundsPayload } from '@safetrust/types';
 import { processWebhookEvent } from '../../repositories/webhook-event.repository';
-import { releaseFundsInTransaction } from '../../repositories/escrow.repository';
-import { mirrorReservationStatusInTransaction } from '../../repositories/reservation.repository';
-import { notifyHotelEscrowConversation } from '../../services/hotel-conversation-notify';
+import {
+  releaseFundsInTransaction,
+} from '../../repositories/escrow.repository';
+import {
+  mirrorReservationStatusInTransaction,
+} from '../../repositories/reservation.repository';
+import {
+  DEFAULT_NOTIFICATION_TIMEOUT_MS,
+  notifyHotelEscrowConversation,
+} from '../../services/hotel-conversation-notify';
 import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 import {
@@ -151,6 +158,9 @@ export const releaseFundsHandler = async (
       contractId,
       eventType: 'escrow_completed',
       body: 'SafeTrust: Funds have been released. Thank you for booking with us.',
+      timeoutMs: DEFAULT_NOTIFICATION_TIMEOUT_MS,
+    }).catch((error) => {
+      console.error('[escrow/release-funds] ❌ notification dispatch error:', error);
     });
 
     console.log(

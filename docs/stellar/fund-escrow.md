@@ -47,7 +47,7 @@ sequenceDiagram
     HAS-->>H: Escrow updated
 
     H->>HAS: update_reservations (status → "funded")
-    H->>HC: Best-effort hotel notification
+    H-)HC: Fire-and-forget in-process notification<br/>(2s budget, no HTTP)
 
     H->>WS: markWebhookEventProcessed
     H-->>TW: 200 { received: true }
@@ -137,9 +137,31 @@ marked as processed in `trustless_work_webhook_events` to prevent re-processing.
 1. **Reservation mirror** — The `reservations` table is updated with `status = "funded"` to
    keep the booking view in sync with the escrow state.
 
-2. **Hotel conversation notification** — A best-effort automated message is sent to the
+2. **Hotel conversation notification** — A best-effort automated message is written to the
    hotel conversation channel: *"SafeTrust: Your deposit has been confirmed on the Stellar
-   network. Your booking is secured."* This never blocks the response.
+   network. Your booking is secured."*
+
+   The handler calls the in-process `hotel-conversation-notify` shared service directly. It
+   no longer POSTs to this application over HTTP, so there is no self-request waiting on the
+   same server's event loop. The call is fire-and-forget and the whole operation (party
+   lookup, conversation upsert, message insert) carries an explicit 2-second budget backed
+   by a PostgreSQL `statement_timeout`, so it cannot delay or fail the lifecycle response.
+
+   Notification logic is available to any future internal caller through
+   `sendHotelConversationMessage`; conversation creation uses an idempotent
+   `INSERT ... ON CONFLICT ON CONSTRAINT unique_hotel_conversation` upsert in
+   `hotel-conversation.repository.ts`.
+
+   Delivery is intentionally best-effort. If reliable delivery is ever required,
+   the minimal addition is a small durable notification/outbox record that a retry
+   loop can drain — not a message broker.
+
+   > **Removed configuration:** the former self-HTTP contract used
+   > `POST /api/hotel/conversations/send` plus an `x-internal-secret` header. Both the
+   > endpoint and the `INTERNAL_SERVICE_SECRET` environment variable were removed, and
+   > the notification helper no longer reads `WEBHOOK_BASE_URL`. That variable is still
+   > used by unrelated Hasura event-trigger metadata. No lifecycle handler targets the
+   > same server over HTTP anymore.
 
 3. **Webhook event logging** — The event is recorded in `trustless_work_webhook_events` with
    `processed = true` for idempotency on retries.
@@ -176,13 +198,18 @@ Values are in USDC stroops — the smallest unit with 7 decimal places. For exam
   not in `[created, pending_funding]`), the Hasura mutation returns 0 affected rows. The
   handler interprets this as "not found" and returns 404. This prevents double-funding.
 
-- **Hotel notification failure:** If the hotel conversation notification fails, the error
-  is logged but does not affect the response. The escrow state update is committed
-  regardless.
+- **Hotel notification failure:** If the hotel conversation notification fails or exceeds
+  its 2-second budget, the error is logged but does not affect the response. The escrow
+  state update is already committed regardless. Notification failures are isolated from
+  escrow state by construction: the shared service never throws, and the handler does not
+  await its result.
 
 ## Test Coverage
 
-- **Unit tests:** `webhook/src/routes/escrows/__tests__/fund.handler.test.ts`
+- **Unit tests:** `webhook/tests/notifications/notification-failure.test.ts` (notification
+  failure isolation and bounded dispatch), plus service/repository tests in
+  `webhook/src/services/__tests__/hotel-conversation-notify.test.ts` and
+  `webhook/src/repositories/__tests__/hotel-conversation.repository.test.ts`
 - **Integration tests (Karate):** `tests/karate/features/escrows/fund.feature`
   - Valid fund callback updates status and balance
   - Duplicate callback is idempotent
