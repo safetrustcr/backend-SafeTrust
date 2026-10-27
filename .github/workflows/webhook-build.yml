@@ -100,8 +100,10 @@ jobs:
         run: npm --prefix webhook run type-check
 
       - name: Run reconciliation tests
+        working-directory: webhook
         run: >-
-          npm --prefix webhook test -- --runTestsByPath
+          npm run build:tooling &&
+          npx jest --runInBand --runTestsByPath
           src/lib/__tests__/reconciliation.test.ts
           src/lib/__tests__/reconciliation-parallel.test.ts
           src/lib/__tests__/reconciliation-bulk.test.ts
