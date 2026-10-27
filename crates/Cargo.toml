@@ -1,3 +1,20 @@
+[package]
+name = "safetrust-native-gates"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+default = []
+zk-verifier = ["dep:zk-verifier"]
+x402-processor = ["dep:x402-processor"]
+soroban-reconciler = ["dep:soroban-reconciler"]
+
+[dependencies]
+zk-verifier = { path = "zk-verifier", optional = true }
+x402-processor = { path = "x402-processor", optional = true }
+soroban-reconciler = { path = "soroban-reconciler", optional = true }
+
 [workspace]
 resolver = "2"
 members = [
@@ -9,6 +26,13 @@ members = [
     "x402-processor",
     "escrow-state-machine",
     "soroban-reconciler",
+]
+default-members = [
+    "webhook-verifier",
+    "stellar-utils",
+    "chunk-processor",
+    "pg-bulk-upsert",
+    "escrow-state-machine",
 ]
 
 [workspace.dependencies]

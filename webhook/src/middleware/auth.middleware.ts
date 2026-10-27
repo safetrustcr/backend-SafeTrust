@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { getAuth } from "firebase-admin/auth";
 import db from "../services/db";
+import { getPlatformTenantId } from "../config/tenant";
 
 export interface RequestContext {
   uid: string;
@@ -35,6 +36,28 @@ export interface AuthenticatedRequest extends Request {
   };
 }
 export type AuthRequest = AuthenticatedRequest;
+
+const HASURA_CLAIMS_NAMESPACE = "https://hasura.io/jwt/claims";
+
+/**
+ * Resolve the session tenant from the verified ID token only.
+ *
+ * Order: the Hasura claims namespace (`x-hasura-tenant-id`), a top-level
+ * `tenant_id` custom claim, then the Firebase multi-tenancy tenant. A token
+ * with no tenant claim belongs to the platform tenant. Request headers are
+ * never a source for this value.
+ */
+export function resolveSessionTenantId(decodedToken: Record<string, any>): string {
+  const candidates = [
+    decodedToken[HASURA_CLAIMS_NAMESPACE]?.["x-hasura-tenant-id"],
+    decodedToken.tenant_id,
+    decodedToken.firebase?.tenant,
+  ];
+  const claim = candidates.find(
+    (value): value is string => typeof value === "string" && value.trim().length > 0
+  );
+  return claim ? claim.trim() : getPlatformTenantId();
+}
 
 export async function authMiddleware(
   req: Request,
@@ -80,7 +103,18 @@ export async function authMiddleware(
     );
     const roles = result.rows.map((row: { name: string }) => row.name);
     const role = ["admin", "host", "guest"].find((value) => roles.includes(value)) || "guest";
-    const tenantId = (req.headers["x-tenant-id"] as string) || "safetrust";
+    const tenantId = resolveSessionTenantId(decodedToken);
+
+    // `x-tenant-id` may only confirm the session tenant, never select another one.
+    const requestedTenant = req.headers["x-tenant-id"];
+    if (
+      typeof requestedTenant === "string" &&
+      requestedTenant.length > 0 &&
+      requestedTenant !== tenantId
+    ) {
+      res.status(403).json({ error: "Forbidden", message: "Tenant is not permitted for this session" });
+      return;
+    }
 
     const context: RequestContext = {
       uid: decodedToken.uid,

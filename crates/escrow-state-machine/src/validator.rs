@@ -8,7 +8,7 @@ use crate::transitions::transition_table;
 /// be reached via a different event.
 pub fn valid_prior_states(
     target: &EscrowStatus,
-    event:  &WebhookEvent,
+    event: &WebhookEvent,
 ) -> Result<Vec<EscrowStatus>, String> {
     let matching: Vec<EscrowStatus> = transition_table()
         .into_iter()
@@ -27,23 +27,56 @@ pub fn valid_prior_states(
 }
 
 /// Validates that a specific from → to transition is legal.
-pub fn is_valid_transition(
-    from:  &EscrowStatus,
-    to:    &EscrowStatus,
-    event: &WebhookEvent,
-) -> bool {
-    transition_table().iter().any(|rule| {
-        &rule.to == to
-            && &rule.event == event
-            && rule.from.contains(from)
-    })
+pub fn is_valid_transition(from: &EscrowStatus, to: &EscrowStatus, event: &WebhookEvent) -> bool {
+    transition_table()
+        .iter()
+        .any(|rule| &rule.to == to && &rule.event == event && rule.from.contains(from))
+}
+
+/// Validates whether an escrow in `from` status can legally transition to `to` status.
+///
+/// Terminal State Rules & Ordering Invariants:
+/// -------------------------------------------
+/// - Terminal states (`completed`, `resolved`, `cancelled`) represent irrevocable on-chain
+///   settlement outcomes where funds have been paid out, refunded, or split.
+/// - Terminal states CANNOT be ordered by numeric status rank (e.g., rank(cancelled) vs rank(completed)):
+///   a numeric ranking implies a total ordering where a higher-ranked status could overwrite a lower-ranked
+///   one. In reality, once completed or resolved, an escrow is permanently final.
+/// - Terminal states (`completed`, `resolved`) must NEVER be overwritten regardless of sequence number.
+/// - `cancelled` must NOT be reachable from `completed` or `resolved`.
+/// - Terminal states must never transition to non-terminal states regardless of incoming sequence number.
+/// - For non-terminal states `from != to`, the transition is valid if and only if there exists a transition rule
+///   in `transition_table()` permitting `from -> to`.
+/// - Reaffirming the same state (`from == to`) is allowed (idempotent write/reaffirmation), UNLESS `from` is
+///   a confirmed terminal state being targeted by an illegal overwrite.
+pub fn can_transition_status(from: &EscrowStatus, to: &EscrowStatus) -> bool {
+    if from == to {
+        return true;
+    }
+
+    // Terminal states cannot transition to ANY other state.
+    if from.is_terminal() {
+        return false;
+    }
+
+    // Explicit invariant: cancelled is not reachable from completed or resolved.
+    if (*from == EscrowStatus::Completed || *from == EscrowStatus::Resolved)
+        && *to == EscrowStatus::Cancelled
+    {
+        return false;
+    }
+
+    // Verify against the canonical transition table.
+    transition_table()
+        .iter()
+        .any(|rule| &rule.to == to && rule.from.contains(from))
 }
 
 /// Generates the Hasura GraphQL `_in` filter values for a target status +
 /// event, as a list of snake_case status strings.
 pub fn graphql_in_filter(
     target: &EscrowStatus,
-    event:  &WebhookEvent,
+    event: &WebhookEvent,
 ) -> Result<Vec<String>, String> {
     Ok(valid_prior_states(target, event)?
         .iter()
@@ -63,22 +96,35 @@ mod tests {
         assert!(is_valid_transition(&S::Funded, &S::Active, &E::EscrowFunded));
         assert!(is_valid_transition(&S::Funded, &S::MilestoneApproved, &E::MilestoneApproved));
         assert!(is_valid_transition(&S::MilestoneApproved, &S::Completed, &E::FundsReleased));
+        assert!(is_valid_transition(&S::Funded, &S::Completed, &E::FundsReleased));
         assert!(is_valid_transition(&S::Funded, &S::Disputed, &E::DisputeRaised));
         assert!(is_valid_transition(&S::Disputed, &S::Resolved, &E::DisputeResolved));
         // A dispute may end with funds returned to the tenant.
-        assert!(is_valid_transition(&S::Disputed, &S::Cancelled, &E::EscrowCancelled));
+        assert!(is_valid_transition(
+            &S::Disputed,
+            &S::Cancelled,
+            &E::EscrowCancelled
+        ));
     }
 
     #[test]
     fn illegal_transitions_are_rejected() {
         // completed → created is not a legal transition
         assert!(!is_valid_transition(&S::Completed, &S::Created, &E::EscrowInitialized));
-        // funded → completed is not a direct transition
-        assert!(!is_valid_transition(&S::Funded, &S::Completed, &E::FundsReleased));
+        // created → completed is not a direct transition
+        assert!(!is_valid_transition(&S::Created, &S::Completed, &E::FundsReleased));
         // wrong event
-        assert!(!is_valid_transition(&S::Funded, &S::Active, &E::EscrowInitialized));
+        assert!(!is_valid_transition(
+            &S::Funded,
+            &S::Active,
+            &E::EscrowInitialized
+        ));
         // a completed escrow cannot be cancelled
-        assert!(!is_valid_transition(&S::Completed, &S::Cancelled, &E::EscrowCancelled));
+        assert!(!is_valid_transition(
+            &S::Completed,
+            &S::Cancelled,
+            &E::EscrowCancelled
+        ));
     }
 
     #[test]
@@ -107,5 +153,42 @@ mod tests {
                 status
             );
         }
+    }
+
+    #[test]
+    fn terminal_states_cannot_transition_to_any_other_state() {
+        for terminal in [S::Completed, S::Resolved, S::Cancelled] {
+            for other in crate::transitions::all_statuses() {
+                if other != terminal {
+                    assert!(
+                        !can_transition_status(&terminal, &other),
+                        "terminal state {:?} must not transition to {:?}",
+                        terminal,
+                        other
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn completed_cannot_be_cancelled() {
+        assert!(!can_transition_status(&S::Completed, &S::Cancelled));
+        assert!(!can_transition_status(&S::Resolved, &S::Cancelled));
+    }
+
+    #[test]
+    fn can_transition_status_valid_lifecycle() {
+        assert!(can_transition_status(&S::Created, &S::Funded));
+        assert!(can_transition_status(&S::Funded, &S::Active));
+        assert!(can_transition_status(&S::Funded, &S::Completed));
+        assert!(can_transition_status(&S::Active, &S::MilestoneApproved));
+        assert!(can_transition_status(&S::MilestoneApproved, &S::Completed));
+        assert!(can_transition_status(&S::Funded, &S::Disputed));
+        assert!(can_transition_status(&S::Disputed, &S::Resolved));
+        assert!(can_transition_status(&S::Disputed, &S::Cancelled));
+        assert!(can_transition_status(&S::Created, &S::Cancelled));
+        // Idempotent reaffirmation
+        assert!(can_transition_status(&S::Funded, &S::Funded));
     }
 }

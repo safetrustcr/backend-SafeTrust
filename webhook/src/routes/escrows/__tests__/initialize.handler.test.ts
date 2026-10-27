@@ -1,32 +1,22 @@
-export {};
 'use strict';
 
-jest.mock('../../../repositories/webhook-event.repository', () => ({
-  logAndCheckWebhookEvent: jest.fn(),
-  markWebhookEventProcessed: jest.fn(),
-}));
-
-jest.mock('../../../repositories/escrow.repository', () => ({
-  createEscrow: jest.fn(),
-}));
-
-jest.mock('../../../repositories/reservation.repository', () => ({
-  linkEscrowToReservation: jest.fn(),
-}));
-
-jest.mock('../../../lib/zk-verifier', () => ({
-  verifyProofOfFunds: jest.fn(),
+jest.mock('../../../services/escrow.service', () => ({
+  EscrowValidationError: class EscrowValidationError extends Error {
+    constructor(message: string, readonly statusCode = 400) {
+      super(message);
+    }
+  },
+  ReservationNotFoundError: class ReservationNotFoundError extends Error {},
+  TenantMismatchError: class TenantMismatchError extends Error {},
+  ZkVerifierUnavailableError: class ZkVerifierUnavailableError extends Error {},
+  initializeEscrow: jest.fn(),
 }));
 
 const { initializeEscrowHandler, amountToStroops } = require('../initialize.handler');
 const {
-  logAndCheckWebhookEvent,
-  markWebhookEventProcessed,
-} = require('../../../repositories/webhook-event.repository');
-const {
-  createEscrow,
-} = require('../../../repositories/escrow.repository');
-const { verifyProofOfFunds } = require('../../../lib/zk-verifier');
+  EscrowValidationError,
+  initializeEscrow,
+} = require('../../../services/escrow.service');
 
 function makeRequest(overrides = {}) {
   return {
@@ -49,153 +39,84 @@ function makeResponse() {
   };
 }
 
-describe('initializeEscrowHandler ZK verification', () => {
+describe('initializeEscrowHandler', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.ZK_ENABLED = 'true'
-    verifyProofOfFunds.mockReturnValue(true);
-    logAndCheckWebhookEvent.mockResolvedValue({
+    initializeEscrow.mockResolvedValue({
       isDuplicate: false,
       eventId: 'event-1',
+      escrow: { id: 'escrow-1' },
     });
-    createEscrow.mockResolvedValue({
-      id: 'escrow-1',
-      contractId: 'contract-1',
-      status: 'created',
-      createdAt: '2026-08-24T00:00:00Z',
-    });
-    markWebhookEventProcessed.mockResolvedValue(undefined);
+    delete process.env.PLATFORM_TENANT_ID;
   });
 
-  it('keeps ZK verification optional', async () => {
+  it('delegates initialization to the service with the request body and platform tenant', async () => {
+    process.env.PLATFORM_TENANT_ID = 'tenant-b';
+    const req = makeRequest();
     const res = makeResponse();
-    await initializeEscrowHandler(makeRequest(), res);
 
-    expect(verifyProofOfFunds).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(200);
-  });
-
-  it('verifies a complete proof bundle before persisting', async () => {
-    const req = makeRequest({
-      zk_proof: 'proof-hex',
-      zk_verification_key: 'vk-hex',
-      zk_threshold_stroops: '1000000000',
-      zk_balance_commitment: 'ab'.repeat(32),
-    });
-    const res = makeResponse();
     await initializeEscrowHandler(req, res);
 
-    expect(verifyProofOfFunds).toHaveBeenCalledWith(
-      'proof-hex',
-      'vk-hex',
-      '1000000000',
-      'ab'.repeat(32)
-    );
-    expect(logAndCheckWebhookEvent).toHaveBeenCalledTimes(1);
-    expect(createEscrow).toHaveBeenCalledTimes(1);
+    expect(initializeEscrow).toHaveBeenCalledWith(req.body, 'tenant-b');
     expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ success: true });
   });
 
-  it('rejects a partial proof bundle without side effects', async () => {
-    const res = makeResponse();
-    await initializeEscrowHandler(makeRequest({ zk_proof: 'proof-hex' }), res);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(verifyProofOfFunds).not.toHaveBeenCalled();
-    expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
-    expect(createEscrow).not.toHaveBeenCalled();
-  });
-
-  it('rejects an invalid proof without side effects', async () => {
-    verifyProofOfFunds.mockReturnValue(false);
-    const res = makeResponse();
-    await initializeEscrowHandler(makeRequest({
-      zk_proof: 'bad-proof',
-      zk_verification_key: 'vk-hex',
-      zk_threshold_stroops: '1000000000',
-      zk_balance_commitment: 'ab'.repeat(32),
-    }), res);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({ success: false, error: 'Invalid ZK proof of funds' });
-    expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
-    expect(createEscrow).not.toHaveBeenCalled();
-  });
-
-  it('rejects a valid proof whose threshold does not match the escrow amount', async () => {
-    const res = makeResponse();
-    await initializeEscrowHandler(makeRequest({
-      zk_proof: 'valid-proof-for-a-different-threshold',
-      zk_verification_key: 'vk-hex',
-      zk_threshold_stroops: '999999999',
-      zk_balance_commitment: 'ab'.repeat(32),
-    }), res);
-
-    expect(verifyProofOfFunds).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({ success: false, error: 'Invalid ZK proof of funds' });
-    expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
-    expect(createEscrow).not.toHaveBeenCalled();
-  });
-
-  it('fails closed when the native verifier is unavailable', async () => {
-    verifyProofOfFunds.mockImplementation(() => {
-      throw new Error('native addon missing');
+  it('responds with the duplicate event when the service detects a duplicate', async () => {
+    initializeEscrow.mockResolvedValue({
+      isDuplicate: true,
+      eventId: 'event-duplicate',
     });
     const res = makeResponse();
-    await initializeEscrowHandler(makeRequest({
-      zk_proof: 'proof-hex',
-      zk_verification_key: 'vk-hex',
-      zk_threshold_stroops: '1000000000',
-      zk_balance_commitment: 'ab'.repeat(32),
-    }), res);
 
-    expect(res.status).toHaveBeenCalledWith(503);
-    expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
-    expect(createEscrow).not.toHaveBeenCalled();
-  });
+    await initializeEscrowHandler(makeRequest(), res);
 
-  it('returns 500 when the ZK verifier is misconfigured', async () => {
-    const error = new Error('misconfigured') as Error & { code?: string };
-    error.code = 'ZK_VERIFIER_MISCONFIGURED';
-    verifyProofOfFunds.mockImplementation(() => {
-      throw error;
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      duplicate: true,
+      eventId: 'event-duplicate',
     });
-    const res = makeResponse();
-    await initializeEscrowHandler(makeRequest({
-      zk_proof: 'proof-hex',
-      zk_verification_key: 'vk-hex',
-      zk_threshold_stroops: '1000000000',
-      zk_balance_commitment: 'ab'.repeat(32),
-    }), res);
-
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'ZK proof verifier is misconfigured' }));
-    expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
-    expect(createEscrow).not.toHaveBeenCalled();
   });
 
-  it('rejects missing ZK proof bundle when ZK_ENFORCEMENT_ENABLED is true', async () => {
-    const originalFlag = process.env.ZK_ENFORCEMENT_ENABLED;
-    try {
-      process.env.ZK_ENFORCEMENT_ENABLED = 'true';
-      const res = makeResponse();
-      await initializeEscrowHandler(makeRequest(), res);
+  it.each([
+    ['a non-numeric value', 'not-an-amount'],
+    ['a non-finite value', Number.POSITIVE_INFINITY],
+    ['a NaN value', Number.NaN],
+    ['zero', 0],
+    ['a null value', null],
+    ['a negative value', -1],
+  ])('rejects %s before calling the service', async (_description, amount) => {
+    const res = makeResponse();
 
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-        error: 'ZK proof of funds bundle is required for escrow initialization',
-      }));
-      expect(logAndCheckWebhookEvent).not.toHaveBeenCalled();
-      expect(createEscrow).not.toHaveBeenCalled();
-    } finally {
-      process.env.ZK_ENFORCEMENT_ENABLED = originalFlag;
-    }
+    await initializeEscrowHandler(makeRequest({ amount }), res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(initializeEscrow).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed amount types before calling the service', async () => {
+    const res = makeResponse();
+
+    await initializeEscrowHandler(makeRequest({ amount: { value: 100 } }), res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(initializeEscrow).not.toHaveBeenCalled();
+  });
+
+  it('maps service validation errors to a bad request', async () => {
+    initializeEscrow.mockRejectedValueOnce(new EscrowValidationError('invalid payload'));
+    const res = makeResponse();
+
+    await initializeEscrowHandler(makeRequest(), res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ success: false, error: 'invalid payload' });
   });
 });
 
 describe('amountToStroops', () => {
-  it('converts whole and fractional asset amounts to stroops', () => {
+  it('converts positive whole and fractional asset amounts', () => {
     expect(amountToStroops(100)).toBe('1000000000');
     expect(amountToStroops(0.0000001)).toBe('1');
     expect(amountToStroops('1.2345678')).toBe('12345678');

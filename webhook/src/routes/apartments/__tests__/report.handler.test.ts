@@ -156,7 +156,7 @@ describe('apartments/report.handler', () => {
       .mockResolvedValueOnce({ rows: [{ id: APARTMENT_ID, owner_id: OWNER_ID }] })
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })
       .mockResolvedValueOnce({ rows: [] }) // ON CONFLICT DO NOTHING -> no row returned
-      .mockResolvedValueOnce({ rows: [{ id: 'report-existing', status: 'open' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'report-existing', status: 'open', apartment_id: APARTMENT_ID }] })
 
     const req = makeRequest()
     const res = makeResponse()

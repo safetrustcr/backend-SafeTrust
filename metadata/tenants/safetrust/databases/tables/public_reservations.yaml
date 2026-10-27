@@ -24,12 +24,6 @@ configuration:
       custom_name: updatedAt
     tenant_id:
       custom_name: tenantId
-    cancelled_by:
-      custom_name: cancelledBy
-    cancelled_at:
-      custom_name: cancelledAt
-    cancel_reason:
-      custom_name: cancelReason
 object_relationships:
   - name: apartment
     using:
@@ -55,10 +49,6 @@ select_permissions:
         - status
         - created_at
         - updated_at
-        - tenant_id
-        - cancelled_by
-        - cancelled_at
-        - cancel_reason
       filter:
         guest_id:
           _eq: X-Hasura-User-Id
@@ -77,10 +67,6 @@ select_permissions:
         - status
         - created_at
         - updated_at
-        - tenant_id
-        - cancelled_by
-        - cancelled_at
-        - cancel_reason
       filter:
         apartment:
           owner_id:
@@ -100,9 +86,5 @@ select_permissions:
         - status
         - created_at
         - updated_at
-        - tenant_id
-        - cancelled_by
-        - cancelled_at
-        - cancel_reason
       filter: {}
     comment: "Admins can view all reservations"

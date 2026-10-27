@@ -25,6 +25,19 @@ declare module '@safetrust/types' {
     wallet_address: string
   }
 
+  export interface WalletDto {
+    address: string
+    chain: ChainType
+    isPrimary: boolean
+    createdAt: string
+  }
+
+  export interface ListWalletsResponse {
+    wallets: WalletDto[]
+    signInWallet: string | null
+  }
+
+
   export interface Apartment {
     id: string
     name: string

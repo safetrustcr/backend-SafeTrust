@@ -6,7 +6,6 @@
 - "!include public_escrow_claims.yaml"
 - "!include public_escrow_milestones.yaml"
 - "!include public_escrow_pending_approvals.yaml"
-- "!include public_escrow_transactions.yaml"
 - "!include public_geography_columns.yaml"
 - "!include public_geometry_columns.yaml"
 - "!include public_listing_reports.yaml"
@@ -23,3 +22,4 @@
 - "!include public_reservations.yaml"
 - "!include public_escrow_analytics_by_day.yaml"
 - "!include public_escrow_status_summary.yaml"
+- "!include public_webhook_health_summary.yaml"

@@ -23,6 +23,10 @@ import {
   findStaleEscrows,
   upsertEscrowBatch,
 } from '../repositories/reconciliation.repository'
+import { hasuraRequest } from './hasura'
+import { isRustBulkUpsertEnabled } from '../lib/native-adapters/rust-upsert.adapter'
+import { processPendingConfirmationRetries } from './confirmation.service'
+import type { ProcessRetriesSummary } from './confirmation.service'
 import type {
   ChunkResult,
   ChunkSyncResult,
@@ -31,7 +35,7 @@ import type {
   UpsertResult,
 } from '../lib/reconciliation.types'
 
-export { setSorobanReconcilerAddon }
+export { isRustBulkUpsertEnabled, setSorobanReconcilerAddon }
 
 export const CHUNK_SIZE = 50
 
@@ -160,6 +164,7 @@ export interface ReconciliationResponse {
   sorobanCorrected: number
   sorobanUnresolved?: number
   durationMs: number
+  confirmationRetries?: ProcessRetriesSummary
 }
 
 
@@ -264,14 +269,14 @@ export async function runSorobanValidation(
   for (const contractId of chunk) {
     try {
       // Query validated Soroban / TW adapter via Rust crate
-      const onChainJson = queryEscrowStateBatch(contractId, network)
+      const onChainJson = querySorobanEscrow(contractId, network)
       const onChain: SorobanOnChainState = JSON.parse(onChainJson)
 
       const dbState = dbStateMap[contractId]
       if (!dbState) continue
 
       // Compare via Rust diff engine with exact amounts
-      const reportJson = reconcileBatch(
+      const reportJson = reconcileSorobanState(
         JSON.stringify(onChain),
         JSON.stringify({
           id: dbState.id ?? '',
@@ -430,21 +435,33 @@ export async function detectStaleEscrows(
 }
 
 /**
- * Step 5: Pure function that formats reconciliation summary results into standard response shape.
+ * Step 5: Background sweep that processes durable confirmation retries.
+ */
+export async function reconcileConfirmationRetries(): Promise<ProcessRetriesSummary> {
+  return processPendingConfirmationRetries()
+}
+
+/**
+ * Step 6: Pure function that formats reconciliation summary results into standard response shape.
  *
  * @param sync - Results from syncing with the indexer
  * @param drift - Results from Soroban on-chain drift validation
  * @param stale - Array of stale contract IDs
  * @param elapsed - Duration in milliseconds
+ * @param retries - Summary of processed confirmation retries (optional)
  * @returns Formatted reconciliation response object
  */
 export function formatReconciliationSummary(
   sync: SyncSummary,
   drift: DriftSummary,
   stale: string[],
-  elapsed: number
+  elapsed: number,
+  retries?: ProcessRetriesSummary
 ): ReconciliationResponse {
-  const totalErrors = (sync.errors?.length ?? 0) + (drift.errors?.length ?? 0)
+  const totalErrors =
+    (sync.errors?.length ?? 0) +
+    (drift.errors?.length ?? 0) +
+    (retries?.errors?.length ?? 0)
   const isNoEscrows = sync.totalEscrows === 0
 
   const response: ReconciliationResponse = {
@@ -462,6 +479,7 @@ export function formatReconciliationSummary(
     sorobanCorrected: drift.corrected,
     sorobanUnresolved: drift.unresolved ?? 0,
     durationMs: elapsed,
+    ...(retries ? { confirmationRetries: retries } : {}),
   }
 
   if (isNoEscrows) {

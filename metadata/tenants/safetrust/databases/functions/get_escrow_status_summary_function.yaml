@@ -3,6 +3,6 @@ function:
   name: get_escrow_status_summary
 configuration:
   exposed_as: query
+permissions:
+  - role: host
 comment: |
-  Escrow lifecycle counts and nominal USDC value. Returns SETOF safetrust.escrow_status_summary.
-  Metric definitions: docs/analytics/metrics.md.
