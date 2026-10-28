@@ -2,6 +2,19 @@
 
 import { Pool, QueryResult, PoolClient, QueryResultRow } from 'pg'
 
+function positiveIntegerFromEnv(name: string, defaultValue: number): number {
+  const value = process.env[name]
+  if (value === undefined) {
+    return defaultValue
+  }
+
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`)
+  }
+  return parsed
+}
+
 // Fail fast — never use hardcoded credentials in production
 const requiredEnvVars = ['POSTGRES_HOST', 'POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD']
 for (const key of requiredEnvVars) {
@@ -10,12 +23,17 @@ for (const key of requiredEnvVars) {
   }
 }
 
+const connectionTimeoutMillis = positiveIntegerFromEnv('DB_CONNECTION_TIMEOUT_MS', 5_000)
+const query_timeout = positiveIntegerFromEnv('DB_QUERY_TIMEOUT_MS', 30_000)
+
 export const pool = new Pool({
   host:     process.env.POSTGRES_HOST     ?? 'localhost',
   port:     parseInt(process.env.POSTGRES_PORT ?? '5432', 10),
   database: process.env.POSTGRES_DB       ?? 'postgres',
   user:     process.env.POSTGRES_USER     ?? 'postgres',
   password: process.env.POSTGRES_PASSWORD ?? 'postgrespassword',
+  connectionTimeoutMillis,
+  query_timeout,
 })
 
 pool.on('error', (err: Error) => {

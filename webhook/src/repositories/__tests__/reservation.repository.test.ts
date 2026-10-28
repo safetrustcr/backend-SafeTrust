@@ -1,4 +1,5 @@
 import {
+  createReservation,
   linkEscrowToReservation,
   mirrorReservationStatus,
   mirrorReservationStatusInTransaction,
@@ -16,6 +17,83 @@ const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRe
 describe('reservation.repository', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+  })
+
+  describe('createReservation', () => {
+    it('inserts with the metadata-defined GraphQL contract and maps the result', async () => {
+      mockedHasuraRequest.mockResolvedValueOnce({
+        insert_safetrust_reservations_one: {
+          id: 'res-1',
+          apartmentId: 'apt-1',
+          guestId: 'guest-1',
+          status: 'pending',
+          checkInDate: '2026-09-01',
+          checkOutDate: '2026-09-05',
+          totalAmount: 500,
+          assetCode: 'USDC',
+          escrowId: null,
+          createdAt: '2026-08-24T00:00:00Z',
+          tenantId: 'safetrust',
+        },
+      })
+
+      const result = await createReservation({
+        tenantId: 'safetrust',
+        apartmentId: 'apt-1',
+        guestId: 'guest-1',
+        checkInDate: '2026-09-01',
+        checkOutDate: '2026-09-05',
+        totalAmount: 500,
+        assetCode: 'USDC',
+      })
+
+      expect(mockedHasuraRequest).toHaveBeenCalledWith(
+        expect.stringContaining('insert_safetrust_reservations_one'),
+        {
+          object: {
+            apartmentId: 'apt-1',
+            guestId: 'guest-1',
+            checkInDate: '2026-09-01',
+            checkOutDate: '2026-09-05',
+            totalAmount: 500,
+            assetCode: 'USDC',
+            status: 'pending',
+            tenantId: 'safetrust',
+          },
+        }
+      )
+      expect(result).toEqual({
+        id: 'res-1',
+        apartment_id: 'apt-1',
+        guest_id: 'guest-1',
+        status: 'pending',
+        check_in_date: '2026-09-01',
+        check_out_date: '2026-09-05',
+        total_amount: 500,
+        asset_code: 'USDC',
+        escrow_id: null,
+        created_at: '2026-08-24T00:00:00Z',
+        tenant_id: 'safetrust',
+      })
+    })
+
+    it('returns null when Hasura does not return an inserted reservation', async () => {
+      mockedHasuraRequest.mockResolvedValueOnce({
+        insert_safetrust_reservations_one: null,
+      })
+
+      const result = await createReservation({
+        tenantId: 'safetrust',
+        apartmentId: 'apt-1',
+        guestId: 'guest-1',
+        checkInDate: '2026-09-01',
+        checkOutDate: '2026-09-05',
+        totalAmount: 500,
+        assetCode: 'USDC',
+      })
+
+      expect(result).toBeNull()
+    })
   })
 
   describe('linkEscrowToReservation', () => {
