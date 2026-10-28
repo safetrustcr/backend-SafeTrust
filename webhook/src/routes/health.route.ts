@@ -1,15 +1,20 @@
 import express, { Request, Response } from 'express'
 import { getApps } from 'firebase-admin/app'
+import type { QueryConfig } from 'pg'
 import { pool } from '../services/db'
 
 const router = express.Router()
+const readinessQuery: QueryConfig & { query_timeout: number } = {
+  text: 'SELECT 1',
+  query_timeout: 200,
+}
 
 router.get('/health/ready', async (_req: Request, res: Response) => {
   const firebase = getApps().some((app) => app.name === '[DEFAULT]')
   let database = false
 
   try {
-    await pool.query({ text: 'SELECT 1', query_timeout: 200 })
+    await pool.query(readinessQuery)
     database = true
   } catch (error) {
     console.error(

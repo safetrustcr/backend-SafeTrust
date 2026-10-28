@@ -1,3 +1,4 @@
+import express from 'express'
 import request from 'supertest'
 import healthRoutes from '../health.route'
 import { getApps } from 'firebase-admin/app'
@@ -15,6 +16,7 @@ jest.mock('../../services/db', () => ({
 
 const mockedGetApps = jest.mocked(getApps)
 const mockedPoolQuery = pool.query as jest.Mock
+const app = express().use(healthRoutes)
 
 describe('health readiness route', () => {
   beforeEach(() => {
@@ -35,12 +37,16 @@ describe('health readiness route', () => {
       rows: [{ '?column?': 1 }],
     })
 
-    const response = await request(healthRoutes).get('/health/ready')
+    const response = await request(app).get('/health/ready')
 
     expect(response.status).toBe(503)
     expect(response.body).toEqual({
       status: 'not_ready',
       dependencies: { firebase: false, database: true },
+    })
+    expect(mockedPoolQuery).toHaveBeenCalledWith({
+      text: 'SELECT 1',
+      query_timeout: 200,
     })
   })
 
@@ -51,7 +57,7 @@ describe('health readiness route', () => {
     mockedPoolQuery.mockRejectedValue(new Error('database unavailable'))
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
 
-    const response = await request(healthRoutes).get('/health/ready')
+    const response = await request(app).get('/health/ready')
 
     expect(response.status).toBe(503)
     expect(response.body.dependencies).toEqual({ firebase: true, database: false })

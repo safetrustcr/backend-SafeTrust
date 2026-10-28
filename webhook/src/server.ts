@@ -33,15 +33,15 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   shuttingDown = true
   console.log(`[api] ${signal} received; stopping server and draining requests`)
 
+  const timeout = setTimeout(() => {
+    console.warn(`[api] Shutdown deadline reached; closing active connections`)
+    server.closeAllConnections()
+    process.exit(1)
+  }, shutdownTimeoutMs)
+
   try {
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        console.warn(`[api] Shutdown deadline reached; closing active connections`)
-        server.closeAllConnections()
-      }, shutdownTimeoutMs)
-
       server.close((error) => {
-        clearTimeout(timeout)
         if (error) {
           reject(error)
         } else {
@@ -55,6 +55,8 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   } catch (error) {
     console.error('[api] Graceful shutdown failed:', error)
     process.exitCode = 1
+  } finally {
+    clearTimeout(timeout)
   }
 }
 

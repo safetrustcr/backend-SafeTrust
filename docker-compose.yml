@@ -73,6 +73,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       HASURA_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:?HASURA_ADMIN_SECRET must be set in .env or the environment}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
+      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
       HASURA_GRAPHQL_ENDPOINT: >-
         http://graphql-engine:8080/v1/graphql
       TRUSTLESSWORK_API_URL: ${TRUSTLESSWORK_API_URL:-https://dev.api.trustlesswork.com}

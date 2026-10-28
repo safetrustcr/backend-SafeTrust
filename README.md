@@ -80,6 +80,11 @@ HASURA_EVENT_SECRET=your_event_secret
 > ⚠️ `HASURA_GRAPHQL_JWT_SECRET` must be valid JSON with a key of at least 32 characters. `start` will fail if this is malformed.
 >
 > ⚠️ `HASURA_ADMIN_SECRET` is required and has no default. `bin/start`, the webhook, and the metadata scripts fail closed when it is missing. In CI and production, inject it from the GitHub Actions secret store or your cloud secret manager instead of `.env`.
+>
+> When running the webhook with `NODE_ENV=production`, also provide
+> `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY`.
+> Compose forwards these values to the webhook; keep the private key in your
+> secret manager rather than committing it.
 
 The webhook exposes `/health/live` for process liveness and `/health/ready`
 for Firebase and PostgreSQL readiness. PostgreSQL connection acquisition and
