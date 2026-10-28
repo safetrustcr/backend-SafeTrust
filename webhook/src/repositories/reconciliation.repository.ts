@@ -5,6 +5,7 @@ import {
   buildConnectionString,
   isRustBulkUpsertEnabled,
 } from '../lib/native-adapters/rust-upsert.adapter'
+import { CANONICAL_TRANSITIONS, balancesEqual } from '../lib/escrow-freshness'
 import type {
   BulkUpsertResult,
   EscrowRecord,
@@ -21,7 +22,19 @@ interface BulkUpsertRow {
   approver: string
   releaser: string
   escrow_type: string
+  ledger_seq: string | null
+  network: string | null
 }
+
+const SQL_TRANSITION_RULES = Object.entries(CANONICAL_TRANSITIONS)
+  .filter(([, targets]) => targets.length > 0)
+  .map(
+    ([from, targets]) =>
+      `(safetrust.trustless_work_escrows.status = '${from}' AND EXCLUDED.status IN (${targets
+        .map((target) => `'${target}'`)
+        .join(', ')}))`
+  )
+  .join(' OR\n        ')
 
 const UPSERT_ESCROW_SQL = `
   INSERT INTO safetrust.trustless_work_escrows (
@@ -33,19 +46,42 @@ const UPSERT_ESCROW_SQL = `
     approver,
     releaser,
     escrow_type,
+    ledger_seq,
+    network,
     updated_at,
     tenant_id
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'safetrust')
+  )
+  SELECT $1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, NOW(), 'safetrust'
+  WHERE $2 IN ('created', 'pending_funding')
   ON CONFLICT (contract_id)
   DO UPDATE SET
     status     = EXCLUDED.status,
     amount     = EXCLUDED.amount,
-    balance    = EXCLUDED.balance,
-    marker     = EXCLUDED.marker,
-    approver   = EXCLUDED.approver,
-    releaser   = EXCLUDED.releaser,
+    balance    = CASE
+      WHEN safetrust.trustless_work_escrows.balance > 0 AND EXCLUDED.balance = 0
+        THEN safetrust.trustless_work_escrows.balance
+      ELSE EXCLUDED.balance
+    END,
+    marker     = COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+    approver   = COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+    releaser   = COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser),
+    network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
     updated_at = NOW()
   WHERE (
+    safetrust.trustless_work_escrows.status IN ('created', 'pending_funding')
+    AND (
+      safetrust.trustless_work_escrows.status = EXCLUDED.status
+      OR (${SQL_TRANSITION_RULES})
+    )
+    AND (
+      safetrust.trustless_work_escrows.network IS NULL
+      OR NULLIF(TRIM(safetrust.trustless_work_escrows.network), '') IS NULL
+      OR EXCLUDED.network IS NULL
+      OR NULLIF(TRIM(EXCLUDED.network), '') IS NULL
+      OR LOWER(REGEXP_REPLACE(safetrust.trustless_work_escrows.network, '^stellar:', '', 'i')) =
+         LOWER(REGEXP_REPLACE(EXCLUDED.network, '^stellar:', '', 'i'))
+    )
+    AND (
     safetrust.trustless_work_escrows.status,
     safetrust.trustless_work_escrows.amount,
     safetrust.trustless_work_escrows.balance,
@@ -56,13 +92,78 @@ const UPSERT_ESCROW_SQL = `
     EXCLUDED.status,
     EXCLUDED.amount,
     EXCLUDED.balance,
-    EXCLUDED.marker,
-    EXCLUDED.approver,
-    EXCLUDED.releaser
+    COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+    COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+    COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser)
+    )
   )
   RETURNING contract_id, (xmax = 0) AS inserted
 `
 
+const UPSERT_ESCROW_WITH_SEQ_SQL = `
+  INSERT INTO safetrust.trustless_work_escrows (
+    contract_id,
+    status,
+    amount,
+    balance,
+    marker,
+    approver,
+    releaser,
+    escrow_type,
+    ledger_seq,
+    network,
+    updated_at,
+    tenant_id
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust')
+  ON CONFLICT (contract_id)
+  DO UPDATE SET
+    status     = EXCLUDED.status,
+    amount     = EXCLUDED.amount,
+    balance    = EXCLUDED.balance,
+    marker     = COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+    approver   = COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+    releaser   = COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser),
+    ledger_seq = EXCLUDED.ledger_seq,
+    network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
+    updated_at = NOW()
+  WHERE (
+    safetrust.trustless_work_escrows.status NOT IN ('completed', 'resolved', 'cancelled')
+    AND (
+      safetrust.trustless_work_escrows.ledger_seq IS NULL
+      OR EXCLUDED.ledger_seq > safetrust.trustless_work_escrows.ledger_seq
+    )
+    AND (
+      safetrust.trustless_work_escrows.status = EXCLUDED.status
+      OR (${SQL_TRANSITION_RULES})
+    )
+    AND (
+      safetrust.trustless_work_escrows.network IS NULL
+      OR NULLIF(TRIM(safetrust.trustless_work_escrows.network), '') IS NULL
+      OR EXCLUDED.network IS NULL
+      OR NULLIF(TRIM(EXCLUDED.network), '') IS NULL
+      OR LOWER(REGEXP_REPLACE(safetrust.trustless_work_escrows.network, '^stellar:', '', 'i')) =
+         LOWER(REGEXP_REPLACE(EXCLUDED.network, '^stellar:', '', 'i'))
+    )
+    AND (
+      safetrust.trustless_work_escrows.ledger_seq,
+      safetrust.trustless_work_escrows.status,
+      safetrust.trustless_work_escrows.amount,
+      safetrust.trustless_work_escrows.balance,
+      safetrust.trustless_work_escrows.marker,
+      safetrust.trustless_work_escrows.approver,
+      safetrust.trustless_work_escrows.releaser
+    ) IS DISTINCT FROM (
+      EXCLUDED.ledger_seq,
+      EXCLUDED.status,
+      EXCLUDED.amount,
+      EXCLUDED.balance,
+      COALESCE(NULLIF(EXCLUDED.marker, ''), safetrust.trustless_work_escrows.marker),
+      COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
+      COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser)
+    )
+  )
+  RETURNING contract_id, (xmax = 0) AS inserted
+`
 export async function fetchEscrowContractIds(
   tenantId = 'safetrust'
 ): Promise<string[]> {
@@ -97,7 +198,8 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
     }
 
     try {
-      const result = await db.query<{ contract_id: string }>(UPSERT_ESCROW_SQL, [
+      const seq = escrow.ledgerSeq ?? escrow.ledger_seq
+      const params = [
         escrow.contractId,
         escrow.status ?? 'created',
         escrow.amount ?? 0,
@@ -106,7 +208,18 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
         escrow.roles?.approver ?? '',
         escrow.roles?.releaser ?? '',
         escrow.escrowType ?? 'single_release',
-      ])
+      ]
+      const result =
+        seq !== undefined && seq !== null
+          ? await db.query<{ contract_id: string }>(UPSERT_ESCROW_WITH_SEQ_SQL, [
+              ...params,
+              typeof seq === 'bigint' ? seq.toString() : seq,
+              escrow.network ?? null,
+            ])
+          : await db.query<{ contract_id: string }>(UPSERT_ESCROW_SQL, [
+              ...params,
+              escrow.network ?? null,
+            ])
 
       if (result.rows.length > 0) {
         updated++
@@ -115,12 +228,12 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
           const { rows: storedRows } = await db.query<{
             ledger_seq: string | null
             status: string
-            balance_matches: boolean | null
+            balance: string | null
           }>(
-            `SELECT ledger_seq::text, status, balance = $2::numeric AS balance_matches
+            `SELECT ledger_seq::text, status, balance::text
                FROM safetrust.trustless_work_escrows
               WHERE contract_id = $1`,
-            [escrow.contractId, escrow.balance ?? 0]
+            [escrow.contractId]
           )
           const stored = storedRows[0]
           if (
@@ -128,7 +241,7 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
             stored?.ledger_seq !== undefined &&
             BigInt(stored.ledger_seq) === BigInt(seq) &&
             (stored.status !== (escrow.status ?? 'created') ||
-              stored.balance_matches !== true)
+              !balancesEqual(stored.balance, escrow.balance))
           ) {
             console.warn(
               `[reconciliation] Equal-sequence conflict on contract "${escrow.contractId}" at seq ${seq}`
@@ -167,16 +280,21 @@ export async function upsertEscrowsBulk(escrows: EscrowRecord[]): Promise<Upsert
     return { updated: 0, unchanged: 0, skipped }
   }
 
-  const updates: BulkUpsertRow[] = valid.map((escrow) => ({
-    contract_id: escrow.contractId,
-    status: escrow.status ?? 'created',
-    amount: String(escrow.amount ?? 0),
-    balance: String(escrow.balance ?? 0),
-    marker: escrow.roles?.marker ?? '',
-    approver: escrow.roles?.approver ?? '',
-    releaser: escrow.roles?.releaser ?? '',
-    escrow_type: escrow.escrowType ?? 'single_release',
-  }))
+  const updates: BulkUpsertRow[] = valid.map((escrow) => {
+    const seq = escrow.ledgerSeq ?? escrow.ledger_seq
+    return {
+      contract_id: escrow.contractId,
+      status: escrow.status ?? 'created',
+      amount: String(escrow.amount ?? 0),
+      balance: String(escrow.balance ?? 0),
+      marker: escrow.roles?.marker ?? '',
+      approver: escrow.roles?.approver ?? '',
+      releaser: escrow.roles?.releaser ?? '',
+      escrow_type: escrow.escrowType ?? 'single_release',
+      ledger_seq: seq == null ? null : typeof seq === 'bigint' ? seq.toString() : String(seq),
+      network: escrow.network ?? null,
+    }
+  })
 
   const resultJson = await bulkUpsertWithRust(
     JSON.stringify(updates),

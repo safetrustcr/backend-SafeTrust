@@ -19,7 +19,6 @@ export {
   upsertEscrowBatch,
   upsertEscrows,
   upsertEscrowsBulk,
-  reconcileEscrowAtomic,
 } from '../repositories/reconciliation.repository'
 export {
   CHUNK_SIZE,

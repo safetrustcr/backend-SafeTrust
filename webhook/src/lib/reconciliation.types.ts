@@ -10,6 +10,9 @@ export interface EscrowRecord {
   amount?: string | number
   balance?: string | number
   escrowType?: string
+  ledgerSeq?: bigint | number | string | null
+  ledger_seq?: bigint | number | string | null
+  network?: string | null
   roles?: EscrowRoles
 }
 
