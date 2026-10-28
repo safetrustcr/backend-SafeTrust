@@ -1,13 +1,13 @@
 -- seed-tenants-roles.sql
 -- Diagram 2: Role and tenant isolation fixture
--- Tests tenant data separation (safetrust vs hotel_industry) and role access permissions
+-- Tests isolated tenant data separation and role access permissions
 
 DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id LIKE 'test-ana-%';
 DELETE FROM safetrust.trustless_work_escrows WHERE contract_id LIKE 'test-ana-%';
 DELETE FROM safetrust.user_roles WHERE user_id LIKE 'test-ana-%';
 DELETE FROM safetrust.users WHERE id LIKE 'test-ana-%';
 
--- 1. Tenant: safetrust
+-- 1. SafeTrust test tenant
 INSERT INTO safetrust.trustless_work_escrows (
   contract_id, marker, approver, releaser, escrow_type, status, amount, balance, asset_code, tenant_id, created_at
 ) VALUES (
@@ -20,7 +20,7 @@ INSERT INTO safetrust.trustless_work_escrows (
   1000.00,
   1000.00,
   'USDC',
-  'safetrust',
+  'test-ana-safetrust',
   '2026-10-18 10:00:00+00'
 );
 
@@ -30,14 +30,14 @@ INSERT INTO safetrust.trustless_work_webhook_events (
   'test-ana-tenant-st-01',
   'escrow.active',
   'test-ana-tenant-st-01-ev1',
-  '{"contract_id": "test-ana-tenant-st-01", "tenant": "safetrust"}',
+  '{"contract_id": "test-ana-tenant-st-01", "tenant": "test-ana-safetrust"}',
   true,
   '2026-10-18 10:00:00+00',
   '2026-10-18 10:00:00+00',
-  'safetrust'
+  'test-ana-safetrust'
 );
 
--- 2. Tenant: hotel_industry (other tenant)
+-- 2. Other test tenant
 INSERT INTO safetrust.trustless_work_escrows (
   contract_id, marker, approver, releaser, escrow_type, status, amount, balance, asset_code, tenant_id, created_at
 ) VALUES (
@@ -50,7 +50,7 @@ INSERT INTO safetrust.trustless_work_escrows (
   8888.00,
   8888.00,
   'USDC',
-  'hotel_industry',
+  'test-ana-hotel-industry',
   '2026-10-18 11:00:00+00'
 );
 
@@ -60,14 +60,14 @@ INSERT INTO safetrust.trustless_work_webhook_events (
   'test-ana-tenant-hi-01',
   'escrow.active',
   'test-ana-tenant-hi-01-ev1',
-  '{"contract_id": "test-ana-tenant-hi-01", "tenant": "hotel_industry"}',
+  '{"contract_id": "test-ana-tenant-hi-01", "tenant": "test-ana-hotel-industry"}',
   true,
   '2026-10-18 11:00:00+00',
   '2026-10-18 11:00:00+00',
-  'hotel_industry'
+  'test-ana-hotel-industry'
 );
 
 -- 3. Test users for role simulation
 INSERT INTO safetrust.users (id, firebase_uid, email, first_name, last_name, last_seen)
 VALUES
-  ('test-ana-user-st', 'test-ana-user-st', 'st-user@safetrust.cr', 'SafeTrust', 'Member', '2026-10-18 10:00:00+00');
+  ('test-ana-user-st', 'test-ana-user-st', 'st-user@safetrust.cr',   'SafeTrust', 'Member', '2026-10-18 10:00:00+00');

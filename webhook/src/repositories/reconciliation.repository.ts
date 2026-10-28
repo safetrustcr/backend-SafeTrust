@@ -111,6 +111,30 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
       if (result.rows.length > 0) {
         updated++
       } else {
+        if (seq !== undefined && seq !== null) {
+          const { rows: storedRows } = await db.query<{
+            ledger_seq: string | null
+            status: string
+            balance_matches: boolean | null
+          }>(
+            `SELECT ledger_seq::text, status, balance = $2::numeric AS balance_matches
+               FROM safetrust.trustless_work_escrows
+              WHERE contract_id = $1`,
+            [escrow.contractId, escrow.balance ?? 0]
+          )
+          const stored = storedRows[0]
+          if (
+            stored?.ledger_seq !== null &&
+            stored?.ledger_seq !== undefined &&
+            BigInt(stored.ledger_seq) === BigInt(seq) &&
+            (stored.status !== (escrow.status ?? 'created') ||
+              stored.balance_matches !== true)
+          ) {
+            console.warn(
+              `[reconciliation] Equal-sequence conflict on contract "${escrow.contractId}" at seq ${seq}`
+            )
+          }
+        }
         unchanged++
       }
     } catch (rowError) {

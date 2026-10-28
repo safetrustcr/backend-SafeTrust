@@ -12,11 +12,11 @@ Background:
 Scenario: Diagram 2 - Admin role is permitted to query any tenant
     * db.execute(karate.read('file:tests/fixtures/analytics/seed-tenants-roles.sql'))
     
-    # 1. Admin queries safetrust tenant
+    # 1. Admin queries the SafeTrust test tenant
     Given request
     """
     {
-        "query": "query AdminQuerySafeTrust { safetrust_get_escrow_status_summary(args: {tenant_id_input: \"safetrust\"}) { total_escrows active_escrows total_value_usdc } }"
+        "query": "query AdminQuerySafeTrust { safetrust_get_escrow_status_summary(args: {tenant_id_input: \"test-ana-safetrust\"}) { total_escrows active_escrows total_value_usdc } }"
     }
     """
     When method POST
@@ -25,11 +25,11 @@ Scenario: Diagram 2 - Admin role is permitted to query any tenant
     And match response.data != null
     And match response.data.safetrust_get_escrow_status_summary[0] == { total_escrows: 1, active_escrows: 1, total_value_usdc: 1000 }
 
-    # 2. Admin queries hotel_industry tenant
+    # 2. Admin queries the other test tenant
     Given request
     """
     {
-        "query": "query AdminQueryHotel { safetrust_get_escrow_status_summary(args: {tenant_id_input: \"hotel_industry\"}) { total_escrows active_escrows total_value_usdc } }"
+        "query": "query AdminQueryHotel { safetrust_get_escrow_status_summary(args: {tenant_id_input: \"test-ana-hotel-industry\"}) { total_escrows active_escrows total_value_usdc } }"
     }
     """
     When method POST
@@ -42,12 +42,12 @@ Scenario: Diagram 2 - host role accessing own tenant sees own data only
     * db.execute(karate.read('file:tests/fixtures/analytics/seed-tenants-roles.sql'))
     * header x-hasura-role = 'host'
     * header x-hasura-user-id = 'test-ana-user-st'
-    * header x-hasura-tenant-id = 'safetrust'
+    * header x-hasura-tenant-id = 'test-ana-safetrust'
 
     Given request
     """
     {
-        "query": "query UserOwnTenant { safetrust_get_escrow_status_summary(args: {tenant_id_input: \"safetrust\"}) { total_escrows active_escrows total_value_usdc } }"
+        "query": "query UserOwnTenant { safetrust_get_escrow_status_summary(args: {tenant_id_input: \"test-ana-safetrust\"}) { total_escrows active_escrows total_value_usdc } }"
     }
     """
     When method POST
@@ -61,12 +61,12 @@ Scenario: Diagram 2 - host role querying another tenant returns own data or auth
     * db.execute(karate.read('file:tests/fixtures/analytics/seed-tenants-roles.sql'))
     * header x-hasura-role = 'host'
     * header x-hasura-user-id = 'test-ana-user-st'
-    * header x-hasura-tenant-id = 'safetrust'
+    * header x-hasura-tenant-id = 'test-ana-safetrust'
 
     Given request
     """
     {
-        "query": "query UserOtherTenant { safetrust_get_escrow_status_summary(args: {tenant_id_input: \"hotel_industry\"}) { total_escrows active_escrows total_value_usdc } }"
+        "query": "query UserOtherTenant { safetrust_get_escrow_status_summary(args: {tenant_id_input: \"test-ana-hotel-industry\"}) { total_escrows active_escrows total_value_usdc } }"
     }
     """
     When method POST
@@ -103,4 +103,3 @@ Scenario: Diagram 2 - Explicit anonymous role impersonation is rejected by Graph
     When method POST
     # Hasura DEV_MODE returns HTTP 200 with errors[] for unknown/unregistered roles (not 4xx)
     Then assert responseStatus == 400 || responseStatus == 401 || (response != null && (response.errors != null || response.error != null))
-

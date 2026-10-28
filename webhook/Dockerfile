@@ -1,7 +1,7 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
 FROM node:24-bookworm-slim AS builder
 
-# Rust toolchain for the default-enabled Neon addons.
+# Rust toolchain for the webhook's Neon addons.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
@@ -58,6 +58,9 @@ COPY --from=builder /app/crates/pg-bulk-upsert/package.json /app/crates/pg-bulk-
 # escrow-state-machine: compile-time SafeTrust escrow lifecycle.
 COPY --from=builder /app/crates/escrow-state-machine/index.node /app/crates/escrow-state-machine/index.node
 COPY --from=builder /app/crates/escrow-state-machine/package.json /app/crates/escrow-state-machine/package.json
+# soroban-reconciler: on-chain escrow state source used by reconciliation.
+COPY --from=builder /app/crates/soroban-reconciler/package.json /app/crates/soroban-reconciler/package.json
+COPY --from=builder /app/crates/soroban-reconciler/native /app/crates/soroban-reconciler/native
 COPY --from=builder /app/crates/escrow-state-machine/index.d.ts /app/crates/escrow-state-machine/index.d.ts
 # x402 payment validation is opt-in at runtime but required by the enabled integration tests.
 COPY --from=builder /app/crates/x402-processor/index.node /app/crates/x402-processor/index.node
