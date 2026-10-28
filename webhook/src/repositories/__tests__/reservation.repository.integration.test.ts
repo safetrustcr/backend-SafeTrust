@@ -21,6 +21,7 @@ describe('reservation.repository Hasura integration', () => {
     let reservationId: string | undefined
     try {
       const reservation = await createReservation({
+        tenantId: 'safetrust',
         apartmentId,
         guestId,
         checkInDate: checkInDate.toISOString(),

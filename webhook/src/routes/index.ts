@@ -15,6 +15,7 @@ import releaseFundsRoute from './escrows/release-funds.route'
 import disputeRoute from './escrows/dispute.route'
 import resolveDisputeRoute from './escrows/resolve-dispute.route'
 
+import healthRoutes from './health.route'
 import authRoutes from './auth'
 import apartmentRoutes from './apartments'
 import bidRequestsRoute from './bid-requests'

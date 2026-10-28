@@ -38,6 +38,7 @@ describe('reservation.repository', () => {
       })
 
       const result = await createReservation({
+        tenantId: 'safetrust',
         apartmentId: 'apt-1',
         guestId: 'guest-1',
         checkInDate: '2026-09-01',
@@ -82,6 +83,7 @@ describe('reservation.repository', () => {
       })
 
       const result = await createReservation({
+        tenantId: 'safetrust',
         apartmentId: 'apt-1',
         guestId: 'guest-1',
         checkInDate: '2026-09-01',
