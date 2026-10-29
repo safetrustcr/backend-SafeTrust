@@ -78,6 +78,7 @@ services:
       - NODE_ENV=test
       - WEBHOOK_PORT=3001
       - HASURA_ADMIN_SECRET=${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      - HASURA_GRAPHQL_ADMIN_SECRET=${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       - HASURA_GRAPHQL_ENDPOINT=http://graphql-engine-test:8080/v1/graphql
       - POSTGRES_HOST=postgres_test
       - POSTGRES_PORT=5432
@@ -90,11 +91,14 @@ services:
       # still disabled so tests never call a facilitator /settle endpoint.
       - X402_ENABLED=true
       - X402_SETTLE_ENABLED=false
+      - SAFETRUST_PLATFORM_WALLET=${TEST_PLATFORM_WALLET:-GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57}
+      - X402_FACILITATOR_URL=https://channels.openzeppelin.com/x402/testnet
+      - STELLAR_NETWORK=testnet
     depends_on:
       postgres_test:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health/live"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -111,6 +115,7 @@ services:
       baseUrl: http://graphql-engine-test:8080/v1/graphql
       webhookUrl: http://webhook:3001
       HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       JWT_SECRET: ${TEST_JWT_SECRET:-testsecret}
       TRUSTLESSWORK_WEBHOOK_SECRET: ${TEST_WEBHOOK_SECRET:-dev-secret}
     command: >
@@ -146,7 +151,7 @@ services:
     command: ["bash", "bin/prepare-test-db"]
     depends_on:
       graphql-engine-test:
-        condition: service_started
+        condition: service_healthy
     networks:
       - test-network
 

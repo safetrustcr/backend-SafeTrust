@@ -1,0 +1,10 @@
+function:
+  schema: safetrust
+  name: get_webhook_health_summary
+configuration:
+  custom_name: get_webhook_health_summary
+  exposed_as: query
+  session_argument: hasura_session
+comment: |
+  Restricted operational health summary. The return view is selectable only by
+  the admin role, which also restricts this function to admin in Hasura.

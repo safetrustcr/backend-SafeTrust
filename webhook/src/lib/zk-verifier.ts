@@ -43,6 +43,7 @@ export function verifyProofOfFunds(
     try {
       // Do not load the experimental native addon during normal application startup.
       verifier = require('../../../crates/zk-verifier');
+      nativeVerifier = verifier;
     } catch (cause) {
       throw createZkError(
         'ZK proof verifier is unavailable',
@@ -79,9 +80,10 @@ export function verifyProofOfFunds(
 
   if (expectedKeyHash) {
     if (!/^[0-9a-fA-F]{64}$/.test(expectedKeyHash)) {
-      const error = new Error('ZK verification key hash is misconfigured') as ZkVerifierError;
-      error.code = 'ZK_VERIFIER_MISCONFIGURED';
-      throw error;
+      throw createZkError(
+        'ZK verification key hash is misconfigured',
+        'ZK_VERIFIER_MISCONFIGURED'
+      );
     }
 
     const normalizedKey = verificationKeyHex.replace(/^0x/, '');
@@ -101,12 +103,11 @@ export function verifyProofOfFunds(
     balanceCommitmentHex
   );
 }
-
 /**
  * Test-only utility to mock or reset the native verifier.
  */
-export function _setNativeVerifierForTesting(verifier: typeof NativeVerifier | null): void {
+export function _setNativeVerifierForTesting(
+  verifier: typeof NativeVerifier | null | undefined
+): void {
   nativeVerifier = verifier;
 }
-
-

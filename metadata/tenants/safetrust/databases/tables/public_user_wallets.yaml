@@ -6,7 +6,7 @@ object_relationships:
     using:
       foreign_key_constraint_on: user_id
 select_permissions:
-  - role: landlord
+  - role: guest
     permission:
       columns:
         - id
@@ -19,8 +19,8 @@ select_permissions:
       filter:
         user_id:
           _eq: X-Hasura-User-Id
-      comment: "Landlords can only see their own wallets"
-  - role: tenant
+      comment: "Guests can only see their own wallets"
+  - role: host
     permission:
       columns:
         - id
@@ -33,67 +33,4 @@ select_permissions:
       filter:
         user_id:
           _eq: X-Hasura-User-Id
-      comment: "Tenants can only see their own wallets"
-insert_permissions:
-  - role: landlord
-    permission:
-      check:
-        user_id:
-          _eq: X-Hasura-User-Id
-      columns:
-        - wallet_address
-        - chain_type
-        - is_primary
-      set:
-        user_id: X-Hasura-User-Id
-        created_at: "now()"
-      comment: "Landlords can add their own wallets"
-  - role: tenant
-    permission:
-      check:
-        user_id:
-          _eq: X-Hasura-User-Id
-      columns:
-        - wallet_address
-        - chain_type
-        - is_primary
-      set:
-        user_id: X-Hasura-User-Id
-        created_at: "now()"
-      comment: "Tenants can add their own wallets"
-update_permissions:
-  - role: landlord
-    permission:
-      columns:
-        - is_primary
-      filter:
-        user_id:
-          _eq: X-Hasura-User-Id
-      check:
-        user_id:
-          _eq: X-Hasura-User-Id
-      comment: "Landlords can update their own wallet settings"
-  - role: tenant
-    permission:
-      columns:
-        - is_primary
-      filter:
-        user_id:
-          _eq: X-Hasura-User-Id
-      check:
-        user_id:
-          _eq: X-Hasura-User-Id
-      comment: "Tenants can update their own wallet settings"
-delete_permissions:
-  - role: landlord
-    permission:
-      filter:
-        user_id:
-          _eq: X-Hasura-User-Id
-      comment: "Landlords can delete their own wallets"
-  - role: tenant
-    permission:
-      filter:
-        user_id:
-          _eq: X-Hasura-User-Id
-      comment: "Tenants can delete their own wallets"
+      comment: "Hosts can only see their own wallets"

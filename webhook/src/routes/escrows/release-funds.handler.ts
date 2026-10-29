@@ -1,25 +1,25 @@
+
 import { Request, Response } from 'express';
-import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
+import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response';
 import { ReleaseFundsPayload } from '@safetrust/types';
-import { processWebhookEvent } from '../../repositories/webhook-event.repository';
 import {
-  releaseFundsInTransaction,
-} from '../../repositories/escrow.repository';
-import {
-  mirrorReservationStatusInTransaction,
-} from '../../repositories/reservation.repository';
+  releaseFundsTransactional,
+  EscrowNotFoundError,
+  EscrowStateConflictError,
+} from '../../services/escrow.service';
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
-import { getPlatformTenantId } from '../../config/tenant';
-import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 
-const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
-  getValidPriorStates: (to: string, event: string) => string
-}
-
-const EVENT_TYPE = EscrowEventType.FundsReleased;
-
+/**
+ * Handles the escrow release-funds webhook event.
+ * Atomically transitions the escrow to 'completed', mirrors reservation status,
+ * and notifies hotel conversation. Supports idempotent retry if already completed.
+ *
+ * @param req - Express request containing ReleaseFundsPayload
+ * @param res - Express response object
+ * @returns Express response indicating success, duplicate, conflict, or error
+ */
 export const releaseFundsHandler = async (
   req: Request<{}, {}, ReleaseFundsPayload>,
   res: Response
@@ -28,56 +28,63 @@ export const releaseFundsHandler = async (
 
   if (!contractId || !releaseSigner) {
     return badRequest(res, {
-      error: 'Missing required fields: contractId, releaseSigner'
+      error: 'Missing required fields: contractId, releaseSigner',
     });
   }
 
   try {
-    // 1 — Claim the event and apply database state changes atomically
-    const { isDuplicate, eventId, result: updated } = await processWebhookEvent(
+    // 1 — Atomic lifecycle transaction: claim event + update escrow + mirror reservation
+    const result = await releaseFundsTransactional(
       contractId,
-      EVENT_TYPE,
-      req.body as unknown as Record<string, unknown>,
-      async (client) => {
-        const validStates: string[] = JSON.parse(
-          getValidPriorStates(EscrowStatus.Completed, EscrowEventType.FundsReleased) as string
-        );
-        const escrow = await releaseFundsInTransaction(client, contractId, validStates)
-        if (escrow) {
-          await mirrorReservationStatusInTransaction(client, escrow.id, 'completed', getPlatformTenantId())
-        }
-        return escrow
-      }
+      req.body as unknown as Record<string, unknown>
     );
 
-    if (isDuplicate) {
-      return duplicate(res, eventId);
+    if (result.isDuplicate) {
+      return duplicate(res, result.eventId);
     }
 
-    if (!updated) {
-      return notFound(res, {
-        error: `Escrow not found for contractId: ${contractId}`
+    // 2 — Notifications outside transaction commit (best-effort, non-fatal)
+    try {
+      await notifyHotelEscrowConversation({
+        contractId,
+        eventType: 'escrow_completed',
+        body: 'SafeTrust: Funds have been released. Thank you for booking with us.',
       });
+    } catch (notifyError) {
+      console.warn(
+        `[escrow/release-funds] Notification failed (non-fatal) for contractId ${contractId}:`,
+        (notifyError as Error).message
+      );
     }
-
-    const escrowId = updated.id;
-
-    // 2 — Notify hotel conversation after the state transaction commits
-    await notifyHotelEscrowConversation({
-      contractId,
-      eventType: 'escrow_completed',
-      body: 'SafeTrust: Funds have been released. Thank you for booking with us.',
-    });
 
     console.log(`[escrow/release-funds] ✅ Funds released — contractId: ${contractId}`);
     return ok(res);
-
   } catch (error) {
-    const err = error as Error & { details?: unknown };
-    console.error('[escrow/release-funds] ❌ error:', err.details || err.message);
-    if (err.details) {
-      return serverError(res, { error: 'Failed to update escrow status', details: err.details });
+    if (error instanceof EscrowNotFoundError) {
+      return notFound(res, { error: error.message });
     }
-    return serverError(res, { error: 'Internal server error', details: err.message });
+
+    if (error instanceof EscrowStateConflictError) {
+      return conflict(res, { error: error.message });
+    }
+
+    const err = error as Error & { details?: unknown };
+
+    console.error(
+      '[escrow/release-funds] ❌ error:',
+      err.details || err.message
+    );
+
+    if (err.details) {
+      return serverError(res, {
+        error: 'Failed to update escrow status',
+        details: err.details,
+      });
+    }
+
+    return serverError(res, {
+      error: 'Internal server error',
+      details: err.message,
+    });
   }
 };

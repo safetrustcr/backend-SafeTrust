@@ -1,3 +1,8 @@
+import { PoolClient } from 'pg';
+import { withTransaction } from './db';
+import { getPlatformTenantId } from '../config/tenant';
+import { mirrorReservationStatus } from '../repositories/reservation.repository';
+import { EscrowEventType, EscrowStatus } from '../types/escrow.types';
 import { InitializeEscrowPayload } from '@safetrust/types';
 import { hasuraTenantRequest, TenantMismatchError } from './tenant-scoped-hasura';
 import {
@@ -5,6 +10,7 @@ import {
   linkEscrowToReservation,
 } from '../repositories/reservation.repository';
 import {
+  getWebhookEventIdentity,
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
@@ -49,6 +55,23 @@ export interface TrustlessWorkEscrow {
 }
 
 // ── Validation error ───────────────────────────────────────────────────────────
+
+export class EscrowNotFoundError extends Error {
+  readonly statusCode = 404;
+  constructor(message: string) {
+    super(message);
+    this.name = 'EscrowNotFoundError';
+  }
+}
+
+export class EscrowStateConflictError extends Error {
+  readonly statusCode = 409;
+  constructor(message: string) {
+    super(message);
+    this.name = 'EscrowStateConflictError';
+  }
+}
+
 
 export class EscrowValidationError extends Error {
   readonly statusCode: number;
@@ -130,7 +153,7 @@ export function validateEscrowInitializationPayload(
   // 2 — Runtime type validation
   if (amountToStroops(amount) === null || typeof escrow_type !== 'string') {
     throw new EscrowValidationError(
-      'amount must be a number and escrow_type must be a string'
+      'amount must be a positive finite numeric value and escrow_type must be a string'
     );
   }
 
@@ -336,14 +359,14 @@ export async function linkReservationToEscrow(
  * Processes an escrow initialization webhook with idempotency protection.
  */
 export async function initializeEscrow(
-  payload: EscrowInitPayload,
-  rawPayload: Record<string, unknown>,
+  body: unknown,
   tenantId: string
 ): Promise<{ isDuplicate: boolean; eventId: string; escrow?: TrustlessWorkEscrow }> {
+  const payload = validateEscrowInitializationPayload(body);
   const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
     payload.contract_id,
     'escrow.initialized',
-    rawPayload
+    payload.raw as unknown as Record<string, unknown>
   );
 
   // Retry a duplicate whose earlier delivery failed part-way; persistEscrow
@@ -375,4 +398,293 @@ export async function initializeEscrow(
   await markWebhookEventProcessed(eventId);
 
   return { isDuplicate: false, eventId, escrow };
+}
+
+
+// ── Shared Transaction & Lifecycle Management ──────────────────────────────────
+//
+// REFERENCE IMPLEMENTATION:
+// Modeled on milestone.service.ts:148-205 (approveMilestoneAndUpdateReservation).
+//
+// TRANSACTION ARCHITECTURE & APPROACH FOR SPANNING WRITES:
+// When an escrow lifecycle event occurs (such as escrow.funded or funds.released),
+// three database operations must succeed or fail as a single atomic unit:
+//   1. Webhook event claim & deduplication check (safetrust.trustless_work_webhook_events)
+//   2. Escrow state transition with prior-state guard (safetrust.trustless_work_escrows)
+//   3. Reservation status mirror (safetrust.reservations)
+//
+// CHOSEN APPROACH: Direct PostgreSQL SQL Transactions
+// Hasura GraphQL operates over HTTP and executes each mutation in its own independent
+// transaction. An application-level PostgreSQL transaction (BEGIN...COMMIT) via PoolClient
+// cannot span across an external Hasura HTTP write. If Hasura is used to update the escrow
+// state and subsequently a SQL/Hasura write to reservations fails, the escrow update cannot
+// be rolled back, leading to permanent data divergence.
+// Therefore, we moved all escrow lifecycle writes to direct PostgreSQL queries executed
+// on a single client connection wrapped in BEGIN ... COMMIT. If any step fails (e.g. reservation
+// mirror failure), ROLLBACK reverts the escrow state update, the reservation change, and the
+// event claim, leaving the webhook event uncommitted and claimable for safe retry.
+//
+// WHY NOTIFICATIONS ARE OUTSIDE THE TRANSACTION:
+// Notifications (chat conversations, emails, webhook callbacks) involve external I/O
+// services that cannot participate in a PostgreSQL two-phase commit and cannot be rolled
+// back once sent. Sending them inside an uncommitted transaction risks:
+//   - Sending spurious notifications if the transaction subsequently rolls back.
+//   - Holding database connection locks while waiting on external network calls.
+//   - Aborting a valid state change if a notification provider encounters a temporary glitch.
+// Thus, notifications are dispatched strictly AFTER commit, and any failure is caught and
+// logged as non-fatal.
+
+export interface EscrowLifecycleParams {
+  contractId: string;
+  eventType: string;
+  targetStatus: EscrowStatus | string;
+  reservationStatus: string;
+  rawPayload: Record<string, unknown>;
+  amount?: number;
+  validPriorStates?: string[];
+  tenantId?: string;
+}
+
+export interface EscrowLifecycleResult {
+  isDuplicate: boolean;
+  eventId: string;
+  escrowId?: string;
+}
+
+/**
+ * Executes an atomic escrow lifecycle transition:
+ * BEGIN -> claim event -> lock escrow & transition state with prior-state guard -> mirror reservation -> mark event processed -> COMMIT.
+ */
+export async function executeEscrowLifecycleTransition(
+  params: EscrowLifecycleParams
+): Promise<EscrowLifecycleResult> {
+  const {
+    contractId,
+    eventType,
+    targetStatus,
+    reservationStatus,
+    rawPayload,
+    amount,
+    validPriorStates,
+    tenantId = getPlatformTenantId(),
+  } = params;
+  const eventIdentity = getWebhookEventIdentity(
+    contractId,
+    eventType,
+    rawPayload,
+    tenantId
+  );
+
+  return withTransaction(async (client) => {
+    // 1 — Advisory transaction lock prevents concurrent duplicate processing for this event
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+      `${tenantId}:${contractId}:${eventType}`,
+    ]);
+
+    // 2 — Check if event was already successfully processed (deduplication)
+    const existing = await client.query<{ id: string }>(
+      `SELECT id
+       FROM safetrust.trustless_work_webhook_events
+       WHERE tenant_id      = $1
+         AND event_identity = $2
+         AND processed   = true
+       LIMIT 1`,
+      [tenantId, eventIdentity]
+    );
+
+    if (existing.rows.length > 0) {
+      return {
+        isDuplicate: true,
+        eventId: existing.rows[0].id,
+      };
+    }
+
+    // 3 — Claim the event within the transaction (uncommitted until all steps succeed)
+    const insertedEvent = await client.query<{ id: string }>(
+      `INSERT INTO safetrust.trustless_work_webhook_events (
+         contract_id,
+         event_type,
+        event_identity,
+        payload,
+        processed,
+        tenant_id
+      ) VALUES ($1, $2, $3, $4, false, $5)
+      RETURNING id`,
+      [contractId, eventType, eventIdentity, JSON.stringify(rawPayload), tenantId]
+    );
+    const eventId = insertedEvent.rows[0].id;
+
+    // 4 — Lock the escrow row and check current status
+    const escrowResult = await client.query<{ id: string; status: string; balance?: number }>(
+      `SELECT id, status, balance
+       FROM safetrust.trustless_work_escrows
+       WHERE contract_id = $1
+       FOR UPDATE`,
+      [contractId]
+    );
+
+    if (escrowResult.rowCount === 0) {
+      throw new EscrowNotFoundError(`Escrow not found for contractId: ${contractId}`);
+    }
+
+    const escrow = escrowResult.rows[0];
+    const escrowId = escrow.id;
+    const currentStatus = escrow.status;
+
+    // 5 — Idempotent completion check: if already at target status, mark processed and return
+    if (currentStatus === targetStatus) {
+      await mirrorReservationStatus(escrowId, reservationStatus, tenantId, client);
+      await client.query(
+        `UPDATE safetrust.trustless_work_webhook_events
+         SET processed = true,
+             processed_at = NOW()
+         WHERE id = $1`,
+        [eventId]
+      );
+      return {
+        isDuplicate: true,
+        eventId,
+        escrowId,
+      };
+    }
+
+    // 6 — Prior-state guard: verify current state is legal for this transition
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
+      getValidPriorStates: (to: string, event: string) => string;
+    };
+    const allowedStates: string[] =
+      validPriorStates ??
+      JSON.parse(getValidPriorStates(targetStatus, eventType) as string);
+
+    if (!allowedStates.includes(currentStatus)) {
+      throw new EscrowStateConflictError(
+        `Escrow is not in a valid state for transition to ${targetStatus}`
+      );
+    }
+
+    // 7 — Update escrow state and balance in safetrust.trustless_work_escrows
+    const now = new Date().toISOString();
+    if (amount !== undefined) {
+      await client.query(
+        `UPDATE safetrust.trustless_work_escrows
+         SET status = $1,
+             balance = $2,
+             updated_at = $3
+         WHERE id = $4`,
+        [targetStatus, amount, now, escrowId]
+      );
+    } else {
+      await client.query(
+        `UPDATE safetrust.trustless_work_escrows
+         SET status = $1,
+             updated_at = $2
+         WHERE id = $3`,
+        [targetStatus, now, escrowId]
+      );
+    }
+
+    // 8 — Mirror status to safetrust.reservations within the SAME transaction client
+    await mirrorReservationStatus(escrowId, reservationStatus, tenantId, client);
+
+    // 9 — Mark webhook event as processed within the transaction
+    await client.query(
+      `UPDATE safetrust.trustless_work_webhook_events
+       SET processed = true,
+           processed_at = $2
+       WHERE id = $1`,
+      [eventId, now]
+    );
+
+    return {
+      isDuplicate: false,
+      eventId,
+      escrowId,
+    };
+  });
+}
+
+/**
+ * Transactional lifecycle command to fund an escrow.
+ * Wraps event claim + escrow state transition + reservation mirror in one atomic unit.
+ */
+export async function fundEscrowTransactional(
+  contractId: string,
+  amount: number,
+  rawPayload: Record<string, unknown>
+): Promise<EscrowLifecycleResult> {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
+    getValidPriorStates: (to: string, event: string) => string;
+  };
+  const validStates: string[] = JSON.parse(
+    getValidPriorStates(EscrowStatus.Funded, EscrowEventType.Funded) as string
+  );
+
+  return executeEscrowLifecycleTransition({
+    contractId,
+    eventType: EscrowEventType.Funded,
+    targetStatus: EscrowStatus.Funded,
+    reservationStatus: 'funded',
+    amount,
+    validPriorStates: validStates,
+    rawPayload,
+  });
+}
+
+/**
+ * Transactional lifecycle command to release funds from an escrow.
+ * Wraps event claim + escrow state transition + reservation mirror in one atomic unit.
+ */
+export async function releaseFundsTransactional(
+  contractId: string,
+  rawPayload: Record<string, unknown>
+): Promise<EscrowLifecycleResult> {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
+    getValidPriorStates: (to: string, event: string) => string;
+  };
+  const validStates: string[] = JSON.parse(
+    getValidPriorStates(EscrowStatus.Completed, EscrowEventType.FundsReleased) as string
+  );
+
+  return executeEscrowLifecycleTransition({
+    contractId,
+    eventType: EscrowEventType.FundsReleased,
+    targetStatus: EscrowStatus.Completed,
+    reservationStatus: 'completed',
+    amount: 0,
+    validPriorStates: validStates,
+    rawPayload,
+  });
+}
+
+// ── Transaction Confirmation Lifecycle Exports ────────────────────────────────
+
+export {
+  LifecycleStage,
+  EscrowAction,
+  SubmissionPath,
+  StellarNetwork,
+  ConfirmationResult,
+  ConfirmationRetryRecord,
+  processHelperSubmission,
+  processExternalSubmission,
+  processPendingConfirmationRetries,
+  verifyStellarTransaction,
+  updateTWIndexerFromTxHash,
+  sendTransactionViaTWHelper,
+} from './confirmation.service';
+
+/**
+ * Validates that an unsubmitted signed XDR cannot advance escrow status or create records.
+ * Wallet signing is purely client-side and unpersisted in DB.
+ */
+export function assertSignedXdrCannotAdvanceStatus(signedXdr: string): void {
+  if (signedXdr && typeof signedXdr === 'string') {
+    throw new EscrowValidationError(
+      'Client-side wallet signing cannot advance escrow status; transaction must be submitted with a txHash',
+      400
+    );
+  }
 }

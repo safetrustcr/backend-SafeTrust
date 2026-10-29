@@ -4,14 +4,14 @@ import { createHash } from 'node:crypto';
 import {
   verifyProofOfFunds,
   _setNativeVerifierForTesting,
-  ZkVerifierError,
 } from '../zk-verifier';
 
 describe('zk-verifier library', () => {
   const originalEnv = process.env;
   const mockNativeVerifier = {
-    verifyProofOfFunds: jest.fn(),
+    verifyProofOfFunds: jest.fn<boolean, [string, string, string, string]>(),
   };
+  let nativeAddonMocked = false;
 
   const sampleVkHex = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
   const sampleVkSha256 = createHash('sha256')
@@ -21,12 +21,20 @@ describe('zk-verifier library', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env = { ...originalEnv, ZK_ENABLED: 'true' };
-    _setNativeVerifierForTesting(mockNativeVerifier as any);
+    _setNativeVerifierForTesting(mockNativeVerifier);
   });
 
   afterAll(() => {
     process.env = originalEnv;
     _setNativeVerifierForTesting(null);
+  });
+
+  afterEach(() => {
+    delete process.env.ZK_PROOF_OF_FUNDS_VK_SHA256;
+    if (nativeAddonMocked) {
+      jest.dontMock('../../../../crates/zk-verifier');
+      nativeAddonMocked = false;
+    }
   });
 
   describe('ZK feature flag', () => {
@@ -46,6 +54,27 @@ describe('zk-verifier library', () => {
   describe('native verifier availability', () => {
     it('throws ZK_VERIFIER_UNAVAILABLE when native verifier is missing', () => {
       _setNativeVerifierForTesting(null);
+
+      expect(() => {
+        verifyProofOfFunds('00', sampleVkHex, '1000', '00'.repeat(32));
+      }).toThrow(
+        expect.objectContaining({
+          code: 'ZK_VERIFIER_UNAVAILABLE',
+          message: 'ZK proof verifier is unavailable',
+        })
+      );
+    });
+
+    it('loads the native verifier lazily and fails closed when it is absent', () => {
+      _setNativeVerifierForTesting(undefined);
+      nativeAddonMocked = true;
+      jest.doMock(
+        '../../../../crates/zk-verifier',
+        () => {
+          throw new Error('native addon missing');
+        },
+        { virtual: true }
+      );
 
       expect(() => {
         verifyProofOfFunds('00', sampleVkHex, '1000', '00'.repeat(32));
