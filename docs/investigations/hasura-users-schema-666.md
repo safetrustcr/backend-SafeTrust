@@ -21,7 +21,6 @@ What was missing is the **GraphQL name**. Hasura exposes a table outside the `pu
 - `public_users.yaml`: add `configuration.custom_name: users`. Original root fields and type names are restored. Select/update permissions are unchanged.
 - `docs/migrations/safetrust-schema-migration.md`: corrected the "GraphQL field names" row.
 - `tests/karate/features/users/users-operations.feature`: pins `users`, `users_by_pk`, `users_aggregate` in `query_root`, the absence of `safetrust_users`, and the users mutations. (The old `query.feature` only asked for `__typename`, which is why nothing caught this.)
-- `metadata/verify-users-operations.mjs`: read-only verifier for any environment (below).
 
 ### Same defect, deliberately not changed here
 
@@ -32,17 +31,14 @@ These tables are also tracked from `safetrust` with no `custom_name`, so their r
 Back up first: `hasura metadata export` to a private location (never commit it). Never clear metadata, drop tables, re-run seeds or expose all tables to silence the warning. Coordinate with HAS-02 (metadata deployment) before changing Cloud.
 
 1. Record, without secrets: the two registry revisions compared, the project/endpoint identifier, the role used, and the incident timeline.
-2. Run the verifier against the **explicit** Cloud endpoint (local defaults target localhost, so a green local run proves nothing about Cloud):
+2. Confirm migration state first, so metadata is never applied for a table that does not exist: `hasura migrate status --database-name safetrust` must show `1779300000001` applied, and `safetrust.users` must exist. Rows are untouched either way.
+3. Check the live schema as **real guest and host JWTs** (no admin bypass), against the **explicit** Cloud endpoint. Run `{ __type(name: "query_root") { fields { name } } }` and `{ __type(name: "subscription_root") { fields { name } } }`: both must list `users` and must not list `safetrust_users`. As the host role, `{ __type(name: "mutation_root") { fields { name } } }` must list `update_users` and `update_users_by_pk`. Then `{ users(limit: 1) { id } }` must succeed. The Karate feature `tests/karate/features/users/users-operations.feature` pins the same contract for CI.
+4. If the schema is already fine (e.g. the registry entry was a temporary deployment snapshot), close #666 as historical with those query results as evidence.
+5. If it fails, deploy this metadata fix. `setup-tenant.sh` skips tables that are already tracked, so for an already-tracked `safetrust.users` apply the customization explicitly (it keeps permissions and relationships), then re-run step 3:
 
-   ```powershell
-   $env:HASURA_ENDPOINT = "https://<project>.hasura.app"
-   $env:HASURA_ADMIN_SECRET = "<from your secret store>"
-   $env:GUEST_TOKEN = "<real guest JWT>"
-   $env:HOST_TOKEN  = "<real host JWT>"
-   node metadata/verify-users-operations.mjs
+   ```json
+   { "type": "pg_set_table_customization",
+     "args": { "source": "safetrust",
+               "table": { "schema": "safetrust", "name": "users" },
+               "configuration": { "custom_name": "users" } } }
    ```
-
-   It checks `get_inconsistent_metadata`, that `users` is tracked from `safetrust` with `custom_name: users` and has select permissions, and, **as each real role (no admin bypass)**, that `query_root` and `subscription_root` expose `users`, `safetrust_users` is absent, the schema is not the empty `no_queries_available` one, and `{ users(limit: 1) { id } }` succeeds. Exit code 0 = all checks that ran passed; skipped checks are listed and do not count.
-3. If the current schema is already fine (e.g. the registry entry was a temporary deployment snapshot), close #666 as historical with the verifier output as evidence.
-4. If it fails, deploy this metadata fix to the affected environment (`HASURA_ADMIN_SECRET=<secret> ./metadata/setup-tenant.sh safetrust --endpoint <explicit-url>`; already-tracked tables are skipped, so re-tracking `users` with its configuration may need `pg_set_table_customization` for that one table) and re-run the verifier.
-5. Confirm migration state with `hasura migrate status --database-name safetrust`; rows are untouched either way.
