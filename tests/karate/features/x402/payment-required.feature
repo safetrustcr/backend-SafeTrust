@@ -29,6 +29,6 @@ Scenario: Endpoint returns 402 with invalid X-Payment header
 Scenario: Endpoint accepts valid X-Payment header (mock facilitator)
   # Note: full integration test requires a live testnet wallet
   # This scenario uses the mock facilitator in test environment
-  Given path '/health'
+  Given path '/health/live'
   When method GET
   Then status 200

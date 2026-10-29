@@ -15,6 +15,7 @@ import releaseFundsRoute from './escrows/release-funds.route'
 import disputeRoute from './escrows/dispute.route'
 import resolveDisputeRoute from './escrows/resolve-dispute.route'
 
+import healthRoutes from './health.route'
 import authRoutes from './auth'
 import apartmentRoutes from './apartments'
 import bidRequestsRoute from './bid-requests'
@@ -51,10 +52,8 @@ function verifyInternalSecret(req: Request, res: Response, next: NextFunction) {
   next()
 }
 
-// ── 1. Health check (public) ──────────────────────────────────────────────────
-router.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({ status: 'ok' })
-})
+// ── 1. Dependency readiness check (public) ────────────────────────────────────
+router.use(healthRoutes)
 
 // ── 2. Escrows / x402 booking entrypoint & TrustlessWork callbacks ──────────────
 router.use(initializeRoute)

@@ -33,8 +33,8 @@ app.use(express.json({
 app.use('/', routes)
 app.use('/reconciliation', reconciliationRoutes)
 
-// ── Health check ──────────────────────────────────────────────────────────────
-app.get('/health', (_req: Request, res: Response) => {
+// Liveness is intentionally independent of external dependencies.
+app.get('/health/live', (_req: Request, res: Response) => {
   res.status(200).json({ status: 'ok' })
 })
 
