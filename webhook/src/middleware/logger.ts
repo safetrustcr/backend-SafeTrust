@@ -8,7 +8,7 @@ export interface RequestContext {
 declare global {
   namespace Express {
     interface Request {
-      context: RequestContext;
+      context?: RequestContext;
     }
   }
 }
