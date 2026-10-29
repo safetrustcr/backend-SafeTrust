@@ -30,7 +30,6 @@ import {
   updateEscrowWithFreshness,
   applyEscrowFreshnessUpdate,
 } from '../escrow.repository'
-import { reconcileEscrowAtomic } from '../../lib/reconciliation'
 
 describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
   // ─── 1. Out-of-order delivery ──────────────────────────────────────────────

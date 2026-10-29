@@ -18,7 +18,7 @@ Scenario: Contract - getEscrowAnalyticsByDay field names and types
         "variables": {
             "startDate": "2026-10-01",
             "endDate": "2026-10-05",
-            "tenant": "safetrust"
+            "tenant": "test-ana-safetrust"
         }
     }
     """
@@ -96,7 +96,7 @@ Scenario: Diagram 1 - Multi-asset escrow aggregation (USDC single-asset policy)
     Given request
     """
     {
-        "query": "query GetMultiAsset($startDate: date!, $endDate: date!) { getEscrowAnalyticsByDay(args: {p_start_date: $startDate, p_end_date: $endDate, p_tenant_id: \"safetrust\"}) { day cohort_active_escrows cohort_active_value_usdc } }",
+        "query": "query GetMultiAsset($startDate: date!, $endDate: date!) { getEscrowAnalyticsByDay(args: {p_start_date: $startDate, p_end_date: $endDate, p_tenant_id: \"test-ana-safetrust\"}) { day cohort_active_escrows cohort_active_value_usdc } }",
         "variables": {
             "startDate": "2026-10-15",
             "endDate": "2026-10-15"
