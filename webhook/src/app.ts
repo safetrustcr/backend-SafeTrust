@@ -4,11 +4,16 @@ import morgan from 'morgan'
 import helmet from 'helmet'
 import dotenv from 'dotenv'
 dotenv.config()
+import { initializeFirebaseAdmin } from './config/firebase-admin'
 
 import routes from './routes'
 import reconciliationRoutes from './routes/reconciliation/sync-escrows.route'
 
 const app: Application = express()
+
+// Ensure Firebase Admin is initialized before any auth middleware runs.
+// Throws on failure so startup cannot proceed without a valid default app.
+initializeFirebaseAdmin()
 
 // ── Security headers FIRST — before any route mounts ─────────────────────────
 app.use(helmet())

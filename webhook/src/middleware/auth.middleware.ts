@@ -91,6 +91,12 @@ export async function authMiddleware(
     try {
       decodedToken = await getAuth().verifyIdToken(idToken);
     } catch (error) {
+      // Distinguish a missing Firebase app (server misconfiguration) from an invalid token.
+      if (error instanceof Error && /no default app/i.test(error.message)) {
+        console.error("[auth] Firebase Admin is not initialized:", error.message);
+        res.status(500).json({ error: "Internal Server Error", message: "Authentication service unavailable" });
+        return;
+      }
       res.status(401).json({ error: "Unauthorized", message: "Invalid or expired token" });
       return;
     }
