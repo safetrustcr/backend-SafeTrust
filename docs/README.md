@@ -18,6 +18,7 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Escrow Claims API](architecture/escrow-claims-api.md) | Request and response contract, error codes, idempotency and rate limit for claims on released escrows |
 | [Reservations API](architecture/reservations-api.md) | Lifecycle, allowed actions computation, read endpoints, and safe cancellation protocol |
 | [Wallet Registry API](architecture/wallets-api.md) | Verified wallet management lifecycle (list, unlink, and atomic set-primary endpoints) |
+| [Hotel Conversation Notifications](architecture/hotel-conversation-notifications.md) | In-process lifecycle notifications, time budget, idempotent conversation creation, and removal of the internal secret |
 
 ### 📜 Architecture Decision Records (ADRs)
 | Document | Description |
