@@ -3,6 +3,7 @@ import { Response } from 'express'
 import { connect, query } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import type { ChainType, ListWalletsResponse, WalletDto } from '@safetrust/types'
+import { logger } from '../../middleware/logger'
 
 const STELLAR = /^[GC][A-Z2-7]{55}$/
 
@@ -66,7 +67,7 @@ export async function listWalletsHandler(
 
     return res.status(200).json(payload)
   } catch (error: unknown) {
-    console.error('[auth/wallets/list]', error instanceof Error ? error.message : 'database error')
+    logger.error('auth.wallets.list_failed', { error })
     return res.status(500).json({ error: 'WALLET_LIST_FAILED' })
   }
 }
@@ -117,13 +118,13 @@ export async function unlinkWalletHandler(
 
     await client.query('COMMIT')
     transactionOpen = false
-    console.info(`[auth/wallets] Unlinked wallet for user ${uid}`)
+    logger.info('auth.wallets.unlinked', { uid })
     return res.status(204).end()
   } catch (error: unknown) {
     if (transactionOpen) {
       await client.query('ROLLBACK').catch(() => undefined)
     }
-    console.error('[auth/wallets/unlink]', error instanceof Error ? error.message : 'database error')
+    logger.error('auth.wallets.unlink_failed', { error })
     return res.status(500).json({ error: 'WALLET_UNLINK_FAILED' })
   } finally {
     client.release()
@@ -189,7 +190,7 @@ export async function setPrimaryWalletHandler(
 
     await client.query('COMMIT')
     transactionOpen = false
-    console.info(`[auth/wallets] Set primary wallet for user ${uid}`)
+    logger.info('auth.wallets.primary_set', { uid })
 
     const payload: ListWalletsResponse = {
       wallets: rows.map(toDto),
@@ -201,7 +202,7 @@ export async function setPrimaryWalletHandler(
     if (transactionOpen) {
       await client.query('ROLLBACK').catch(() => undefined)
     }
-    console.error('[auth/wallets/primary]', error instanceof Error ? error.message : 'database error')
+    logger.error('auth.wallets.primary_failed', { error })
     return res.status(500).json({ error: 'SET_PRIMARY_WALLET_FAILED' })
   } finally {
     client.release()

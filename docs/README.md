@@ -19,6 +19,7 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Reservations API](architecture/reservations-api.md) | Lifecycle, allowed actions computation, read endpoints, and safe cancellation protocol |
 | [Wallet Registry API](architecture/wallets-api.md) | Verified wallet management lifecycle (list, unlink, and atomic set-primary endpoints) |
 | [Hotel Conversation Notifications](architecture/hotel-conversation-notifications.md) | In-process lifecycle notifications, time budget, idempotent conversation creation, and removal of the internal secret |
+| [Error Handling, Logging and CORS](architecture/error-handling-and-logging.md) | Typed `AppError` mapping, sanitized 5xx bodies, structured logs with `requestId`, raw-body capture, and the CORS origin policy |
 
 ### 📜 Architecture Decision Records (ADRs)
 | Document | Description |

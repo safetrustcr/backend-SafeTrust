@@ -1,6 +1,7 @@
 import { Response } from 'express'
 import { query } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
+import { logger } from '../../middleware/logger'
 
 interface UserRow {
   id: string
@@ -82,7 +83,7 @@ export const syncUserHandler = async (
       }
     }
 
-    console.log(`[sync-user] user synced - uid: ${user.firebase_uid}`)
+    logger.info('auth.sync_user.succeeded', { uid: user.firebase_uid })
     return res.status(200).json({
       user: {
         id: user.id,
@@ -93,7 +94,7 @@ export const syncUserHandler = async (
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error('[sync-user] error:', message)
+    logger.error('auth.sync_user.failed', { error: message })
     return res.status(500).json({ error: 'Database error' })
   }
 }

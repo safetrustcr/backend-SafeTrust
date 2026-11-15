@@ -5,6 +5,7 @@ import {
   ReservationDto,
   toReservationDto,
 } from '../../services/reservation-actions'
+import { logger } from '../../middleware/logger'
 
 type GetReservationResponse =
   | ReservationDto
@@ -36,7 +37,7 @@ export const getReservationHandler = async (
     return res.status(200).json(dto)
   } catch (error) {
     const err = error as Error
-    console.error('[reservations/get] ❌ error:', err.message)
+    logger.error('reservations.get.failed', { error: err })
     return res.status(500).json({ error: 'Internal server error' })
   }
 }

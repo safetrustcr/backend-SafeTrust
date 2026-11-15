@@ -67,6 +67,10 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: ${WEBHOOK_PORT:-3000}
       WEBHOOK_PORT: ${WEBHOOK_PORT:-3000}
+      # Browser origins for the API; see .env.example. Empty in development
+      # allows only localhost / 127.0.0.1 origins.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-postgres}

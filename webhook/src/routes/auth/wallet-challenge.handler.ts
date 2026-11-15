@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { Response } from 'express'
 import { connect } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
+import { logger } from '../../middleware/logger'
 
 const TENANT_ID = 'safetrust'
 const CHALLENGE_TTL_MS = 5 * 60 * 1000
@@ -95,7 +96,7 @@ export async function createWalletChallengeHandler(
       return res.status(400).json({ error: 'UNSUPPORTED_STELLAR_ACCOUNT_TYPE' })
     }
   } catch {
-    console.error('[auth/wallet/challenge] Stellar account lookup failed')
+    logger.error('auth.wallet_challenge.account_lookup_failed')
     return res.status(503).json({ error: 'STELLAR_ACCOUNT_LOOKUP_FAILED' })
   }
 
@@ -129,7 +130,7 @@ export async function createWalletChallengeHandler(
     }
     return res.status(200).json({ challengeId, challenge: message, expiresAt })
   } catch (error: unknown) {
-    console.error('[auth/wallet/challenge]', error instanceof Error ? error.message : 'database error')
+    logger.error('auth.wallet_challenge.failed', { error })
     return res.status(500).json({ error: 'WALLET_CHALLENGE_FAILED' })
   }
 }
@@ -231,7 +232,7 @@ export async function verifyWalletChallengeHandler(
     if (transactionOpen) await client.query('ROLLBACK').catch(() => undefined)
     const code = (error as { code?: string }).code
     if (code === '23505') return res.status(409).json({ error: 'WALLET_ALREADY_REGISTERED' })
-    console.error('[auth/wallet/verify]', error instanceof Error ? error.message : 'database error')
+    logger.error('auth.wallet_verify.failed', { error })
     return res.status(500).json({ error: 'WALLET_VERIFICATION_FAILED' })
   } finally {
     client.release()

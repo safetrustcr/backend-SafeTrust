@@ -1,19 +1,18 @@
 'use strict'
 
 import { EscrowStatus, EscrowEventType } from '../types/escrow.types'
+import { ConflictError } from '../utils/errors'
 
-export class StateConflictError extends Error {
-  readonly statusCode = 409
+export class StateConflictError extends ConflictError {
   constructor(message: string) {
-    super(message)
+    super(message, { code: 'state_conflict' })
     this.name = 'StateConflictError'
   }
 }
 
-export class StaleStateError extends Error {
-  readonly statusCode = 409
+export class StaleStateError extends ConflictError {
   constructor(message: string) {
-    super(message)
+    super(message, { code: 'stale_state' })
     this.name = 'StaleStateError'
   }
 }

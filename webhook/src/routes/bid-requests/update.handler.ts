@@ -4,6 +4,7 @@ import { Response } from 'express'
 import { pool } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { BidRequest } from './create.handler'
+import { logger } from '../../middleware/logger'
 
 export interface UpdateBidRequestPayload {
   status?: string
@@ -108,7 +109,7 @@ export const updateBidRequestHandler = async (
 
     await client.query('COMMIT')
 
-    console.log(`[bid-requests/update] ✅ ${id} → ${newStatus}`)
+    logger.info('bid_requests.update.succeeded', { bidId: id, status: newStatus })
     return res.status(200).json({ bid: updated.rows[0] })
   } catch (error) {
     const err = error as Error
@@ -116,9 +117,9 @@ export const updateBidRequestHandler = async (
       await client.query('ROLLBACK')
     } catch (rollbackErr) {
       const rErr = rollbackErr as Error
-      console.error('[bid-requests/update] rollback failed', rErr.message)
+      logger.error('bid_requests.update.rollback_failed', { error: rErr })
     }
-    console.error('[bid-requests/update] ❌', err.message)
+    logger.error('bid_requests.update.failed', { error: err })
     return res.status(500).json({ error: 'Failed to update bid request' })
   } finally {
     client.release()

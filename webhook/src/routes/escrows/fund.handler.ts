@@ -9,6 +9,7 @@ import {
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
+import { logger } from '../../middleware/logger';
 
 /**
   * Handles the escrow funded webhook event.
@@ -58,13 +59,10 @@ export const fundEscrowHandler = async (
         body: 'SafeTrust: Your deposit has been confirmed on the Stellar network. Your booking is secured.',
       });
     } catch (notifyError) {
-      console.warn(
-        `[escrow/fund] Notification failed (non-fatal) for contractId ${contractId}:`,
-        (notifyError as Error).message
-      );
+      logger.warn('escrow.fund.notification_failed', { contractId, error: notifyError });
     }
 
-    console.log(`[escrow/fund] ✅ Escrow funded — contractId: ${contractId}`);
+    logger.info('escrow.fund.succeeded', { contractId });
     return ok(res);
   } catch (error) {
     if (error instanceof EscrowNotFoundError) {
@@ -75,11 +73,7 @@ export const fundEscrowHandler = async (
       return conflict(res, { error: error.message });
     }
 
-    const err = error as Error & { details?: unknown };
-    console.error('[escrow/fund] ❌ error:', err.details || err.message);
-    if (err.details) {
-      return serverError(res, { error: 'Failed to update escrow status', details: err.details });
-    }
-    return serverError(res, { error: 'Internal server error' });
+    logger.error('escrow.fund.failed', { contractId, error });
+    return serverError(res, 'Failed to update escrow status');
   }
 };
