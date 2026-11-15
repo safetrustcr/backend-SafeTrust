@@ -181,14 +181,55 @@ process_metadata_tables() {
         echo "ℹ️  All tables already tracked for $tenant_name"
     fi
 
-    # Track table select permissions
     local raw_tables_json
     raw_tables_json=$(yq -o json e '.' "${table_files[@]}" 2>/dev/null \
         | jq -s 'map(if type == "array" then .[] else . end) | map(select(type == "object" and ((.table.name? // "") != "")))') || true
 
+    # Create relationships before permissions: select filters such as
+    # `conversation: {guest_id: ...}` are rejected until the relationship exists.
+    local desired_rels
+    desired_rels=$(echo "$raw_tables_json" | jq --arg source "$tenant_name" \
+        '[.[] | . as $tbl | { name: $tbl.table.name, schema: ($tbl.table.schema // "public") } as $t
+          | ((.object_relationships // [])[] | {kind: "object", args: { source: $source, table: $t, name: .name, using: .using }}),
+            ((.array_relationships // [])[] | {kind: "array", args: { source: $source, table: $t, name: .name, using: .using }})]' 2>/dev/null || echo "[]")
+
+    if [ -n "$desired_rels" ] && [ "$desired_rels" != "[]" ] && [ "$desired_rels" != "null" ]; then
+        local rel_meta
+        rel_meta=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d '{"type":"export_metadata","args":{}}') || return 1
+
+        local rels_to_create
+        rels_to_create=$(jq -cn --arg source "$tenant_name" \
+            --argjson metadata "$rel_meta" --argjson desired "$desired_rels" \
+            '[$metadata | (.metadata // .).sources[]? | select(.name == $source) | .tables[]? | .table as $t | ((.object_relationships // []) + (.array_relationships // []))[]? | {table: $t, name: .name}] as $tracked | $desired | map(select(. as $d | $tracked | any(.table == $d.args.table and .name == $d.args.name) | not))') || return 1
+
+        if [ -n "$rels_to_create" ] && [ "$rels_to_create" != "[]" ]; then
+            echo "🔎 Creating table relationships for $tenant_name..."
+            local rels_payload rels_response
+            rels_payload=$(jq -cn --argjson rels "$rels_to_create" \
+                '{type:"bulk", args:($rels | map({type:("pg_create_" + .kind + "_relationship"), args:.args}))}')
+            rels_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+                -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+                -H "Content-Type: application/json" \
+                -d "$rels_payload") || return 1
+            if echo "$rels_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+                echo "❌ Error creating table relationships for $tenant_name: $rels_response" >&2
+                return 1
+            fi
+            echo "✅ Table relationships created for $tenant_name"
+        fi
+    fi
+
+    # Track table select permissions. `admin` is Hasura's built-in full-access
+    # role: declaring a permission for it is rejected ("already defined"), and
+    # because the request is a bulk, that one rejection would drop every
+    # permission. YAML may still list admin to document intent; skip it here.
+
     local desired_table_perms
     desired_table_perms=$(echo "$raw_tables_json" | jq --arg source "$tenant_name" \
-        '[.[] | select(.select_permissions != null and (.select_permissions | length) > 0) | . as $tbl | .select_permissions[] | { source: $source, table: { name: $tbl.table.name, schema: ($tbl.table.schema // "public") }, role: .role, permission: .permission }]' 2>/dev/null || echo "[]")
+        '[.[] | select(.select_permissions != null and (.select_permissions | length) > 0) | . as $tbl | .select_permissions[] | select(.role != "admin") | { source: $source, table: { name: $tbl.table.name, schema: ($tbl.table.schema // "public") }, role: .role, permission: .permission }]' 2>/dev/null || echo "[]")
 
     if [ -n "$desired_table_perms" ] && [ "$desired_table_perms" != "[]" ] && [ "$desired_table_perms" != "null" ]; then
         local current_meta
@@ -207,10 +248,17 @@ process_metadata_tables() {
             local table_perms_payload
             table_perms_payload=$(jq -cn --argjson perms "$table_perms_to_create" \
                 '{type:"bulk", args:($perms | map({type:"pg_create_select_permission", args:.}))}')
-            curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+            # A bulk request is atomic: one invalid permission rejects them all,
+            # so an error here means no select permission was created.
+            local table_perms_response
+            table_perms_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
                 -H "X-Hasura-Admin-Secret: ${admin_secret}" \
                 -H "Content-Type: application/json" \
-                -d "$table_perms_payload" >&2 || true
+                -d "$table_perms_payload") || return 1
+            if echo "$table_perms_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+                echo "❌ Error creating table select permissions for $tenant_name: $table_perms_response" >&2
+                return 1
+            fi
             echo "✅ Table select permissions updated for $tenant_name"
         fi
     fi
@@ -317,8 +365,11 @@ process_metadata_functions() {
             perm_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
                 -H "X-Hasura-Admin-Secret: ${admin_secret}" \
                 -H "Content-Type: application/json" \
-                -d "$perm_payload")
-            echo "[perm-response] $perm_response" >&2
+                -d "$perm_payload") || return 1
+            if echo "$perm_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+                echo "❌ Error creating function permissions for $tenant_name: $perm_response" >&2
+                return 1
+            fi
             echo "✅ Function permissions updated for $tenant_name"
         fi
     fi

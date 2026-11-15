@@ -2,12 +2,11 @@
 -- Canonical source: dApp-SafeTrust/infra/hasura/seeds/safetrust/02_apartments_seed.sql
 -- Owner lookup uses firebase_uid for stable cross-seed references
 
--- Idempotency: remove demo apartments before reinserting
-DELETE FROM safetrust.apartments
-WHERE owner_id IN (
-    SELECT id FROM safetrust.users
-    WHERE firebase_uid IN ('demo-tenant-uid-001', 'demo-owner-uid-002')
-);
+-- Idempotency: upsert the demo apartments by id. They are not deleted and
+-- reinserted because safetrust.reservations references apartments with
+-- ON DELETE RESTRICT, so a delete fails once the reservations seed has run
+-- (any bin/start without --reset). Upserting keeps dependent reservations,
+-- conversations and escrows intact while refreshing the apartment values.
 
 -- Apartment 1
 INSERT INTO safetrust.apartments (
@@ -36,7 +35,17 @@ SELECT
     NOW() - INTERVAL '2 months',
     NOW() + INTERVAL '10 months'
 FROM safetrust.users u WHERE u.firebase_uid = 'demo-owner-uid-002'
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+    owner_id         = EXCLUDED.owner_id,
+    name             = EXCLUDED.name,
+    description      = EXCLUDED.description,
+    price            = EXCLUDED.price,
+    warranty_deposit = EXCLUDED.warranty_deposit,
+    coordinates      = EXCLUDED.coordinates,
+    address          = EXCLUDED.address,
+    is_available     = EXCLUDED.is_available,
+    available_from   = EXCLUDED.available_from,
+    available_until  = EXCLUDED.available_until;
 
 -- Apartment 2
 INSERT INTO safetrust.apartments (
@@ -65,4 +74,14 @@ SELECT
     NOW() - INTERVAL '1 month',
     NOW() + INTERVAL '12 months'
 FROM safetrust.users u WHERE u.firebase_uid = 'demo-owner-uid-002'
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+    owner_id         = EXCLUDED.owner_id,
+    name             = EXCLUDED.name,
+    description      = EXCLUDED.description,
+    price            = EXCLUDED.price,
+    warranty_deposit = EXCLUDED.warranty_deposit,
+    coordinates      = EXCLUDED.coordinates,
+    address          = EXCLUDED.address,
+    is_available     = EXCLUDED.is_available,
+    available_from   = EXCLUDED.available_from,
+    available_until  = EXCLUDED.available_until;
