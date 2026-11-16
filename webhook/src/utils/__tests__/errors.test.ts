@@ -99,6 +99,17 @@ describe('classifyError for non-AppError values', () => {
     expect(classified.message).not.toContain('Unexpected token')
   })
 
+  it.each(['constructor', '__proto__', 'toString', 'hasOwnProperty'])(
+    'does not treat the inherited key %s as a parser error',
+    (type) => {
+      expect(classifyError({ type })).toEqual({
+        status: 500,
+        code: 'internal_error',
+        message: 'Internal server error',
+      })
+    }
+  )
+
   it('uses a 4xx status from a library error, but only an exposable message', () => {
     expect(classifyError(Object.assign(new Error('Too many requests'), { status: 429, expose: true })))
       .toEqual({ status: 429, code: 'request_error', message: 'Too many requests' })

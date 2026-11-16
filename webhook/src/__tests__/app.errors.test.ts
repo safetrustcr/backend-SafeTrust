@@ -2,8 +2,8 @@
  * Error classification, correlation and CORS on the real Express app.
  */
 import crypto from 'crypto'
+import type { Application } from 'express'
 import request from 'supertest'
-import app from '../app'
 import { fundEscrowTransactional } from '../services/escrow.service'
 
 // Firebase token verification is not exercised here; its ESM-only `jose`
@@ -30,6 +30,19 @@ jest.mock('../services/hotel-conversation-notify', () => ({
 
 const mockedFund = fundEscrowTransactional as jest.MockedFunction<typeof fundEscrowTransactional>
 const SECRET = 'test-trustlesswork-secret'
+const ALLOWED_ORIGIN = 'http://localhost:3001'
+
+// The app resolves its CORS policy when it is imported, so it is loaded only
+// after this test pins the environment, whatever the developer's .env says.
+// dotenv does not override variables that are already set.
+const TEST_ENV: Record<string, string> = {
+  CORS_ALLOWED_ORIGINS: ALLOWED_ORIGIN,
+  TRUSTLESSWORK_WEBHOOK_SECRET: SECRET,
+  LOG_LEVEL: 'info',
+}
+const originalEnv = Object.fromEntries(Object.keys(TEST_ENV).map((key) => [key, process.env[key]]))
+
+let app: Application
 
 function signed(rawBody: string, signedBytes: string = rawBody) {
   const timestamp = String(Date.now())
@@ -50,15 +63,18 @@ function logLines(spy: jest.SpyInstance): Record<string, unknown>[] {
 }
 
 describe('app error classification', () => {
-  const originalSecret = process.env.TRUSTLESSWORK_WEBHOOK_SECRET
   let errorSpy: jest.SpyInstance
 
   beforeAll(() => {
-    process.env.TRUSTLESSWORK_WEBHOOK_SECRET = SECRET
+    Object.assign(process.env, TEST_ENV)
+    app = require('../app').default
   })
 
   afterAll(() => {
-    process.env.TRUSTLESSWORK_WEBHOOK_SECRET = originalSecret
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
   })
 
   beforeEach(() => {
@@ -157,9 +173,9 @@ describe('app error classification', () => {
   })
 
   describe('CORS', () => {
-    it('allows a local development origin and exposes X-Request-Id', async () => {
-      const res = await request(app).get('/health/live').set('Origin', 'http://localhost:3001')
-      expect(res.headers['access-control-allow-origin']).toBe('http://localhost:3001')
+    it('allows a configured origin and exposes X-Request-Id', async () => {
+      const res = await request(app).get('/health/live').set('Origin', ALLOWED_ORIGIN)
+      expect(res.headers['access-control-allow-origin']).toBe(ALLOWED_ORIGIN)
       expect(res.headers['access-control-expose-headers']).toBe('X-Request-Id')
     })
 

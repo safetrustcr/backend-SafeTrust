@@ -106,9 +106,10 @@ export function requestPath(req: Request): string {
 
 /**
  * Assigns the request id (reusing a well-formed incoming `X-Request-Id`),
- * returns it in the response header, and writes one `http.request` access log
- * line when the response finishes. Mount first, before body parsing, so even
- * a rejected body is correlated.
+ * returns it in the response header, and writes exactly one `http.request`
+ * access log line per request: on `finish`, or on `close` when the connection
+ * ends before the response was fully sent (client disconnect, socket error).
+ * Mount first, before body parsing, so even a rejected body is correlated.
  */
 export function requestId(req: Request, res: Response, next: NextFunction): void {
   const incoming = req.get('x-request-id')
@@ -117,19 +118,29 @@ export function requestId(req: Request, res: Response, next: NextFunction): void
   res.setHeader('X-Request-Id', id)
 
   const startedAt = process.hrtime.bigint()
-  res.on('finish', () => {
+  let logged = false
+  const logCompletion = (): void => {
+    if (logged) return
+    logged = true
+
     const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6
+    // `close` without `finish`: the response never completed, so the status
+    // is what the handler had set (or the default), not what the client got.
+    const aborted = !res.writableFinished
     const fields = {
       requestId: id,
       method: req.method,
       path: requestPath(req),
       status: res.statusCode,
       durationMs: Math.round(durationMs * 10) / 10,
+      ...(aborted ? { aborted: true } : {}),
     }
     if (res.statusCode >= 500) logger.error('http.request', fields)
-    else if (res.statusCode >= 400) logger.warn('http.request', fields)
+    else if (res.statusCode >= 400 || aborted) logger.warn('http.request', fields)
     else logger.info('http.request', fields)
-  })
+  }
+  res.once('finish', logCompletion)
+  res.once('close', logCompletion)
 
   next()
 }

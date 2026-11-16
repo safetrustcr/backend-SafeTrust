@@ -24,11 +24,14 @@ function makeApp(throwing: () => unknown) {
 describe('errorHandler', () => {
   let errorSpy: jest.SpyInstance
   let warnSpy: jest.SpyInstance
+  const originalLogLevel = process.env.LOG_LEVEL
 
   const lines = (spy: jest.SpyInstance) =>
     spy.mock.calls.map((call) => String(call[0])).filter((l) => l.startsWith('{')).map((l) => JSON.parse(l))
 
   beforeEach(() => {
+    // Log assertions need records written whatever the caller's LOG_LEVEL is.
+    process.env.LOG_LEVEL = 'info'
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
     warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined)
     jest.spyOn(console, 'log').mockImplementation(() => undefined)
@@ -36,6 +39,8 @@ describe('errorHandler', () => {
 
   afterEach(() => {
     jest.restoreAllMocks()
+    if (originalLogLevel === undefined) delete process.env.LOG_LEVEL
+    else process.env.LOG_LEVEL = originalLogLevel
   })
 
   it.each([

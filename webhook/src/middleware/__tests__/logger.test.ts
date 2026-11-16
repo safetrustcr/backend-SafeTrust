@@ -1,6 +1,19 @@
 import express from 'express'
+import http from 'http'
+import { AddressInfo } from 'net'
 import request from 'supertest'
 import { bindRequestContext, getRequestId, logger, requestId, serializeError } from '../logger'
+
+/** Set LOG_LEVEL for a test; the returned function restores (or deletes) it. */
+function setLogLevel(level: string | undefined): () => void {
+  const original = process.env.LOG_LEVEL
+  if (level === undefined) delete process.env.LOG_LEVEL
+  else process.env.LOG_LEVEL = level
+  return () => {
+    if (original === undefined) delete process.env.LOG_LEVEL
+    else process.env.LOG_LEVEL = original
+  }
+}
 
 function captureLines(): { lines: () => Record<string, unknown>[]; restore: () => void } {
   const spies = (['log', 'warn', 'error', 'debug'] as const).map((method) =>
@@ -13,17 +26,17 @@ function captureLines(): { lines: () => Record<string, unknown>[]; restore: () =
 }
 
 describe('logger', () => {
-  const originalLevel = process.env.LOG_LEVEL
   let capture: ReturnType<typeof captureLines>
+  let restoreLogLevel: () => void
 
   beforeEach(() => {
-    delete process.env.LOG_LEVEL
+    restoreLogLevel = setLogLevel(undefined)
     capture = captureLines()
   })
 
   afterEach(() => {
     capture.restore()
-    process.env.LOG_LEVEL = originalLevel
+    restoreLogLevel()
   })
 
   it('writes one JSON object with time, level, event and fields', () => {
@@ -76,6 +89,7 @@ describe('logger', () => {
 
 describe('request correlation', () => {
   let capture: ReturnType<typeof captureLines>
+  let restoreLogLevel: () => void
 
   function makeApp() {
     const app = express()
@@ -88,15 +102,24 @@ describe('request correlation', () => {
       logger.info('work.done')
       res.json({ requestId: getRequestId() })
     })
+    app.get('/slow', async (_req, res) => {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      if (!res.destroyed) res.json({ ok: true })
+    })
     return app
   }
 
+  const accessLogs = () => capture.lines().filter((line) => line.event === 'http.request')
+
   beforeEach(() => {
+    // The assertions read info-level records; don't depend on the caller's LOG_LEVEL.
+    restoreLogLevel = setLogLevel('info')
     capture = captureLines()
   })
 
   afterEach(() => {
     capture.restore()
+    restoreLogLevel()
   })
 
   it('assigns an id, returns it in X-Request-Id, and tags handler logs with it', async () => {
@@ -132,6 +155,36 @@ describe('request correlation', () => {
     })
     expect(typeof access?.durationMs).toBe('number')
     expect(JSON.stringify(capture.lines())).not.toContain('secret')
+  })
+
+  it('writes exactly one access log for a completed request', async () => {
+    const res = await request(makeApp()).post('/work').send({})
+    // `close` follows `finish` on a completed response; give it time to fire.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    const lines = accessLogs().filter((line) => line.requestId === res.headers['x-request-id'])
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).not.toHaveProperty('aborted')
+  })
+
+  it('logs a request whose client disconnects before the response finishes', async () => {
+    const server = makeApp().listen(0)
+    try {
+      const { port } = server.address() as AddressInfo
+      await new Promise<void>((resolve) => {
+        const req = http.get({ port, path: '/slow', headers: { 'X-Request-Id': 'client-gone-1234' } })
+        req.on('error', () => resolve())
+        setTimeout(() => req.destroy(), 50)
+      })
+      // Wait past the handler's delay so a late `finish` would also be seen.
+      await new Promise((resolve) => setTimeout(resolve, 400))
+
+      const lines = accessLogs().filter((line) => line.requestId === 'client-gone-1234')
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toMatchObject({ level: 'warn', method: 'GET', path: '/slow', aborted: true })
+    } finally {
+      await new Promise((resolve) => server.close(resolve))
+    }
   })
 
   it('keeps concurrent requests apart', async () => {

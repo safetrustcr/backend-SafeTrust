@@ -130,7 +130,9 @@ export function classifyError(error: unknown): ClassifiedError {
 
   if (error && typeof error === 'object') {
     const record = error as Record<string, unknown>
-    if (typeof record.type === 'string' && BODY_PARSER_ERRORS[record.type]) {
+    // Own entries only: an inherited key such as `constructor` or `__proto__`
+    // must not be mistaken for a parser classification.
+    if (typeof record.type === 'string' && Object.hasOwn(BODY_PARSER_ERRORS, record.type)) {
       return BODY_PARSER_ERRORS[record.type]
     }
 
