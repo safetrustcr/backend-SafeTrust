@@ -12,6 +12,7 @@ import {
   insert,
 } from '../../repositories/escrow-claims.repository'
 import { UUID_PATTERN } from './validation'
+import { logger } from '../../middleware/logger'
 
 const MIN_BODY = 10
 const MAX_BODY = 2000
@@ -100,7 +101,7 @@ export const createClaimHandler = async (
       if (raced) {
         return res.status(409).json({ error: 'CLIENT_OP_ID_REUSED' })
       }
-      console.error('createClaimHandler: claim missing after insert conflict')
+      logger.error('escrow_claims.create.missing_after_conflict')
       return res.status(500).json({ error: 'INTERNAL_ERROR' })
     }
 
@@ -112,7 +113,7 @@ export const createClaimHandler = async (
     } catch {
       // connection already unusable; release below discards it
     }
-    console.error('createClaimHandler error:', err)
+    logger.error('escrow_claims.create.failed', { error: err })
     return res.status(500).json({ error: 'INTERNAL_ERROR' })
   } finally {
     client.release()

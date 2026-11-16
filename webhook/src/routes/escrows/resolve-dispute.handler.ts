@@ -15,6 +15,7 @@ import {
 import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 import { getValidPriorStates } from '../../lib/escrow-transitions';
+import { logger } from '../../middleware/logger';
 
 const EVENT_TYPE = EscrowEventType.DisputeResolved;
 
@@ -82,15 +83,11 @@ export const resolveDisputeHandler = async (
 
     await markWebhookEventProcessed(eventId);
 
-    console.log(`[escrow/resolve-dispute] ✅ Dispute resolved — contractId: ${contractId}, resolver: ${resolver}`);
+    logger.info('escrow.resolve_dispute.succeeded', { contractId, resolver });
     return ok(res);
 
   } catch (error) {
-    const err = error as Error & { details?: unknown };
-    console.error('[escrow/resolve-dispute] ❌ error:', err.details || err.message);
-    if (err.details) {
-      return serverError(res, { error: 'Failed to update escrow status', details: err.details });
-    }
-    return serverError(res, { error: 'Internal server error', details: err.message });
+    logger.error('escrow.resolve_dispute.failed', { contractId: req.body?.contractId, error });
+    return serverError(res, 'Failed to update escrow status');
   }
 };

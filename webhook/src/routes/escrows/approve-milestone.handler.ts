@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response';
 import { ApproveMilestonePayload } from '@safetrust/types';
+import { logger } from '../../middleware/logger';
 import {
   approveMilestone,
   EscrowStateConflictError,
@@ -38,13 +39,11 @@ export async function approveMilestoneHandler(
       return duplicate(res, result.eventId);
     }
 
-    console.log(
-      `[escrow/approve-milestone] ✅ Milestone approved — contractId: ${contractId}, milestoneId: ${milestoneId}`
-    );
+    logger.info('escrow.approve_milestone.succeeded', { contractId, milestoneId });
     return ok(res);
 
   } catch (error) {
-    const err = error as Error & { details?: unknown };
+    const err = error as Error;
 
     if (err instanceof EscrowStateConflictError) {
       return conflict(res, { error: err.message });
@@ -57,10 +56,7 @@ export async function approveMilestoneHandler(
       return notFound(res, { error: err.message });
     }
 
-    console.error(
-      '[escrow/approve-milestone] ❌ failed:',
-      err.details || err.message
-    );
+    logger.error('escrow.approve_milestone.failed', { contractId: req.body?.contractId, error });
     return serverError(res, { error: 'Failed to update milestone approval' });
   }
 }

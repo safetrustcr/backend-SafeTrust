@@ -2,6 +2,7 @@ import { Response } from 'express'
 import { query } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import type { MeResponse, UserRole } from '@safetrust/types'
+import { logger } from '../../middleware/logger'
 
 interface RoleRow {
   name: UserRole
@@ -42,7 +43,7 @@ export const meHandler = async (
     return res.status(200).json(response)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error('[auth/me] error:', message)
+    logger.error('auth.me.failed', { error: message })
     return res.status(500).json({ error: 'Failed to resolve user roles' })
   }
 }

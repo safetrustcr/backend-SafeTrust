@@ -241,9 +241,8 @@ describe('reservations/create.handler', () => {
     await createReservationHandler(req, res)
 
     expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'Internal server error',
-      details: 'Reservation service failed',
-    })
+    expect(res.json).toHaveBeenCalledWith({ error: 'Failed to create reservation' })
+    // The service's error message stays in the logs, never in the body.
+    expect(JSON.stringify((res.json as jest.Mock).mock.calls)).not.toContain('Reservation service failed')
   })
 })

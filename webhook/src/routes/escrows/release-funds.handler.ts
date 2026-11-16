@@ -10,6 +10,7 @@ import {
 import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
+import { logger } from '../../middleware/logger';
 
 /**
  * Handles the escrow release-funds webhook event.
@@ -51,13 +52,10 @@ export const releaseFundsHandler = async (
         body: 'SafeTrust: Funds have been released. Thank you for booking with us.',
       });
     } catch (notifyError) {
-      console.warn(
-        `[escrow/release-funds] Notification failed (non-fatal) for contractId ${contractId}:`,
-        (notifyError as Error).message
-      );
+      logger.warn('escrow.release_funds.notification_failed', { contractId, error: notifyError });
     }
 
-    console.log(`[escrow/release-funds] ✅ Funds released — contractId: ${contractId}`);
+    logger.info('escrow.release_funds.succeeded', { contractId });
     return ok(res);
   } catch (error) {
     if (error instanceof EscrowNotFoundError) {
@@ -68,23 +66,7 @@ export const releaseFundsHandler = async (
       return conflict(res, { error: error.message });
     }
 
-    const err = error as Error & { details?: unknown };
-
-    console.error(
-      '[escrow/release-funds] ❌ error:',
-      err.details || err.message
-    );
-
-    if (err.details) {
-      return serverError(res, {
-        error: 'Failed to update escrow status',
-        details: err.details,
-      });
-    }
-
-    return serverError(res, {
-      error: 'Internal server error',
-      details: err.message,
-    });
+    logger.error('escrow.release_funds.failed', { contractId, error });
+    return serverError(res, 'Failed to update escrow status');
   }
 };

@@ -1,4 +1,5 @@
 import { PoolClient } from 'pg';
+import { AppError, ConflictError, NotFoundError, ServiceUnavailableError } from '../utils/errors';
 import { withTransaction } from './db';
 import { getPlatformTenantId } from '../config/tenant';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
@@ -56,37 +57,32 @@ export interface TrustlessWorkEscrow {
 
 // ── Validation error ───────────────────────────────────────────────────────────
 
-export class EscrowNotFoundError extends Error {
-  readonly statusCode = 404;
+export class EscrowNotFoundError extends NotFoundError {
   constructor(message: string) {
-    super(message);
+    super(message, { code: 'escrow_not_found' });
     this.name = 'EscrowNotFoundError';
   }
 }
 
-export class EscrowStateConflictError extends Error {
-  readonly statusCode = 409;
+export class EscrowStateConflictError extends ConflictError {
   constructor(message: string) {
-    super(message);
+    super(message, { code: 'escrow_state_conflict' });
     this.name = 'EscrowStateConflictError';
   }
 }
 
 
-export class EscrowValidationError extends Error {
-  readonly statusCode: number;
+export class EscrowValidationError extends AppError {
   constructor(message: string, statusCode = 400) {
-    super(message);
+    super(message, statusCode, { code: 'escrow_validation_error' });
     this.name = 'EscrowValidationError';
-    this.statusCode = statusCode;
   }
 }
 
 /** Thrown when the ZK verifier native addon is unavailable. */
-export class ZkVerifierUnavailableError extends Error {
-  readonly statusCode = 503;
+export class ZkVerifierUnavailableError extends ServiceUnavailableError {
   constructor(message: string) {
-    super(message);
+    super(message, { code: 'zk_verifier_unavailable' });
     this.name = 'ZkVerifierUnavailableError';
   }
 }
@@ -304,10 +300,9 @@ export async function persistEscrow(
 }
 
 /** Thrown when the reservation named in booking_metadata does not exist. */
-export class ReservationNotFoundError extends Error {
-  readonly statusCode = 404;
+export class ReservationNotFoundError extends NotFoundError {
   constructor(reservationId: string) {
-    super(`Reservation ${reservationId} not found`);
+    super(`Reservation ${reservationId} not found`, { code: 'reservation_not_found' });
     this.name = 'ReservationNotFoundError';
   }
 }

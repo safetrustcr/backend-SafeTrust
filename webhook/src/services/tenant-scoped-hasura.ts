@@ -1,4 +1,5 @@
 import { hasuraRequest } from './hasura'
+import { ForbiddenError } from '../utils/errors'
 
 // ── Tenant-scoped admin writes ─────────────────────────────────────────────────
 //
@@ -8,11 +9,9 @@ import { hasuraRequest } from './hasura'
 // the platform tenant for signed server-to-server webhooks), and any tenant value
 // in the variables must equal it before the request is sent.
 
-export class TenantMismatchError extends Error {
-  readonly statusCode = 403
-
+export class TenantMismatchError extends ForbiddenError {
   constructor(message = 'Tenant does not match the verified session tenant') {
-    super(message)
+    super(message, { code: 'tenant_mismatch' })
     this.name = 'TenantMismatchError'
   }
 }
