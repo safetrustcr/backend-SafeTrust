@@ -41,14 +41,24 @@ const {
 /**
  * Build a minimal escrow object as the TrustlessWork indexer would return it.
  */
+/** A Trustless Work V1 indexer escrow (GetEscrowsFromIndexerResponse). */
 function makeEscrow(overrides = {}) {
   return {
     contractId: 'CDLZ_TEST_001',
-    status: 'funded',
-    amount: '100.0000000',
-    balance: '0.0000000',
-    escrowType: 'single_release',
-    roles: { marker: 'MARKER', approver: 'APPROVER', releaser: 'RELEASER' },
+    type: 'single-release',
+    amount: 100,
+    balance: 100,
+    fundedBy: 'GGUEST',
+    flags: { approved: false, disputed: false, released: false, resolved: false },
+    milestones: [{ description: 'Check-in', status: 'pending', approved: false }],
+    roles: {
+      approver: 'APPROVER',
+      serviceProvider: 'MARKER',
+      platformAddress: 'PLATFORM',
+      releaseSigner: 'RELEASER',
+      disputeResolver: 'RESOLVER',
+      receiver: 'MARKER',
+    },
     ...overrides,
   };
 }
@@ -255,6 +265,20 @@ describe('syncChunk', () => {
     expect(result).toEqual({ updated: 1, unchanged: 0, skipped: 0 });
   });
 
+  it('writes the status derived from V1 flags and the V1 role names', async () => {
+    const escrow = makeEscrow({ flags: { released: true } });
+    mockHttpResponse({ escrows: [escrow] });
+    db.query.mockResolvedValue({ rows: [{ contract_id: escrow.contractId, inserted: false }] });
+
+    await syncChunk([escrow.contractId]);
+
+    const [, params] = db.query.mock.calls[0];
+    // contract_id, status, amount, balance, marker, approver, releaser, escrow_type, network
+    expect(params.slice(0, 8)).toEqual([
+      'CDLZ_TEST_001', 'completed', 100, 100, 'MARKER', 'APPROVER', 'RELEASER', 'single_release',
+    ]);
+  });
+
   it('counts an unchanged row when RETURNING is empty', async () => {
     const escrow = makeEscrow();
     mockHttpResponse({ escrows: [escrow] });
@@ -297,7 +321,7 @@ describe('syncChunk', () => {
   });
 
   it('skips an escrow missing contractId', async () => {
-    mockHttpResponse({ escrows: [{ status: 'funded' }] }); // no contractId
+    mockHttpResponse({ escrows: [{ flags: {} }] }); // no contractId
 
     const result = await syncChunk(['some-id']);
     expect(result).toEqual({ updated: 0, unchanged: 0, skipped: 1 });

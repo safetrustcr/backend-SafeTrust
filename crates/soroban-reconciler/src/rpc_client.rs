@@ -330,17 +330,28 @@ pub fn validate_rpc_contract_response(
     validate_response_shape(result, contract_id)
 }
 
+/// First non-empty value among the given environment variables.
+fn env_first(names: &[&str]) -> Option<String> {
+    names
+        .iter()
+        .filter_map(|name| env::var(name).ok())
+        .map(|value| value.trim().to_string())
+        .find(|value| !value.is_empty())
+}
+
 /// Query escrow state using Trustless Work API (authoritative structured indexer).
 pub fn query_escrow_state_from_tw_api(
     contract_id: &str,
     network: &str,
 ) -> Result<SorobanEscrowState, String> {
-    let base_url = env::var("TRUSTLESS_WORK_API_URL")
-        .unwrap_or_else(|_| "https://dev.api.trustlesswork.com".to_string());
-    let api_key = env::var("TRUSTLESS_WORK_API_KEY").unwrap_or_default();
+    // Same names and precedence as webhook/src/lib/source-adapters/tw.adapter.ts:
+    // TRUSTLESSWORK_* (what docker-compose passes), then the legacy spelling.
+    let base_url = env_first(&["TRUSTLESSWORK_API_URL", "TRUSTLESS_WORK_API_URL"])
+        .unwrap_or_else(|| "https://dev.api.trustlesswork.com".to_string());
+    let api_key = env_first(&["TRUSTLESSWORK_API_KEY", "TRUSTLESS_WORK_API_KEY"]).unwrap_or_default();
 
     let url = format!(
-        "{}/helper/get-escrows-by-contract-ids?contractIds={}",
+        "{}/helper/get-escrow-by-contract-ids?contractIds={}&validateOnChain=true",
         base_url.trim_end_matches('/'),
         contract_id
     );

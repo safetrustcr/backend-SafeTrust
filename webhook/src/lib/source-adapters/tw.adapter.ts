@@ -1,15 +1,71 @@
 import https from 'https'
 import http from 'http'
-import type { EscrowRecord } from '../reconciliation.types'
+import { logger } from '../../middleware/logger'
+import type { TwIndexerEscrow } from './tw-indexer.types'
 
-export const TW_BASE_URL =
-  process.env.TRUSTLESS_WORK_API_URL || 'https://dev.api.trustlesswork.com'
-export const TW_API_KEY = process.env.TRUSTLESS_WORK_API_KEY || ''
+// ── Configuration ──────────────────────────────────────────────────────────────
+//
+// TRUSTLESSWORK_API_URL / TRUSTLESSWORK_API_KEY are the names docker-compose
+// passes to the container. The earlier TRUSTLESS_WORK_API_* spelling is still
+// read, with a warning, so an existing .env keeps working until it is renamed.
 
-function httpGet(url: string, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
+export const DEFAULT_TRUSTLESSWORK_API_URL = 'https://dev.api.trustlesswork.com'
+
+const warnedLegacyNames = new Set<string>()
+
+function readSetting(name: string, legacyName: string): string | undefined {
+  const value = process.env[name]?.trim()
+  if (value) return value
+
+  const legacy = process.env[legacyName]?.trim()
+  if (legacy) {
+    if (!warnedLegacyNames.has(legacyName)) {
+      warnedLegacyNames.add(legacyName)
+      logger.warn('trustlesswork.legacy_env_name', { legacyName, name })
+    }
+    return legacy
+  }
+  return undefined
+}
+
+/** Trustless Work API base URL, without a trailing slash. */
+export function getTrustlessWorkApiUrl(): string {
+  const url = readSetting('TRUSTLESSWORK_API_URL', 'TRUSTLESS_WORK_API_URL') ?? DEFAULT_TRUSTLESSWORK_API_URL
+  return url.replace(/\/+$/, '')
+}
+
+/** Trustless Work API key sent as `x-api-key`; empty when not configured. */
+export function getTrustlessWorkApiKey(): string {
+  return readSetting('TRUSTLESSWORK_API_KEY', 'TRUSTLESS_WORK_API_KEY') ?? ''
+}
+
+/** Test seam: forget which legacy names were already reported. */
+export function __resetTrustlessWorkConfigWarningsForTests(): void {
+  warnedLegacyNames.clear()
+}
+
+// ── Indexer read ───────────────────────────────────────────────────────────────
+
+/** Trustless Work V1 indexer read (trustless-work-dev skill, skills/api/*-release-escrow.md). */
+export const INDEXER_PATH = '/helper/get-escrow-by-contract-ids'
+
+/**
+ * Query string for one chunk: one `contractIds` pair per id (the parameter is
+ * a `string[]`) and `validateOnChain=true`, so the indexer checks its copy
+ * against the contract before answering.
+ */
+export function buildIndexerUrl(baseUrl: string, contractIds: string[]): string {
+  const params = new URLSearchParams()
+  for (const id of contractIds) params.append('contractIds', id)
+  params.append('validateOnChain', 'true')
+  return `${baseUrl}${INDEXER_PATH}?${params.toString()}`
+}
+
+function httpGet(url: string, headers: Record<string, string> = {}): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url)
     const transport = parsed.protocol === 'https:' ? https : http
+    const apiKey = getTrustlessWorkApiKey()
 
     const options = {
       hostname: parsed.hostname,
@@ -18,7 +74,7 @@ function httpGet(url: string, headers: Record<string, string> = {}): Promise<Rec
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        ...(TW_API_KEY ? { 'x-api-key': TW_API_KEY } : {}),
+        ...(apiKey ? { 'x-api-key': apiKey } : {}),
         ...headers,
       },
     }
@@ -51,14 +107,16 @@ function httpGet(url: string, headers: Record<string, string> = {}): Promise<Rec
   })
 }
 
-export async function fetchEscrowsByContractIds(contractIds: string[]): Promise<EscrowRecord[]> {
-  const qs = encodeURIComponent(contractIds.join(','))
-  const url = `${TW_BASE_URL}/helper/get-escrows-by-contract-ids?contractIds=${qs}`
-  const data = await httpGet(url)
+/**
+ * Raw V1 indexer escrows for the given contract ids. The caller normalizes
+ * them with `normalizeIndexerEscrows` before writing.
+ */
+export async function fetchEscrowsByContractIds(contractIds: string[]): Promise<TwIndexerEscrow[]> {
+  const data = await httpGet(buildIndexerUrl(getTrustlessWorkApiUrl(), contractIds))
 
-  if (Array.isArray(data)) return data as unknown as EscrowRecord[]
-  if (Array.isArray((data as Record<string, unknown>).escrows)) {
-    return (data as Record<string, unknown>).escrows as EscrowRecord[]
+  if (Array.isArray(data)) return data as TwIndexerEscrow[]
+  if (data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).escrows)) {
+    return (data as Record<string, unknown>).escrows as TwIndexerEscrow[]
   }
 
   throw new Error(

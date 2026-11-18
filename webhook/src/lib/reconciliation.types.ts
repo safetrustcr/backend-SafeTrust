@@ -4,6 +4,11 @@ export interface EscrowRoles {
   releaser?: string
 }
 
+/**
+ * Normalized escrow written by the reconciliation UPSERT. Built from the
+ * Trustless Work V1 indexer response by `normalizeIndexerEscrow`; field names
+ * follow the current `trustless_work_escrows` columns.
+ */
 export interface EscrowRecord {
   contractId: string
   status?: string
@@ -55,7 +60,8 @@ export interface ChunkResult {
   fetched: number
   duration_ms: number
   error: string | null
-  escrows: EscrowRecord[]
+  /** Raw Trustless Work V1 indexer escrows; normalized before the UPSERT. */
+  escrows: unknown[]
 }
 
 export interface ReconciliationEscrowRow {

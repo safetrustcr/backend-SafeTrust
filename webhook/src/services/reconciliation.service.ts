@@ -7,6 +7,7 @@
  */
 
 import { fetchEscrowsByContractIds } from '../lib/source-adapters/tw.adapter'
+import { normalizeIndexerEscrows } from '../lib/source-adapters/tw-indexer.normalize'
 import {
   isRustChunkProcessingEnabled,
   processChunksWithRust,
@@ -54,7 +55,7 @@ export function chunkArray<T>(arr: T[], size: number): T[][] {
 
 export async function syncChunk(contractIds: string[]): Promise<UpsertResult> {
   const escrows = await fetchEscrowsByContractIds(contractIds)
-  return upsertEscrowBatch(escrows)
+  return upsertEscrowBatch(normalizeIndexerEscrows(escrows))
 }
 
 export async function syncChunksParallel(chunks: string[][]): Promise<ChunkSyncResult> {
@@ -71,7 +72,7 @@ export async function syncChunksParallel(chunks: string[][]): Promise<ChunkSyncR
       errors.push(`chunk_${result.chunk_index}: ${result.error}`)
       continue
     }
-    const counts = await upsertEscrowBatch(result.escrows || [])
+    const counts = await upsertEscrowBatch(normalizeIndexerEscrows(result.escrows || []))
     updated += counts.updated
     unchanged += counts.unchanged
     skipped += counts.skipped
