@@ -3,9 +3,12 @@
 import db from '../db'
 import { hasuraRequest } from '../hasura'
 import {
-  fetchEscrowsByContractIds,
-} from '../../lib/source-adapters/tw.adapter'
-import * as reconciliationRepository from '../../repositories/reconciliation.repository'
+  fetchEscrowsByContractIds,
+
+} from '../../lib/source-adapters/tw.adapter'
+
+import * as reconciliationRepository from '../../repositories/reconciliation.repository'
+
 import {
   fetchEscrowContractIds,
   syncEscrowsWithIndexer,
@@ -26,8 +29,10 @@ jest.mock('../hasura', () => ({
   hasuraRequest: jest.fn(),
 }))
 
-jest.mock('../../lib/source-adapters/tw.adapter', () => ({
-  fetchEscrowsByContractIds: jest.fn(),
+jest.mock('../../lib/source-adapters/tw.adapter', () => ({
+
+  fetchEscrowsByContractIds: jest.fn(),
+
 }))
 
 describe('reconciliation.service', () => {
@@ -35,7 +40,8 @@ describe('reconciliation.service', () => {
     jest.clearAllMocks()
     setSorobanReconcilerAddon(null)
     process.env.SOROBAN_VALIDATION_ENABLED = 'false'
-    process.env.RUST_CHUNK_PROCESSING_ENABLED = 'false'
+    process.env.RUST_CHUNK_PROCESSING_ENABLED = 'false'
+
   })
 
   // ─── 1. fetchEscrowContractIds ─────────────────────────────────────────────
@@ -87,7 +93,8 @@ describe('reconciliation.service', () => {
     it('returns zero summary immediately when contractIds array is empty', async () => {
       const result = await syncEscrowsWithIndexer([])
 
-      expect(fetchEscrowsByContractIds).not.toHaveBeenCalled()
+      expect(fetchEscrowsByContractIds).not.toHaveBeenCalled()
+
       expect(result).toEqual({
         totalEscrows: 0,
         chunks: 0,
@@ -98,26 +105,43 @@ describe('reconciliation.service', () => {
       })
     })
 
-    it('fetches and upserts escrow chunks when contract IDs are present', async () => {
-      ;(fetchEscrowsByContractIds as jest.Mock).mockResolvedValueOnce([
-        { contractId: 'c1' },
-      ])
-      const upsertEscrowBatch = jest
-        .spyOn(reconciliationRepository, 'upsertEscrowBatch')
-        .mockResolvedValueOnce({
-          updated: 10,
-          unchanged: 85,
-          skipped: 5,
-        })
+    it('fetches and upserts escrow chunks when contract IDs are present', async () => {
+
+      ;(fetchEscrowsByContractIds as jest.Mock).mockResolvedValueOnce([
+
+        { contractId: 'c1' },
+
+      ])
+
+      const upsertEscrowBatch = jest
+
+        .spyOn(reconciliationRepository, 'upsertEscrowBatch')
+
+        .mockResolvedValueOnce({
+
+          updated: 10,
+
+          unchanged: 85,
+
+          skipped: 5,
+
+        })
+
 
       const contractIds = ['c1', 'c2', 'c3']
       const result = await syncEscrowsWithIndexer(contractIds)
 
-      expect(fetchEscrowsByContractIds).toHaveBeenCalledWith(contractIds)
-      expect(upsertEscrowBatch).toHaveBeenCalledWith([{ contractId: 'c1' }])
+      expect(fetchEscrowsByContractIds).toHaveBeenCalledWith(contractIds)
+
+      // Raw indexer rows are normalized before the write (tw-indexer.normalize.ts).
+      expect(upsertEscrowBatch).toHaveBeenCalledWith([
+        expect.objectContaining({ contractId: 'c1', status: 'created', escrowType: 'single_release' }),
+      ])
+
       expect(result).toEqual({
         totalEscrows: 3,
-        chunks: 1,
+        chunks: 1,
+
         updated: 10,
         unchanged: 85,
         skipped: 5,
@@ -126,9 +150,12 @@ describe('reconciliation.service', () => {
     })
 
     it('includes chunk errors in the summary', async () => {
-      ;(fetchEscrowsByContractIds as jest.Mock).mockRejectedValueOnce(
-        new Error('connection timeout')
-      )
+      ;(fetchEscrowsByContractIds as jest.Mock).mockRejectedValueOnce(
+
+        new Error('connection timeout')
+
+      )
+
 
       const result = await syncEscrowsWithIndexer(['c1'])
 
@@ -136,17 +163,27 @@ describe('reconciliation.service', () => {
       expect(result.totalEscrows).toBe(1)
     })
 
-    it('reports database write errors as chunk errors', async () => {
-      ;(fetchEscrowsByContractIds as jest.Mock).mockResolvedValueOnce([
-        { contractId: 'c1' },
-      ])
-      jest
-        .spyOn(reconciliationRepository, 'upsertEscrowBatch')
-        .mockRejectedValueOnce(new Error('database write failed'))
-
-      const result = await syncEscrowsWithIndexer(['c1'])
+    it('reports database write errors as chunk errors', async () => {
 
-      expect(result.errors).toEqual(['chunk_0: database write failed'])
+      ;(fetchEscrowsByContractIds as jest.Mock).mockResolvedValueOnce([
+
+        { contractId: 'c1' },
+
+      ])
+
+      jest
+
+        .spyOn(reconciliationRepository, 'upsertEscrowBatch')
+
+        .mockRejectedValueOnce(new Error('database write failed'))
+
+
+
+      const result = await syncEscrowsWithIndexer(['c1'])
+
+
+      expect(result.errors).toEqual(['chunk_0: database write failed'])
+
     })
   })
 
@@ -430,42 +467,58 @@ describe('reconciliation.service', () => {
   // ─── 4. detectStaleEscrows ─────────────────────────────────────────────────
   describe('detectStaleEscrows', () => {
     it('calls findStaleEscrows with default 7 days and returns stale IDs', async () => {
-      jest
-        .spyOn(reconciliationRepository, 'findStaleEscrows')
-        .mockResolvedValueOnce(['stale_1', 'stale_2'])
+      jest
+
+        .spyOn(reconciliationRepository, 'findStaleEscrows')
+
+        .mockResolvedValueOnce(['stale_1', 'stale_2'])
+
 
       const result = await detectStaleEscrows()
 
-      expect(reconciliationRepository.findStaleEscrows).toHaveBeenCalledWith(7)
+      expect(reconciliationRepository.findStaleEscrows).toHaveBeenCalledWith(7)
+
       expect(result).toEqual(['stale_1', 'stale_2'])
     })
 
     it('calls findStaleEscrows with custom days parameter', async () => {
-      jest
-        .spyOn(reconciliationRepository, 'findStaleEscrows')
-        .mockResolvedValueOnce(['stale_old'])
+      jest
+
+        .spyOn(reconciliationRepository, 'findStaleEscrows')
+
+        .mockResolvedValueOnce(['stale_old'])
+
 
       const result = await detectStaleEscrows(30)
 
-      expect(reconciliationRepository.findStaleEscrows).toHaveBeenCalledWith(30)
+      expect(reconciliationRepository.findStaleEscrows).toHaveBeenCalledWith(30)
+
       expect(result).toEqual(['stale_old'])
     })
 
     it('handles empty stale list', async () => {
-      jest
-        .spyOn(reconciliationRepository, 'findStaleEscrows')
-        .mockResolvedValueOnce([])
+      jest
+
+        .spyOn(reconciliationRepository, 'findStaleEscrows')
+
+        .mockResolvedValueOnce([])
+
 
       const result = await detectStaleEscrows()
       expect(result).toEqual([])
     })
 
     it('handles undefined return gracefully', async () => {
-      const staleEscrows = jest.spyOn(
-        reconciliationRepository,
-        'findStaleEscrows'
-      )
-      ;(staleEscrows as jest.Mock).mockResolvedValueOnce(undefined)
+      const staleEscrows = jest.spyOn(
+
+        reconciliationRepository,
+
+        'findStaleEscrows'
+
+      )
+
+      ;(staleEscrows as jest.Mock).mockResolvedValueOnce(undefined)
+
 
       const result = await detectStaleEscrows()
       expect(result).toEqual([])

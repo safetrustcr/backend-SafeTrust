@@ -1,5 +1,5 @@
 import type { ChunkProcessorAddon } from '../reconciliation.types'
-import { TW_API_KEY, TW_BASE_URL } from '../source-adapters/tw.adapter'
+import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../source-adapters/tw.adapter'
 
 const CHUNK_PROCESSOR_MODULE = '../../../../crates/chunk-processor'
 
@@ -36,8 +36,8 @@ export async function processChunksWithRust(chunks: string[][]): Promise<string>
   if (!addon) throw new Error('chunk-processor addon not loaded')
   return addon.processChunksParallel(
     JSON.stringify(chunks),
-    TW_BASE_URL,
-    TW_API_KEY,
+    getTrustlessWorkApiUrl(),
+    getTrustlessWorkApiKey(),
     envInt('CHUNK_CONCURRENCY', 5),
     envInt('CHUNK_TIMEOUT_MS', 5000)
   )
