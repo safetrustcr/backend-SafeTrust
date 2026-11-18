@@ -108,3 +108,17 @@ without a ledger sequence may only update escrows that are still `created` or
 escrow from `funded` to `milestone_approved`, `completed`, `disputed` or
 `resolved`. Those transitions need a version token for the snapshot (for
 example a ledger sequence) before polling can drive them.
+
+The unversioned UPSERT matches the Rust bulk path (`pg-bulk-upsert`): a
+snapshot with a confirmed status may not create a row, but for an existing row
+the stored status decides. `reconciliation.repository.integration.test.ts`
+checks this against a real database (opt-in with `RECONCILIATION_DB_TEST=true`):
+a stored `created` escrow accepts a `funded` snapshot, while confirmed rows,
+invalid transitions, other networks and nonzero balances stay protected.
+
+## Soroban drift reader
+
+The optional drift check (`SOROBAN_VALIDATION_ENABLED`, `crates/soroban-reconciler`)
+reads the same endpoint. `normalize_tw_v1_response` applies the status table
+above before the crate's existing identity, status and exact-balance checks.
+It requires the V1 `balance` and never substitutes the configured `amount`.

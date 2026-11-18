@@ -8,6 +8,7 @@
 
 import { fetchEscrowsByContractIds } from '../lib/source-adapters/tw.adapter'
 import { normalizeIndexerEscrows } from '../lib/source-adapters/tw-indexer.normalize'
+import { logger } from '../middleware/logger'
 import {
   isRustChunkProcessingEnabled,
   processChunksWithRust,
@@ -53,9 +54,25 @@ export function chunkArray<T>(arr: T[], size: number): T[][] {
   return chunks
 }
 
+/**
+ * Normalize raw indexer escrows and write the valid ones. Invalid records are
+ * logged and counted as skipped; they never block their siblings.
+ */
+async function writeIndexerEscrows(raw: unknown[]): Promise<UpsertResult> {
+  const { escrows, invalid } = normalizeIndexerEscrows(raw)
+  for (const record of invalid) {
+    logger.warn('reconciliation.invalid_indexer_escrow', {
+      contractId: record.contractId,
+      reason: record.reason,
+    })
+  }
+  const counts = await upsertEscrowBatch(escrows)
+  return { ...counts, skipped: counts.skipped + invalid.length }
+}
+
 export async function syncChunk(contractIds: string[]): Promise<UpsertResult> {
   const escrows = await fetchEscrowsByContractIds(contractIds)
-  return upsertEscrowBatch(normalizeIndexerEscrows(escrows))
+  return writeIndexerEscrows(escrows)
 }
 
 export async function syncChunksParallel(chunks: string[][]): Promise<ChunkSyncResult> {
@@ -72,7 +89,7 @@ export async function syncChunksParallel(chunks: string[][]): Promise<ChunkSyncR
       errors.push(`chunk_${result.chunk_index}: ${result.error}`)
       continue
     }
-    const counts = await upsertEscrowBatch(normalizeIndexerEscrows(result.escrows || []))
+    const counts = await writeIndexerEscrows(result.escrows || [])
     updated += counts.updated
     unchanged += counts.unchanged
     skipped += counts.skipped

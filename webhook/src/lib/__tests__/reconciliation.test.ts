@@ -279,6 +279,23 @@ describe('syncChunk', () => {
     ]);
   });
 
+  it('writes valid records when a sibling record is malformed', async () => {
+    const good = makeEscrow({ contractId: 'GOOD_001' });
+    const broken = makeEscrow({ contractId: 'BROKEN_002', milestones: [null] });
+    mockHttpResponse({ escrows: [good, broken] });
+    db.query.mockResolvedValue({ rows: [{ contract_id: 'GOOD_001', inserted: false }] });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const result = await syncChunk(['GOOD_001', 'BROKEN_002']);
+
+    expect(result).toEqual({ updated: 1, unchanged: 0, skipped: 1 });
+    expect(db.query).toHaveBeenCalledTimes(1);
+    expect(db.query.mock.calls[0][1][0]).toBe('GOOD_001');
+    const logged = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('invalid_indexer_escrow'));
+    expect(JSON.parse(logged!)).toMatchObject({ contractId: 'BROKEN_002', reason: 'milestones[0] is not an object' });
+    warn.mockRestore();
+  });
+
   it('counts an unchanged row when RETURNING is empty', async () => {
     const escrow = makeEscrow();
     mockHttpResponse({ escrows: [escrow] });

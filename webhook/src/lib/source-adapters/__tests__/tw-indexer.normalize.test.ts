@@ -3,6 +3,7 @@ import {
   deriveEscrowStatus,
   normalizeIndexerEscrow,
   normalizeIndexerEscrows,
+  validateIndexerEscrow,
 } from '../tw-indexer.normalize'
 import type { TwIndexerEscrow, TwMilestone } from '../tw-indexer.types'
 
@@ -149,7 +150,53 @@ describe('normalizeIndexerEscrow', () => {
     })
   })
 
-  it('normalizes a list without dropping entries', () => {
-    expect(normalizeIndexerEscrows([single(), {}, multi([ms()])])).toHaveLength(3)
+  it('ignores non-string role values instead of writing them', () => {
+    const roles = { serviceProvider: 42, approver: { a: 1 }, releaseSigner: 'GRELEASER' }
+    expect(normalizeIndexerEscrow(single({ roles: roles as never })).roles).toEqual({
+      marker: '', approver: '', releaser: 'GRELEASER',
+    })
+  })
+})
+
+describe('validateIndexerEscrow', () => {
+  it.each<[string, unknown]>([
+    ['a valid single-release escrow', single()],
+    ['a valid multi-release escrow', multi([ms(), ms({ approved: true })])],
+    ['an absent milestone array', single({ milestones: undefined })],
+    ['a null milestone array', single({ milestones: null as never })],
+    ['an empty milestone array', single({ milestones: [] })],
+  ])('accepts %s', (_label, raw) => {
+    expect(validateIndexerEscrow(raw)).toBeNull()
+  })
+
+  it.each<[string, unknown, string]>([
+    ['a non-object', 'escrow', 'escrow is not an object'],
+    ['an array', [single()], 'escrow is not an object'],
+    ['a missing contractId', { ...single(), contractId: undefined }, 'missing contractId'],
+    ['a blank contractId', { ...single(), contractId: '  ' }, 'missing contractId'],
+    ['a null milestone', single({ milestones: [null as never] }), 'milestones[0] is not an object'],
+    ['a primitive milestone', single({ milestones: [{ description: 'a' }, 7 as never] }), 'milestones[1] is not an object'],
+    ['a non-array milestones field', single({ milestones: { 0: {} } as never }), 'milestones is not an array'],
+    ['non-object milestone flags', multi([{ ...ms(), flags: 'released' as never }]), 'milestones[0].flags is not an object'],
+    ['non-object escrow flags', single({ flags: true as never }), 'flags is not an object'],
+    ['non-object roles', single({ roles: 'GHOST' as never }), 'roles is not an object'],
+  ])('rejects %s', (_label, raw, reason) => {
+    expect(validateIndexerEscrow(raw)).toBe(reason)
+  })
+})
+
+describe('normalizeIndexerEscrows', () => {
+  it('skips an invalid record without blocking valid siblings', () => {
+    const broken = single({ contractId: 'CBROKEN', milestones: [null as never] })
+    const { escrows, invalid } = normalizeIndexerEscrows([single(), broken, multi([ms()])])
+
+    expect(escrows.map((e) => e.contractId)).toEqual(['CSINGLE', 'CMULTI'])
+    expect(invalid).toEqual([{ contractId: 'CBROKEN', reason: 'milestones[0] is not an object' }])
+  })
+
+  it('reports an invalid record without a contract id', () => {
+    expect(normalizeIndexerEscrows([{ flags: {} }]).invalid).toEqual([
+      { contractId: undefined, reason: 'missing contractId' },
+    ])
   })
 })

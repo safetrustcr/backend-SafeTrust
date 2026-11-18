@@ -36,6 +36,12 @@ const SQL_TRANSITION_RULES = Object.entries(CANONICAL_TRANSITIONS)
   )
   .join(' OR\n        ')
 
+// Unversioned snapshot (no ledger_seq). Admission matches pg-bulk-upsert's
+// evaluate_observation: a snapshot with a confirmed status may not CREATE a
+// row, but when the row exists it always reaches ON CONFLICT, where the stored
+// status (created / pending_funding only), transition, network and balance
+// guards decide. Filtering on the incoming status alone would drop a `funded`
+// snapshot for a stored `created` escrow before those guards ran.
 const UPSERT_ESCROW_SQL = `
   INSERT INTO safetrust.trustless_work_escrows (
     contract_id,
@@ -51,8 +57,16 @@ const UPSERT_ESCROW_SQL = `
     updated_at,
     tenant_id
   )
-  SELECT $1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, NOW(), 'safetrust'
-  WHERE $2 IN ('created', 'pending_funding')
+  -- Explicit parameter types: $1 and $2 are used both as values and in
+  -- comparisons, and without casts Postgres deduces conflicting types for them
+  -- ("inconsistent types deduced for parameter") and rejects every row.
+  SELECT $1::text, $2::text, $3::numeric, $4::numeric, $5::text, $6::text, $7::text,
+         $8::text, NULL, $9::text, NOW(), 'safetrust'
+  WHERE $2::text IN ('created', 'pending_funding')
+     OR EXISTS (
+       SELECT 1 FROM safetrust.trustless_work_escrows existing
+        WHERE existing.contract_id = $1::text
+     )
   ON CONFLICT (contract_id)
   DO UPDATE SET
     status     = EXCLUDED.status,
