@@ -287,7 +287,8 @@ wait_for_hasura() {
 # Hasura env var holding a tenant's own database URL: safetrust -> SAFETRUST, hotel_industry -> HOTEL_INDUSTRY.
 tenant_env_name() { printf '%s' "$1" | tr '[:lower:]-' '[:upper:]_'; }
 
-# pg_add_source is idempotent: an existing source is reported, any other
+# pg_add_source with replace_configuration: true repoints a source that older
+# metadata still has on PG_DATABASE_URL to the tenant database URL. Any other
 # error (wrong admin secret, bad connection info) fails the run.
 register_sources() {
   begin_phase sources
@@ -300,6 +301,7 @@ register_sources() {
       type: "pg_add_source",
       args: {
         name: $name,
+        replace_configuration: true,
         configuration: {
           connection_info: {
             database_url: { from_env: $env_var },
