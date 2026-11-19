@@ -10,8 +10,8 @@ dispute outcome.
 This page documents that lifecycle, the two-phase XDR signing pattern, the
 database states, and the four Soroban roles. For the surrounding escrow flow,
 see the [architecture overview](../architecture/overview.md) and the
-[escrow lifecycle](./escrow-lifecycle.md). For the agent payment path that is
-quarantined from this flow, see the [x402 protocol](./x402-protocol.md).
+[escrow lifecycle](./escrow-lifecycle.md). For agent payments on initialization,
+see the [x402 protocol](./x402-protocol.md).
 
 **Sources of truth**
 
@@ -321,7 +321,6 @@ cancellation. Both `resolved` and `cancelled` are terminal.
 
 - [Architecture overview](../architecture/overview.md) — system layers and the
   frontend-managed XDR flow.
-- [x402 protocol](./x402-protocol.md) — agent payments, quarantined from the
-  escrow eligibility path.
+- [x402 protocol](./x402-protocol.md) — agent payments for escrow initialization.
 - [Escrow lifecycle](./escrow-lifecycle.md) — the full state machine and
   handler mapping.

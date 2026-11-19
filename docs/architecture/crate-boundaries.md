@@ -1,8 +1,8 @@
 # Rust Crate Boundaries and Integration Quarantine
 
-The Cargo workspace contains eight functional Rust crates and one feature-gate
-package. Five functional crates are included in the default webhook build;
-`zk-verifier`, `x402-processor`, and `soroban-reconciler` are excluded until
+The Cargo workspace contains six functional Rust crates and one feature-gate
+package. Four functional crates are included in the default webhook build;
+`zk-verifier` and `soroban-reconciler` are excluded until
 their prerequisites are resolved.
 
 This page records, for every crate, its responsibility, consumers, exports,
@@ -10,8 +10,8 @@ fallback, build artifact, and disposition. It is the ownership boundary for the
 `crates/` workspace. For the high-level crate story, see
 [Rust crates in SafeTrust](./rust-crates.md).
 
-**No crate is deleted by this change.** Five functional crates remain in the
-default build; the three quarantined crates remain available behind explicit,
+Four functional crates remain in the
+default build; the two quarantined crates remain available behind explicit,
 default-off Cargo feature gates.
 
 ---
@@ -30,7 +30,6 @@ flowchart TD
     subgraph Quarantine and rebuild
         C6[zk-verifier\nESC-05 prerequisite]
         C7[soroban-reconciler\nESC-02 prerequisite]
-        C8[x402-processor\nESC-05 prerequisite]
     end
 ```
 
@@ -47,7 +46,7 @@ flowchart TD
 | `chunk-processor` | Fetch Trustless Work indexer chunks concurrently on Tokio, bounded by a concurrency limit. | `webhook/src/lib/reconciliation.ts` (`syncAllChunks`), gated by `RUST_CHUNKS_ENABLED`. |
 | `pg-bulk-upsert` | Fold a chunk of escrow rows into one ordered `INSERT … ON CONFLICT … UNNEST`. | `webhook/src/lib/reconciliation.ts` (`upsertEscrowBatch`), gated by `RUST_BULK_UPSERT_ENABLED`. |
 | `soroban-reconciler` | Compare database escrow state with Soroban state and report drift. | `webhook/src/services/reconciliation.service.ts` (`validateSorobanDrift`), gated by `SOROBAN_VALIDATION_ENABLED`. |
-| `x402-processor` | Parse `X-Payment` headers and verify them with an allowlisted facilitator. | `webhook/src/middleware/x402-payment.middleware.ts` → `initialize.route.ts`, gated by `X402_ENABLED`. |
+| `x402 (TypeScript)` | Official `@x402/express`, `@x402/core`, and `@x402/stellar` packages protect escrow initialization. | `webhook/src/routes/escrows/initialize.route.ts`, gated by `X402_ENABLED`. |
 
 | Crate | Native exports | Fallback when the addon is absent | Build script / deployment artifact |
 |---|---|---|---|
@@ -58,7 +57,7 @@ flowchart TD
 | `chunk-processor` | `processChunksParallel` | Sequential JS chunk loop in `reconciliation.ts`. | Default build + shared `scripts/copy-native.js`; artifact `crates/chunk-processor/index.node`. |
 | `pg-bulk-upsert` | `bulkUpsertEscrows` | Row-by-row `UPSERT_ESCROW_SQL` loop in `reconciliation.ts`. | Default build + shared `scripts/copy-native.js`; artifact `crates/pg-bulk-upsert/index.node`. |
 | `soroban-reconciler` | `queryEscrowStateBatch`, `reconcileBatch` | **None.** The service logs and skips the contract; the reader is disabled by default (see §4). | Excluded from the default build. Opt in with `cargo build --manifest-path crates/Cargo.toml -p safetrust-native-gates --features soroban-reconciler` only after ESC-02; artifact is not copied into the default image. |
-| `x402-processor` | `validateX402Payment`, `buildPaymentRequirement` | JS fallback in `crates/x402-processor/index.ts` never returns `is_valid: true`; it fails closed. | Excluded from the default build. Opt in with `cargo build --manifest-path crates/Cargo.toml -p safetrust-native-gates --features x402-processor` only after ESC-05; artifact is not copied into the default image. |
+| `x402 (TypeScript)` | N/A (Node SDK) | Returns 402 with `PAYMENT-REQUIRED` when unpaid; 503 when disabled. | Built into TypeScript service dependencies (`@x402/*`). |
 
 The workspace and optional dependency feature map are in
 [`crates/Cargo.toml`](../../crates/Cargo.toml).
@@ -99,10 +98,6 @@ members and copies only their runtime artifacts. `crates/**/*.node` and
   contract storage; it fabricates state. The reader is disabled by default and
   the pure diff engine is retained (see §4). ESC-02 must establish an
   authoritative state source before it is re-enabled.
-- **`x402-processor`** — quarantined. Findings F2, F3, and F8 remain
-  unresolved, and payment success must not grant booking eligibility. It is
-  isolated from the eligibility path and settlement is default-off (see §6).
-  ESC-05 must be closed before it is re-enabled.
 
 ---
 
@@ -172,43 +167,16 @@ a `Uint8Array` view, and asserts equal accept/reject results.
 
 ---
 
-## 6. `x402-processor`: isolation from the eligibility path
+## 6. `x402`: official `@x402` Stellar integration and eligibility gate
 
-```mermaid
-flowchart LR
-    subgraph Eligibility path
-        ZK[zk-verifier]
-        ES[escrow.service]
-    end
-    subgraph Isolated
-        X4[x402-processor\nF2 F3 F8 unresolved]
-    end
-    ZK --> ES
-    ES -.->|must not depend on| X4
-    X4 -->|disabled by default\nX402_ENABLED=false| OFF[feature flag off]
-```
-
-`x402-processor` is not deleted, but it cannot grant eligibility:
+x402 payments are managed by the official `@x402/express`, `@x402/core`, and `@x402/stellar` packages:
 
 - `X402_ENABLED=false` is the default. The initialize route only evaluates
-  x402 when the flag is exactly `true`, and it lazy-loads the x402 middleware
-  only on that path — so the default eligibility path never requires the
-  `x402-processor` module or its native addon.
-- With x402 disabled, a request carrying `X-Payment`,
-  `X-Payment-Protocol`, or `X-Payment-Required` is **not** evaluated by x402;
-  it must pass the Trustless Work HMAC check like any other callback.
-- The middleware itself also fails closed with `503` if it is invoked while the
-  flag is off, so a future route cannot accidentally mount it.
-- `X402_SETTLE_ENABLED=false` is the default. A successful facilitator
-  `/verify` does not trigger `/settle`. The current settlement task has no
-  durable retry, idempotency record, or reconciliation, so it must not run in
-  production until F2/F3/F8 are closed.
-- The eligibility authority remains the HMAC-verified Trustless Work callback
-  and the `zk-verifier` proof check. `escrow.service.ts` does not import
-  `x402-processor`.
-
-The x402 Karate suite runs with `X402_ENABLED=true` in the isolated test
-compose file to exercise the payment gate; settlement stays disabled.
+  x402 when the flag is exactly `true`.
+- With x402 disabled, a request carrying `X-Payment` or other x402 headers
+  fails closed with `503 Feature Unavailable`, and standard callbacks must pass the Trustless Work HMAC check.
+- When `X402_ENABLED=true`, unpaid requests receive `402 Payment Required`, and valid payment headers are verified and settled via the configured facilitator before the escrow is initialized.
+- The eligibility authority remains the HMAC-verified Trustless Work callback and the `zk-verifier` proof check.
 
 ---
 
