@@ -1,7 +1,7 @@
 # Native crate build gates
 
 The default Cargo workspace build includes only crates used by the safe startup
-path. `zk-verifier`, `x402-processor`, and `soroban-reconciler` remain workspace
+path. `zk-verifier` and `soroban-reconciler` remain workspace
 members so they can be built deliberately, but are excluded from
 `default-members` and from the default webhook build and image.
 
@@ -11,7 +11,6 @@ and its optional path dependencies:
 | Crate | Cargo feature | Prerequisite before enabling |
 |---|---|---|
 | `zk-verifier` | `zk-verifier` | Close remaining ESC-05 prerequisites; `ZK_ENABLED` opt-in and verification-key pinning are enforced by the TypeScript consumer. |
-| `x402-processor` | `x402-processor` | Close ESC-05: resolve the payment-flow gaps and wire the experimental feature flag. |
 | `soroban-reconciler` | `soroban-reconciler` | Close ESC-02: establish an authoritative on-chain state source. |
 
 Each feature activates the corresponding `optional = true` path dependency.
@@ -19,7 +18,7 @@ For example, explicitly include one crate in the build graph with:
 
 ```sh
 cargo build --manifest-path crates/Cargo.toml \
-  -p safetrust-native-gates --features x402-processor
+  -p safetrust-native-gates --features zk-verifier
 ```
 
 To produce a Neon addon artifact for an explicitly approved deployment, build

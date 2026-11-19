@@ -184,9 +184,9 @@ jobs:
       - name: Build native addons used by the Jest suite
         run: |
           cargo build --release --manifest-path crates/Cargo.toml \
-            -p webhook-verifier -p escrow-state-machine -p x402-processor \
+            -p webhook-verifier -p escrow-state-machine \
             -p stellar-utils -p soroban-reconciler
-          for addon in webhook-verifier escrow-state-machine x402-processor stellar-utils soroban-reconciler; do
+          for addon in webhook-verifier escrow-state-machine stellar-utils soroban-reconciler; do
             node crates/scripts/copy-native.js --crate="$addon"
           done
 

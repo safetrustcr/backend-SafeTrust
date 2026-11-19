@@ -34,10 +34,6 @@ const crateConfigs: Record<string, CrateConfig> = {
     libraryName: 'soroban_reconciler',
     destination: path.join('native', 'index.node'),
   },
-  'x402-processor': {
-    libraryName: 'x402_processor',
-    destination: 'index.node',
-  },
   'zk-verifier': {
     libraryName: 'zk_verifier',
     destination: 'index.node',

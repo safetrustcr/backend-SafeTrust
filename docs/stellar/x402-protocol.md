@@ -1,172 +1,149 @@
 # x402 Protocol — Agentic Payments on Stellar
 
-x402 is an open protocol from Coinbase that enables per-request
-HTTP payments designed for AI agents and automated systems that
-cannot interact with browser wallets. SafeTrust implements
-x402 v2 on Stellar using Soroban authorization entries and
-USDC SEP-41.
+x402 is an open, internet-native payment protocol that enables per-request micropayments using the HTTP `402 Payment Required` status code. It is designed specifically for autonomous AI agents and automated services that transact machine-to-machine and cannot interact with browser-based wallet popups (such as Freighter).
 
-## Why x402 matters for SafeTrust
+SafeTrust implements the official `@x402` Stellar standard (`@x402/express`, `@x402/core`, and `@x402/stellar`) for agentic payments on the escrow initialization endpoint (`POST /api/escrows/initialize`).
 
-Human users book through a browser with Freighter wallet.
-AI agents — travel bots, autonomous booking systems,
-x402-aware applications — cannot open browser popups.
-Without x402, AI agents cannot book on SafeTrust at all.
+---
 
-```mermaid
-flowchart LR
-    subgraph Human Booking
-        HU([Human Guest]) -->|browser| FE[Next.js Frontend]
-        FE -->|Freighter popup| FW[Freighter Wallet]
-        FW -->|signed XDR| BE[SafeTrust API]
-    end
+## 1. Why x402 Rather than MPP
 
-    subgraph AI Agent Booking
-        AG([AI Agent]) -->|X-Payment header| BE
-        BE -->|verify| FAC[Facilitator]
-        FAC -->|settle| SC[Soroban Contract]
-    end
-```
+When evaluating micropayment architectures on Stellar, SafeTrust chose the **x402 protocol** over alternatives such as MPP (Micropayment Protocol):
 
-## End-to-end payment flow
+| Consideration | x402 (Chosen) | MPP (Micropayment Protocol) |
+|---|---|---|
+| **Settlement Delegation** | Delegates transaction submission, gas sponsoring, and sequencer interaction to an external **Facilitator**. | Requires a server-held fee-payer private key and on-chain submission infrastructure on the API server. |
+| **Secret Management** | Client signs authorization directly; server verifies proof via facilitator without server-held secrets or shared pre-shared keys (PSKs). | Requires a server-held fee-payer secret key and shared secrets between client and merchant. |
+| **Discovery & Standards** | Conforms to official `@x402` v2 specifications and Bazaar agent registry discovery mechanisms. | Bespoke protocol implementation with non-standard client libraries. |
+| **Client-Side Friction** | Autonomous agents use `@x402/fetch` or standard HTTP headers (`PAYMENT-SIGNATURE`) in a single round-trip challenge-response. | Custom integration flow required by each client agent. |
+
+---
+
+## 2. End-to-End Payment Flow & Order of Operations
+
+In the official `@x402/express` architecture, the payment middleware intercepts requests, manages the 402 challenge, verifies payment authorization entries with the facilitator, and triggers settlement **before** completing the response.
 
 ```mermaid
 sequenceDiagram
-    participant AG as AI Agent
-    participant BE as SafeTrust API
-    participant FAC as OpenZeppelin Facilitator
+    participant AG as AI Agent (Client)
+    participant MW as @x402/express Middleware
+    participant FAC as x402 Facilitator
+    participant HND as Escrow Initialize Handler
     participant SC as Soroban USDC Contract
 
-    AG->>BE: POST /api/escrows/initialize\n(no X-Payment header)
-    BE-->>AG: 402 Payment Required\n{ accepts: [{\n  scheme: exact\n  network: stellar:testnet\n  amount: 0.10 USDC\n  asset: USDC SEP-41\n  facilitator_url: ...\n}]}
+    Note over AG,MW: 1. Initial Request (Unpaid)
+    AG->>MW: POST /api/escrows/initialize
+    MW-->>AG: 402 Payment Required<br/>Header: PAYMENT-REQUIRED (Base64 JSON Requirements)
 
-    AG->>SC: authorize USDC transfer\n(signed Soroban auth entry)
+    Note over AG,SC: 2. Agent signs authorization entry
+    AG->>SC: Build Soroban token authorization entry
 
-    AG->>BE: POST /api/escrows/initialize\nX-Payment: x402 <base64-auth>
+    Note over AG,MW: 3. Paid Request
+    AG->>MW: POST /api/escrows/initialize<br/>Header: PAYMENT-SIGNATURE: <base64 payload>
 
-    BE->>BE: validateX402Payment(...)
-    BE->>FAC: POST /verify\n{ payload, amount, network }
-    FAC-->>BE: { isValid: true, payer: GAGENT... }
+    Note over MW,FAC: 4. Verification & Settlement
+    MW->>FAC: POST /verify (checks authorization entry & amount)
+    FAC-->>MW: { isValid: true, payer: "G..." }
 
-    BE->>BE: spawn settlement task\nonly if X402_SETTLE_ENABLED=true
-    BE-->>AG: 200 OK\nrequest accepted; settlement pending
+    MW->>FAC: POST /settle (submits transaction on-chain)
+    FAC->>SC: Execute USDC transfer to SAFETRUST_PLATFORM_WALLET
+    SC-->>FAC: Confirmed on-chain
+    FAC-->>MW: { success: true, transaction: "0x..." }
 
-    BE->>FAC: POST /settle (async, opt-in)
-    alt Settlement confirmed
-        FAC->>SC: settle USDC on-chain
-        FAC-->>BE: success
-        Note over BE,AG: Only now may the payment be treated as settled
-    else Settlement fails
-        FAC-->>BE: error
-        BE->>BE: log failure only
-        Note over BE,AG: Booking success is not confirmed
-    end
+    Note over MW,HND: 5. Route Handler Execution
+    MW->>HND: next() — invoke initializeEscrowHandler()
+    HND->>HND: Validate escrow data, persist in database, check idempotency
+    HND-->>MW: 200 OK { success: true }
+
+    Note over MW,AG: 6. Delivery with Settlement Receipt
+    MW-->>AG: 200 OK<br/>Header: PAYMENT-RESPONSE: <base64 settlement receipt><br/>Body: { success: true }
 ```
 
-The current `validateX402Payment` implementation returns after `/verify`.
-When `X402_SETTLE_ENABLED=true` it also starts `/settle` in a fire-and-forget
-task; with the default `false` it never calls `/settle`. Consequently, the HTTP
-200 response means the request passed verification and was accepted for
-processing; it is not proof of settlement and must not be reported as a
-confirmed, paid booking.
+### Order of Operations & Failure Handling:
+1. **Verification**: When an agent sends a payment header, the middleware verifies the authorization with the facilitator. If verification fails, the request is rejected immediately with HTTP 402 and the failure reason; the route handler is never called.
+2. **Settlement**: Settlement is executed with the facilitator.
+3. **If settlement fails**: The middleware detects settlement failure before dispatching a success response. The client receives an error response, preventing unpaid bookings from being acknowledged.
+4. **Handler Execution**: Once verified and settled, `next()` invokes `initializeEscrowHandler`. The handler persists the escrow in Hasura / PostgreSQL and attaches `PAYMENT-RESPONSE` to the HTTP 200 response.
 
-The background task is in-memory and currently only logs settlement
-failures. It has no durable retry queue, idempotency record, or settlement
-reconciliation. It is therefore gated behind `X402_SETTLE_ENABLED=false` by
-default: `/verify` can succeed without `/settle` being called. Before this flow
-is production-ready, persist a pending settlement keyed by a stable payment
-identifier, retry it idempotently after transient failures, reconcile
-facilitator or on-chain status, and expose booking success only after that
-record becomes settled. Until then, a `200` is not proof of settlement.
+---
 
-## Stellar vs EVM difference
+## 3. Verified Facilitator Endpoints
 
-x402 was designed for EVM chains where a payment is an
-on-chain transaction in the `X-Payment` header. On Stellar
-the mechanism is different — the client sends a signed
-Soroban authorization entry, not a broadcast transaction.
+Facilitator endpoints were verified directly against their `/supported` introspection endpoints:
 
-| Aspect | EVM x402 | Stellar x402 |
-|---|---|---|
-| Payment proof | On-chain transaction hash | Signed Soroban auth entry |
-| What moves on-chain | ETH/ERC-20 transfer | USDC SEP-41 authorization |
-| Signing | secp256k1 | Ed25519 auth-entry signing |
-| Facilitator role | Verify tx included | Verify + settle auth entry |
+### Testnet
+- **Facilitator Endpoint**: `https://x402.org/facilitator`
+  - **Status**: Live, publicly reachable without an API key (HTTP 200).
+  - **Supported Scheme**: `exact`
+  - **Supported Network**: `stellar:testnet`
+  - **Fee Sponsorship**: `extra.areFeesSponsored: true` (gas fees for transaction submission are sponsored by the facilitator).
+  - **API Key**: Not required.
+- **Alternative (OpenZeppelin Testnet)**: `https://channels.openzeppelin.com/x402/testnet`
+  - Returns HTTP 401 Unauthorized without an API key; requires an OpenZeppelin Channels account and key.
 
-## USDC SEP-41 contract addresses
+### Mainnet (Pubnet)
+- **Facilitator Endpoint**: `https://channels.openzeppelin.com/x402`
+  - **Status**: Checked via live probe (`/supported`); returns HTTP 401 Unauthorized without authentication credentials.
+  - **API Key**: Required. Operators must configure an API key via `X402_FACILITATOR_API_KEY`.
+  - **Endpoint Configuration**: Because public mainnet facilitators require authentication, `X402_FACILITATOR_URL` is a documented configuration input rather than an invented public URL.
 
-| Network | SEP-41 Contract |
-|---|---|
-| Testnet | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
-| Mainnet | `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` |
+---
 
-## Facilitators
+## 4. USDC SEP-41 Contract Identifiers
 
-```mermaid
-flowchart TD
-    BE[SafeTrust API\nx402-processor crate] --> FAC1[OpenZeppelin Testnet\nchannels.openzeppelin.com\n/x402/testnet]
-    BE --> FAC2[OpenZeppelin Mainnet\nchannels.openzeppelin.com\n/x402]
-    BE --> FAC3[Coinbase Testnet\nx402.org/facilitator]
-    FAC1 -->|/verify + /settle| SC[Soroban USDC Contract]
-    FAC2 -->|/verify + /settle| SC
-    FAC3 -->|/verify + /settle| SC
-```
+To prevent transaction failure, payment requirements specify the exact SEP-41 Stellar Asset Contract (SAC) ID for USDC. The addresses below are written in full and verified against official documentation:
 
-| Facilitator | Endpoint | Networks |
-|---|---|---|
-| OpenZeppelin | `channels.openzeppelin.com/x402/testnet` | Testnet |
-| OpenZeppelin | `channels.openzeppelin.com/x402` | Mainnet |
-| Coinbase | `x402.org/facilitator` | Testnet only |
+| Network | Full USDC Contract Address | Classic Issuer Account | Source Citation |
+|---|---|---|---|
+| **Testnet** | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` | `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` | [Stellar Developer Docs: Agentic Payments with x402](https://developers.stellar.org/docs/build/agentic-payments/x402)<br/>Derived via `@stellar/stellar-sdk` `new Asset('USDC', issuer).contractId(Networks.TESTNET)` |
+| **Mainnet** | `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` | `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` | [Circle: USDC on Stellar](https://www.circle.com/multi-chain-usdc/stellar)<br/>[Stellar Developer Docs: Agentic Payments with x402](https://developers.stellar.org/docs/build/agentic-payments/x402)<br/>Derived via `@stellar/stellar-sdk` `new Asset('USDC', issuer).contractId(Networks.PUBLIC)` |
 
-## Human user protection and quarantine
+> [!IMPORTANT]
+> **USDC Trustline Requirement on `SAFETRUST_PLATFORM_WALLET`**:
+> The recipient platform wallet configured in `SAFETRUST_PLATFORM_WALLET` must establish an explicit trustline for the native USDC asset before accepting payments. If the recipient account lacks a USDC trustline, on-chain Soroban token transfer invocations fail with:
+> ```text
+> Error(Contract, #13)
+> ```
+> Error code `#13` indicates an absent trustline / balance record for the recipient.
 
-`X402_ENABLED=false` is the default, and it is enforced as a hard boundary:
+---
 
-- With the flag off, **no x402 payment is evaluated** on the escrow
-  initialization route. A request carrying `X-Payment`,
-  `X-Payment-Protocol`, or `X-Payment-Required` is treated like any other
-  request and must pass the TrustlessWork HMAC check.
-- The x402 middleware also fails closed with `503` if it is mounted while the
-  flag is off, so a stale route cannot accidentally grant eligibility.
+## 5. Escrow Initialization Idempotency & Retried Payments
 
-When `X402_ENABLED=true`, a request bypasses x402 only when it includes
-`X-TrustlessWork-Signature` and no explicit x402 header. Without either, the
-route returns `402 Payment Required`; with an explicit x402 header, it validates
-that payment even if a TrustlessWork signature is also present. Firebase
-authentication does not create an exemption on this route.
+SafeTrust enforces strict idempotency at the database boundary via the `safetrust.trustless_work_webhook_events` table:
 
-This quarantine exists because findings **F2, F3, and F8** from the security
-review are unresolved. x402 must not be able to grant booking eligibility
-until they are closed. See [Crate Boundaries](../architecture/crate-boundaries.md).
+1. When a client agent retries an initialization request with the same `contract_id` and payload:
+   - The x402 payment middleware verifies and settles the payment.
+   - The route handler invokes `initializeEscrow(payload, tenantId)`.
+   - The repository checks `logAndCheckWebhookEvent`. If the `contract_id` was already processed, `isDuplicate: true` is returned.
+   - The handler returns HTTP 200 duplicate acknowledgment without creating duplicate records or modifying escrow state.
+2. If network transit drops a response after settlement succeeded, the agent's retry using the existing contract ID will safely acknowledge the existing escrow rather than failing.
 
-## Rust crate wiring
+---
 
-```mermaid
-flowchart LR
-    IR[initialize.route.ts\nX402_ENABLED=true only] --> MW[x402-payment.middleware.ts\nreads X-Payment header]
-    MW --> PA[parser.rs\nparse header\nvalidate network]
-    PA --> FA[facilitator.rs\nPOST /verify]
-    FA -->|X402_SETTLE_ENABLED=true| ST[async POST /settle]
-    FA -->|HTTP| FAC[OpenZeppelin\nFacilitator]
-```
+## 6. Environment Variables Reference
 
-## Environment variables
+| Variable | Status | Default | Description |
+|---|---|---|---|
+| `X402_ENABLED` | **Kept** | `false` | Master safety switch. When `false`, x402 payment headers fail closed with HTTP 503 (`Feature Unavailable`), and Trustless Work callbacks require HMAC signatures. Operators set to `true` once configuration is complete. |
+| `STELLAR_NETWORK` | **Kept** | `testnet` | Target Stellar network: `testnet` (resolves to `stellar:testnet`) or `mainnet` / `pubnet` (resolves to `stellar:pubnet`). |
+| `SAFETRUST_PLATFORM_WALLET` | **Kept** | `G_YOUR_PLATFORM_WALLET_PUBLIC_KEY` | Recipient wallet for $0.10 booking fees. Must be a valid Stellar public key (`G...`). Startup validation rejects unedited placeholders when `X402_ENABLED=true`. |
+| `X402_FACILITATOR_URL` | **Kept** | `https://x402.org/facilitator` | URL of the x402 facilitator. Testnet defaults to open endpoint; mainnet must be supplied by operator. |
+| `X402_FACILITATOR_API_KEY` | **Added** | `(empty)` | Optional API key sent as bearer token via `createAuthHeaders` for authenticated facilitators (e.g. OpenZeppelin Channels). |
 
-```bash
-# Enable x402 payment requirement on the escrow initialization route.
-# false (default) is a hard quarantine: X-Payment headers are ignored there.
-X402_ENABLED=false
+---
 
-# Trigger the fire-and-forget facilitator /settle call after /verify.
-# Keep false until F2/F3/F8 are resolved and settlement is durable.
-X402_SETTLE_ENABLED=false
+## 7. Operator Setup & Activation Guide
 
-# x402 facilitator endpoint
-X402_FACILITATOR_URL=https://channels.openzeppelin.com/x402/testnet
-
-# SafeTrust platform wallet — receives booking fees
-SAFETRUST_PLATFORM_WALLET=
-
-# Stellar network for USDC contract address selection
-STELLAR_NETWORK=testnet
-```
+1. Ensure the platform wallet has been created and funded on the desired Stellar network.
+2. Establish a USDC trustline on the platform wallet:
+   - Testnet: Trust `USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`
+   - Mainnet: Trust `USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`
+3. In your environment (`.env`), set:
+   ```bash
+   SAFETRUST_PLATFORM_WALLET=G<YOUR_REAL_STELLAR_WALLET_PUBLIC_KEY>
+   X402_FACILITATOR_URL=https://x402.org/facilitator # or your private facilitator
+   X402_FACILITATOR_API_KEY=<YOUR_API_KEY_IF_REQUIRED>
+   X402_ENABLED=true
+   ```
+4. Start the service. If `SAFETRUST_PLATFORM_WALLET` is invalid or missing when `X402_ENABLED=true`, the service refuses to start.
