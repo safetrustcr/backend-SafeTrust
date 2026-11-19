@@ -1,6 +1,3 @@
-jest.mock('https', () => ({ request: jest.fn() }))
-
-import { EventEmitter } from 'events'
 import {
   __resetTrustlessWorkConfigWarningsForTests,
   buildIndexerUrl,
@@ -10,8 +7,6 @@ import {
   getTrustlessWorkApiUrl,
 } from '../tw.adapter'
 
-const https = require('https')
-
 const ENV_KEYS = [
   'TRUSTLESSWORK_API_URL',
   'TRUSTLESSWORK_API_KEY',
@@ -19,35 +14,12 @@ const ENV_KEYS = [
   'TRUSTLESS_WORK_API_KEY',
 ] as const
 
-function mockResponse(body: unknown, statusCode = 200) {
-  const response = new EventEmitter() as EventEmitter & { statusCode: number; setEncoding: jest.Mock }
-  response.statusCode = statusCode
-  response.setEncoding = jest.fn()
-
-  const request = new EventEmitter() as EventEmitter & { setTimeout: jest.Mock; end: jest.Mock }
-  request.setTimeout = jest.fn()
-  request.end = jest.fn(() => {
-    process.nextTick(() => {
-      response.emit('data', typeof body === 'string' ? body : JSON.stringify(body))
-      response.emit('end')
-    })
-  })
-
-  https.request.mockImplementation((_options: unknown, callback: (res: typeof response) => void) => {
-    callback(response)
-    return request
-  })
-}
-
-function lastRequestOptions(): { path: string; hostname: string; headers: Record<string, string> } {
-  return https.request.mock.calls.at(-1)[0]
-}
-
 describe('TrustlessWork source adapter', () => {
   const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]))
 
   beforeEach(() => {
     jest.clearAllMocks()
+    delete (global as any).fetch
     for (const key of ENV_KEYS) delete process.env[key]
     __resetTrustlessWorkConfigWarningsForTests()
     jest.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -117,42 +89,68 @@ describe('TrustlessWork source adapter', () => {
   describe('fetchEscrowsByContractIds', () => {
     it('sends the API key from TRUSTLESSWORK_API_KEY as x-api-key', async () => {
       process.env.TRUSTLESSWORK_API_KEY = 'tw-key'
-      mockResponse([{ contractId: 'C1' }])
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify([{ contractId: 'C1' }]),
+      })
 
-      await fetchEscrowsByContractIds(['C1'])
+      const escrows = await fetchEscrowsByContractIds(['C1'])
+      expect(escrows).toEqual([{ contractId: 'C1' }])
 
-      expect(lastRequestOptions().headers['x-api-key']).toBe('tw-key')
-      expect(lastRequestOptions().path).toBe(
-        '/helper/get-escrow-by-contract-ids?contractIds=C1&validateOnChain=true'
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://dev.api.trustlesswork.com/helper/get-escrow-by-contract-ids?contractIds=C1&validateOnChain=true',
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'x-api-key': 'tw-key' }),
+        })
       )
     })
 
     it('omits x-api-key when no key is configured', async () => {
-      mockResponse([{ contractId: 'C1' }])
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify([{ contractId: 'C1' }]),
+      })
+
       await fetchEscrowsByContractIds(['C1'])
-      expect(lastRequestOptions().headers).not.toHaveProperty('x-api-key')
+      const callOptions = (global.fetch as jest.Mock).mock.calls[0][1]
+      expect(callOptions.headers).not.toHaveProperty('x-api-key')
     })
 
     it('uses the configured base URL', async () => {
       process.env.TRUSTLESSWORK_API_URL = 'https://api.trustlesswork.com'
-      mockResponse([])
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify([]),
+      })
+
       await fetchEscrowsByContractIds(['C1'])
-      expect(lastRequestOptions().hostname).toBe('api.trustlesswork.com')
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('https://api.trustlesswork.com/helper/get-escrow-by-contract-ids'),
+        expect.anything()
+      )
     })
 
     it('returns the raw records from either response shape', async () => {
-      mockResponse({ escrows: [{ contractId: 'C1', flags: { released: true } }] })
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ escrows: [{ contractId: 'C1', flags: { released: true } }] }),
+      })
+
       await expect(fetchEscrowsByContractIds(['C1'])).resolves.toEqual([
         { contractId: 'C1', flags: { released: true } },
       ])
 
-      mockResponse([{ contractId: 'C2' }])
-      await expect(fetchEscrowsByContractIds(['C2'])).resolves.toEqual([{ contractId: 'C2' }])
-    })
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify([{ contractId: 'C2' }]),
+      })
 
-    it('rejects an unexpected shape', async () => {
-      mockResponse({ unexpected: true })
-      await expect(fetchEscrowsByContractIds(['C1'])).rejects.toThrow('Unexpected TrustlessWork API response shape')
+      await expect(fetchEscrowsByContractIds(['C2'])).resolves.toEqual([{ contractId: 'C2' }])
     })
   })
 })

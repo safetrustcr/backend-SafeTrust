@@ -40,6 +40,13 @@ pool.on('error', (err: Error) => {
   console.error('[db] Unexpected error on idle database client:', err)
 })
 
+export interface Queryable {
+  query<T extends QueryResultRow = Record<string, unknown>>(
+    text: string,
+    params?: unknown[]
+  ): Promise<QueryResult<T>>
+}
+
 export async function query<T extends QueryResultRow = Record<string, unknown>>(
   text: string,
   params?: unknown[]
