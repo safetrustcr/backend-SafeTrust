@@ -1,11 +1,16 @@
 # ADR-0001: Escrow Eligibility Statement and Trust Model
 
-- **Status**: Accepted
-- **Date**: 2026-10-18
+- **Status**: Superseded (by [Issue #753](https://github.com/safetrustcr/backend-SafeTrust/issues/753))
+- **Date**: 2026-10-18 (Superseded: 2026-11-19)
 - **Deciders**: SafeTrust Core Architecture Team, DevOps & Security Engineering
 - **Context Issue**: [#655 ZK-01: Define the eligibility statement and trust model](https://github.com/safetrustcr/backend-SafeTrust/issues/655)
+- **Superseded By**: [#753: Remove the zero-knowledge proof-of-funds feature](https://github.com/safetrustcr/backend-SafeTrust/issues/753)
 - **Policy Identifier**: `escrow-eligibility-v1`
-- **Blocks**: ZK-02 through ZK-09
+- **Blocks**: None (ZK feature removed)
+
+> [!NOTE]
+> **Superseded Notice**: This ADR has been **superseded** by [Issue #753](https://github.com/safetrustcr/backend-SafeTrust/issues/753).
+> Booking escrows do not require off-chain zero-knowledge proofs of funds because Trustless Work enforces release constraints directly on-chain (requiring escrow balances to cover configured release amounts). The `crates/zk-verifier` crate, verification-key pinning schemes, and runtime flags (`ZK_ENABLED`, `ZK_ENFORCEMENT_ENABLED`) have been removed to eliminate unnecessary toolchain maintenance. This ADR is retained for historical context.
 
 ---
 
