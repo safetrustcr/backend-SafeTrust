@@ -1,5 +1,9 @@
 # Dispute Lifecycle and Resolution
 
+> **Deprecated callback endpoints:** the TrustlessWork `dispute` and `resolve-dispute` callbacks
+> were removed. Reconciliation polling at `POST /reconciliation/sync-escrows` now applies the
+> `disputed` and `resolved` transitions. Endpoint details below are kept for historical reference.
+
 SafeTrust escrows are single-release or multi-release Soroban contracts
 managed through Trustless Work. A dispute does not move funds by itself: it
 freezes the escrow in `disputed`, then the on-chain **Releaser** address signs

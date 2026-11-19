@@ -21,6 +21,7 @@ import {
 } from '../lib/source-adapters/soroban.adapter'
 import {
   fetchEscrowContractIds as loadEscrowContractIds,
+  fetchEscrowTransitionStates,
   fetchSorobanEscrowRows,
   findStaleEscrows,
   upsertEscrowBatch,
@@ -29,10 +30,16 @@ import { hasuraRequest } from './hasura'
 import { isRustBulkUpsertEnabled } from '../lib/native-adapters/rust-upsert.adapter'
 import { processPendingConfirmationRetries } from './confirmation.service'
 import type { ProcessRetriesSummary } from './confirmation.service'
+import { canTransitionStatus } from '../lib/escrow-freshness'
+import { executeEscrowLifecycleTransition } from './escrow.service'
+import type { EscrowLifecycleParams } from './escrow.service'
+import { notifyHotelEscrowConversation } from './hotel-conversation-notify'
 import type {
   ChunkResult,
   ChunkSyncResult,
+  EscrowRecord,
   ReconciliationEscrowRow,
+  ReconciliationTransitionSummary,
   SyncAllResult,
   UpsertResult,
 } from '../lib/reconciliation.types'
@@ -54,11 +61,225 @@ export function chunkArray<T>(arr: T[], size: number): T[][] {
   return chunks
 }
 
+export interface ReconciliationTransition {
+  contractId: string
+  observedStatus: string
+  eventType: string
+  targetStatus: string
+  reservationStatus: string
+  amount?: number
+  notification?: { eventType: string; body: string }
+}
+
+interface ReconciliationTransitionSpec {
+  eventType: string
+  targetStatus: string
+  reservationStatus: string
+  notification?: { eventType: string; body: string }
+}
+
+const LIFECYCLE_TRANSITION_SPECS: Record<string, ReconciliationTransitionSpec> = {
+  funded: {
+    eventType: 'escrow.funded',
+    targetStatus: 'funded',
+    reservationStatus: 'funded',
+    notification: {
+      eventType: 'escrow_funded',
+      body: 'SafeTrust: Your deposit has been confirmed on the Stellar network. Your booking is secured.',
+    },
+  },
+  completed: {
+    eventType: 'funds.released',
+    targetStatus: 'completed',
+    reservationStatus: 'completed',
+    notification: {
+      eventType: 'escrow_completed',
+      body: 'SafeTrust: Funds have been released. Thank you for booking with us.',
+    },
+  },
+  disputed: {
+    eventType: 'dispute.raised',
+    targetStatus: 'disputed',
+    reservationStatus: 'disputed',
+  },
+  resolved: {
+    eventType: 'dispute.resolved',
+    targetStatus: 'resolved',
+    reservationStatus: 'resolved',
+  },
+}
+
+function transitionAmount(targetStatus: string, record: EscrowRecord): number | undefined {
+  if (targetStatus === 'funded') {
+    const amount = Number(record.amount ?? 0)
+    return Number.isFinite(amount) && amount > 0 ? amount : undefined
+  }
+  if (targetStatus === 'completed' || targetStatus === 'resolved') return 0
+  return undefined
+}
+
+export function detectReconciliationTransitions(
+  localStates: Array<{ contract_id: string; status?: string }>,
+  observedEscrows: EscrowRecord[]
+): ReconciliationTransition[] {
+  const statusByContract = new Map(
+    localStates
+      .filter((row) => Boolean(row.contract_id))
+      .map((row) => [row.contract_id, row.status])
+  )
+  const transitions: ReconciliationTransition[] = []
+
+  for (const record of observedEscrows) {
+    const observedStatus = record.status
+    if (!record.contractId || !observedStatus) continue
+
+    const spec = LIFECYCLE_TRANSITION_SPECS[observedStatus]
+    if (!spec) continue
+
+    const localStatus = statusByContract.get(record.contractId)
+    if (!localStatus || localStatus === observedStatus) continue
+    if (!canTransitionStatus(localStatus, observedStatus)) continue
+
+    transitions.push({
+      contractId: record.contractId,
+      observedStatus,
+      eventType: spec.eventType,
+      targetStatus: spec.targetStatus,
+      reservationStatus: spec.reservationStatus,
+      amount: transitionAmount(observedStatus, record),
+      notification: spec.notification,
+    })
+  }
+
+  return transitions
+}
+
+export interface ApplyReconciliationTransitionsOptions {
+  executeTransition?: (params: EscrowLifecycleParams) => Promise<{
+    isDuplicate: boolean
+    eventId: string
+    escrowId?: string
+  }>
+  notify?: typeof notifyHotelEscrowConversation
+}
+
+export async function applyReconciliationTransitions(
+  transitions: ReconciliationTransition[],
+  options: ApplyReconciliationTransitionsOptions = {}
+): Promise<ReconciliationTransitionSummary> {
+  const summary: ReconciliationTransitionSummary = {
+    detected: transitions.length,
+    applied: 0,
+    duplicates: 0,
+    failed: 0,
+    errors: [],
+  }
+  const execute = options.executeTransition ?? executeEscrowLifecycleTransition
+  const notify = options.notify ?? notifyHotelEscrowConversation
+
+  for (const transition of transitions) {
+    try {
+      const result = await execute({
+        contractId: transition.contractId,
+        eventType: transition.eventType,
+        targetStatus: transition.targetStatus,
+        reservationStatus: transition.reservationStatus,
+        amount: transition.amount,
+        rawPayload: {
+          contractId: transition.contractId,
+          status: transition.targetStatus,
+          source: 'reconciliation',
+        },
+      })
+
+      if (result.isDuplicate) {
+        summary.duplicates++
+        continue
+      }
+
+      summary.applied++
+      logger.info('reconciliation.transition_applied', {
+        contractId: transition.contractId,
+        from: transition.observedStatus,
+        status: transition.targetStatus,
+        eventId: result.eventId,
+      })
+
+      if (transition.notification) {
+        const notification = transition.notification
+        void notify({
+          contractId: transition.contractId,
+          eventType: notification.eventType,
+          body: notification.body,
+        }).catch((error: unknown) => {
+          logger.warn('reconciliation.notification_failed', {
+            contractId: transition.contractId,
+            eventType: notification.eventType,
+            error,
+          })
+        })
+      }
+    } catch (error) {
+      const message = (error as Error).message ?? String(error)
+      summary.failed++
+      summary.errors.push(`${transition.contractId}: ${message}`)
+      logger.warn('reconciliation.transition_failed', {
+        contractId: transition.contractId,
+        status: transition.targetStatus,
+        error: message,
+      })
+    }
+  }
+
+  return summary
+}
+
+function emptyTransitionSummary(): ReconciliationTransitionSummary {
+  return { detected: 0, applied: 0, duplicates: 0, failed: 0, errors: [] }
+}
+
+function mergeTransitionSummaries(
+  target: ReconciliationTransitionSummary,
+  source?: ReconciliationTransitionSummary
+): void {
+  if (!source) return
+  target.detected += source.detected
+  target.applied += source.applied
+  target.duplicates += source.duplicates
+  target.failed += source.failed
+  target.errors.push(...source.errors)
+}
+
+async function applyObservedStateChanges(
+  observedEscrows: EscrowRecord[]
+): Promise<ReconciliationTransitionSummary> {
+  if (observedEscrows.length === 0) return emptyTransitionSummary()
+  try {
+    const localStates = await fetchEscrowTransitionStates(
+      observedEscrows.map((record) => record.contractId)
+    )
+    return await applyReconciliationTransitions(
+      detectReconciliationTransitions(localStates, observedEscrows)
+    )
+  } catch (error) {
+    const message = (error as Error).message ?? String(error)
+    logger.warn('reconciliation.transition_detection_failed', { error: message })
+    return { ...emptyTransitionSummary(), failed: 1, errors: [message] }
+  }
+}
+
+export interface ReconcileChunkOptions {
+  applyTransitions?: boolean
+}
+
 /**
  * Normalize raw indexer escrows and write the valid ones. Invalid records are
  * logged and counted as skipped; they never block their siblings.
  */
-async function writeIndexerEscrows(raw: unknown[]): Promise<UpsertResult> {
+async function writeIndexerEscrows(
+  raw: unknown[],
+  options: ReconcileChunkOptions = {}
+): Promise<UpsertResult> {
   const { escrows, invalid } = normalizeIndexerEscrows(raw)
   for (const record of invalid) {
     logger.warn('reconciliation.invalid_indexer_escrow', {
@@ -66,16 +287,30 @@ async function writeIndexerEscrows(raw: unknown[]): Promise<UpsertResult> {
       reason: record.reason,
     })
   }
+
+  const transitions = options.applyTransitions
+    ? await applyObservedStateChanges(escrows)
+    : undefined
   const counts = await upsertEscrowBatch(escrows)
-  return { ...counts, skipped: counts.skipped + invalid.length }
+  return {
+    ...counts,
+    skipped: counts.skipped + invalid.length,
+    ...(transitions ? { transitions } : {}),
+  }
 }
 
-export async function syncChunk(contractIds: string[]): Promise<UpsertResult> {
+export async function syncChunk(
+  contractIds: string[],
+  options: ReconcileChunkOptions = {}
+): Promise<UpsertResult> {
   const escrows = await fetchEscrowsByContractIds(contractIds)
-  return writeIndexerEscrows(escrows)
+  return writeIndexerEscrows(escrows, options)
 }
 
-export async function syncChunksParallel(chunks: string[][]): Promise<ChunkSyncResult> {
+export async function syncChunksParallel(
+  chunks: string[][],
+  options: ReconcileChunkOptions = {}
+): Promise<ChunkSyncResult> {
   const resultsJson = await processChunksWithRust(chunks)
   const chunkResults: ChunkResult[] = JSON.parse(resultsJson)
 
@@ -83,16 +318,18 @@ export async function syncChunksParallel(chunks: string[][]): Promise<ChunkSyncR
   let unchanged = 0
   let skipped = 0
   const errors: string[] = []
+  const transitions = options.applyTransitions ? emptyTransitionSummary() : undefined
 
   for (const result of chunkResults) {
     if (result.error) {
       errors.push(`chunk_${result.chunk_index}: ${result.error}`)
       continue
     }
-    const counts = await writeIndexerEscrows(result.escrows || [])
+    const counts = await writeIndexerEscrows(result.escrows || [], options)
     updated += counts.updated
     unchanged += counts.unchanged
     skipped += counts.skipped
+    mergeTransitionSummaries(transitions!, counts.transitions)
     console.log(
       `[reconciliation]   chunk ${result.chunk_index + 1}/${chunks.length}` +
         ` (${chunks[result.chunk_index]?.length ?? 0} ids, ${result.duration_ms}ms) —` +
@@ -100,10 +337,19 @@ export async function syncChunksParallel(chunks: string[][]): Promise<ChunkSyncR
     )
   }
 
-  return { updated, unchanged, skipped, errors }
+  return {
+    updated,
+    unchanged,
+    skipped,
+    errors,
+    ...(transitions ? { transitions } : {}),
+  }
 }
 
-export async function syncAllChunks(contractIds: string[]): Promise<SyncAllResult> {
+export async function syncAllChunks(
+  contractIds: string[],
+  options: ReconcileChunkOptions = {}
+): Promise<SyncAllResult> {
   const chunks = chunkArray(contractIds, CHUNK_SIZE)
   if (chunks.length === 0) {
     return { chunks: 0, updated: 0, unchanged: 0, skipped: 0, errors: [] }
@@ -111,7 +357,7 @@ export async function syncAllChunks(contractIds: string[]): Promise<SyncAllResul
 
   if (isRustChunkProcessingEnabled()) {
     try {
-      const result = await syncChunksParallel(chunks)
+      const result = await syncChunksParallel(chunks, options)
       return { chunks: chunks.length, ...result }
     } catch (err) {
       console.error(
@@ -124,13 +370,15 @@ export async function syncAllChunks(contractIds: string[]): Promise<SyncAllResul
   let unchanged = 0
   let skipped = 0
   const errors: string[] = []
+  const transitions = options.applyTransitions ? emptyTransitionSummary() : undefined
 
   for (let i = 0; i < chunks.length; i++) {
     try {
-      const result = await syncChunk(chunks[i])
+      const result = await syncChunk(chunks[i], options)
       updated += result.updated
       unchanged += result.unchanged
       skipped += result.skipped
+      mergeTransitionSummaries(transitions!, result.transitions)
       console.log(
         `[reconciliation]   chunk ${i + 1}/${chunks.length}` +
           ` (${chunks[i].length} ids) — updated: ${result.updated}, unchanged: ${result.unchanged}, skipped: ${result.skipped}`
@@ -144,7 +392,14 @@ export async function syncAllChunks(contractIds: string[]): Promise<SyncAllResul
     }
   }
 
-  return { chunks: chunks.length, updated, unchanged, skipped, errors }
+  return {
+    chunks: chunks.length,
+    updated,
+    unchanged,
+    skipped,
+    errors,
+    ...(transitions ? { transitions } : {}),
+  }
 }
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
@@ -156,6 +411,7 @@ export interface SyncSummary {
   unchanged: number
   skipped: number
   errors: string[]
+  transitions?: ReconciliationTransitionSummary
 }
 
 export interface DriftSummary {
@@ -183,6 +439,7 @@ export interface ReconciliationResponse {
   sorobanUnresolved?: number
   durationMs: number
   confirmationRetries?: ProcessRetriesSummary
+  transitions?: ReconciliationTransitionSummary
 }
 
 
@@ -233,7 +490,8 @@ export async function fetchEscrowContractIds(
  * @returns Summary of synchronized chunks and record counts
  */
 export async function syncEscrowsWithIndexer(
-  contractIds: string[]
+  contractIds: string[],
+  options: ReconcileChunkOptions = {}
 ): Promise<SyncSummary> {
   if (contractIds.length === 0) {
     return {
@@ -246,7 +504,7 @@ export async function syncEscrowsWithIndexer(
     }
   }
 
-  const result = await syncAllChunks(contractIds)
+  const result = await syncAllChunks(contractIds, options)
   return {
     totalEscrows: contractIds.length,
     chunks: result.chunks,
@@ -254,6 +512,7 @@ export async function syncEscrowsWithIndexer(
     unchanged: result.unchanged,
     skipped: result.skipped,
     errors: result.errors,
+    ...(result.transitions ? { transitions: result.transitions } : {}),
   }
 }
 
@@ -474,7 +733,8 @@ export function formatReconciliationSummary(
   drift: DriftSummary,
   stale: string[],
   elapsed: number,
-  retries?: ProcessRetriesSummary
+  retries?: ProcessRetriesSummary,
+  transitions?: ReconciliationTransitionSummary
 ): ReconciliationResponse {
   const totalErrors =
     (sync.errors?.length ?? 0) +
@@ -498,6 +758,7 @@ export function formatReconciliationSummary(
     sorobanUnresolved: drift.unresolved ?? 0,
     durationMs: elapsed,
     ...(retries ? { confirmationRetries: retries } : {}),
+    ...(transitions ? { transitions } : {}),
   }
 
   if (isNoEscrows) {

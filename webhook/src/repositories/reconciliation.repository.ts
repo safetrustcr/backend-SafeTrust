@@ -199,6 +199,28 @@ export async function fetchSorobanEscrowRows(): Promise<ReconciliationEscrowRow[
   return rows
 }
 
+export interface ReconciliationTransitionStateRow {
+  contract_id: string
+  id: string
+  status: string
+  balance: string | null
+}
+
+export async function fetchEscrowTransitionStates(
+  contractIds: string[],
+  tenantId = 'safetrust'
+): Promise<ReconciliationTransitionStateRow[]> {
+  if (contractIds.length === 0) return []
+  const result = await db.query<ReconciliationTransitionStateRow>(
+    `SELECT contract_id, id::text AS id, status, balance::text AS balance
+       FROM safetrust.trustless_work_escrows
+      WHERE tenant_id = $1
+        AND contract_id = ANY($2::text[])`,
+    [tenantId, contractIds]
+  )
+  return result?.rows ?? []
+}
+
 export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResult> {
   let updated = 0
   let unchanged = 0

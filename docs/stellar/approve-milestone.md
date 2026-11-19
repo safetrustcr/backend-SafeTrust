@@ -1,5 +1,9 @@
 # Approve Milestone
 
+> **Deprecated:** the TrustlessWork `approve-milestone` callback was removed. Reconciliation
+> polling at `POST /reconciliation/sync-escrows` records milestone-derived statuses. This page
+> is kept for historical reference.
+
 > `POST /api/escrows/approve-milestone` — TrustlessWork callback recording a host-approved milestone.
 
 ## Overview

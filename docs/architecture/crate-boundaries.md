@@ -42,8 +42,8 @@ flowchart TD
 |---|---|---|
 | `zk-verifier` | Verify Noir UltraHonk proof-of-funds proofs with a pinned Barretenberg build. | `webhook/src/lib/zk-verifier.ts` → `initialize.handler.ts`, `escrow.service.ts`. |
 | `stellar-utils` | Stellar strkey validation and Ed25519 signature verification. | `webhook/src/routes/auth/sync-wallet.handler.ts`. |
-| `escrow-state-machine` | Canonical escrow status enum, transition table, and `getValidPriorStates()` filters. | `dispute.handler.ts`, `resolve-dispute.handler.ts`, `fund.handler.ts`, `milestone.service.ts`, `routes/index.ts`. |
-| `webhook-verifier` | Constant-time HMAC-SHA256 verification of Trustless Work callbacks. | `webhook/src/middleware/trustlesswork-signature.middleware.ts`. |
+| `escrow-state-machine` | Canonical escrow status enum, transition table, and `getValidPriorStates()` filters. | `webhook/src/services/escrow.service.ts` (`executeEscrowLifecycleTransition`), `milestone.service.ts`, `webhook/src/lib/escrow-transitions.ts`. |
+| `webhook-verifier` | Constant-time HMAC-SHA256 verification of Trustless Work callbacks. | Retired; no runtime consumers after polling became authoritative. |
 | `chunk-processor` | Fetch Trustless Work indexer chunks concurrently on Tokio, bounded by a concurrency limit. | `webhook/src/lib/reconciliation.ts` (`syncAllChunks`), gated by `RUST_CHUNKS_ENABLED`. |
 | `pg-bulk-upsert` | Fold a chunk of escrow rows into one ordered `INSERT … ON CONFLICT … UNNEST`. | `webhook/src/lib/reconciliation.ts` (`upsertEscrowBatch`), gated by `RUST_BULK_UPSERT_ENABLED`. |
 | `soroban-reconciler` | Compare database escrow state with Soroban state and report drift. | `webhook/src/services/reconciliation.service.ts` (`validateSorobanDrift`), gated by `SOROBAN_VALIDATION_ENABLED`. |

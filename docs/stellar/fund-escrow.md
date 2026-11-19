@@ -1,5 +1,9 @@
 # Fund Escrow
 
+> **Deprecated:** the TrustlessWork `fund` callback was removed. Reconciliation polling at
+> `POST /reconciliation/sync-escrows` now applies the `funded` transition. This page is kept for
+> historical reference.
+
 > `POST /api/escrows/fund` — TrustlessWork callback confirming a guest's USDC deposit on Stellar.
 
 ## Overview

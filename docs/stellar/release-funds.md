@@ -1,5 +1,9 @@
 # Release Funds
 
+> **Deprecated:** the TrustlessWork `release-funds` callback was removed. Reconciliation
+> polling at `POST /reconciliation/sync-escrows` now applies the `completed` transition. This
+> page is kept for historical reference.
+
 > `POST /api/escrows/release-funds` — TrustlessWork callback confirming funds have been released to the host.
 
 ## Overview

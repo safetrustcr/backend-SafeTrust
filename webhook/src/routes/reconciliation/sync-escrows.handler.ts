@@ -54,10 +54,17 @@ export const syncEscrowsHandler = async (
 
   try {
     const contractIds = await fetchEscrowContractIds('safetrust')
-    const sync = await syncEscrowsWithIndexer(contractIds)
+    const sync = await syncEscrowsWithIndexer(contractIds, { applyTransitions: true })
     const drift = await validateSorobanDrift(contractIds, NETWORK)
     const stale = await detectStaleEscrows(STALE_ESCROW_DAYS)
-    const summary = formatReconciliationSummary(sync, drift, stale, Date.now() - startTime)
+    const summary = formatReconciliationSummary(
+      sync,
+      drift,
+      stale,
+      Date.now() - startTime,
+      undefined,
+      sync.transitions
+    )
 
     const level = summary.errors > 0 ? 'warn' : 'info'
     logger[level]('reconciliation.sync.completed', {
@@ -71,6 +78,7 @@ export const syncEscrowsHandler = async (
       sorobanDrift: summary.sorobanDrift,
       sorobanCorrected: summary.sorobanCorrected,
       errors: summary.errors,
+      ...(summary.transitions ? { transitions: summary.transitions } : {}),
     })
 
     return ok(res, summary)
