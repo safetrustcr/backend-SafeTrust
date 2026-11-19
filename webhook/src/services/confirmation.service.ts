@@ -8,7 +8,17 @@
 
 import db from './db'
 import { hasuraRequest } from './hasura'
-import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
+import {
+  verifyStellarTransaction,
+  type StellarVerificationResult,
+  VALID_TX_HASH,
+} from '../clients/stellar.client'
+import {
+  sendTransactionViaHelper,
+  updateIndexerFromTxHash,
+} from '../clients/trustless-work.client'
+
+export { verifyStellarTransaction, type StellarVerificationResult, VALID_TX_HASH }
 
 // ── Types & Constants ─────────────────────────────────────────────────────────
 
@@ -68,87 +78,6 @@ export interface ProcessRetriesSummary {
   errors: string[]
 }
 
-const VALID_TX_HASH = /^[0-9a-fA-F]{64}$/
-
-// ── Horizon / Stellar Verification ─────────────────────────────────────────────
-
-export interface StellarVerificationResult {
-  verified: boolean
-  ledger?: number
-  successful?: boolean
-  networkMatch?: boolean
-  error?: string
-}
-
-/**
- * Verifies a Stellar transaction directly against the expected Stellar network.
- * Enforces:
- *  - Valid 64-hex tx hash format
- *  - Ledger execution on the matching network
- *  - Rejection of failed, pending, expired, or wrong-network transactions
- */
-export async function verifyStellarTransaction(
-  txHash: string,
-  expectedNetwork: StellarNetwork
-): Promise<StellarVerificationResult> {
-  if (!txHash || !VALID_TX_HASH.test(txHash)) {
-    return {
-      verified: false,
-      error: 'Invalid transaction hash format; must be a 64-character hex string',
-    }
-  }
-
-  const horizonBase =
-    expectedNetwork === 'mainnet'
-      ? 'https://horizon.stellar.org'
-      : 'https://horizon-testnet.stellar.org'
-
-  try {
-    const response = await fetch(`${horizonBase}/transactions/${txHash}`)
-    if (response.status === 404) {
-      return {
-        verified: false,
-        error: `Transaction not found on Stellar ${expectedNetwork} (pending, expired, or wrong network)`,
-      }
-    }
-
-    if (!response.ok) {
-      return {
-        verified: false,
-        error: `Stellar Horizon returned status ${response.status}`,
-      }
-    }
-
-    const txData = (await response.json()) as {
-      successful?: boolean
-      ledger?: number
-      id?: string
-      network?: string
-    }
-
-    if (txData.successful !== true) {
-      return {
-        verified: false,
-        successful: false,
-        error: 'Transaction failed on-ledger',
-      }
-    }
-
-    return {
-      verified: true,
-      successful: true,
-      networkMatch: true,
-      ledger: txData.ledger,
-    }
-  } catch (err) {
-    const error = err as Error
-    return {
-      verified: false,
-      error: `Network error verifying transaction: ${error.message}`,
-    }
-  }
-}
-
 // ── Trustless Work Indexer Synchronization ────────────────────────────────────
 
 /**
@@ -168,34 +97,7 @@ export async function updateTWIndexerFromTxHash(
     }
   }
 
-  const twBaseUrl = getTrustlessWorkApiUrl()
-  const twApiKey = getTrustlessWorkApiKey()
-
-  try {
-    const response = await fetch(`${twBaseUrl}/indexer/update-from-txHash`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
-      },
-      body: JSON.stringify({ txHash, network }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      return {
-        success: false,
-        error: `TW indexer returned status ${response.status}: ${errText}`,
-      }
-    }
-
-    return { success: true }
-  } catch (err) {
-    return {
-      success: false,
-      error: `TW indexer network error: ${(err as Error).message}`,
-    }
-  }
+  return updateIndexerFromTxHash(txHash, network)
 }
 
 /**
@@ -205,43 +107,7 @@ export async function sendTransactionViaTWHelper(
   signedXdr: string,
   network: StellarNetwork
 ): Promise<{ success: boolean; txHash?: string; error?: string }> {
-  const twBaseUrl = getTrustlessWorkApiUrl()
-  const twApiKey = getTrustlessWorkApiKey()
-
-  try {
-    const response = await fetch(`${twBaseUrl}/helper/send-transaction`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
-      },
-      body: JSON.stringify({ signedXdr, network }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      return {
-        success: false,
-        error: `TW helper returned status ${response.status}: ${errText}`,
-      }
-    }
-
-    const data = (await response.json()) as { txHash?: string; hash?: string }
-    const txHash = data.txHash || data.hash
-    if (!txHash) {
-      return {
-        success: false,
-        error: 'TW helper response did not include transaction hash',
-      }
-    }
-
-    return { success: true, txHash }
-  } catch (err) {
-    return {
-      success: false,
-      error: `TW helper network error: ${(err as Error).message}`,
-    }
-  }
+  return sendTransactionViaHelper(signedXdr, network)
 }
 
 // ── Bounded Exponential Backoff ───────────────────────────────────────────────
