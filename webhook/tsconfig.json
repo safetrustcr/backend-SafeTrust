@@ -1,11 +1,17 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ES2022",
-    "moduleResolution": "bundler",
+    "module": "commonjs",
     "lib": [
       "ES2022"
     ],
+    "baseUrl": ".",
+    "paths": {
+      "@x402/core/server": ["./node_modules/@x402/core/dist/cjs/server"],
+      "@x402/core/types": ["./node_modules/@x402/core/dist/cjs/types"],
+      "@x402/stellar/exact/server": ["./node_modules/@x402/stellar/dist/cjs/exact/server"],
+      "@x402/express": ["./node_modules/@x402/express/dist/cjs"]
+    },
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,

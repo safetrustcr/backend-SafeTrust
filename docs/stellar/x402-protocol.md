@@ -12,8 +12,8 @@ When evaluating micropayment architectures on Stellar, SafeTrust chose the **x40
 
 | Consideration | x402 (Chosen) | MPP (Micropayment Protocol) |
 |---|---|---|
-| **Settlement Delegation** | Delegates transaction submission, gas sponsoring, and sequencer interaction to an external **Facilitator**. | Requires a server-held fee-payer private key and on-chain submission infrastructure on the API server. |
-| **Secret Management** | Client signs authorization directly; server verifies proof via facilitator without server-held secrets or shared pre-shared keys (PSKs). | Requires a server-held fee-payer secret key and shared secrets between client and merchant. |
+| **Settlement Delegation** | Delegates transaction submission, gas sponsoring, and sequencer interaction to an external **Facilitator**. | In pull/sponsorship mode, requires a server-held fee-payer private key and on-chain submission infrastructure on the API server; in push mode, client broadcasts and server verifies a `signedHash` credential. |
+| **Secret Management** | Client signs authorization directly; server verifies proof via facilitator without server-held secrets or shared pre-shared keys (PSKs). | Pull/sponsorship mode requires a server-held fee-payer secret key and shared secrets between client and merchant. |
 | **Discovery & Standards** | Conforms to official `@x402` v2 specifications and Bazaar agent registry discovery mechanisms. | Bespoke protocol implementation with non-standard client libraries. |
 | **Client-Side Friction** | Autonomous agents use `@x402/fetch` or standard HTTP headers (`PAYMENT-SIGNATURE`) in a single round-trip challenge-response. | Custom integration flow required by each client agent. |
 

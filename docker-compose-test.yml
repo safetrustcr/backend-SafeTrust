@@ -90,7 +90,7 @@ services:
       # The x402 Karate suite exercises the enabled payment gate.
       - X402_ENABLED=true
       - SAFETRUST_PLATFORM_WALLET=${TEST_PLATFORM_WALLET:-GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57}
-      - X402_FACILITATOR_URL=https://channels.openzeppelin.com/x402/testnet
+      - X402_FACILITATOR_URL=${X402_FACILITATOR_URL:-https://x402.org/facilitator}
       - STELLAR_NETWORK=testnet
     depends_on:
       postgres_test:

@@ -31,12 +31,34 @@ export function buildPaymentMiddleware(): RequestHandler {
         ],
         description: 'SafeTrust escrow initialization fee',
         mimeType: 'application/json',
+        unpaidResponseBody: () => ({
+          contentType: 'application/json',
+          body: {
+            error: 'Payment Required',
+            x402Version: 2,
+            accepts: [
+              {
+                scheme: 'exact',
+                network: config.network,
+                asset: {
+                  code: 'USDC',
+                  contract:
+                    config.network === 'stellar:pubnet'
+                      ? 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'
+                      : 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+                },
+                facilitator_url: config.facilitatorUrl,
+                pay_to: config.payTo,
+              },
+            ],
+          },
+        }),
       },
     },
     server,
     undefined,
     undefined,
-    true
+    false
   ) as unknown as RequestHandler
 }
 
@@ -76,6 +98,39 @@ router.post(
         })
         return
       }
+
+      const xPayment = req.headers['x-payment']
+      if (typeof xPayment === 'string' && !req.headers['payment-signature']) {
+        if (!xPayment.startsWith('x402 ')) {
+          const config = getX402Config()
+          const requirements = {
+            x402Version: 2,
+            error: 'Invalid x402 payment',
+            accepts: [
+              {
+                scheme: 'exact',
+                network: config.network,
+                asset:
+                  config.network === 'stellar:pubnet'
+                    ? 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'
+                    : 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+                payTo: config.payTo,
+              },
+            ],
+          }
+          res.setHeader(
+            'payment-required',
+            Buffer.from(JSON.stringify(requirements)).toString('base64')
+          )
+          res.status(402).json({
+            error: 'Invalid x402 payment',
+            invalid_reason: `Invalid X-Payment header format — must start with 'x402 ', got: '${xPayment}'`,
+            x402Version: 2,
+          })
+          return
+        }
+      }
+
       // The paid path trusts only PAYMENT-SIGNATURE (x402 v2).
       // Discard legacy x-payment so it cannot satisfy the payment gate.
       delete req.headers['x-payment']

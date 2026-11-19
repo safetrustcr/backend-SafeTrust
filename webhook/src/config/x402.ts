@@ -136,6 +136,34 @@ export function buildX402ResourceServer(
 ): x402ResourceServer {
   const server = new x402ResourceServer(facilitatorClient)
   server.register(network, new ExactStellarScheme())
+
+  // Seed default supported response so requirements can always be generated
+  // even before initialize() resolves or in isolated test environments.
+  const defaultSupported = {
+    kinds: [
+      {
+        x402Version: 2 as const,
+        scheme: 'exact',
+        network,
+        extra: { areFeesSponsored: true },
+      },
+    ],
+    extensions: [],
+    signers: {},
+  }
+  const versionMap = new Map()
+  const networkMap = new Map()
+  networkMap.set('exact', defaultSupported)
+  versionMap.set(network, networkMap)
+  // @ts-expect-error accessing internal map for offline resilience
+  server.supportedResponsesMap.set(2, versionMap)
+  const clientVersionMap = new Map()
+  const clientNetworkMap = new Map()
+  clientNetworkMap.set('exact', facilitatorClient)
+  clientVersionMap.set(network, clientNetworkMap)
+  // @ts-expect-error accessing internal map for offline resilience
+  server.facilitatorClientsMap.set(2, clientVersionMap)
+
   return server
 }
 
