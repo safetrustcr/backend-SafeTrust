@@ -13,7 +13,6 @@ import {
   EscrowStateConflictError,
   EscrowValidationError,
   ReservationNotFoundError,
-  ZkVerifierUnavailableError,
 } from '../../services/escrow.service'
 import { StaleStateError, StateConflictError } from '../../lib/escrow-transitions'
 import { MilestoneNotFoundError, MilestoneValidationError } from '../../services/milestone.service'
@@ -45,7 +44,7 @@ describe('AppError hierarchy', () => {
       code: 'internal_error',
       message: 'Internal server error',
     })
-    expect(classifyError(new ServiceUnavailableError('zk-verifier index.node missing')).message)
+    expect(classifyError(new ServiceUnavailableError('service index.node missing')).message)
       .toBe('Service unavailable')
   })
 
@@ -65,7 +64,6 @@ describe('domain errors are part of the hierarchy', () => {
     [new TenantMismatchError(), 403, 'tenant_mismatch'],
     [new EscrowValidationError('missing field'), 400, 'escrow_validation_error'],
     [new MilestoneValidationError('missing field'), 400, 'milestone_validation_error'],
-    [new ZkVerifierUnavailableError('addon missing'), 503, 'zk_verifier_unavailable'],
   ])('%p → %i %s', (error, status, code) => {
     expect(error).toBeInstanceOf(AppError)
     expect(error.statusCode).toBe(status)
@@ -80,7 +78,7 @@ describe('domain errors are part of the hierarchy', () => {
   })
 
   it('sanitizes a 5xx validation error', () => {
-    const error = new EscrowValidationError('ZK proof verifier is misconfigured', 500)
+    const error = new EscrowValidationError('Verifier is misconfigured', 500)
     expect(classifyError(error).message).toBe('Internal server error')
   })
 })

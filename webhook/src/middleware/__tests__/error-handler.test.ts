@@ -46,7 +46,7 @@ describe('errorHandler', () => {
   it.each([
     [() => new ValidationError('amount must be positive'), 400, 'validation_error', 'amount must be positive'],
     [() => new ConflictError('escrow already funded'), 409, 'conflict', 'escrow already funded'],
-    [() => new ServiceUnavailableError('zk addon missing'), 503, 'service_unavailable', 'Service unavailable'],
+    [() => new ServiceUnavailableError('native addon missing'), 503, 'service_unavailable', 'Service unavailable'],
   ])('maps thrown AppErrors to their status', async (make, status, code, message) => {
     const res = await request(makeApp(make)).post('/boom').send({})
     expect(res.status).toBe(status)

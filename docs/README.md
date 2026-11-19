@@ -24,7 +24,7 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 ### 📜 Architecture Decision Records (ADRs)
 | Document | Description |
 |---|---|
-| [ADR-0001: ZK Eligibility Statement and Trust Model](adr/0001-zk-eligibility-statement-and-trust-model.md) | Predicate specification, trust boundaries, feasibility trade-offs, and verification key pinning for escrow admission |
+| [ADR-0001: ZK Eligibility Statement and Trust Model](adr/0001-zk-eligibility-statement-and-trust-model.md) | *(Superseded by #753)* Predicate specification, trust boundaries, feasibility trade-offs, and verification key pinning for escrow admission |
 
 ### 🔐 Stellar & Escrow Flows
 | Document | Description |

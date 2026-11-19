@@ -46,8 +46,7 @@ The existing domain errors are part of the hierarchy and keep their names, so
 `instanceof` checks are unchanged: `EscrowNotFoundError`,
 `ReservationNotFoundError` and `MilestoneNotFoundError` are `NotFoundError`s;
 `StateConflictError`, `StaleStateError` and `EscrowStateConflictError` are
-`ConflictError`s; `TenantMismatchError` is a `ForbiddenError`;
-`ZkVerifierUnavailableError` is a `ServiceUnavailableError`.
+`ConflictError`s; and `TenantMismatchError` is a `ForbiddenError`.
 `EscrowValidationError` and `MilestoneValidationError` keep their configurable
 status. Each sets a specific code such as `escrow_not_found` or
 `tenant_mismatch`.
