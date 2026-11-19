@@ -104,3 +104,13 @@ jq '{status, failed_phase, total_ms, tenants: (.tenants | map_values(.total_ms))
   printed; Hasura's error names the table, role and column at fault.
 - **Seed errors**: the summary shows `failed in seeds` for the tenant; the full
   error is in `<tenant>-seeds.log`.
+- **Untrack obsolete PostGIS system tables**: on existing environments that previously tracked `geography_columns`, `geometry_columns`, and `spatial_ref_sys`, untrack them with `pg_untrack_table`:
+  ```bash
+  for tbl in geography_columns geometry_columns spatial_ref_sys; do
+    curl -sS -X POST "${HASURA_ENDPOINT:-http://localhost:8080}/v1/metadata" \
+      -H "X-Hasura-Admin-Secret: ${HASURA_ADMIN_SECRET}" \
+      -H "Content-Type: application/json" \
+      -d "{\"type\":\"pg_untrack_table\",\"args\":{\"table\":{\"name\":\"$tbl\",\"schema\":\"public\"},\"source\":\"safetrust\",\"cascade\":true}}"
+  done
+  ```
+  Alternatively, run `bin/start --reset safetrust` to start fresh from clean volumes.
