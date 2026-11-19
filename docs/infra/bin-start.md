@@ -107,10 +107,17 @@ jq '{status, failed_phase, total_ms, tenants: (.tenants | map_values(.total_ms))
 - **Untrack obsolete PostGIS system tables**: on existing environments that previously tracked `geography_columns`, `geometry_columns`, and `spatial_ref_sys`, untrack them with `pg_untrack_table`:
   ```bash
   for tbl in geography_columns geometry_columns spatial_ref_sys; do
-    curl -sS -X POST "${HASURA_ENDPOINT:-http://localhost:8080}/v1/metadata" \
+    echo "Untracking public.$tbl..."
+    curl -fsS --fail-with-body -X POST "${HASURA_ENDPOINT:-http://localhost:8080}/v1/metadata" \
       -H "X-Hasura-Admin-Secret: ${HASURA_ADMIN_SECRET}" \
       -H "Content-Type: application/json" \
-      -d "{\"type\":\"pg_untrack_table\",\"args\":{\"table\":{\"name\":\"$tbl\",\"schema\":\"public\"},\"source\":\"safetrust\",\"cascade\":true}}"
+      -d "{\"type\":\"pg_untrack_table\",\"args\":{\"table\":{\"name\":\"$tbl\",\"schema\":\"public\"},\"source\":\"safetrust\",\"cascade\":false}}" || {
+        echo "Failed to untrack public.$tbl. If dependent objects exist, review and resolve them before retrying." >&2
+        break
+      }
   done
   ```
-  Alternatively, run `bin/start --reset safetrust` to start fresh from clean volumes.
+  If Hasura reports dependent objects when `cascade` is `false`, review and resolve those dependencies before retrying the untrack.
+
+  > [!WARNING]
+  > Alternatively, `bin/start --reset safetrust` starts fresh from clean volumes. Note that `--reset` removes **all** stack Docker volumes, deleting data across all tenants (including `hotel_industry`). Only use `--reset` when all volume data can safely be discarded.
