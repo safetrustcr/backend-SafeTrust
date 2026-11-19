@@ -104,3 +104,42 @@ jq '{status, failed_phase, total_ms, tenants: (.tenants | map_values(.total_ms))
   printed; Hasura's error names the table, role and column at fault.
 - **Seed errors**: the summary shows `failed in seeds` for the tenant; the full
   error is in `<tenant>-seeds.log`.
+
+## Metadata Configuration Reconciliation & Recovery
+
+### How Configuration is Reconciled
+`metadata/deploy-tenant.sh` reconciles metadata incrementally for each tenant:
+1. **Missing objects**: Tables and functions not yet tracked in Hasura are registered with their full YAML configuration using `pg_track_tables` and `pg_track_function`.
+2. **Tracked objects with changed configuration**: For tables and functions already tracked in Hasura whose `configuration` (`custom_name`, `custom_root_fields`, `column_config`) differs from the local YAML, the deploy calls `pg_set_table_customization` and `pg_set_function_customization` in bulk.
+3. **Idempotency**: Tracked objects whose configuration already matches YAML are left untouched. Running the deploy twice in a row executes zero customization calls on the second run.
+4. **Permissions & Relationships**: Missing foreign-key relationships and select/function permissions are reconciled against the post-tracking metadata state.
+
+#### Why `pg_set_*_customization` instead of `replace_metadata`
+Multi-tenant deploys (`safetrust`, `hotel_industry`) execute per-tenant in parallel. `replace_metadata` is global across all sources, which would cause concurrent tenant deploys to overwrite one another's changes or drop non-tenant configurations. In contrast, calling `pg_set_table_customization` and `pg_set_function_customization`:
+- Scopes changes strictly to the target tenant source.
+- Safely runs in parallel without lock contention or cross-tenant overwrites.
+- Only mutates configuration for objects that actually drifted, leaving existing relationships and permissions undisturbed.
+
+### Recovering an Existing Environment
+Existing environments that were initialized before custom root fields were introduced (e.g., exposing default `safetrust_users` instead of `users`, or missing `getEscrowAnalyticsByDay`) can be updated in-place without losing database data:
+
+```bash
+bin/start --restart safetrust hotel_industry
+```
+
+`bin/start --restart` executes the metadata deployment against the running containers. `deploy-tenant.sh` detects the differences between the live metadata and the YAML configurations, issues the customization commands, and reloads the Hasura metadata cache.
+
+Alternatively, to start completely from scratch with fresh volumes:
+```bash
+bin/start --reset safetrust hotel_industry
+```
+
+### Clean Test Database per Run (`bin/test`)
+`bin/test` executes:
+```bash
+docker compose -p safetrust-test -f docker-compose-test.yml "${ENV_FILE_FLAGS[@]}" down -v --remove-orphans 2>/dev/null || true
+```
+prior to starting Karate tests. This ensures that:
+- The named volume `db_data_test` is deleted before the run begins, giving `postgres_test` and Hasura a pristine database every time.
+- No stale metadata, old root fields, or test data persist between consecutive local test runs.
+- The teardown adds minimal overhead (~1–2 seconds) while guaranteeing deterministic, reproducible test runs locally and in CI.
