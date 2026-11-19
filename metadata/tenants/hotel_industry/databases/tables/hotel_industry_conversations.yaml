@@ -1,3 +1,5 @@
+# hotel_industry tables have no tenant_id column: the schema is the tenant
+# boundary (its own Hasura source), and rows are scoped to participants.
 table:
   name: conversations
   schema: hotel_industry
@@ -24,12 +26,11 @@ select_permissions:
         - last_message_at
         - created_at
       filter:
-        _and:
-          - _or:
-              - guest_id:
-                  _eq: X-Hasura-User-Id
-              - host_id:
-                  _eq: X-Hasura-User-Id
+        _or:
+          - guest_id:
+              _eq: X-Hasura-User-Id
+          - host_id:
+              _eq: X-Hasura-User-Id
   - role: host
     permission:
       columns:
@@ -41,14 +42,11 @@ select_permissions:
         - last_message_at
         - created_at
       filter:
-        _and:
-          - tenant_id:
-              _eq: X-Hasura-Tenant-Id
-          - _or:
-              - guest_id:
-                  _eq: X-Hasura-User-Id
-              - host_id:
-                  _eq: X-Hasura-User-Id
+        _or:
+          - guest_id:
+              _eq: X-Hasura-User-Id
+          - host_id:
+              _eq: X-Hasura-User-Id
   - role: admin
     permission:
       columns: "*"
@@ -58,13 +56,9 @@ insert_permissions:
   - role: guest
     permission:
       check:
-        _and:
-          - tenant_id:
-              _eq: X-Hasura-Tenant-Id
-          - guest_id:
-              _eq: X-Hasura-User-Id
+        guest_id:
+          _eq: X-Hasura-User-Id
       set:
-        tenant_id: X-Hasura-Tenant-Id
         guest_id: X-Hasura-User-Id
       columns:
         - reservation_id
@@ -72,13 +66,9 @@ insert_permissions:
   - role: host
     permission:
       check:
-        _and:
-          - tenant_id:
-              _eq: X-Hasura-Tenant-Id
-          - host_id:
-              _eq: X-Hasura-User-Id
+        host_id:
+          _eq: X-Hasura-User-Id
       set:
-        tenant_id: X-Hasura-Tenant-Id
         host_id: X-Hasura-User-Id
       columns:
         - reservation_id
@@ -91,22 +81,16 @@ update_permissions:
         - last_message_at
         - status
       filter:
-        _and:
-          - tenant_id:
-              _eq: X-Hasura-Tenant-Id
-          - guest_id:
-              _eq: X-Hasura-User-Id
+        guest_id:
+          _eq: X-Hasura-User-Id
   - role: host
     permission:
       columns:
         - last_message_at
         - status
       filter:
-        _and:
-          - tenant_id:
-              _eq: X-Hasura-Tenant-Id
-          - host_id:
-              _eq: X-Hasura-User-Id
+        host_id:
+          _eq: X-Hasura-User-Id
 
 delete_permissions:
   - role: admin

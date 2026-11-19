@@ -2,10 +2,11 @@ import { Response } from 'express'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { createReservation, TenantMismatchError } from '../../services/reservation.service'
 import type { Reservation } from '@safetrust/types'
+import { logger } from '../../middleware/logger'
 
 type CreateReservationResponse =
   | { reservation: Reservation }
-  | { error: string; details?: unknown }
+  | { error: string }
 
 export const createReservationHandler = async (
   req: AuthenticatedRequest,
@@ -61,18 +62,15 @@ export const createReservationHandler = async (
       return res.status(500).json({ error: 'Failed to create reservation' })
     }
 
-    console.log(`[reservations/create] ✅ Reservation created — id: ${reservation.id}`)
+    logger.info('reservations.create.succeeded', { reservationId: reservation.id })
     return res.status(201).json({ reservation })
   } catch (error) {
     if (error instanceof TenantMismatchError) {
       return res.status(403).json({ error: 'Forbidden: tenant mismatch' })
     }
 
-    const err = error as Error & { details?: unknown }
-    console.error('[reservations/create] ❌ error:', err.details || err.message)
-    if (err.details) {
-      return res.status(500).json({ error: 'Failed to create reservation', details: err.details })
-    }
-    return res.status(500).json({ error: 'Internal server error', details: err.message })
+    // Log the cause; the 500 body never carries driver or Hasura detail.
+    logger.error('reservations.create.failed', { error })
+    return res.status(500).json({ error: 'Failed to create reservation' })
   }
 }

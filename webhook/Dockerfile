@@ -62,6 +62,10 @@ COPY --from=builder /app/crates/escrow-state-machine/index.d.ts /app/crates/escr
 # x402 payment validation is opt-in at runtime but required by the enabled integration tests.
 COPY --from=builder /app/crates/x402-processor/index.node /app/crates/x402-processor/index.node
 COPY --from=builder /app/crates/x402-processor/package.json /app/crates/x402-processor/package.json
+# soroban-reconciler: built by build:rust; still gated at runtime by
+# SOROBAN_VALIDATION_ENABLED and its unvalidated-reader safeguards.
+COPY --from=builder /app/crates/soroban-reconciler/package.json /app/crates/soroban-reconciler/package.json
+COPY --from=builder /app/crates/soroban-reconciler/native /app/crates/soroban-reconciler/native
 
 # node user/group already exists in the official Node image.
 USER node

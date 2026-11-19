@@ -2,6 +2,7 @@ import { Response } from 'express'
 import type { CreateListingReportPayload, ListingReportResponse, ReportCategory } from '@safetrust/types'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { query } from '../../services/db'
+import { logger } from '../../middleware/logger'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -104,12 +105,12 @@ export const createReportHandler = async (
     }
 
     // Never log `details` — it may contain personal data.
-    console.log(`[apartments/report] ✅ report created — id: ${report.id}, apartmentId: ${apartmentId}, category: ${category}`)
+    logger.info('apartments.report.created', { reportId: report.id, apartmentId, category })
 
     return res.status(201).json({ id: report.id, status: report.status })
   } catch (error) {
     const err = error as Error
-    console.error('[apartments/report] ❌', err.message)
+    logger.error('apartments.report.failed', { error: err })
     return res.status(500).json({ error: 'Failed to create report' })
   }
 }

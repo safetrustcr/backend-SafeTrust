@@ -5,6 +5,7 @@ import { pool } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { findParticipation, listForEscrow } from '../../repositories/escrow-claims.repository'
 import { UUID_PATTERN } from './validation'
+import { logger } from '../../middleware/logger'
 
 /**
  * GET /api/escrow-claims/:escrowId: both parties of the escrow see all its claims.
@@ -42,7 +43,7 @@ export const listClaimsHandler = async (
       })),
     })
   } catch (err) {
-    console.error('listClaimsHandler error:', err)
+    logger.error('escrow_claims.list.failed', { error: err })
     return res.status(500).json({ error: 'INTERNAL_ERROR' })
   } finally {
     client.release()

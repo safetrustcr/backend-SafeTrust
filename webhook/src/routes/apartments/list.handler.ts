@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import type { Apartment, ApartmentListQuery, ApartmentListResponse } from '@safetrust/types'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import db, { query } from '../../services/db'
+import { logger } from '../../middleware/logger'
 
 /**
  * Format apartment entity so decimal columns (price, warranty_deposit) from pg driver are converted to numbers,
@@ -167,7 +168,7 @@ export const listApartments = async (
     })
   } catch (error) {
     const err = error as Error
-    console.error('[apartments/list] ❌ error:', err.message)
+    logger.error('apartments.list.failed', { error: err })
     return res.status(500).json({ error: 'Database error' })
   }
 }
@@ -261,7 +262,7 @@ export const createApartment = async (
     return res.status(201).json({ apartment: formatApartment(result.rows[0]) })
   } catch (error) {
     const err = error as Error
-    console.error('[apartments/create] ❌', err.message)
+    logger.error('apartments.create.failed', { error: err })
     return res.status(500).json({ error: 'Failed to create apartment' })
   }
 }
@@ -291,7 +292,7 @@ export const getApartmentById = async (
     return res.status(200).json({ apartment: formatApartment(result.rows[0]) })
   } catch (error) {
     const err = error as Error
-    console.error('[apartments/get] ❌', err.message)
+    logger.error('apartments.get.failed', { error: err })
     return res.status(500).json({ error: 'Database error' })
   }
 }

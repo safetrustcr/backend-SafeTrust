@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
+import { logger } from './logger'
 
 type X402Addon = {
   validateX402Payment: (header: string, requiredAmount: number) => string
@@ -26,7 +27,8 @@ function getX402Addon(): X402Addon | null {
       x402Addon = require('../../crates/x402-processor')
     } catch (fallbackError) {
       x402Addon = null
-      console.warn('[x402] native addon unavailable; payment validation will fail closed without it:', {
+      logger.warn('x402.native_addon_unavailable', {
+        effect: 'payment validation fails closed',
         primaryPathError: error instanceof Error ? error.message : error,
         fallbackPathError:
           fallbackError instanceof Error ? fallbackError.message : fallbackError,
@@ -135,7 +137,7 @@ export const requireX402Payment =
       next()
     } catch (error) {
       const err = error as Error
-      console.error('[x402] Validation error:', err.message)
+      logger.error('x402.validation_failed', { error: err })
       res.status(500).json({ error: 'Payment validation failed' })
     }
   }

@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express'
 import { getApps } from 'firebase-admin/app'
 import type { QueryConfig } from 'pg'
 import { pool } from '../services/db'
+import { logger } from '../middleware/logger'
 
 const router = express.Router()
 const readinessQuery: QueryConfig & { query_timeout: number } = {
@@ -17,10 +18,7 @@ router.get('/health/ready', async (_req: Request, res: Response) => {
     await pool.query(readinessQuery)
     database = true
   } catch (error) {
-    console.error(
-      '[health] Database readiness check failed:',
-      error instanceof Error ? error.message : String(error)
-    )
+    logger.error('health.database_check_failed', { error })
   }
 
   const ready = firebase && database

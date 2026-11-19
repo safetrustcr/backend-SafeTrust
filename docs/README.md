@@ -18,6 +18,8 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Escrow Claims API](architecture/escrow-claims-api.md) | Request and response contract, error codes, idempotency and rate limit for claims on released escrows |
 | [Reservations API](architecture/reservations-api.md) | Lifecycle, allowed actions computation, read endpoints, and safe cancellation protocol |
 | [Wallet Registry API](architecture/wallets-api.md) | Verified wallet management lifecycle (list, unlink, and atomic set-primary endpoints) |
+| [Hotel Conversation Notifications](architecture/hotel-conversation-notifications.md) | In-process lifecycle notifications, time budget, idempotent conversation creation, and removal of the internal secret |
+| [Error Handling, Logging and CORS](architecture/error-handling-and-logging.md) | Typed `AppError` mapping, sanitized 5xx bodies, structured logs with `requestId`, raw-body capture, and the CORS origin policy |
 
 ### 📜 Architecture Decision Records (ADRs)
 | Document | Description |
@@ -33,6 +35,7 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Release Funds](stellar/release-funds.md) | Payout release mechanisms and on-chain settlement execution |
 | [Dispute & Resolve](stellar/dispute-resolve.md) | Two-phase XDR dispute lifecycle, Soroban roles, status transitions, and indexer synchronization |
 | [Escrow State Source](stellar/escrow-state-source.md) | Authoritative state source selection, removal of fabricated reads, and adapter validation |
+| [Trustless Work Indexer Sync](stellar/trustless-work-indexer.md) | How reconciliation reads the Trustless Work V1 indexer: configuration, request, status derivation from flags, field mapping, and the unversioned-snapshot limitation |
 | [x402 Protocol](stellar/x402-protocol.md) | Agentic payments on Stellar using Soroban authorization entries and USDC SEP-41 |
 
 

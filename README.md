@@ -105,20 +105,24 @@ bin/start tenant-name tenant-name
 | Step | Action |
 | --- | --- |
 | 1 | Start `postgres`, `graphql-engine`, `webhook` containers |
-| 2 | Poll `GET /healthz` until Hasura is ready (up to 3 min) |
-| 3 | Build and deploy tenant metadata for all tenants |
-| 4 | Apply all migrations per tenant |
-| 5 | Reload Hasura metadata |
-| 6 | Apply seed data per tenant in parallel, with one transaction per seed file |
+| 2 | Poll `GET /healthz` until Hasura is ready (up to 2 min) |
+| 3 | Register a Hasura database source per tenant |
+| 4 | Apply migrations per tenant, one tenant at a time |
+| 5 | Build and deploy tenant metadata, all tenants in parallel |
+| 6 | Reload Hasura metadata |
+| 7 | Apply seeds per tenant with `hasura seed apply` |
+| 8 | Check Hasura, PostgreSQL and the webhook, then print one `DEPLOYMENT SUMMARY` |
 
-Seed files are applied directly with PostgreSQL and `ON_ERROR_STOP=1`. Each file
-is wrapped in `BEGIN`/`COMMIT`, so a failed file rolls back completely; the two
-independent tenants run concurrently. Seed inserts use conflict-safe or
-stable-key cleanup patterns, making `bin/start` safe to rerun without
-`docker compose down -v`.
+The summary shows each tenant's time per phase and status, the shared steps,
+the total time and the health checks. Every run also writes per-tenant logs to
+`tests/results/bin-start/<run-id>/` and a JSON report to
+`tests/results/bin-start-report.json`. See [bin/start](docs/infra/bin-start.md)
+for the summary format, `--verbose`, and troubleshooting.
 
-Set `SEED_CHUNK_SIZE` in `.env` to tune the configured seed batch size (default
-`500`).
+Seed inserts use conflict-safe or stable-key cleanup patterns, making
+`bin/start` safe to rerun without `docker compose down -v`. Chunked seeding
+with `SEED_CHUNK_SIZE` (default `500` rows per transaction) is done by
+[`bin/deploy_init`](docs/infra/deploy-init.md), not `bin/start`.
 
 **Target a specific tenant:**
 

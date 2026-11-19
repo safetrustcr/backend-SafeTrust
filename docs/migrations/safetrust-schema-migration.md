@@ -221,7 +221,7 @@ table:
 | `tables.yaml` include list | ❌ Unchanged | Lists canonical file paths, which do not change |
 | Table names inside YAML | ❌ Unchanged | `name: users` remains `users` |
 | PostGIS view entries | ❌ Unchanged | `geography_columns`, `geometry_columns`, and `spatial_ref_sys` remain in `public` |
-| GraphQL field names | ❌ Unchanged | Field names remain identical after Hasura re-tracks under `safetrust.*` |
+| GraphQL field names | ⚠️ **Changed unless a `custom_name` is set** | Hasura exposes a table outside `public` as `<schema>_<table>` (e.g. `safetrust_users`). A table keeps its original field names only if its YAML has `configuration.custom_name` — `users` (issue #666), `roles`, `escrow_milestones` and `trustless_work_escrows` do; see `docs/investigations/hasura-users-schema-666.md` for the tables that still do not. |
 
 > [!IMPORTANT]
 > The spatial tables `public_geography_columns`, `public_geometry_columns`, and `public_spatial_ref_sys` were NOT moved by migration `1779300000001` and remain on `schema: public`.

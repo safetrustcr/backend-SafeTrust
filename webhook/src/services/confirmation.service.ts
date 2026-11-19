@@ -8,6 +8,7 @@
 
 import db from './db'
 import { hasuraRequest } from './hasura'
+import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
 
 // ── Types & Constants ─────────────────────────────────────────────────────────
 
@@ -167,9 +168,8 @@ export async function updateTWIndexerFromTxHash(
     }
   }
 
-  const twBaseUrl =
-    process.env.TRUSTLESS_WORK_API_URL || 'https://dev.api.trustlesswork.com'
-  const twApiKey = process.env.TRUSTLESS_WORK_API_KEY || ''
+  const twBaseUrl = getTrustlessWorkApiUrl()
+  const twApiKey = getTrustlessWorkApiKey()
 
   try {
     const response = await fetch(`${twBaseUrl}/indexer/update-from-txHash`, {
@@ -205,9 +205,8 @@ export async function sendTransactionViaTWHelper(
   signedXdr: string,
   network: StellarNetwork
 ): Promise<{ success: boolean; txHash?: string; error?: string }> {
-  const twBaseUrl =
-    process.env.TRUSTLESS_WORK_API_URL || 'https://dev.api.trustlesswork.com'
-  const twApiKey = process.env.TRUSTLESS_WORK_API_KEY || ''
+  const twBaseUrl = getTrustlessWorkApiUrl()
+  const twApiKey = getTrustlessWorkApiKey()
 
   try {
     const response = await fetch(`${twBaseUrl}/helper/send-transaction`, {

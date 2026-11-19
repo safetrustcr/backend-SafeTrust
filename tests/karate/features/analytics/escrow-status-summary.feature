@@ -16,7 +16,7 @@ Scenario: Contract - safetrust_get_escrow_status_summary field names and types
     {
         "query": "query GetSummary($tenant: String) { safetrust_get_escrow_status_summary(args: {tenant_id_input: $tenant}) { total_escrows active_escrows completed_escrows disputed_escrows total_value_usdc pending_value_usdc } }",
         "variables": {
-            "tenant": "safetrust"
+            "tenant": "test-ana-safetrust"
         }
     }
     """
@@ -63,17 +63,24 @@ Scenario: Default tenant parameter - operates without explicit arguments
     And match response.errors == '#notpresent'
     And match response.data != null
     And match response.data.safetrust_get_escrow_status_summary == '#[1]'
-    And match response.data.safetrust_get_escrow_status_summary[0].total_escrows == 6
-    And match response.data.safetrust_get_escrow_status_summary[0].active_escrows == 3
-    And match response.data.safetrust_get_escrow_status_summary[0].total_value_usdc == 4150
-    And match response.data.safetrust_get_escrow_status_summary[0].pending_value_usdc == 400
+    * def defaultSummary = response.data.safetrust_get_escrow_status_summary[0]
+    Given request
+    """
+    {
+        "query": "query GetSummaryExplicitDefault { safetrust_get_escrow_status_summary(args: {tenant_id_input: \"safetrust\"}) { total_escrows active_escrows total_value_usdc pending_value_usdc } }"
+    }
+    """
+    When method POST
+    Then status 200
+    And match response.errors == '#notpresent'
+    And match response.data.safetrust_get_escrow_status_summary[0] == defaultSummary
 
 Scenario: Diagram 1 - Multi-asset escrow status aggregation (USDC single-asset policy)
     * db.execute(karate.read('file:tests/fixtures/analytics/seed-multi-asset.sql'))
     Given request
     """
     {
-        "query": "query GetMultiAssetSummary { safetrust_get_escrow_status_summary(args: {tenant_id_input: \"safetrust\"}) { total_escrows active_escrows total_value_usdc pending_value_usdc } }"
+        "query": "query GetMultiAssetSummary { safetrust_get_escrow_status_summary(args: {tenant_id_input: \"test-ana-safetrust\"}) { total_escrows active_escrows total_value_usdc pending_value_usdc } }"
     }
     """
     When method POST

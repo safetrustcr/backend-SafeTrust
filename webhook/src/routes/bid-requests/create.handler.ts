@@ -3,6 +3,7 @@
 import { Response } from 'express'
 import { query } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
+import { logger } from '../../middleware/logger'
 
 export interface CreateBidRequestPayload {
   apartmentId?: string
@@ -116,7 +117,7 @@ export const createBidRequestHandler = async (
 
     // bid_status_histories entry is inserted automatically by the record_bid_status trigger
 
-    console.log(`[bid-requests/create] bid created — id: ${bid.id}`)
+    logger.info('bid_requests.create.succeeded', { bidId: bid.id })
     return res.status(201).json({ bid })
   } catch (error) {
     const err = error as Error
@@ -126,7 +127,7 @@ export const createBidRequestHandler = async (
         error: 'Duplicate pending bid',
       })
     }
-    console.error('[bid-requests/create]', err.message)
+    logger.error('bid_requests.create.failed', { error: err })
     return res.status(500).json({ error: 'Failed to create bid request' })
   }
 }

@@ -6,6 +6,7 @@ import type {
   SyncWalletPayload,
   SyncWalletResponse,
 } from '@safetrust/types'
+import { logger } from '../../middleware/logger'
 
 const VALID_CHAIN_TYPES: readonly ChainType[] = ['ETH', 'STELLAR', 'BSC']
 
@@ -18,10 +19,10 @@ try {
   nativeStellarUtils = require('../../../../crates/stellar-utils') as StellarUtils
 } catch (error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
-  console.warn(
-    '[auth/sync-wallet] stellar-utils native addon unavailable, falling back to JS validation:',
-    message
-  )
+  logger.warn('auth.sync_wallet.native_addon_unavailable', {
+    fallback: 'js-validation',
+    error: message,
+  })
 }
 
 function isStellarAddress(address: unknown): boolean {
@@ -86,12 +87,12 @@ export async function syncWalletHandler(
       return res.status(409).json({ error: 'WALLET_ALREADY_REGISTERED' })
     }
 
-    console.log(`[auth/sync-wallet] uid=${uid} wallet=${wallet_address}`)
+    logger.info('auth.sync_wallet.succeeded', { uid, walletAddress: wallet_address })
     const response: SyncWalletResponse = { success: true, wallet_address: wallet.wallet_address }
     return res.status(200).json(response)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error('[auth/sync-wallet]', message)
+    logger.error('auth.sync_wallet.failed', { error: message })
     return res.status(500).json({ error: 'Failed to sync wallet' })
   }
 }

@@ -2,11 +2,12 @@ import { Request, Response } from 'express';
 import {
   badRequest,
   duplicate,
-  notFound,
+  forbidden,
   ok,
+  sendError,
   serverError,
-  serviceUnavailable,
 } from '../../utils/response'
+import { AppError } from '../../utils/errors'
 import {
   EscrowValidationError,
   initializeEscrow as initializeEscrowService,
@@ -16,6 +17,7 @@ import {
 } from '../../services/escrow.service';
 import { amountToStroops } from '../../lib/stellar-amounts';
 import { getPlatformTenantId } from '../../config/tenant';
+import { logger } from '../../middleware/logger';
 
 export { amountToStroops };
 
@@ -40,31 +42,28 @@ export const initializeEscrowHandler = async (
       return duplicate(res, result.eventId);
     }
 
-    console.log(
-      `[escrow/initialize] Escrow persisted — contract_id: ${req.body.contract_id}, id: ${result.escrow?.id}`
-    );
+    logger.info('escrow.initialize.succeeded', {
+      contractId: req.body.contract_id,
+      escrowId: result.escrow?.id,
+    });
     return ok(res);
   } catch (error) {
-    if (error instanceof EscrowValidationError) {
-      return error.statusCode === 400
-        ? badRequest(res, { error: error.message })
-        : serverError(res, { error: error.message });
-    }
-    if (error instanceof ZkVerifierUnavailableError) {
-      return serviceUnavailable(res, { error: error.message });
-    }
-    if (error instanceof ReservationNotFoundError) {
-      return notFound(res, { error: error.message });
-    }
     if (error instanceof TenantMismatchError) {
-      return res.status(403).json({ success: false, error: 'Forbidden: tenant mismatch' });
+      return forbidden(res, { error: 'Forbidden: tenant mismatch', code: error.code });
+    }
+    if (error instanceof EscrowValidationError && error.statusCode === 400) {
+      return badRequest(res, { error: error.message });
+    }
+    if (error instanceof AppError) {
+      // Not found keeps its message; 5xx (a misconfigured or unavailable ZK
+      // verifier) is logged and answered with a generic message.
+      if (error.statusCode >= 500) {
+        logger.error('escrow.initialize.failed', { contractId: req.body?.contract_id, error });
+      }
+      return sendError(res, error);
     }
 
-    const err = error as Error & { details?: unknown };
-    console.error('[escrow/initialize] Error:', err.details || err.message);
-    if (err.details) {
-      return serverError(res, { error: 'Failed to persist escrow record', details: err.details });
-    }
-    return serverError(res, { error: 'Internal server error', details: err.message });
+    logger.error('escrow.initialize.failed', { contractId: req.body?.contract_id, error });
+    return serverError(res, 'Failed to persist escrow record');
   }
 };

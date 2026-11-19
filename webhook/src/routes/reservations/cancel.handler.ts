@@ -8,6 +8,7 @@ import {
   ReservationDto,
   toReservationDto,
 } from '../../services/reservation-actions'
+import { logger } from '../../middleware/logger'
 
 type CancelReservationResponse =
   | ReservationDto
@@ -79,7 +80,7 @@ export const cancelReservationHandler = async (
     return res.status(200).json(toReservationDto(current, userId))
   } catch (error) {
     const err = error as Error
-    console.error('[reservations/cancel] ❌ error:', err.message)
+    logger.error('reservations.cancel.failed', { error: err })
     return res.status(500).json({ error: 'Internal server error' })
   }
 }

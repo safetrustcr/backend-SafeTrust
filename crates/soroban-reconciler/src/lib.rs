@@ -387,5 +387,134 @@ mod tests {
         assert!(!report_drift.in_sync);
         assert_eq!(report_drift.discrepancies.len(), 2);
     }
-}
+    // ── Trustless Work V1 indexer responses ─────────────────────────────────
 
+    fn v1_single(contract_id: &str, extra: serde_json::Value) -> serde_json::Value {
+        let mut record = serde_json::json!({
+            "contractId": contract_id,
+            "type": "single-release",
+            "amount": 200,
+            "balance": 150.25,
+            "flags": { "approved": false, "disputed": false, "released": false, "resolved": false },
+            "milestones": [{ "description": "Check-in", "approved": false }],
+            "trustline": { "address": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5", "symbol": "USDC" },
+            "roles": {
+                "approver": "GAPPROVER",
+                "serviceProvider": "GHOST",
+                "platformAddress": "GPLATFORM",
+                "releaseSigner": "GRELEASER",
+                "disputeResolver": "GRESOLVER",
+                "receiver": "GHOST"
+            }
+        });
+        if let (Some(base), Some(over)) = (record.as_object_mut(), extra.as_object()) {
+            for (k, v) in over {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+        record
+    }
+
+    #[test]
+    fn v1_response_validates_through_the_existing_checks() {
+        let contract_id = test_contract_address(60);
+        let response = serde_json::json!([v1_single(&contract_id, serde_json::json!({}))]);
+
+        let normalized = normalize_tw_v1_response(&response, &contract_id).expect("V1 response normalizes");
+        let state = validate_response_shape(&normalized, &contract_id).expect("V1 response validates");
+
+        assert_eq!(state.status, "funded");
+        assert_eq!(state.balance, 1_502_500_000); // 150.25 units, exact stroops
+        assert_eq!(state.marker.as_deref(), Some("GHOST"));
+        assert_eq!(state.approver.as_deref(), Some("GAPPROVER"));
+        assert_eq!(state.releaser.as_deref(), Some("GRELEASER"));
+        assert_eq!(state.asset_code.as_deref(), Some("USDC"));
+    }
+
+    #[test]
+    fn v1_integer_balance_is_read_as_token_units() {
+        let contract_id = test_contract_address(61);
+        let record = v1_single(&contract_id, serde_json::json!({ "balance": 100 }));
+        let normalized = normalize_tw_v1_response(&record, &contract_id).unwrap();
+        assert_eq!(validate_response_shape(&normalized, &contract_id).unwrap().balance, 1_000_000_000);
+    }
+
+    #[test]
+    fn v1_status_follows_the_flag_table() {
+        let id = test_contract_address(62);
+        let cases = [
+            (serde_json::json!({ "balance": 0, "flags": {} }), "created"),
+            (serde_json::json!({ "milestones": [{ "approved": true }] }), "milestone_approved"),
+            (serde_json::json!({ "flags": { "disputed": true } }), "disputed"),
+            (serde_json::json!({ "flags": { "released": true } }), "completed"),
+            (serde_json::json!({ "flags": { "disputed": true, "resolved": true } }), "resolved"),
+        ];
+        for (extra, expected) in cases {
+            assert_eq!(derive_tw_v1_status(&v1_single(&id, extra)).unwrap(), expected);
+        }
+
+        let multi = |milestones: serde_json::Value| {
+            serde_json::json!({ "contractId": id, "type": "multi-release", "balance": 50, "milestones": milestones })
+        };
+        assert_eq!(
+            derive_tw_v1_status(&multi(serde_json::json!([{ "flags": { "released": true } }, { "flags": {} }]))).unwrap(),
+            "milestone_approved"
+        );
+        assert_eq!(
+            derive_tw_v1_status(&multi(serde_json::json!([{ "flags": { "disputed": true } }, { "flags": {} }]))).unwrap(),
+            "disputed"
+        );
+        assert_eq!(
+            derive_tw_v1_status(&multi(serde_json::json!([
+                { "flags": { "released": true } },
+                { "flags": { "disputed": true, "resolved": true } }
+            ]))).unwrap(),
+            "resolved"
+        );
+    }
+
+    #[test]
+    fn v1_response_without_balance_is_rejected_not_filled_from_amount() {
+        let contract_id = test_contract_address(63);
+        let mut record = v1_single(&contract_id, serde_json::json!({}));
+        record.as_object_mut().unwrap().remove("balance");
+        let err = normalize_tw_v1_response(&record, &contract_id).unwrap_err();
+        assert!(err.contains("no 'balance'"), "{}", err);
+    }
+
+    #[test]
+    fn v1_malformed_milestones_are_rejected() {
+        let contract_id = test_contract_address(64);
+        let record = v1_single(&contract_id, serde_json::json!({ "milestones": [null] }));
+        let err = normalize_tw_v1_response(&record, &contract_id).unwrap_err();
+        assert!(err.contains("milestones[0] is not an object"), "{}", err);
+    }
+
+    #[test]
+    fn v1_contract_identity_is_still_enforced() {
+        let expected = test_contract_address(65);
+        let other = test_contract_address(66);
+        let response = serde_json::json!({ "escrows": [v1_single(&other, serde_json::json!({}))] });
+        let normalized = normalize_tw_v1_response(&response, &expected).unwrap();
+        assert!(validate_response_shape(&normalized, &expected).unwrap_err().contains("Contract ID mismatch"));
+    }
+
+    #[test]
+    fn v1_picks_the_matching_record_from_a_list() {
+        let wanted = test_contract_address(67);
+        let other = test_contract_address(68);
+        let response = serde_json::json!([
+            v1_single(&other, serde_json::json!({ "flags": { "released": true } })),
+            v1_single(&wanted, serde_json::json!({ "flags": { "disputed": true } })),
+        ]);
+        let normalized = normalize_tw_v1_response(&response, &wanted).unwrap();
+        assert_eq!(validate_response_shape(&normalized, &wanted).unwrap().status, "disputed");
+    }
+
+    #[test]
+    fn pre_v1_shape_with_status_passes_through_unchanged() {
+        let contract_id = test_contract_address(69);
+        let legacy = serde_json::json!({ "contractId": contract_id, "status": "funded", "balance": "1.0000000" });
+        assert_eq!(normalize_tw_v1_response(&legacy, &contract_id).unwrap(), legacy);
+    }
+}
