@@ -8,7 +8,20 @@
 
 import db from './db'
 import { hasuraRequest } from './hasura'
-import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
+import { getTransactionByHash } from '../clients/stellar.client'
+import { sendTransaction, updateIndexerFromTxHash } from '../clients/trustless-work.client'
+import { UpstreamError, UpstreamTimeoutError } from '../utils/upstream-errors'
+
+/** Describe an upstream failure for the retry record / result error field. */
+function upstreamErrorText(upstream: string, error: unknown): string {
+  if (error instanceof UpstreamTimeoutError) {
+    return `${upstream} timed out after ${error.timeoutMs} ms at ${error.upstreamPath}`
+  }
+  if (error instanceof UpstreamError) {
+    return `${upstream} upstream error at ${error.upstreamPath}: ${error.message}`
+  }
+  return `${upstream} request failed: ${error instanceof Error ? error.message : String(error)}`
+}
 
 // ── Types & Constants ─────────────────────────────────────────────────────────
 
@@ -98,32 +111,13 @@ export async function verifyStellarTransaction(
     }
   }
 
-  const horizonBase =
-    expectedNetwork === 'mainnet'
-      ? 'https://horizon.stellar.org'
-      : 'https://horizon-testnet.stellar.org'
-
   try {
-    const response = await fetch(`${horizonBase}/transactions/${txHash}`)
-    if (response.status === 404) {
+    const txData = await getTransactionByHash(txHash, expectedNetwork)
+    if (txData === null) {
       return {
         verified: false,
         error: `Transaction not found on Stellar ${expectedNetwork} (pending, expired, or wrong network)`,
       }
-    }
-
-    if (!response.ok) {
-      return {
-        verified: false,
-        error: `Stellar Horizon returned status ${response.status}`,
-      }
-    }
-
-    const txData = (await response.json()) as {
-      successful?: boolean
-      ledger?: number
-      id?: string
-      network?: string
     }
 
     if (txData.successful !== true) {
@@ -168,32 +162,13 @@ export async function updateTWIndexerFromTxHash(
     }
   }
 
-  const twBaseUrl = getTrustlessWorkApiUrl()
-  const twApiKey = getTrustlessWorkApiKey()
-
   try {
-    const response = await fetch(`${twBaseUrl}/indexer/update-from-txHash`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
-      },
-      body: JSON.stringify({ txHash, network }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      return {
-        success: false,
-        error: `TW indexer returned status ${response.status}: ${errText}`,
-      }
-    }
-
+    await updateIndexerFromTxHash(txHash, network)
     return { success: true }
   } catch (err) {
     return {
       success: false,
-      error: `TW indexer network error: ${(err as Error).message}`,
+      error: upstreamErrorText('TW indexer', err),
     }
   }
 }
@@ -205,29 +180,8 @@ export async function sendTransactionViaTWHelper(
   signedXdr: string,
   network: StellarNetwork
 ): Promise<{ success: boolean; txHash?: string; error?: string }> {
-  const twBaseUrl = getTrustlessWorkApiUrl()
-  const twApiKey = getTrustlessWorkApiKey()
-
   try {
-    const response = await fetch(`${twBaseUrl}/helper/send-transaction`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
-      },
-      body: JSON.stringify({ signedXdr, network }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      return {
-        success: false,
-        error: `TW helper returned status ${response.status}: ${errText}`,
-      }
-    }
-
-    const data = (await response.json()) as { txHash?: string; hash?: string }
-    const txHash = data.txHash || data.hash
+    const { txHash } = await sendTransaction(signedXdr, network)
     if (!txHash) {
       return {
         success: false,
@@ -239,7 +193,7 @@ export async function sendTransactionViaTWHelper(
   } catch (err) {
     return {
       success: false,
-      error: `TW helper network error: ${(err as Error).message}`,
+      error: upstreamErrorText('TW helper', err),
     }
   }
 }

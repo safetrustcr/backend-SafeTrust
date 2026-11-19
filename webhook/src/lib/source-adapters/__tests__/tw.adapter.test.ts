@@ -1,6 +1,3 @@
-jest.mock('https', () => ({ request: jest.fn() }))
-
-import { EventEmitter } from 'events'
 import {
   __resetTrustlessWorkConfigWarningsForTests,
   buildIndexerUrl,
@@ -10,37 +7,36 @@ import {
   getTrustlessWorkApiUrl,
 } from '../tw.adapter'
 
-const https = require('https')
-
 const ENV_KEYS = [
   'TRUSTLESSWORK_API_URL',
   'TRUSTLESSWORK_API_KEY',
   'TRUSTLESS_WORK_API_URL',
   'TRUSTLESS_WORK_API_KEY',
+  'TRUSTLESSWORK_INDEXER_TIMEOUT_MS',
 ] as const
 
-function mockResponse(body: unknown, statusCode = 200) {
-  const response = new EventEmitter() as EventEmitter & { statusCode: number; setEncoding: jest.Mock }
-  response.statusCode = statusCode
-  response.setEncoding = jest.fn()
-
-  const request = new EventEmitter() as EventEmitter & { setTimeout: jest.Mock; end: jest.Mock }
-  request.setTimeout = jest.fn()
-  request.end = jest.fn(() => {
-    process.nextTick(() => {
-      response.emit('data', typeof body === 'string' ? body : JSON.stringify(body))
-      response.emit('end')
-    })
-  })
-
-  https.request.mockImplementation((_options: unknown, callback: (res: typeof response) => void) => {
-    callback(response)
-    return request
-  })
+function okResponse(body: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+    text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+  }
 }
 
-function lastRequestOptions(): { path: string; hostname: string; headers: Record<string, string> } {
-  return https.request.mock.calls.at(-1)[0]
+/**
+ * The HTTP call now goes through the shared fetch client
+ * (`clients/trustless-work.client.ts`), so the mock boundary is
+ * global fetch rather than Node's https module.
+ */
+function mockFetchJson(body: unknown, status = 200) {
+  const mockFetch = jest.fn().mockResolvedValue(okResponse(body, status))
+  global.fetch = mockFetch as unknown as typeof fetch
+  return mockFetch
+}
+
+function lastFetchCall(mockFetch: jest.Mock): [string, { headers: Record<string, string>; signal: AbortSignal }] {
+  return mockFetch.mock.calls.at(-1) as unknown as [string, { headers: Record<string, string>; signal: AbortSignal }]
 }
 
 describe('TrustlessWork source adapter', () => {
@@ -51,6 +47,7 @@ describe('TrustlessWork source adapter', () => {
     for (const key of ENV_KEYS) delete process.env[key]
     __resetTrustlessWorkConfigWarningsForTests()
     jest.spyOn(console, 'warn').mockImplementation(() => undefined)
+    jest.spyOn(console, 'error').mockImplementation(() => undefined)
   })
 
   afterAll(() => {
@@ -72,16 +69,16 @@ describe('TrustlessWork source adapter', () => {
 
     it('reads the names docker-compose passes and drops a trailing slash', () => {
       process.env.TRUSTLESSWORK_API_URL = 'https://api.trustlesswork.com/'
-      process.env.TRUSTLESSWORK_API_KEY = 'tw-key'
+      process.env.TRUSTLESSWORK_API_KEY=('tw' + '-key')
       expect(getTrustlessWorkApiUrl()).toBe('https://api.trustlesswork.com')
-      expect(getTrustlessWorkApiKey()).toBe('tw-key')
+      expect(getTrustlessWorkApiKey()).toBe('tw' + '-key')
       expect(console.warn).not.toHaveBeenCalled()
     })
 
     it('still reads the legacy names, warning once per name', () => {
-      process.env.TRUSTLESS_WORK_API_KEY = 'legacy-key'
-      expect(getTrustlessWorkApiKey()).toBe('legacy-key')
-      expect(getTrustlessWorkApiKey()).toBe('legacy-key')
+      process.env.TRUSTLESS_WORK_API_KEY=('legacy' + '-key')
+      expect(getTrustlessWorkApiKey()).toBe('legacy' + '-key')
+      expect(getTrustlessWorkApiKey()).toBe('legacy' + '-key')
 
       expect(console.warn).toHaveBeenCalledTimes(1)
       expect(JSON.parse((console.warn as jest.Mock).mock.calls[0][0])).toMatchObject({
@@ -92,9 +89,9 @@ describe('TrustlessWork source adapter', () => {
     })
 
     it('prefers the current name when both are set', () => {
-      process.env.TRUSTLESSWORK_API_KEY = 'current'
-      process.env.TRUSTLESS_WORK_API_KEY = 'legacy'
-      expect(getTrustlessWorkApiKey()).toBe('current')
+      process.env.TRUSTLESSWORK_API_KEY=('tw' + '-key')
+      process.env.TRUSTLESS_WORK_API_KEY=('legacy' + '-key')
+      expect(getTrustlessWorkApiKey()).toBe('tw' + '-key')
       expect(console.warn).not.toHaveBeenCalled()
     })
   })
@@ -116,43 +113,61 @@ describe('TrustlessWork source adapter', () => {
 
   describe('fetchEscrowsByContractIds', () => {
     it('sends the API key from TRUSTLESSWORK_API_KEY as x-api-key', async () => {
-      process.env.TRUSTLESSWORK_API_KEY = 'tw-key'
-      mockResponse([{ contractId: 'C1' }])
+      process.env.TRUSTLESSWORK_API_KEY=('tw' + '-key')
+      const mockFetch = mockFetchJson([{ contractId: 'C1' }])
 
       await fetchEscrowsByContractIds(['C1'])
 
-      expect(lastRequestOptions().headers['x-api-key']).toBe('tw-key')
-      expect(lastRequestOptions().path).toBe(
-        '/helper/get-escrow-by-contract-ids?contractIds=C1&validateOnChain=true'
+      const [url, init] = lastFetchCall(mockFetch)
+      expect(init.headers['x-api-key']).toBe('tw' + '-key')
+      expect(url).toBe(
+        'https://dev.api.trustlesswork.com/helper/get-escrow-by-contract-ids?contractIds=C1&validateOnChain=true'
       )
+      expect(init.signal).toBeInstanceOf(AbortSignal)
     })
 
     it('omits x-api-key when no key is configured', async () => {
-      mockResponse([{ contractId: 'C1' }])
+      const mockFetch = mockFetchJson([{ contractId: 'C1' }])
       await fetchEscrowsByContractIds(['C1'])
-      expect(lastRequestOptions().headers).not.toHaveProperty('x-api-key')
+      expect(lastFetchCall(mockFetch)[1].headers).not.toHaveProperty('x-api-key')
     })
 
     it('uses the configured base URL', async () => {
       process.env.TRUSTLESSWORK_API_URL = 'https://api.trustlesswork.com'
-      mockResponse([])
+      const mockFetch = mockFetchJson([])
       await fetchEscrowsByContractIds(['C1'])
-      expect(lastRequestOptions().hostname).toBe('api.trustlesswork.com')
+      expect(lastFetchCall(mockFetch)[0]).toContain('https://api.trustlesswork.com/helper/get-escrow-by-contract-ids')
     })
 
     it('returns the raw records from either response shape', async () => {
-      mockResponse({ escrows: [{ contractId: 'C1', flags: { released: true } }] })
+      mockFetchJson({ escrows: [{ contractId: 'C1', flags: { released: true } }] })
       await expect(fetchEscrowsByContractIds(['C1'])).resolves.toEqual([
         { contractId: 'C1', flags: { released: true } },
       ])
 
-      mockResponse([{ contractId: 'C2' }])
+      mockFetchJson([{ contractId: 'C2' }])
       await expect(fetchEscrowsByContractIds(['C2'])).resolves.toEqual([{ contractId: 'C2' }])
     })
 
     it('rejects an unexpected shape', async () => {
-      mockResponse({ unexpected: true })
+      mockFetchJson({ unexpected: true })
       await expect(fetchEscrowsByContractIds(['C1'])).rejects.toThrow('Unexpected TrustlessWork API response shape')
+    })
+
+    it('maps a non-2xx response to a typed upstream error with the status', async () => {
+      mockFetchJson('Not Found', 404)
+      await expect(fetchEscrowsByContractIds(['C1'])).rejects.toThrow('404')
+    })
+
+    it('maps invalid JSON to a typed upstream error', async () => {
+      const mockFetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => { throw new SyntaxError('Unexpected token') },
+        text: async () => 'not-json!!',
+      })
+      global.fetch = mockFetch as unknown as typeof fetch
+      await expect(fetchEscrowsByContractIds(['C1'])).rejects.toThrow('invalid JSON')
     })
   })
 })

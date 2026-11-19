@@ -123,7 +123,8 @@ describe('Confirmation Service - Issue #660', () => {
       // Ensure Stellar Horizon testnet was queried for verification
       expect(mockFetch).toHaveBeenNthCalledWith(
         2,
-        `https://horizon-testnet.stellar.org/transactions/${VALID_TX_HASH}`
+        `https://horizon-testnet.stellar.org/transactions/${VALID_TX_HASH}`,
+        expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
       )
     })
   })
@@ -265,7 +266,8 @@ describe('Confirmation Service - Issue #660', () => {
       expect(verification.verified).toBe(false)
       expect(verification.error).toContain('mainnet')
       expect(global.fetch).toHaveBeenCalledWith(
-        `https://horizon.stellar.org/transactions/${VALID_TX_HASH}`
+        `https://horizon.stellar.org/transactions/${VALID_TX_HASH}`,
+        expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
       )
     })
 
@@ -347,7 +349,8 @@ describe('Confirmation Service - Issue #660', () => {
 
       expect(result.success).toBe(false)
       expect(result.stage).toBe('ledger_confirmed')
-      expect(result.error).toContain('TW indexer returned status 503')
+      expect(result.error).toContain('TW indexer upstream error at /indexer/update-from-txHash')
+      expect(result.error).toContain('503')
 
       // Verify retry was updated with status 'retrying' and attempt 1
       expect(mockedDbQuery).toHaveBeenCalledWith(
