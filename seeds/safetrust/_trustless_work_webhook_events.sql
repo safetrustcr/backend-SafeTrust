@@ -2,11 +2,16 @@
 -- Covers main TrustlessWork webhook event types for local dev/testing
 -- contract_id values use CAATN5DTEST... prefix for test data
 
--- Idempotency: clear existing webhook events
-TRUNCATE public.trustless_work_webhook_events CASCADE;
+-- event_identity is NOT NULL and unique per tenant (migration
+-- 1779400000001_add_webhook_event_identity). Seed rows use a readable
+-- 'seed:<contract_id>:<event_type>' identity, which cannot collide with the
+-- SHA-256 identities the webhook derives or the 'legacy:<id>' backfill.
 
-INSERT INTO public.trustless_work_webhook_events (
-  contract_id, event_type, payload, signature,
+-- Idempotency: clear existing webhook events
+TRUNCATE safetrust.trustless_work_webhook_events CASCADE;
+
+INSERT INTO safetrust.trustless_work_webhook_events (
+  contract_id, event_type, event_identity, payload, signature,
   processed, processed_at, error_message,
   retry_count, max_retries, next_retry_at, tenant_id
 ) VALUES
@@ -15,6 +20,7 @@ INSERT INTO public.trustless_work_webhook_events (
 (
   'CAATN5DTEST00001',
   'escrow.created',
+  'seed:CAATN5DTEST00001:escrow.created',
   '{
     "contractId": "CAATN5DTEST00001",
     "engagementId": "ENG-SEED-001",
@@ -35,6 +41,7 @@ INSERT INTO public.trustless_work_webhook_events (
 (
   'CAATN5DTEST00001',
   'milestone.approved',
+  'seed:CAATN5DTEST00001:milestone.approved',
   '{
     "contractId": "CAATN5DTEST00001",
     "milestoneIndex": 0,
@@ -50,6 +57,7 @@ INSERT INTO public.trustless_work_webhook_events (
 (
   'CAATN5DTEST00002',
   'escrow.funded',
+  'seed:CAATN5DTEST00002:escrow.funded',
   '{
     "contractId": "CAATN5DTEST00002",
     "engagementId": "ENG-SEED-002",
@@ -66,6 +74,7 @@ INSERT INTO public.trustless_work_webhook_events (
 (
   'CAATN5DTEST00002',
   'escrow.disputed',
+  'seed:CAATN5DTEST00002:escrow.disputed',
   '{
     "contractId": "CAATN5DTEST00002",
     "raisedBy": "GAWVVSATEST0002APPROVER",
@@ -80,6 +89,7 @@ INSERT INTO public.trustless_work_webhook_events (
 (
   'CAATN5DTEST00003',
   'escrow.completed',
+  'seed:CAATN5DTEST00003:escrow.completed',
   '{
     "contractId": "CAATN5DTEST00003",
     "engagementId": "ENG-SEED-003",
@@ -95,6 +105,7 @@ INSERT INTO public.trustless_work_webhook_events (
 (
   'CAATN5DTEST00003',
   'escrow.cancelled',
+  'seed:CAATN5DTEST00003:escrow.cancelled',
   '{
     "contractId": "CAATN5DTEST00003",
     "cancelledBy": "GAWVVSATEST0003RELEASER",

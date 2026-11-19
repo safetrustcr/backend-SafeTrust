@@ -1,3 +1,10 @@
+# Backend-only: no guest or host select permission.
+#
+# hotel_industry.reservations has no guest_id or host_id column, so there is
+# no ownership path to filter escrow transactions by X-Hasura-User-Id, and the
+# table has no tenant_id (the schema is the tenant boundary). Participants are
+# recorded by email in escrow_transaction_users. Grant participant reads only
+# once that link is modelled as a relationship to hotel_industry.users.
 table:
   name: escrow_transactions
   schema: hotel_industry

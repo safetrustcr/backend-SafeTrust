@@ -9,6 +9,11 @@
     "bb.exe",
     "index.node",
     "index.d.ts",
-    "install-bb.js"
-  ]
+    "install-bb.js",
+    "install-bb.ts"
+  ],
+  "scripts": {
+    "build": "cargo build --release -p zk-verifier",
+    "postbuild": "node ../scripts/copy-native.js --crate=zk-verifier"
+  }
 }

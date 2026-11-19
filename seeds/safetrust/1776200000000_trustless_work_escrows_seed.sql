@@ -2,21 +2,21 @@
 -- Uses contract IDs matching _trustless_work_webhook_events.sql
 -- Safe to re-run: DELETE guards on all inserts
 
-DELETE FROM public.escrow_milestones
+DELETE FROM safetrust.escrow_milestones
   WHERE escrow_id IN (
-    SELECT id FROM public.trustless_work_escrows
+    SELECT id FROM safetrust.trustless_work_escrows
     WHERE contract_id IN (
       'CAATN5DTEST00001','CAATN5DTEST00002','CAATN5DTEST00003'
     )
   );
 
-DELETE FROM public.trustless_work_escrows
+DELETE FROM safetrust.trustless_work_escrows
   WHERE contract_id IN (
     'CAATN5DTEST00001','CAATN5DTEST00002','CAATN5DTEST00003'
   );
 
 -- Contract 1: milestone_approved (matches escrow.created + milestone.approved events)
-INSERT INTO public.trustless_work_escrows (
+INSERT INTO safetrust.trustless_work_escrows (
   contract_id, marker, approver, releaser,
   escrow_type, status, asset_code, amount, balance, tenant_id
 ) VALUES (
@@ -29,7 +29,7 @@ INSERT INTO public.trustless_work_escrows (
 );
 
 -- Contract 2: funded (matches escrow.funded event)
-INSERT INTO public.trustless_work_escrows (
+INSERT INTO safetrust.trustless_work_escrows (
   contract_id, marker, approver, releaser,
   escrow_type, status, asset_code, amount, balance, tenant_id
 ) VALUES (
@@ -42,7 +42,7 @@ INSERT INTO public.trustless_work_escrows (
 );
 
 -- Contract 3: completed (matches escrow.completed + escrow.cancelled events)
-INSERT INTO public.trustless_work_escrows (
+INSERT INTO safetrust.trustless_work_escrows (
   contract_id, marker, approver, releaser,
   escrow_type, status, asset_code, amount, balance, tenant_id
 ) VALUES (
@@ -55,7 +55,7 @@ INSERT INTO public.trustless_work_escrows (
 );
 
 -- Milestone for CAATN5DTEST00001 (status: milestone_approved)
-INSERT INTO public.escrow_milestones (
+INSERT INTO safetrust.escrow_milestones (
   escrow_id, milestone_id, description,
   amount, status, approved_by, approved_at, tenant_id
 )
@@ -66,6 +66,6 @@ SELECT
   'GAWVVSATEST0001APPROVER',
   NOW() - INTERVAL '2 days',
   'safetrust'
-FROM public.trustless_work_escrows
+FROM safetrust.trustless_work_escrows
 WHERE contract_id = 'CAATN5DTEST00001'
 ON CONFLICT (escrow_id, milestone_id) DO NOTHING;

@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleDetection": "force",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ],
+    "typeRoots": [
+      "./webhook/node_modules/@types"
+    ],
+    "noEmitOnError": true
+  },
+  "include": [
+    "crates/**/*.ts"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/target",
+    "**/*.d.ts"
+  ]
+}

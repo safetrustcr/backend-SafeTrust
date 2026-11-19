@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e # Exit immediately if a command exits with a non-zero status
+set -eo pipefail # Exit on error and if any command in a pipeline fails
 
 # Configuration — paths relative to the script location, not the calling directory
 # This ensures bin/start and setup-tenant.sh can call this script from any directory
@@ -115,10 +115,10 @@ build_tenant() {
             relative_path="${yaml_file#$BUILD_DIR/$tenant/}"
             yaml_path=$(dirname "$relative_path")
 
-            $YAML_MERGE_TOOL eval ".\"$yaml_path\"" "$TENANTS_DIR/$tenant/tenant_overrides.yaml" > /dev/null 2>&1
-            if [ $? -eq 0 ]; then
-                $YAML_MERGE_TOOL eval-all 'select(fileIndex == 0) * select(fileIndex == 1).'"\"$yaml_path\"" "$yaml_file" "$TENANTS_DIR/$tenant/tenant_overrides.yaml" > "$yaml_file.tmp"
-                mv "$yaml_file.tmp" "$yaml_file"
+            # Single yq call: attempt merge directly
+            # If the path does not exist in overrides, yq outputs the base file unchanged
+            if merged=$($YAML_MERGE_TOOL eval-all 'select(fileIndex == 0) * (select(fileIndex == 1)."'"$yaml_path"'" // {})' "$yaml_file" "$TENANTS_DIR/$tenant/tenant_overrides.yaml" 2>/dev/null); then
+                echo "$merged" > "$yaml_file"
             fi
         done
     fi
@@ -132,10 +132,8 @@ TENANT="$1"
 
 
 if [ -n "$TENANT" ]; then
-    build_tenant "$TENANT"
-    exit_code=$?
-    if [ $exit_code -ne 0 ]; then
-        exit $exit_code
+    if ! build_tenant "$TENANT"; then
+        exit 1
     fi
 else
     echo "⚙️ Building metadata for all tenants..."
@@ -145,22 +143,20 @@ else
         exit 1
     fi
 
-    tenant_dirs=$(find "$TENANTS_DIR" -maxdepth 1 -mindepth 1 -type d)
-
-    if [ -z "$tenant_dirs" ]; then
-        echo "❌ Error: No tenant directories found in $TENANTS_DIR"
-        exit 1
-    fi
-
-    for tenant_dir in $tenant_dirs; do
+    found=0
+    while IFS= read -r -d '' tenant_dir; do
+        found=1
         tenant=$(basename "$tenant_dir")
-        build_tenant "$tenant"
-        exit_code=$?
-        if [ $exit_code -ne 0 ]; then
+        if ! build_tenant "$tenant"; then
             echo "❌ Error: Failed to build tenant: $tenant"
             continue
         fi
-    done
+    done < <(find "$TENANTS_DIR" -maxdepth 1 -mindepth 1 -type d -print0)
+
+    if [ "$found" -eq 0 ]; then
+        echo "❌ Error: No tenant directories found in $TENANTS_DIR"
+        exit 1
+    fi
 fi
 
 echo "✅ Metadata build process completed successfully!"

@@ -1,98 +1,55 @@
 table:
   name: users
-  schema: public
-array_relationships:
-  - name: user_roles
-    using:
-      foreign_key_constraint_on:
-        column: user_id
-        table:
-          name: user_roles
-          schema: public
-  - name: user_wallets
-    using:
-      foreign_key_constraint_on:
-        column: user_id
-        table:
-          name: user_wallets
-          schema: public
+  schema: safetrust
+# Issue #666: tables outside the `public` schema are exposed by Hasura as
+# `<schema>_<table>` unless a custom name is set. Without this block the
+# 1779300000001 schema move turned `users` into `safetrust_users` (and
+# `users_by_pk`, `insert_users`, ... into `safetrust_users_by_pk`, ...), which
+# is exactly "the users operations are gone" for every client still using the
+# original names. `custom_name` restores the original contract (same pattern
+# as public_roles.yaml).
+configuration:
+  column_config: {}
+  custom_column_names: {}
+  custom_name: users
+  custom_root_fields: {}
 select_permissions:
-  - role: admin
-    permission:
-      columns:
-        - id
-        - firebase_uid
-        - email
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
-        - last_seen
-      filter: {}
-      allow_aggregations: true
-  - role: host
-    permission:
-      columns:
-        - id
-        - firebase_uid
-        - email
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
-        - last_seen
-      filter:
-        id:
-          _eq: X-Hasura-User-Id
   - role: guest
     permission:
       columns:
         - id
-        - firebase_uid
         - email
         - first_name
         - last_name
         - phone_number
         - country_code
         - location
+        - role
         - last_seen
       filter:
         id:
-          _eq: X-Hasura-User-Id
-  - role: tenant
+          _eq: x-hasura-user-id
+  - role: host
     permission:
       columns:
         - id
-        - firebase_uid
         - email
         - first_name
         - last_name
         - phone_number
         - country_code
         - location
+        - role
         - last_seen
       filter:
         id:
-          _eq: X-Hasura-User-Id
-  - role: landlord
+          _eq: x-hasura-user-id
+  - role: admin
     permission:
-      columns:
-        - id
-        - firebase_uid
-        - email
-        - first_name
-        - last_name
-        - phone_number
-        - country_code
-        - location
-        - last_seen
-      filter:
-        id:
-          _eq: X-Hasura-User-Id
+      columns: "*"
+      filter: {}
 update_permissions:
-  - role: tenant
+  - role: guest
     permission:
       columns:
         - first_name
@@ -102,11 +59,11 @@ update_permissions:
         - location
       filter:
         id:
-          _eq: X-Hasura-User-Id
+          _eq: x-hasura-user-id
       check:
         id:
-          _eq: X-Hasura-User-Id
-  - role: landlord
+          _eq: x-hasura-user-id
+  - role: host
     permission:
       columns:
         - first_name
@@ -116,7 +73,7 @@ update_permissions:
         - location
       filter:
         id:
-          _eq: X-Hasura-User-Id
+          _eq: x-hasura-user-id
       check:
         id:
-          _eq: X-Hasura-User-Id
+          _eq: x-hasura-user-id

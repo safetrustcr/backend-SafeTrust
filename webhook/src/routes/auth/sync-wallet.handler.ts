@@ -6,6 +6,7 @@ import type {
   SyncWalletPayload,
   SyncWalletResponse,
 } from '@safetrust/types'
+import { logger } from '../../middleware/logger'
 
 const VALID_CHAIN_TYPES: readonly ChainType[] = ['ETH', 'STELLAR', 'BSC']
 
@@ -18,10 +19,10 @@ try {
   nativeStellarUtils = require('../../../../crates/stellar-utils') as StellarUtils
 } catch (error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
-  console.warn(
-    '[auth/sync-wallet] stellar-utils native addon unavailable, falling back to JS validation:',
-    message
-  )
+  logger.warn('auth.sync_wallet.native_addon_unavailable', {
+    fallback: 'js-validation',
+    error: message,
+  })
 }
 
 function isStellarAddress(address: unknown): boolean {
@@ -31,14 +32,14 @@ function isStellarAddress(address: unknown): boolean {
 }
 
 const UPSERT_WALLET = `
-  INSERT INTO public.user_wallets (user_id, wallet_address, chain_type, is_primary)
+  INSERT INTO safetrust.user_wallets (user_id, wallet_address, chain_type, is_primary)
   VALUES ($1, $2, $3, $4)
   ON CONFLICT (wallet_address)
   DO UPDATE SET
-    user_id = EXCLUDED.user_id,
     chain_type = EXCLUDED.chain_type,
     is_primary = EXCLUDED.is_primary,
     updated_at = NOW()
+  WHERE safetrust.user_wallets.user_id = EXCLUDED.user_id
   RETURNING id, wallet_address, chain_type, is_primary
 `
 
@@ -50,7 +51,10 @@ export async function syncWalletHandler(
   req: AuthenticatedRequest & { body: Partial<SyncWalletPayload> },
   res: Response
 ): Promise<Response> {
-  const { uid } = req.user
+  const uid = req.context?.uid || req.user?.uid
+  if (!uid) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
   const { wallet_address, chain_type, is_primary = false } = req.body
 
   if (!wallet_address || typeof wallet_address !== 'string') {
@@ -65,17 +69,30 @@ export async function syncWalletHandler(
   if (typeof is_primary !== 'boolean') {
     return res.status(400).json({ error: 'is_primary must be a boolean' })
   }
+  if (
+    chain_type === 'STELLAR' ||
+    isStellarAddress(wallet_address) ||
+    /^C[A-Z2-7]{55}$/.test(wallet_address)
+  ) {
+    return res.status(400).json({
+      error: 'WALLET_CHALLENGE_REQUIRED',
+      message: 'Use /auth/wallet/challenge and /auth/wallet/verify to register a Stellar wallet',
+    })
+  }
 
   try {
     const result = await query<WalletRow>(UPSERT_WALLET, [uid, wallet_address, chain_type, is_primary])
     const wallet = result.rows[0]
+    if (!wallet) {
+      return res.status(409).json({ error: 'WALLET_ALREADY_REGISTERED' })
+    }
 
-    console.log(`[auth/sync-wallet] uid=${uid} wallet=${wallet_address}`)
+    logger.info('auth.sync_wallet.succeeded', { uid, walletAddress: wallet_address })
     const response: SyncWalletResponse = { success: true, wallet_address: wallet.wallet_address }
     return res.status(200).json(response)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error('[auth/sync-wallet]', message)
+    logger.error('auth.sync_wallet.failed', { error: message })
     return res.status(500).json({ error: 'Failed to sync wallet' })
   }
 }

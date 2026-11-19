@@ -1,7 +1,7 @@
 -- Seed test bid requests
-DELETE FROM public.bid_requests WHERE id = '11111111-1111-1111-1111-111111111111';
+DELETE FROM safetrust.bid_requests WHERE id = '11111111-1111-1111-1111-111111111111';
 
-INSERT INTO public.bid_requests (
+INSERT INTO safetrust.bid_requests (
     id, apartment_id, tenant_id, current_status, 
     proposed_price, desired_move_in
 ) VALUES

@@ -1,0 +1,30 @@
+# Return type of hotel_industry.find_nearby_hotels. Hasura grants a function
+# permission to a role only if that role can select from the return table, so
+# every role in the function's permissions needs a select permission here.
+# Rows only exist as function output: public hotel listing data.
+table:
+  name: find_nearby_hotels_result
+  schema: hotel_industry
+select_permissions:
+  - role: anonymous
+    permission:
+      columns:
+        - id
+        - distance
+        - name
+        - description
+        - address
+        - hotel_area
+        - coordinates
+      filter: {}
+  - role: user
+    permission:
+      columns:
+        - id
+        - distance
+        - name
+        - description
+        - address
+        - hotel_area
+        - coordinates
+      filter: {}

@@ -1,138 +1,139 @@
-'use strict'
+import { Request, Response, NextFunction } from "express";
+import { getAuth } from "firebase-admin/auth";
+import db from "../services/db";
+import { getPlatformTenantId } from "../config/tenant";
+import { logger } from './logger'
 
-import { Request, Response, NextFunction } from 'express'
-import { getAuth, DecodedIdToken } from 'firebase-admin/auth'
-import { query } from '../services/db'
-
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-/**
- * The user attached to the request by `authMiddleware`. Extends the Firebase
- * `DecodedIdToken` with the role fields resolved from `public.user_roles`.
- */
-export interface AuthenticatedUser extends DecodedIdToken {
-  roles: string[]
-  role: string
-  admin?: boolean
-}
-
-export interface AuthenticatedRequest extends Request {
-  user: AuthenticatedUser
-}
-
-interface RoleRow {
-  name: string
-}
-
-/**
- * Resolves the roles assigned to a user from the `public.user_roles` join table.
- *
- * Mirrors the query convention in `routes/auth/me.handler.js`: a user may hold
- * multiple roles, so `roles` is always an array. `role` is a convenience scalar
- * holding the highest-privilege assigned role (or `'guest'` when none are
- * assigned), used for single-role response shapes.
- *
- * The query orders by an explicit privilege precedence so `roles[0]` — and any
- * response derived from it — is deterministic. Without `ORDER BY`, PostgreSQL
- * does not guarantee row order, which would make the scalar `role` (and the
- * sync-user response) flap for multi-role users. Authorization decisions must
- * still consider the full `roles` array, not just this scalar.
- */
-async function resolveUserRole(uid: string): Promise<{ roles: string[]; role: string }> {
-  const result = await query<RoleRow>(
-    `SELECT r.name
-     FROM public.user_roles ur
-     JOIN public.roles r ON r.id = ur.role_id
-     WHERE ur.user_id = $1
-     ORDER BY
-       CASE r.name
-         WHEN 'admin' THEN 0
-         WHEN 'host'  THEN 1
-         WHEN 'guest' THEN 2
-         ELSE 3
-       END,
-       r.name`,
-    [uid]
-  )
-
-  const roles = result.rows.map((row) => row.name)
-  return { roles, role: roles[0] ?? 'guest' }
+export interface RequestContext {
+  uid: string;
+  tenantId: string;
+  roles: string[];
+  email?: string;
 }
 
 declare global {
   namespace Express {
     interface Request {
-      user?: AuthenticatedUser
+      context?: RequestContext;
+      user?: {
+        uid: string;
+        email?: string;
+        role: string;
+        roles: string[];
+        [key: string]: any;
+      };
     }
   }
 }
 
+export interface AuthenticatedRequest extends Request {
+  context?: RequestContext;
+  user?: {
+    uid: string;
+    email?: string;
+    role: string;
+    roles: string[];
+    [key: string]: any;
+  };
+}
+export type AuthRequest = AuthenticatedRequest;
+
+const HASURA_CLAIMS_NAMESPACE = "https://hasura.io/jwt/claims";
+
 /**
- * Verifies a Firebase Bearer token and attaches `uid`, `email`, `name`, `role`,
- * `roles`, and `admin` to `req.user`. Roles are sourced from `public.user_roles`
- * (not Firebase custom claims) in both the test-bypass and verified-token paths.
+ * Resolve the session tenant from the verified ID token only.
+ *
+ * Order: the Hasura claims namespace (`x-hasura-tenant-id`), a top-level
+ * `tenant_id` custom claim, then the Firebase multi-tenancy tenant. A token
+ * with no tenant claim belongs to the platform tenant. Request headers are
+ * never a source for this value.
  */
-export const authMiddleware = async (
+export function resolveSessionTenantId(decodedToken: Record<string, any>): string {
+  const candidates = [
+    decodedToken[HASURA_CLAIMS_NAMESPACE]?.["x-hasura-tenant-id"],
+    decodedToken.tenant_id,
+    decodedToken.firebase?.tenant,
+  ];
+  const claim = candidates.find(
+    (value): value is string => typeof value === "string" && value.trim().length > 0
+  );
+  return claim ? claim.trim() : getPlatformTenantId();
+}
+
+export async function authMiddleware(
   req: Request,
   res: Response,
   next: NextFunction
-): Promise<void> => {
-  const authHeader = req.headers['authorization']
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({
-      error: 'Unauthorized',
-      message: 'Missing or malformed Authorization header',
-    })
-    return
+): Promise<void> {
+  // If already authenticated by parent middleware boundary (e.g. /api), proceed immediately
+  if (req.context) {
+    next();
+    return;
   }
 
-  const token = authHeader.split('Bearer ')[1]
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Unauthorized", message: "Missing or malformed Authorization header" });
+    return;
+  }
 
-  // Bypass for testing
-  if (token === 'mock-token') {
-    if (process.env.NODE_ENV !== 'test') {
-      console.error('FATAL: mock-token used outside of test environment')
-      res.status(500).json({
-        error: 'Server configuration error',
-        message: 'mock-token not allowed in this environment'
-      })
-      return
+  const idToken = authHeader.split("Bearer ")[1];
+  if (idToken === "mock-token" && process.env.NODE_ENV !== "test") {
+    res.status(401).json({ error: "Unauthorized", message: "Invalid or expired token" });
+    return;
+  }
+  let decodedToken: Record<string, any>;
+  if (idToken === "mock-token" && process.env.NODE_ENV === "test") {
+    decodedToken = {
+      uid: (req.headers["x-test-uid"] as string) || "test-user-123",
+      email: (req.headers["x-test-email"] as string) || "test@example.com",
+    };
+  } else {
+    try {
+      decodedToken = await getAuth().verifyIdToken(idToken);
+    } catch (error) {
+      // Distinguish a missing Firebase app (server misconfiguration) from an invalid token.
+      if (error instanceof Error && /no default app/i.test(error.message)) {
+        logger.error('auth.firebase_not_initialized', { error });
+        res.status(500).json({ error: "Internal Server Error", message: "Authentication service unavailable" });
+        return;
+      }
+      res.status(401).json({ error: "Unauthorized", message: "Invalid or expired token" });
+      return;
     }
-    const uid = (req.headers['x-test-uid'] as string) || 'test-user-id'
-    const { roles, role } = await resolveUserRole(uid)
-    req.user = {
-      uid,
-      email: req.headers['x-test-email'] || 'test@example.com',
-      roles,
-      role,
-    } as unknown as AuthenticatedUser
-    next()
-    return
   }
 
   try {
-    const decoded = await getAuth().verifyIdToken(token)
-    const { roles, role } = await resolveUserRole(decoded.uid)
-    req.user = {
-      ...decoded, // Include all custom claims
-      uid: decoded.uid,
-      email: decoded.email,
-      name: decoded.name,
-      admin: decoded.admin === true,
-      roles, // role/roles from user_roles win over any custom claims
-      role,
+    const result = await db.query<{ name: string }>(
+      "SELECT r.name FROM safetrust.user_roles ur JOIN safetrust.roles r ON r.id = ur.role_id WHERE ur.user_id = $1",
+      [decodedToken.uid]
+    );
+    const roles = result.rows.map((row: { name: string }) => row.name);
+    const role = ["admin", "host", "guest"].find((value) => roles.includes(value)) || "guest";
+    const tenantId = resolveSessionTenantId(decodedToken);
+
+    // `x-tenant-id` may only confirm the session tenant, never select another one.
+    const requestedTenant = req.headers["x-tenant-id"];
+    if (
+      typeof requestedTenant === "string" &&
+      requestedTenant.length > 0 &&
+      requestedTenant !== tenantId
+    ) {
+      res.status(403).json({ error: "Forbidden", message: "Tenant is not permitted for this session" });
+      return;
     }
-    next()
+
+    const context: RequestContext = {
+      uid: decodedToken.uid,
+      tenantId,
+      roles,
+      email: decodedToken.email,
+    };
+
+    req.context = context;
+    req.user = { ...decodedToken, uid: decodedToken.uid, roles, role };
+    next();
   } catch (error) {
-    console.error('[auth] Token verification failed:', (error as Error).message)
-    res.status(401).json({
-      error: 'Unauthorized',
-      message: 'Invalid or expired token',
-    })
+    res.status(500).json({ error: "Internal Server Error", message: "Failed to resolve user role" });
   }
 }
-
-export const authenticateFirebase = authMiddleware
-
-export { resolveUserRole }

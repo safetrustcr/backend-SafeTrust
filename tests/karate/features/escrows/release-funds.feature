@@ -5,6 +5,7 @@ Feature: POST /api/escrows/release-funds
     * def contractId = 'escrow-funded-001'
     * def releaseSigner = 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z'
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
+    * db.execute("UPDATE safetrust.trustless_work_escrows SET status = 'milestone_approved' WHERE contract_id = '" + contractId + "'")
 
   Scenario: Successfully release funds -> update status and balance to 0 -> 200 OK
     * def body = { contractId: '#(contractId)', releaseSigner: '#(releaseSigner)' }
@@ -14,8 +15,8 @@ Feature: POST /api/escrows/release-funds
     And request bodyStr
     When method POST
     Then status 200
-    And match response == { received: true }
-    * def rows = db.query("SELECT status, balance FROM public.trustless_work_escrows WHERE contract_id = '" + contractId + "'")
+    And match response == { success: true }
+    * def rows = db.query("SELECT status, balance FROM safetrust.trustless_work_escrows WHERE contract_id = '" + contractId + "'")
     And match rows[0].status == 'completed'
     And assert rows[0].balance == '0' || rows[0].balance == '0.0000000'
 

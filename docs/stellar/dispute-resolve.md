@@ -4,10 +4,11 @@
 > polling-based flow; the route implementation in this checkout has not yet
 > been migrated to it.
 
-A dispute or its resolution is a Stellar transaction, not a local status
-update. SafeTrust requests the unsigned XDR, the authorized wallet signs it,
-and Trustless Work submits it. SafeTrust learns the resulting state through
-indexer reconciliation.
+A dispute or its resolution is an on-chain transaction, not a local status
+update. SafeTrust builds an unsigned XDR through Trustless Work and returns it
+to the frontend. The authorized wallet signs it, and the frontend submits it
+through Trustless Work. SafeTrust learns the indexed result through
+reconciliation, subject to the indexer's freshness rules.
 
 ## Raise a dispute
 
@@ -24,26 +25,28 @@ sequenceDiagram
     BE->>TW: POST dispute endpoint for escrow type
     TW-->>BE: unsigned XDR
     BE-->>FE: unsigned XDR
-    FE->>FW: Sign unsigned XDR
+    FE->>FW: sign unsigned XDR
     FW-->>FE: signed XDR
     FE->>TW: POST /helper/send-transaction
-    TW->>ST: Submit signed transaction
-    ST-->>TW: Transaction result
+    TW->>ST: submit signed transaction
+    ST-->>TW: transaction result
     CR->>BE: POST /reconciliation/sync-escrows
     BE->>TW: GET /helper/get-escrow-by-contract-ids
-    TW-->>BE: Updated dispute flags and balance
-    BE->>BE: Reconcile disputed state
+    TW-->>BE: dispute flags and balance
+    BE->>BE: reconcile indexed state
 ```
 
-The frontend calls SafeTrust `POST /api/escrows/dispute`. SafeTrust builds the
-unsigned XDR using:
+The frontend calls SafeTrust `POST /api/escrows/dispute`. SafeTrust requests
+the unsigned XDR from Trustless Work using:
 
 - Single-release: `POST /escrow/single-release/dispute-escrow`
 - Multi-release milestone: `POST /escrow/multi-release/dispute-milestone`
 
-The frontend signs the XDR and submits it to Trustless Work's
-`POST /helper/send-transaction`. The local state becomes disputed only after
-the V1 indexer reports the dispute and reconciliation applies that result.
+The frontend signs the XDR with the authorized wallet and submits it using
+`POST /helper/send-transaction`. `flags.disputed` derives the `disputed`
+state. The current unversioned-snapshot policy does not allow polling alone to
+advance a funded escrow to `disputed`; see
+[Trustless Work Indexer](./trustless-work-indexer.md).
 
 ## Resolve a dispute
 
@@ -52,7 +55,7 @@ sequenceDiagram
     participant FE as Frontend
     participant BE as SafeTrust backend
     participant TW as Trustless Work API
-    participant FW as Releaser wallet
+    participant DR as Dispute Resolver wallet
     participant ST as Stellar
     participant CR as Hasura cron
 
@@ -60,28 +63,31 @@ sequenceDiagram
     BE->>TW: POST resolve endpoint for escrow type
     TW-->>BE: unsigned XDR
     BE-->>FE: unsigned XDR
-    FE->>FW: Sign unsigned XDR
-    FW-->>FE: signed XDR
+    FE->>DR: sign unsigned XDR
+    DR-->>FE: signed XDR
     FE->>TW: POST /helper/send-transaction
-    TW->>ST: Submit signed transaction
-    ST-->>TW: Transaction result
+    TW->>ST: submit signed transaction
+    ST-->>TW: transaction result
     CR->>BE: POST /reconciliation/sync-escrows
     BE->>TW: GET /helper/get-escrow-by-contract-ids
-    TW-->>BE: Updated resolution flags and balance
-    BE->>BE: Reconcile resolved state
+    TW-->>BE: resolution flags and balance
+    BE->>BE: reconcile indexed state
 ```
 
 The frontend calls SafeTrust `POST /api/escrows/resolve-dispute`. SafeTrust
-builds the unsigned XDR using:
+builds the unsigned XDR with:
 
 - Single-release: `POST /escrow/single-release/resolve-dispute`
 - Multi-release milestone: `POST /escrow/multi-release/resolve-milestone-dispute`
 
-The Releaser wallet signs the transaction, and the frontend submits it using
-`POST /helper/send-transaction`. SafeTrust learns the outcome from
-`POST /reconciliation/sync-escrows`, which polls
-`GET /helper/get-escrow-by-contract-ids`. Resolution is persisted only after
-the indexer reflects the on-chain result.
+The **Dispute Resolver** wallet signs the resolution transaction; this role is
+distinct from the Release Signer. The frontend submits the signed XDR through
+`POST /helper/send-transaction`. `flags.resolved` derives the `resolved`
+state. The current V1 snapshot policy cannot safely advance a funded escrow
+through polling alone to this terminal state. SafeTrust requires a versioned
+snapshot or transaction confirmation before applying the transition.
 
-See [Trustless Work Indexer](./trustless-work-indexer.md) for status derivation
-from flags and balance.
+Resolution is distinct from cancellation. `resolved` records a dispute outcome;
+`cancelled` is a separate pre-check-in transition. See the [escrow
+lifecycle](./escrow-lifecycle.md) and [Trustless Work
+Indexer](./trustless-work-indexer.md) documentation.

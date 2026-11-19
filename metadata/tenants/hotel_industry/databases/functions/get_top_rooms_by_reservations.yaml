@@ -1,7 +1,7 @@
 - name: get_top_rooms_by_reservations
-  schema: public
+  schema: hotel_industry
   definition: |
-    CREATE OR REPLACE FUNCTION public.get_top_rooms_by_reservations(
+    CREATE OR REPLACE FUNCTION hotel_industry.get_top_rooms_by_reservations(
         time_period VARCHAR DEFAULT 'all',
         filter_status VARCHAR DEFAULT NULL
     )

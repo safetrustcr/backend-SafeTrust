@@ -14,6 +14,7 @@ jest.mock('../../../services/db', () => ({
 const VALID_STELLAR = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
 // Fabricated address with the right shape but a bad SEP-23 checksum.
 const BAD_CHECKSUM_STELLAR = 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z'
+const VALID_ETH = '0x71C845137c37D73F4085411A3194134134944111'
 
 // Whether the Rust stellar-utils addon is built in this environment. When it
 // is, validation is stricter (checksum + Ed25519-public-key-only) than the JS
@@ -107,18 +108,7 @@ describe('syncWalletHandler', () => {
     expect(query).not.toHaveBeenCalled()
   })
 
-  it('accepts a valid Stellar address and upserts the wallet', async () => {
-    ;(query as jest.Mock).mockResolvedValue({
-      rows: [
-        {
-          id: 'wallet-1',
-          wallet_address: VALID_STELLAR,
-          chain_type: 'STELLAR',
-          is_primary: true,
-        },
-      ],
-    })
-
+  it('requires challenge verification before registering a Stellar address', async () => {
     const req = makeRequest({
       wallet_address: VALID_STELLAR,
       chain_type: 'STELLAR',
@@ -128,26 +118,19 @@ describe('syncWalletHandler', () => {
 
     await syncWalletHandler(req, res)
 
-    expect(res.status).toHaveBeenCalledWith(200)
-    expect(res.json).toHaveBeenCalledWith({
-      success: true,
-      wallet_address: VALID_STELLAR,
-    })
-    expect(query).toHaveBeenCalledTimes(1)
-    expect((query as jest.Mock).mock.calls[0][1]).toEqual([
-      'user-1',
-      VALID_STELLAR,
-      'STELLAR',
-      true,
-    ])
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'WALLET_CHALLENGE_REQUIRED' }))
+    expect(query).not.toHaveBeenCalled()
   })
 
   it('returns 500 when the database upsert fails', async () => {
     ;(query as jest.Mock).mockRejectedValue(new Error('connection refused'))
 
+    // Must be a non-Stellar address: any G…/C… strkey is rejected with 400
+    // WALLET_CHALLENGE_REQUIRED before the upsert runs.
     const req = makeRequest({
-      wallet_address: VALID_STELLAR,
-      chain_type: 'STELLAR',
+      wallet_address: '0x1234567890abcdef1234567890abcdef12345678',
+      chain_type: 'ETH',
       is_primary: false,
     })
     const res = makeResponse()

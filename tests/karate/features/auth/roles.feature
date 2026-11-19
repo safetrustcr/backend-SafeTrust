@@ -10,16 +10,16 @@ Feature: GET /api/auth/me — role-based redirect behavior
     * def adminToken = karate.call('classpath:helpers/get-firebase-token.js', { uid: adminUid })
 
     # Clean and seed users
-    * db.execute("DELETE FROM public.user_roles WHERE user_id IN ('host-user-001','guest-user-001','admin-user-001')")
-    * db.execute("DELETE FROM public.users WHERE id IN ('host-user-001','guest-user-001','admin-user-001')")
-    * db.execute("INSERT INTO public.users (id, firebase_uid, email) VALUES ('host-user-001',  'host-user-001',  'host@safetrust.cr')  ON CONFLICT DO NOTHING")
-    * db.execute("INSERT INTO public.users (id, firebase_uid, email) VALUES ('guest-user-001', 'guest-user-001', 'guest@safetrust.cr') ON CONFLICT DO NOTHING")
-    * db.execute("INSERT INTO public.users (id, firebase_uid, email) VALUES ('admin-user-001', 'admin-user-001', 'admin@safetrust.cr') ON CONFLICT DO NOTHING")
+    * db.execute("DELETE FROM safetrust.user_roles WHERE user_id IN ('host-user-001','guest-user-001','admin-user-001')")
+    * db.execute("DELETE FROM safetrust.users WHERE id IN ('host-user-001','guest-user-001','admin-user-001')")
+    * db.execute("INSERT INTO safetrust.users (id, firebase_uid, email) VALUES ('host-user-001',  'host-user-001',  'host@safetrust.cr')  ON CONFLICT DO NOTHING")
+    * db.execute("INSERT INTO safetrust.users (id, firebase_uid, email) VALUES ('guest-user-001', 'guest-user-001', 'guest@safetrust.cr') ON CONFLICT DO NOTHING")
+    * db.execute("INSERT INTO safetrust.users (id, firebase_uid, email) VALUES ('admin-user-001', 'admin-user-001', 'admin@safetrust.cr') ON CONFLICT DO NOTHING")
 
     # Assign roles
-    * db.execute("INSERT INTO public.user_roles (user_id, role_id) SELECT 'host-user-001',  id FROM public.roles WHERE name = 'host'  ON CONFLICT DO NOTHING")
-    * db.execute("INSERT INTO public.user_roles (user_id, role_id) SELECT 'guest-user-001', id FROM public.roles WHERE name = 'guest' ON CONFLICT DO NOTHING")
-    * db.execute("INSERT INTO public.user_roles (user_id, role_id) SELECT 'admin-user-001', id FROM public.roles WHERE name = 'admin' ON CONFLICT DO NOTHING")
+    * db.execute("INSERT INTO safetrust.user_roles (user_id, role_id) SELECT 'host-user-001',  id FROM safetrust.roles WHERE name = 'host'  ON CONFLICT DO NOTHING")
+    * db.execute("INSERT INTO safetrust.user_roles (user_id, role_id) SELECT 'guest-user-001', id FROM safetrust.roles WHERE name = 'guest' ON CONFLICT DO NOTHING")
+    * db.execute("INSERT INTO safetrust.user_roles (user_id, role_id) SELECT 'admin-user-001', id FROM safetrust.roles WHERE name = 'admin' ON CONFLICT DO NOTHING")
 
   # ── Host ──
 
@@ -33,7 +33,7 @@ Feature: GET /api/auth/me — role-based redirect behavior
     And match response.redirect == '/dashboard/escrow-dashboard'
 
   Scenario: Host role is stored correctly in user_roles table
-    * def rows = db.query("SELECT r.name FROM public.roles r JOIN public.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'host-user-001' ORDER BY r.name")
+    * def rows = db.query("SELECT r.name FROM safetrust.roles r JOIN safetrust.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'host-user-001' ORDER BY r.name")
     Then match rows == [{ name: 'host' }]
 
   # ── Guest ─
@@ -48,7 +48,7 @@ Feature: GET /api/auth/me — role-based redirect behavior
     And match response.redirect == '/dashboard/guest'
 
   Scenario: Guest role is stored correctly in user_roles table
-    * def rows = db.query("SELECT r.name FROM public.roles r JOIN public.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'guest-user-001' ORDER BY r.name")
+    * def rows = db.query("SELECT r.name FROM safetrust.roles r JOIN safetrust.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'guest-user-001' ORDER BY r.name")
     Then match rows == [{ name: 'guest' }]
 
   # ── Admin ─
@@ -63,7 +63,7 @@ Feature: GET /api/auth/me — role-based redirect behavior
     And match response.redirect == '/dashboard/escrow-dashboard'
 
   Scenario: Admin role is stored correctly in user_roles table
-    * def rows = db.query("SELECT r.name FROM public.roles r JOIN public.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'admin-user-001' ORDER BY r.name")
+    * def rows = db.query("SELECT r.name FROM safetrust.roles r JOIN safetrust.user_roles ur ON ur.role_id = r.id WHERE ur.user_id = 'admin-user-001' ORDER BY r.name")
     Then match rows == [{ name: 'admin' }]
 
   # ── No role ─
@@ -71,8 +71,8 @@ Feature: GET /api/auth/me — role-based redirect behavior
   Scenario: User with no role assigned defaults to guest redirect
     * def noRoleUid = 'no-role-user-001'
     * def noRoleToken = karate.call('classpath:helpers/get-firebase-token.js', { uid: noRoleUid })
-    * db.execute("DELETE FROM public.users WHERE id = 'no-role-user-001'")
-    * db.execute("INSERT INTO public.users (id, firebase_uid, email) VALUES ('no-role-user-001', 'no-role-user-001', 'norole@safetrust.cr') ON CONFLICT DO NOTHING")
+    * db.execute("DELETE FROM safetrust.users WHERE id = 'no-role-user-001'")
+    * db.execute("INSERT INTO safetrust.users (id, firebase_uid, email) VALUES ('no-role-user-001', 'no-role-user-001', 'norole@safetrust.cr') ON CONFLICT DO NOTHING")
     Given path '/api/auth/me'
     And header Authorization = 'Bearer ' + noRoleToken
     And header x-test-uid = noRoleUid

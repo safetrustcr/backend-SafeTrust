@@ -27,6 +27,13 @@ describe('escrow-state-machine native addon', () => {
     expect(getValidPriorStates('funded', 'escrow.funded')).toBe('["created","pending_funding"]')
   })
 
+  it('allows a disputed escrow to be cancelled', () => {
+    expect(validateTransition('disputed', 'cancelled', 'escrow.cancelled')).toBe(true)
+    expect(JSON.parse(getValidPriorStates('cancelled', 'escrow.cancelled'))).toContain(
+      'disputed'
+    )
+  })
+
   it('getValidPriorStates throws when no legal transition exists', () => {
     expect(() => getValidPriorStates('completed', 'dispute.raised')).toThrow(
       /No valid prior states/

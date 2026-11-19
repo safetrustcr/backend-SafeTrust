@@ -1,340 +1,829 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# bin/start — start the SafeTrust backend and deploy one or more tenants.
+#
+# Phases:
+#   containers → Hasura health → database sources → migrations →
+#   metadata (all tenants in parallel) → metadata reload → seeds → health checks
+#
+# Ends with one DEPLOYMENT SUMMARY covering every tenant (per-phase timings,
+# status, Hasura/Postgres/webhook health) and writes:
+#   tests/results/bin-start/<run-id>/       logs per tenant and phase (last 10 runs kept)
+#   tests/results/bin-start-report.json     machine-readable report of the last run
+#   tests/results/dc-prep-timings.json      legacy timing baseline read by the
+#                                           @timing Karate feature (written only
+#                                           for `bin/start safetrust`)
+#
+# Usage:
+#   bin/start [--reset | --restart] [--verbose] <tenant> [tenant ...]
+#
+# Examples:
+#   bin/start safetrust hotel_industry
+#   bin/start --reset safetrust
+#   bin/start --restart --verbose safetrust hotel_industry
+# ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
+
+if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then
+  echo "❌ bin/start needs bash 4.3 or newer (found ${BASH_VERSION})." >&2
+  echo "   On macOS: brew install bash" >&2
+  exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-# Load .env file if available
-if [ -f .env ]; then
-  export $(grep -v '^#' .env | xargs)
-fi
-
-HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
-HASURA_PORT="${HASURA_PORT:-8080}"
-POSTGRES_PORT="${POSTGRES_PORT:-5433}"
-WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
-HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
+readonly RESULTS_DIR="tests/results"
+readonly REPORT_FILE="$RESULTS_DIR/bin-start-report.json"
+readonly LEGACY_TIMINGS_FILE="$RESULTS_DIR/dc-prep-timings.json"
+readonly KEEP_RUN_LOGS=10
+readonly HASURA_MAX_WAIT_SECONDS=120
+readonly WEBHOOK_MAX_WAIT_SECONDS=20
+readonly REQUIRED_COMMANDS=(docker curl jq yq hasura)
+readonly TENANT_PHASES=(migrations metadata seeds)
 
 RESET_DATABASE=false
 RESTART_CONTAINERS=false
+VERBOSE=false
 TENANTS=()
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --reset)
-      RESET_DATABASE=true
-      shift
-      ;;
-    --restart)
-      RESTART_CONTAINERS=true
-      shift
-      ;;
-    -h|--help)
-      cat <<'USAGE'
-Usage: bin/start [--reset] [--restart] <tenant1> [tenant2 ...]
+# ── Run state ─────────────────────────────────────────────────────────────────
+CURRENT_PHASE="startup"
+PHASE_START_MS=0
+RUN_START_MS=0
+RUN_ID=""
+RUN_DIR=""
+STARTED_AT=""
+METADATA_PIDS=()
+HEALTH_RAN=false
+declare -A PHASE_MS=()      # shared phase → duration (ms)
+declare -A MARK_S=()        # shared phase → seconds since start when it ended (legacy report)
+declare -A T_MS=()          # "tenant|phase" → duration (ms)
+declare -A T_STATE=()       # "tenant|phase" → running | ok | skipped | failed | interrupted
+declare -A HEALTH=()        # check → result
+declare -A TENANT_META=()   # tenant → "tables select_perms relationships functions function_perms"
 
-Options:
-  --reset    Stop the stack and remove its volumes before starting.
-  --restart  Recreate the containers while preserving volumes.
-  -h, --help Show this help.
-USAGE
-      exit 0
-      ;;
-    -* )
-      echo "❌ Error: Unknown option: $1"
-      echo "   Run 'bin/start --help' for usage."
-      exit 1
-      ;;
-    *)
-      TENANTS+=("$1")
-      shift
-      ;;
-  esac
-done
-
-if [[ "$RESET_DATABASE" == "true" && "$RESTART_CONTAINERS" == "true" ]]; then
-  echo "❌ Error: --reset and --restart cannot be used together."
-  exit 1
-fi
-
-if [[ "${#TENANTS[@]}" -eq 0 ]]; then
+# ── Helpers ───────────────────────────────────────────────────────────────────
+usage() {
   cat <<'USAGE'
-Usage: bin/start [--reset] [--restart] <tenant1> [tenant2 ...]
+Usage: bin/start [--reset | --restart] [--verbose] <tenant1> [tenant2 ...]
 
 Options:
   --reset    Stop the stack and remove its volumes before starting.
-  --restart  Recreate the containers while preserving volumes.
+  --restart  Recreate the containers while preserving volumes
+             (skips migrations and seeds).
+  --verbose  Print each tenant's full metadata deploy log.
   -h, --help Show this help.
 
 Example:
   bin/start --restart safetrust hotel_industry
+
+Each run ends with a DEPLOYMENT SUMMARY and writes logs to
+tests/results/bin-start/<run-id>/ and a report to
+tests/results/bin-start-report.json.
 USAGE
-  exit 0
-fi
+}
 
-TRACK_SAFETRUST_TIMINGS=false
-if [[ "${#TENANTS[@]}" -eq 1 && "${TENANTS[0]}" == "safetrust" ]]; then
-  TRACK_SAFETRUST_TIMINGS=true
-  TIMER_START=$SECONDS
-fi
+die() {
+  echo "❌ Error: $*" >&2
+  exit 1
+}
 
-echo ""
-echo "🚀 Starting SafeTrust backend..."
-echo "   Tenants to deploy: ${TENANTS[*]}"
-echo ""
-
-
-# ── 1. Start containers ───────────────────────────────────────────────────────
-if [[ "$RESET_DATABASE" == "true" ]]; then
-  echo "🧹 Resetting containers and database volumes..."
-  docker compose down -v
-elif [[ "$RESTART_CONTAINERS" == "true" ]]; then
-  echo "🔄 Restarting containers (preserving database volumes)..."
-  docker compose down
-fi
-
-echo "📦 Starting containers..."
-docker compose up -d --build
-
-if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_DOCKER_UP=$((SECONDS - TIMER_START))
-fi
-
-# ── 2. Wait for Hasura to be healthy ─────────────────────────────────────────
-echo "⏳ Waiting for Hasura to be healthy on ${HASURA_ENDPOINT}..."
-
-MAX_WAIT_SECONDS=120
-POLL_INTERVAL=0.5
-START_TS=$SECONDS
-until curl -sf "${HASURA_ENDPOINT}/healthz" > /dev/null 2>&1; do
-  ELAPSED=$((SECONDS - START_TS))
-  if [[ "$ELAPSED" -ge "$MAX_WAIT_SECONDS" ]]; then
-    echo "❌ Hasura health check timed out after ${MAX_WAIT_SECONDS}s"
-    echo "   Last Hasura response:"
-    curl -s "${HASURA_ENDPOINT}/healthz" || true
-    exit 1
+# Milliseconds since the epoch; falls back to whole seconds without EPOCHREALTIME.
+now_ms() {
+  if [[ -n "${EPOCHREALTIME:-}" ]]; then
+    local micros="${EPOCHREALTIME/[.,]/}"
+    echo $(( micros / 1000 ))
+  else
+    echo $(( SECONDS * 1000 ))
   fi
-  # Progress indicator every 5 seconds
-  if (( ELAPSED % 5 == 0 && ELAPSED > 0 )); then
-    echo "   ⏳ Still waiting... (${ELAPSED}s elapsed)"
+}
+
+# 14234 → "14.2s"; 75000 → "1m 15s"
+fmt_ms() {
+  local ms="$1"
+  if (( ms >= 60000 )); then
+    printf '%dm %02ds' $(( ms / 60000 )) $(( (ms % 60000) / 1000 ))
+  else
+    printf '%d.%ds' $(( ms / 1000 )) $(( (ms % 1000) / 100 ))
   fi
-  sleep "$POLL_INTERVAL"
-done
-HASURA_READY_AT=$((SECONDS - START_TS))
-echo "✅ Hasura is healthy (ready in ${HASURA_READY_AT}s)"
+}
 
-if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_HASURA_HEALTH=$((SECONDS - TIMER_START))
-fi
+begin_phase() {
+  CURRENT_PHASE="$1"
+  PHASE_START_MS=$(now_ms)
+}
 
-echo ""
+end_phase() {
+  local now
+  now=$(now_ms)
+  PHASE_MS["$1"]=$(( now - PHASE_START_MS ))
+  MARK_S["$1"]=$(( (now - RUN_START_MS) / 1000 ))
+}
 
-# ── 3. Register database sources for each tenant ─────────────────────────────
-# Must happen before migrations so Hasura knows about the database.
-# pg_add_source is idempotent — safe to run on every start call.
-echo "🔌 Registering database sources..."
-for TENANT in "${TENANTS[@]}"; do
-  echo "   ▶ Registering source: $TENANT"
-  curl -sf -X POST "${HASURA_ENDPOINT}/v1/metadata" \
+# Run one tenant step, streaming its output and keeping a copy in the run log.
+run_tenant_step() {
+  local phase="$1" tenant="$2"
+  shift 2
+  T_STATE["$tenant|$phase"]=running
+  local start
+  start=$(now_ms)
+  "$@" 2>&1 | tee -a "$RUN_DIR/$tenant-$phase.log"
+  T_MS["$tenant|$phase"]=$(( $(now_ms) - start ))
+  T_STATE["$tenant|$phase"]=ok
+}
+
+skip_tenant_phase() {
+  local phase="$1" tenant
+  for tenant in "${TENANTS[@]}"; do
+    T_STATE["$tenant|$phase"]=skipped
+    T_MS["$tenant|$phase"]=0
+  done
+}
+
+hasura_metadata() {
+  curl -sS --max-time 30 -X POST "${HASURA_ENDPOINT}/v1/metadata" \
     -H "X-Hasura-Admin-Secret: $HASURA_ADMIN_SECRET" \
     -H "Content-Type: application/json" \
-    -d "{
-      \"type\": \"pg_add_source\",
-      \"args\": {
-        \"name\": \"${TENANT}\",
-        \"configuration\": {
-          \"connection_info\": {
-            \"database_url\": {
-              \"from_env\": \"PG_DATABASE_URL\"
-            },
-            \"isolation_level\": \"read-committed\",
-            \"use_prepared_statements\": false
+    -d "$1"
+}
+
+http_status() {
+  curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$1" || true
+}
+
+# ── Setup ─────────────────────────────────────────────────────────────────────
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --reset)   RESET_DATABASE=true ;;
+      --restart) RESTART_CONTAINERS=true ;;
+      --verbose) VERBOSE=true ;;
+      -h|--help) usage; exit 0 ;;
+      -*)
+        echo "❌ Error: Unknown option: $1" >&2
+        echo "   Run 'bin/start --help' for usage." >&2
+        exit 1
+        ;;
+      *) TENANTS+=("$1") ;;
+    esac
+    shift
+  done
+
+  if [[ "$RESET_DATABASE" == "true" && "$RESTART_CONTAINERS" == "true" ]]; then
+    die "--reset and --restart cannot be used together."
+  fi
+
+  if [[ "${#TENANTS[@]}" -eq 0 ]]; then
+    usage
+    exit 0
+  fi
+}
+
+# Let Compose parse .env so JSON quotes and spaces survive unchanged.
+# The same resolved values are used by Compose and the deployment commands.
+load_env() {
+  if [[ -f .env ]]; then
+    local compose_env env_entry
+    compose_env=$(docker compose config --environment)
+    while IFS= read -r env_entry; do
+      if [[ "$env_entry" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]]; then
+        # shellcheck disable=SC2163 # exports the NAME=value string itself
+        export "$env_entry"
+      fi
+    done <<< "$compose_env"
+  fi
+
+  HASURA_ADMIN_SECRET="${HASURA_ADMIN_SECRET:-}"
+  HASURA_PORT="${HASURA_PORT:-8080}"
+  POSTGRES_PORT="${POSTGRES_PORT:-5433}"
+  WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
+  HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
+}
+
+validate_environment() {
+  local cmd missing=()
+  for cmd in "${REQUIRED_COMMANDS[@]}"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      missing+=("$cmd")
+    fi
+  done
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    die "missing required command(s): ${missing[*]}"
+  fi
+
+  if [[ -z "$HASURA_ADMIN_SECRET" ]]; then
+    echo "❌ Error: HASURA_ADMIN_SECRET is required." >&2
+    echo "   Set it in .env or export it before running bin/start." >&2
+    exit 1
+  fi
+
+  local tenant available
+  for tenant in "${TENANTS[@]}"; do
+    if [[ ! -d "metadata/tenants/$tenant" || ! -d "migrations/$tenant" ]]; then
+      available=$(ls metadata/tenants | tr '\n' ' ')
+      die "unknown tenant '$tenant' (available: ${available% })"
+    fi
+  done
+}
+
+prepare_run_dir() {
+  RUN_ID="$(date +%Y%m%d-%H%M%S)"
+  RUN_DIR="$RESULTS_DIR/bin-start/$RUN_ID"
+  mkdir -p "$RUN_DIR"
+
+  local runs=()
+  shopt -s nullglob
+  runs=("$RESULTS_DIR"/bin-start/*/)
+  shopt -u nullglob
+  local excess=$(( ${#runs[@]} - KEEP_RUN_LOGS ))
+  if (( excess > 0 )); then
+    rm -rf -- "${runs[@]:0:excess}"
+  fi
+}
+
+# ── Phases ────────────────────────────────────────────────────────────────────
+start_containers() {
+  begin_phase containers
+  if [[ "$RESET_DATABASE" == "true" ]]; then
+    echo "🧹 Resetting containers and database volumes..."
+    docker compose down -v
+  elif [[ "$RESTART_CONTAINERS" == "true" ]]; then
+    echo "🔄 Restarting containers (preserving database volumes)..."
+    docker compose down
+  fi
+
+  echo "📦 Starting containers..."
+  docker compose up -d --build
+  end_phase containers
+}
+
+wait_for_hasura() {
+  begin_phase hasura_health
+  echo "⏳ Waiting for Hasura to be healthy on ${HASURA_ENDPOINT}..."
+
+  local start_ts=$SECONDS elapsed
+  until curl -sf "${HASURA_ENDPOINT}/healthz" > /dev/null 2>&1; do
+    elapsed=$(( SECONDS - start_ts ))
+    if (( elapsed >= HASURA_MAX_WAIT_SECONDS )); then
+      echo "❌ Hasura health check timed out after ${HASURA_MAX_WAIT_SECONDS}s"
+      echo "   Last Hasura response:"
+      curl -s "${HASURA_ENDPOINT}/healthz" || true
+      echo "   Recent graphql-engine logs:"
+      docker compose logs --tail 20 graphql-engine 2>&1 | sed 's/^/   │ /' || true
+      return 1
+    fi
+    if (( elapsed % 5 == 0 && elapsed > 0 )); then
+      echo "   ⏳ Still waiting... (${elapsed}s elapsed)"
+    fi
+    sleep 0.5
+  done
+  end_phase hasura_health
+  echo "✅ Hasura is healthy (ready in $(fmt_ms "${PHASE_MS[hasura_health]}"))"
+  echo ""
+}
+
+# pg_add_source is idempotent: an existing source is reported, any other
+# error (wrong admin secret, bad connection info) fails the run.
+register_sources() {
+  begin_phase sources
+  echo "🔌 Registering database sources..."
+  local tenant payload response code
+  for tenant in "${TENANTS[@]}"; do
+    echo "   ▶ Registering source: $tenant"
+    payload=$(jq -cn --arg name "$tenant" '{
+      type: "pg_add_source",
+      args: {
+        name: $name,
+        configuration: {
+          connection_info: {
+            database_url: { from_env: "PG_DATABASE_URL" },
+            isolation_level: "read-committed",
+            use_prepared_statements: false
           }
         }
       }
-    }" > /dev/null && echo "   ✅ Source registered: $TENANT" \
-      || echo "   ℹ️  Source already exists: $TENANT (skipping)"
-done
+    }')
+    response=$(hasura_metadata "$payload")
+    code=$(jq -r 'if type == "object" and has("error") then (.code // "error") else "ok" end' <<< "$response" 2>/dev/null || echo "invalid-response")
+    case "$code" in
+      ok)             echo "   ✅ Source registered: $tenant" ;;
+      already-exists) echo "   ℹ️  Source already exists: $tenant (skipping)" ;;
+      *)
+        echo "   ❌ Failed to register source $tenant: $response"
+        return 1
+        ;;
+    esac
+  done
+  end_phase sources
+  echo ""
+}
 
-echo ""
-
-# ── 4. Apply migrations for each tenant ──────────────────────────────────────
-# Tables are created here — must run before metadata deploy.
-if [[ "$RESTART_CONTAINERS" != "true" ]]; then
-  echo "📂 Applying migrations..."
-
-  if [[ "${#TENANTS[@]}" -eq 1 ]]; then
-    # Single tenant — no parallelization overhead needed
-    TENANT="${TENANTS[0]}"
-    echo "   ▶ Migrating tenant: $TENANT"
-    hasura migrate apply \
-      --endpoint "${HASURA_ENDPOINT}" \
-      --admin-secret "$HASURA_ADMIN_SECRET" \
-      --database-name "$TENANT"
-    echo "   ✅ Migrations applied for $TENANT"
+# Sources share Hasura CLI catalog state. Concurrent migration commands can
+# overwrite each other's applied versions, so apply tenants sequentially.
+apply_migrations() {
+  begin_phase migrations
+  if [[ "$RESTART_CONTAINERS" == "true" ]]; then
+    echo "⏭️  --restart: skipping migrations (schema unchanged)"
+    skip_tenant_phase migrations
   else
-    # Multiple tenants — run in parallel background jobs
-    # Tenants are schema-isolated: no cross-tenant migration dependencies
-    MIGRATION_PIDS=()
-    MIGRATION_LOGS=$(mktemp -d)
-
-    for TENANT in "${TENANTS[@]}"; do
-      (
+    echo "📂 Applying migrations..."
+    local tenant
+    for tenant in "${TENANTS[@]}"; do
+      echo "   ▶ Migrating tenant: $tenant"
+      run_tenant_step migrations "$tenant" \
         hasura migrate apply \
           --endpoint "${HASURA_ENDPOINT}" \
           --admin-secret "$HASURA_ADMIN_SECRET" \
-          --database-name "$TENANT" \
-          > "$MIGRATION_LOGS/$TENANT.log" 2>&1
-      ) &
-      MIGRATION_PIDS+=($!)
-      echo "   ▶ Migrating tenant: $TENANT (pid ${MIGRATION_PIDS[-1]})"
+          --database-name "$tenant"
+      echo "   ✅ Migrations applied for $tenant ($(fmt_ms "${T_MS[$tenant|migrations]}"))"
     done
-
-    MIGRATION_FAILED=()
-    for i in "${!MIGRATION_PIDS[@]}"; do
-      TENANT="${TENANTS[$i]}"
-      if wait "${MIGRATION_PIDS[$i]}"; then
-        echo "   ✅ Migrations applied for $TENANT"
-      else
-        echo "   ❌ Migration failed for $TENANT:"
-        cat "$MIGRATION_LOGS/$TENANT.log"
-        MIGRATION_FAILED+=("$TENANT")
-      fi
-    done
-
-    rm -rf "$MIGRATION_LOGS"
-
-    if [[ ${#MIGRATION_FAILED[@]} -gt 0 ]]; then
-      echo "❌ Migrations failed for: ${MIGRATION_FAILED[*]}"
-      exit 1
-    fi
   fi
+  end_phase migrations
+  echo ""
+}
 
-  if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-    TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
-  fi
-else
-  echo "⏭️  --restart: skipping migrations (schema unchanged)"
-  TIMING_MIGRATIONS_SAFETRUST=0
-fi
+# Tables exist after migrations, so Hasura can track them. Every tenant is
+# deployed as a background job (setup-tenant.sh uses its own mktemp -d); each
+# job's full output goes to its own log so the console stays readable.
+deploy_metadata() {
+  begin_phase metadata
+  echo "🏗️  Deploying tenant metadata: ${TENANTS[*]}"
 
-echo ""
-
-# ── 5. Deploy tenant metadata AFTER migrations ────────────────────────────────
-# Tables now exist in the DB so Hasura can track them successfully.
-echo "🏗️  Deploying tenant metadata: ${TENANTS[*]}"
-
-if [[ "${#TENANTS[@]}" -eq 1 ]]; then
-  # Single tenant — call setup-tenant.sh directly, no parallelization
-  cd metadata
-  ./setup-tenant.sh "${TENANTS[0]}" \
-    --endpoint "${HASURA_ENDPOINT}" \
-    --admin-secret "$HASURA_ADMIN_SECRET"
-  cd ..
-else
-  # Multiple tenants — deploy metadata in parallel background jobs
-  # setup-tenant.sh uses mktemp -d internally so parallel runs are safe
-  METADATA_PIDS=()
-  METADATA_LOGS=$(mktemp -d)
-
-  for TENANT in "${TENANTS[@]}"; do
+  local tenant
+  for tenant in "${TENANTS[@]}"; do
+    T_STATE["$tenant|metadata"]=running
     (
-      cd metadata
-      ./setup-tenant.sh "$TENANT" \
-        --endpoint "${HASURA_ENDPOINT}" \
-        --admin-secret "$HASURA_ADMIN_SECRET" \
-        > "$METADATA_LOGS/$TENANT.log" 2>&1
-      cd ..
+      trap - EXIT INT TERM
+      job_start=$(now_ms)
+      job_rc=0
+      (
+        cd metadata
+        ./setup-tenant.sh "$tenant" \
+          --endpoint "${HASURA_ENDPOINT}" \
+          --admin-secret "$HASURA_ADMIN_SECRET"
+      ) > "$RUN_DIR/$tenant-metadata.log" 2>&1 || job_rc=$?
+      echo $(( $(now_ms) - job_start )) > "$RUN_DIR/$tenant-metadata.ms"
+      exit "$job_rc"
     ) &
-    METADATA_PIDS+=($!)
-    echo "   ▶ Deploying metadata for $TENANT (pid ${METADATA_PIDS[-1]})"
+    METADATA_PIDS+=("$!")
+    echo "   ▶ $tenant (pid $!) → $RUN_DIR/$tenant-metadata.log"
   done
 
-  METADATA_FAILED=()
-  for i in "${!METADATA_PIDS[@]}"; do
-    TENANT="${TENANTS[$i]}"
-    if wait "${METADATA_PIDS[$i]}"; then
-      # Stream the log output after completion so it appears in order
-      cat "$METADATA_LOGS/$TENANT.log"
-      echo "   ✅ Metadata deployed for $TENANT"
+  local failed=() i rc log
+  for i in "${!TENANTS[@]}"; do
+    tenant="${TENANTS[$i]}"
+    log="$RUN_DIR/$tenant-metadata.log"
+    rc=0
+    wait "${METADATA_PIDS[$i]}" || rc=$?
+    T_MS["$tenant|metadata"]=$(cat "$RUN_DIR/$tenant-metadata.ms" 2>/dev/null || echo 0)
+
+    if [[ "$VERBOSE" == "true" ]]; then
+      echo "   ┌── $tenant metadata log"
+      sed 's/^/   │ /' "$log"
+      echo "   └──"
+    fi
+
+    if (( rc == 0 )); then
+      T_STATE["$tenant|metadata"]=ok
+      echo "   ✅ Metadata deployed for $tenant ($(fmt_ms "${T_MS[$tenant|metadata]}"))"
     else
-      cat "$METADATA_LOGS/$TENANT.log"
-      echo "   ❌ Metadata deployment failed for $TENANT"
-      METADATA_FAILED+=("$TENANT")
+      T_STATE["$tenant|metadata"]=failed
+      failed+=("$tenant")
+      echo "   ❌ Metadata deployment failed for $tenant (exit $rc, $(fmt_ms "${T_MS[$tenant|metadata]}"))"
+      if [[ "$VERBOSE" != "true" ]]; then
+        echo "   ┌── last 30 lines of $log"
+        tail -n 30 "$log" | sed 's/^/   │ /'
+        echo "   └──"
+      fi
+    fi
+  done
+  METADATA_PIDS=()
+  end_phase metadata
+
+  if [[ "${#failed[@]}" -gt 0 ]]; then
+    echo "❌ Metadata deployment failed for: ${failed[*]}"
+    return 1
+  fi
+  echo ""
+}
+
+reload_metadata() {
+  begin_phase reload
+  echo "📋 Reloading metadata..."
+  hasura metadata reload \
+    --endpoint "${HASURA_ENDPOINT}" \
+    --admin-secret "$HASURA_ADMIN_SECRET" 2>&1 | tee -a "$RUN_DIR/metadata-reload.log"
+  end_phase reload
+  echo ""
+}
+
+apply_seeds() {
+  begin_phase seeds
+  if [[ "$RESTART_CONTAINERS" == "true" ]]; then
+    echo "⏭️  --restart: skipping seeds (data unchanged)"
+    skip_tenant_phase seeds
+  else
+    echo "🌱 Applying seeds..."
+    local tenant
+    for tenant in "${TENANTS[@]}"; do
+      echo "   ▶ Seeding tenant: $tenant"
+      run_tenant_step seeds "$tenant" \
+        hasura seed apply \
+          --endpoint "${HASURA_ENDPOINT}" \
+          --admin-secret "$HASURA_ADMIN_SECRET" \
+          --database-name "$tenant"
+      echo "   ✅ Seeds applied for $tenant ($(fmt_ms "${T_MS[$tenant|seeds]}"))"
+    done
+  fi
+  end_phase seeds
+}
+
+# Post-deploy checks. They never fail the run; they describe what is running.
+run_health_checks() {
+  begin_phase health
+  HEALTH_RAN=true
+
+  if curl -sf --max-time 3 "${HASURA_ENDPOINT}/healthz" > /dev/null 2>&1; then
+    HEALTH[hasura]=ok
+  else
+    HEALTH[hasura]=down
+  fi
+
+  local inconsistency
+  inconsistency=$(hasura_metadata '{"type":"get_inconsistent_metadata","args":{}}' 2>/dev/null || true)
+  HEALTH[inconsistent_objects]=$(jq -r '.inconsistent_objects | length' <<< "$inconsistency" 2>/dev/null || echo "unknown")
+
+  local metadata tenant counts
+  metadata=$(hasura_metadata '{"type":"export_metadata","args":{}}' 2>/dev/null || true)
+  for tenant in "${TENANTS[@]}"; do
+    counts=$(jq -r --arg source "$tenant" '
+      (.metadata // .).sources[]? | select(.name == $source) | [
+        (.tables // [] | length),
+        ([.tables[]? | select(.select_permissions)] | length),
+        ([.tables[]? | ((.object_relationships // []) + (.array_relationships // []))[]] | length),
+        (.functions // [] | length),
+        ([.functions[]? | (.permissions // [])[]] | length)
+      ] | map(tostring) | join(" ")' <<< "$metadata" 2>/dev/null || true)
+    TENANT_META["$tenant"]="${counts:-unavailable}"
+  done
+
+  if docker compose exec -T postgres pg_isready -U postgres -q > /dev/null 2>&1; then
+    HEALTH[postgres]=ok
+  else
+    HEALTH[postgres]=down
+  fi
+
+  # The webhook starts alongside Hasura; give it a moment to begin listening.
+  local live="000" waited=0
+  while (( waited < WEBHOOK_MAX_WAIT_SECONDS )); do
+    live=$(http_status "http://localhost:${WEBHOOK_PORT}/health/live")
+    if [[ "$live" == "200" ]]; then
+      break
+    fi
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
+  HEALTH[webhook_live]="$live"
+  HEALTH[webhook_ready]=$(http_status "http://localhost:${WEBHOOK_PORT}/health/ready")
+  # /health/ready reports each dependency; name the ones that are down.
+  HEALTH[webhook_not_ready]=$(curl -s --max-time 3 "http://localhost:${WEBHOOK_PORT}/health/ready" 2>/dev/null \
+    | jq -r '.dependencies // {} | to_entries | map(select(.value != true) | .key) | join(", ")' 2>/dev/null || true)
+
+  end_phase health
+}
+
+# ── Reporting ─────────────────────────────────────────────────────────────────
+tenant_cell() {
+  local key="$1|$2"
+  case "${T_STATE[$key]:-}" in
+    ok)      fmt_ms "${T_MS[$key]}" ;;
+    skipped)     printf 'skipped' ;;
+    failed)      printf 'FAILED' ;;
+    interrupted) printf 'STOPPED' ;;
+    *)           printf -- '-' ;;
+  esac
+}
+
+tenant_total_ms() {
+  local tenant="$1" phase total=0
+  for phase in "${TENANT_PHASES[@]}"; do
+    total=$(( total + ${T_MS[$tenant|$phase]:-0} ))
+  done
+  echo "$total"
+}
+
+tenant_status() {
+  local tenant="$1" phase state next=""
+  for phase in "${TENANT_PHASES[@]}"; do
+    state="${T_STATE[$tenant|$phase]:-}"
+    if [[ "$state" == "failed" ]]; then
+      printf '❌ failed in %s' "$phase"
+      return
+    fi
+    if [[ "$state" == "interrupted" ]]; then
+      printf '⛔ interrupted in %s' "$phase"
+      return
+    fi
+    if [[ -z "$next" && "$state" != "ok" && "$state" != "skipped" ]]; then
+      next="$phase"
+    fi
+  done
+  if [[ -z "$next" ]]; then
+    printf '✅ ready'
+  else
+    printf '⏸  stopped before %s' "$next"
+  fi
+}
+
+shared_cell() {
+  if [[ -n "${PHASE_MS[$1]:-}" ]]; then
+    fmt_ms "${PHASE_MS[$1]}"
+  else
+    printf -- '-'
+  fi
+}
+
+print_health() {
+  local tenant counts tables perms rels funcs fperms webhook
+  echo "  Health"
+  if [[ "${HEALTH[hasura]}" == "ok" ]]; then
+    case "${HEALTH[inconsistent_objects]}" in
+      0)       echo "    Hasura           ✅ healthy · ✅ metadata consistent" ;;
+      unknown) echo "    Hasura           ✅ healthy · ⚠️  metadata consistency unknown" ;;
+      *)       echo "    Hasura           ✅ healthy · ⚠️  ${HEALTH[inconsistent_objects]} inconsistent metadata object(s) — hasura metadata ic list" ;;
+    esac
+  else
+    echo "    Hasura           ❌ not responding on ${HASURA_ENDPOINT}/healthz"
+  fi
+
+  if [[ "${HEALTH[postgres]}" == "ok" ]]; then
+    echo "    PostgreSQL       ✅ accepting connections (localhost:${POSTGRES_PORT})"
+  else
+    echo "    PostgreSQL       ❌ pg_isready failed — docker compose logs postgres"
+  fi
+
+  if [[ "${HEALTH[webhook_live]}" == "200" ]]; then
+    webhook="✅ live"
+  else
+    webhook="❌ not live (HTTP ${HEALTH[webhook_live]}) — docker compose logs webhook"
+  fi
+  if [[ "${HEALTH[webhook_ready]}" == "200" ]]; then
+    webhook+=" · ✅ ready"
+  elif [[ -n "${HEALTH[webhook_not_ready]}" ]]; then
+    webhook+=" · ⚠️  not ready: ${HEALTH[webhook_not_ready]} unavailable (HTTP ${HEALTH[webhook_ready]})"
+  else
+    webhook+=" · ⚠️  not ready (HTTP ${HEALTH[webhook_ready]}, see /health/ready)"
+  fi
+  echo "    Webhook          $webhook"
+
+  for tenant in "${TENANTS[@]}"; do
+    counts="${TENANT_META[$tenant]}"
+    if [[ "$counts" == "unavailable" ]]; then
+      printf '    %-16s ⚠️  metadata not found in Hasura\n' "$tenant"
+    else
+      read -r tables perms rels funcs fperms <<< "$counts"
+      printf '    %-16s %s tables · %s with select perms · %s relationships · %s functions · %s function perms\n' \
+        "$tenant" "$tables" "$perms" "$rels" "$funcs" "$fperms"
+    fi
+  done
+}
+
+print_summary() {
+  local rc="$1"
+  local width=16 tenant
+  for tenant in "${TENANTS[@]}"; do
+    if (( ${#tenant} > width )); then width=${#tenant}; fi
+  done
+
+  local bar="════════════════════════════════════════════════════════════════════════"
+  local rule="────────────────────────────────────────────────────────────────────────"
+  echo ""
+  echo "$bar"
+  if (( rc == 0 )); then
+    echo "  DEPLOYMENT SUMMARY — ✅ all tenants ready"
+  elif (( rc == 130 )); then
+    echo "  DEPLOYMENT SUMMARY — ⛔ interrupted during: $CURRENT_PHASE"
+  else
+    echo "  DEPLOYMENT SUMMARY — ❌ failed during: $CURRENT_PHASE"
+  fi
+  echo "$bar"
+
+  printf "  %-${width}s %11s %11s %11s %11s   %s\n" "Tenant" "Migrations" "Metadata" "Seeds" "Total" "Status"
+  echo "  $rule"
+  for tenant in "${TENANTS[@]}"; do
+    printf "  %-${width}s %11s %11s %11s %11s   %s\n" "$tenant" \
+      "$(tenant_cell "$tenant" migrations)" \
+      "$(tenant_cell "$tenant" metadata)" \
+      "$(tenant_cell "$tenant" seeds)" \
+      "$(fmt_ms "$(tenant_total_ms "$tenant")")" \
+      "$(tenant_status "$tenant")"
+  done
+  echo "  $rule"
+
+  printf '  %-18s containers %s · Hasura health %s · sources %s · metadata reload %s\n' "Shared steps" \
+    "$(shared_cell containers)" "$(shared_cell hasura_health)" "$(shared_cell sources)" "$(shared_cell reload)"
+
+  if [[ "${#TENANTS[@]}" -gt 1 && -n "${PHASE_MS[metadata]:-}" ]]; then
+    local work=0
+    for tenant in "${TENANTS[@]}"; do
+      work=$(( work + ${T_MS[$tenant|metadata]:-0} ))
+    done
+    printf '  %-18s %s wall-clock for %s of work across %d tenants (parallel)\n' "Metadata deploy" \
+      "$(fmt_ms "${PHASE_MS[metadata]}")" "$(fmt_ms "$work")" "${#TENANTS[@]}"
+  fi
+
+  printf '  %-18s %s\n' "Total time" "$(fmt_ms $(( $(now_ms) - RUN_START_MS )))"
+  printf '  %-18s %s\n' "Logs" "$RUN_DIR/"
+  printf '  %-18s %s\n' "Report" "$REPORT_FILE"
+
+  if [[ "$HEALTH_RAN" == "true" ]]; then
+    echo "  $rule"
+    print_health
+  fi
+
+  if (( rc != 0 && rc != 130 )); then
+    echo "  $rule"
+    echo "  Next step: check the log for the failed step in $RUN_DIR/"
+  fi
+  echo "$bar"
+}
+
+write_report() {
+  local rc="$1" tenant phase tenants_json='{}' phases_json tenant_json
+  for tenant in "${TENANTS[@]}"; do
+    phases_json='{}'
+    for phase in "${TENANT_PHASES[@]}"; do
+      phases_json=$(jq -c --arg phase "$phase" \
+        --arg state "${T_STATE[$tenant|$phase]:-not_reached}" \
+        --argjson ms "${T_MS[$tenant|$phase]:-0}" \
+        '. + {($phase): {state: $state, ms: $ms}}' <<< "$phases_json")
+    done
+    tenant_json=$(jq -c --argjson phases "$phases_json" \
+      --argjson total "$(tenant_total_ms "$tenant")" \
+      --arg counts "${TENANT_META[$tenant]:-}" \
+      '{phases: $phases, total_ms: $total} + (
+        ($counts | split(" ") | map(tonumber? // empty)) as $c
+        | if ($c | length) == 5
+          then {hasura: {tables: $c[0], tables_with_select_permissions: $c[1], relationships: $c[2], functions: $c[3], function_permissions: $c[4]}}
+          else {} end
+      )' <<< '{}')
+    tenants_json=$(jq -c --arg tenant "$tenant" --argjson data "$tenant_json" '. + {($tenant): $data}' <<< "$tenants_json")
+  done
+
+  local shared_json='{}' key
+  for key in containers hasura_health sources migrations metadata reload seeds health; do
+    if [[ -n "${PHASE_MS[$key]:-}" ]]; then
+      shared_json=$(jq -c --arg key "$key" --argjson ms "${PHASE_MS[$key]}" '. + {($key): $ms}' <<< "$shared_json")
     fi
   done
 
-  rm -rf "$METADATA_LOGS"
-
-  if [[ ${#METADATA_FAILED[@]} -gt 0 ]]; then
-    echo "❌ Metadata deployment failed for: ${METADATA_FAILED[*]}"
-    exit 1
+  local health_json='null'
+  if [[ "$HEALTH_RAN" == "true" ]]; then
+    health_json=$(jq -cn \
+      --arg hasura "${HEALTH[hasura]}" \
+      --arg inconsistent "${HEALTH[inconsistent_objects]}" \
+      --arg postgres "${HEALTH[postgres]}" \
+      --arg live "${HEALTH[webhook_live]}" \
+      --arg ready "${HEALTH[webhook_ready]}" \
+      --arg not_ready "${HEALTH[webhook_not_ready]}" \
+      '{hasura_healthy: ($hasura == "ok"),
+        inconsistent_metadata_objects: ($inconsistent | tonumber? // null),
+        postgres_ready: ($postgres == "ok"),
+        webhook_live_status: ($live | tonumber? // null),
+        webhook_ready_status: ($ready | tonumber? // null),
+        webhook_unavailable_dependencies: ($not_ready | split(", ") | map(select(. != "")))}')
   fi
-fi
 
-if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_METADATA_DEPLOY_SAFETRUST=$((SECONDS - TIMER_START))
-fi
+  mkdir -p "$RESULTS_DIR"
+  jq -n \
+    --arg run_id "$RUN_ID" \
+    --arg started_at "$STARTED_AT" \
+    --arg finished_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson exit_code "$rc" \
+    --arg failed_phase "$CURRENT_PHASE" \
+    --argjson reset "$RESET_DATABASE" \
+    --argjson restart "$RESTART_CONTAINERS" \
+    --argjson total_ms "$(( $(now_ms) - RUN_START_MS ))" \
+    --argjson shared "$shared_json" \
+    --argjson tenants "$tenants_json" \
+    --argjson health "$health_json" \
+    --arg log_dir "$RUN_DIR" \
+    '{run_id: $run_id, started_at: $started_at, finished_at: $finished_at,
+      status: (if $exit_code == 0 then "success" elif $exit_code == 130 then "interrupted" else "failed" end),
+      exit_code: $exit_code,
+      failed_phase: (if $exit_code == 0 then null else $failed_phase end),
+      options: {reset: $reset, restart: $restart},
+      total_ms: $total_ms, phases_ms: $shared, tenants: $tenants,
+      health: $health, log_dir: $log_dir}' > "$REPORT_FILE"
+}
 
-echo ""
-
-# ── 6. Reload metadata after deploy ──────────────────────────────────────────
-echo "📋 Reloading metadata..."
-hasura metadata reload \
-  --endpoint "${HASURA_ENDPOINT}" \
-  --admin-secret "$HASURA_ADMIN_SECRET"
-
-if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  TIMING_METADATA_RELOAD=$((SECONDS - TIMER_START))
-fi
-
-echo ""
-
-# ── 7. Apply seeds for each tenant ───────────────────────────────────────────
-if [[ "$RESTART_CONTAINERS" != "true" ]]; then
-  echo "🌱 Applying seeds..."
-  for TENANT in "${TENANTS[@]}"; do
-    echo "   ▶ Seeding tenant: $TENANT"
-    hasura seed apply \
-      --endpoint "${HASURA_ENDPOINT}" \
-      --admin-secret "$HASURA_ADMIN_SECRET" \
-      --database-name "$TENANT"
-    echo "   ✅ Seeds applied for $TENANT"
-  done
-
-  if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-    TIMING_SEEDS_SAFETRUST=$((SECONDS - TIMER_START))
-    TIMING_TOTAL=$((SECONDS - TIMER_START))
+# Cumulative whole seconds since start, as read by tests/karate/features/dc-prep-timings.feature.
+write_legacy_timings() {
+  if [[ "${#TENANTS[@]}" -ne 1 || "${TENANTS[0]}" != "safetrust" ]]; then
+    return 0
   fi
-else
-  echo "⏭️  --restart: skipping seeds (data unchanged)"
-  TIMING_SEEDS_SAFETRUST=0
-  TIMING_TOTAL=$((SECONDS - TIMER_START))
-fi
-
-if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
-  mkdir -p tests/results
-  cat > tests/results/dc-prep-timings.json <<EOF
+  local migrations="${MARK_S[migrations]}" seeds="${MARK_S[seeds]}"
+  if [[ "$RESTART_CONTAINERS" == "true" ]]; then
+    migrations=0
+    seeds=0
+  fi
+  cat > "$LEGACY_TIMINGS_FILE" <<EOF
 {
-  "docker_up": ${TIMING_DOCKER_UP},
-  "hasura_health": ${TIMING_HASURA_HEALTH},
-  "migrations_safetrust": ${TIMING_MIGRATIONS_SAFETRUST},
-  "metadata_deploy_safetrust": ${TIMING_METADATA_DEPLOY_SAFETRUST},
-  "metadata_reload": ${TIMING_METADATA_RELOAD},
-  "seeds_safetrust": ${TIMING_SEEDS_SAFETRUST},
-  "total": ${TIMING_TOTAL}
+  "docker_up": ${MARK_S[containers]},
+  "hasura_health": ${MARK_S[hasura_health]},
+  "migrations_safetrust": ${migrations},
+  "metadata_deploy_safetrust": ${MARK_S[metadata]},
+  "metadata_reload": ${MARK_S[reload]},
+  "seeds_safetrust": ${seeds},
+  "total": ${MARK_S[seeds]}
 }
 EOF
-fi
+}
 
-# ── Done ──────────────────────────────────────────────────────────────────────
-echo ""
-echo "✅ SafeTrust backend ready"
-echo "   Tenants deployed: ${TENANTS[*]}"
-echo "   GraphQL:          ${HASURA_ENDPOINT}/v1/graphql"
-echo "   PostgreSQL:       localhost:${POSTGRES_PORT}"
-echo "   Webhook:          http://localhost:${WEBHOOK_PORT}"
-echo ""
-echo "👉 To open Hasura console:"
-echo "   hasura console --endpoint ${HASURA_ENDPOINT} --admin-secret $HASURA_ADMIN_SECRET"
+print_ready() {
+  echo ""
+  echo "✅ SafeTrust backend ready"
+  echo "   Tenants deployed: ${TENANTS[*]}"
+  echo "   GraphQL:          ${HASURA_ENDPOINT}/v1/graphql"
+  echo "   PostgreSQL:       localhost:${POSTGRES_PORT}"
+  echo "   Webhook:          http://localhost:${WEBHOOK_PORT}"
+  echo ""
+  echo "👉 To open Hasura console:"
+  echo "   hasura console --endpoint ${HASURA_ENDPOINT} --admin-secret \"\$HASURA_ADMIN_SECRET\""
+}
+
+# ── Signal and exit handling ──────────────────────────────────────────────────
+stop_background_jobs() {
+  local pid
+  for pid in "${METADATA_PIDS[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
+on_interrupt() {
+  echo ""
+  echo "⛔ Interrupted during: $CURRENT_PHASE"
+  exit 130
+}
+
+# Always runs: marks unfinished steps failed, prints the summary and writes
+# the report, so a failed or interrupted run still says where it stopped.
+on_exit() {
+  local rc=$?
+  trap - EXIT INT TERM
+  set +e
+  stop_background_jobs
+
+  local key unfinished=failed
+  if (( rc == 130 )); then
+    unfinished=interrupted
+  fi
+  for key in "${!T_STATE[@]}"; do
+    if [[ "${T_STATE[$key]}" == "running" ]]; then
+      T_STATE[$key]=$unfinished
+    fi
+  done
+
+  print_summary "$rc"
+  write_report "$rc" || echo "⚠️  Could not write $REPORT_FILE" >&2
+  if (( rc == 0 )); then
+    write_legacy_timings || echo "⚠️  Could not write $LEGACY_TIMINGS_FILE" >&2
+    print_ready
+  fi
+  exit "$rc"
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+main() {
+  parse_args "$@"
+  load_env
+  validate_environment
+
+  RUN_START_MS=$(now_ms)
+  STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  prepare_run_dir
+  trap on_exit EXIT
+  trap on_interrupt INT TERM
+
+  echo ""
+  echo "🚀 Starting SafeTrust backend..."
+  echo "   Tenants to deploy: ${TENANTS[*]}"
+  echo "   Run log:           $RUN_DIR/"
+  echo ""
+
+  start_containers
+  wait_for_hasura
+  register_sources
+  apply_migrations
+  deploy_metadata
+  reload_metadata
+  apply_seeds
+  run_health_checks
+  CURRENT_PHASE="done"
+}
+
+main "$@"

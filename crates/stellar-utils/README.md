@@ -17,7 +17,7 @@ ABI-stable across Node.js versions — no per-Node rebuilds.
 ```bash
 # From the repo root (workspace build — builds both crates, shared target/ + Cargo.lock):
 cargo build --release --workspace
-node crates/stellar-utils/copy-native.js   # → native/index.node (handles .so/.dylib/.dll naming)
+node crates/scripts/copy-native.js --crate=stellar-utils   # → native/index.node (handles .so/.dylib/.dll naming)
 
 # Or from webhook/: builds the whole workspace and copies both addons
 npm run build:rust

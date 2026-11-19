@@ -3,6 +3,7 @@
 import { Response } from 'express'
 import { query } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
+import { logger } from '../../middleware/logger'
 
 export interface CreateBidRequestPayload {
   apartmentId?: string
@@ -27,7 +28,7 @@ export interface BidRequest {
 
 // Mirrors the check_active_bids trigger: one active bid per tenant across all apartments
 const EXISTING_ACTIVE = `
-  SELECT id FROM public.bid_requests
+  SELECT id FROM safetrust.bid_requests
   WHERE tenant_id = $1
     AND current_status IN ('PENDING', 'VIEWED', 'APPROVED')
     AND deleted_at IS NULL
@@ -35,7 +36,7 @@ const EXISTING_ACTIVE = `
 `
 
 const INSERT_BID = `
-  INSERT INTO public.bid_requests
+  INSERT INTO safetrust.bid_requests
     (apartment_id, tenant_id, proposed_price, desired_move_in, current_status)
   VALUES ($1, $2, $3, $4, 'PENDING')
   RETURNING *
@@ -76,7 +77,7 @@ export const createBidRequestHandler = async (
   req: AuthenticatedRequest & { body: CreateBidRequestPayload },
   res: Response
 ): Promise<Response> => {
-  const { uid } = req.user || {}
+  const uid = req.context?.uid || req.user?.uid
   const apartmentId = req.body?.apartmentId || req.body?.apartment_id
   const proposedPrice = req.body?.proposedPrice || req.body?.proposed_price
   const desiredMoveIn = req.body?.desiredMoveIn || req.body?.desired_move_in
@@ -116,7 +117,7 @@ export const createBidRequestHandler = async (
 
     // bid_status_histories entry is inserted automatically by the record_bid_status trigger
 
-    console.log(`[bid-requests/create] bid created — id: ${bid.id}`)
+    logger.info('bid_requests.create.succeeded', { bidId: bid.id })
     return res.status(201).json({ bid })
   } catch (error) {
     const err = error as Error
@@ -126,7 +127,7 @@ export const createBidRequestHandler = async (
         error: 'Duplicate pending bid',
       })
     }
-    console.error('[bid-requests/create]', err.message)
+    logger.error('bid_requests.create.failed', { error: err })
     return res.status(500).json({ error: 'Failed to create bid request' })
   }
 }

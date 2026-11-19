@@ -1,0 +1,244 @@
+import { hasuraRequest } from './hasura';
+import { AppError, NotFoundError } from '../utils/errors';
+import {
+  logAndCheckWebhookEvent,
+  markWebhookEventProcessed,
+} from '../repositories/webhook-event.repository';
+import { withTransaction } from './db';
+import {
+  getValidPriorStates,
+  StateConflictError,
+} from '../lib/escrow-transitions';
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+/** Result of resolving a contractId to its internal Hasura UUID. */
+export interface EscrowLookupResult {
+  escrowId: string;
+}
+
+// ── Errors ─────────────────────────────────────────────────────────────────────
+
+export class MilestoneValidationError extends AppError {
+  constructor(message: string, statusCode = 400) {
+    super(message, statusCode, { code: 'milestone_validation_error' });
+    this.name = 'MilestoneValidationError';
+  }
+}
+
+export class EscrowNotFoundError extends NotFoundError {
+  constructor(message: string) {
+    super(message, { code: 'escrow_not_found' });
+    this.name = 'EscrowNotFoundError';
+  }
+}
+
+export { StateConflictError };
+
+export class EscrowStateConflictError extends StateConflictError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EscrowStateConflictError';
+  }
+}
+
+export class MilestoneNotFoundError extends NotFoundError {
+  constructor(message: string) {
+    super(message, { code: 'milestone_not_found' });
+    this.name = 'MilestoneNotFoundError';
+  }
+}
+
+// ── Service functions ──────────────────────────────────────────────────────────
+
+/**
+ * Validate the fields required to approve a milestone.
+ * Throws MilestoneValidationError (400) on failure.
+ */
+export function validateApproveMilestonePayload(
+  contractId: unknown,
+  milestoneId: unknown,
+  approver: unknown,
+  flag: unknown
+): void {
+  if (!contractId || !milestoneId || !approver || flag === undefined) {
+    throw new MilestoneValidationError(
+      'Missing required fields: contractId, milestoneId, approver, flag'
+    );
+  }
+
+  if (flag !== true) {
+    throw new MilestoneValidationError('flag must be true to approve a milestone');
+  }
+}
+
+/**
+ * Look up an escrow UUID by its on-chain contractId.
+ * Throws EscrowNotFoundError (404) if no record is found.
+ */
+export async function lookupEscrowByContractId(
+  contractId: string
+): Promise<EscrowLookupResult> {
+  const query = `
+    query GetEscrowId($contractId: String!) {
+      trustless_work_escrows(where: { contractId: { _eq: $contractId } }) {
+        id
+      }
+    }
+  `;
+
+  const data = await hasuraRequest<{
+    trustless_work_escrows?: Array<{ id: string }>;
+  }>(query, { contractId });
+
+  const escrowId = data.trustless_work_escrows?.[0]?.id;
+  if (!escrowId) {
+    throw new EscrowNotFoundError('Escrow not found');
+  }
+
+  return { escrowId };
+}
+
+/**
+ * Approve a milestone, update the escrow status, and mirror the result to
+ * the reservations table in a single PostgreSQL transaction.
+ *
+ * Throws MilestoneNotFoundError (404) if the milestone row does not exist.
+ * Throws EscrowNotFoundError (404) if the escrow does not exist.
+ * Throws EscrowStateConflictError (409) if the escrow exists but is not in
+ * a valid prior state.
+ */
+export async function approveMilestoneAndUpdateReservation(
+  escrowId: string,
+  milestoneId: string,
+  approver: string
+): Promise<void> {
+  const approvedAt = new Date().toISOString();
+
+  // Resolve valid prior states before any DB write via canonical shared module.
+  const validStates: string[] = getValidPriorStates(
+    'milestone_approved',
+    'milestone.approved'
+  );
+
+  const reservationStatus =
+    milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
+
+  return withTransaction(async (client) => {
+    const milestoneResult = await client.query(
+      `
+        SELECT id, status
+        FROM safetrust.escrow_milestones
+        WHERE escrow_id = $1
+          AND milestone_id = $2
+        FOR UPDATE
+      `,
+      [escrowId, milestoneId]
+    );
+
+    if (milestoneResult.rowCount === 0) {
+      throw new MilestoneNotFoundError('Milestone not found');
+    }
+
+    const escrowResult = await client.query(
+      `
+        SELECT id, status
+        FROM safetrust.trustless_work_escrows
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [escrowId]
+    );
+
+    if (escrowResult.rowCount === 0) {
+      throw new EscrowNotFoundError('Escrow not found');
+    }
+
+    const escrowStatus = escrowResult.rows[0].status as string;
+
+    if (
+      escrowStatus === 'milestone_approved' &&
+      milestoneResult.rows[0].status === 'approved'
+    ) {
+      return;
+    }
+
+    if (!validStates.includes(escrowStatus)) {
+      throw new EscrowStateConflictError(
+        'Escrow is not in a valid state for milestone approval'
+      );
+    }
+
+    await client.query(
+      `
+        UPDATE safetrust.escrow_milestones
+        SET
+          status = 'approved',
+          approved_by = $1,
+          approved_at = $2,
+          updated_at = $2
+        WHERE escrow_id = $3
+          AND milestone_id = $4
+      `,
+      [approver, approvedAt, escrowId, milestoneId]
+    );
+
+    const updateEscrowResult = await client.query(
+      `
+        UPDATE safetrust.trustless_work_escrows
+        SET
+          status = 'milestone_approved',
+          updated_at = $1
+        WHERE id = $2
+          AND status = ANY($3)
+      `,
+      [approvedAt, escrowId, validStates]
+    );
+
+    if (updateEscrowResult && updateEscrowResult.rowCount === 0) {
+      throw new EscrowStateConflictError(
+        'Escrow cannot transition to milestone_approved: current status not in valid states'
+      );
+    }
+
+    await client.query(
+      `
+        UPDATE safetrust.reservations
+        SET
+          status = $1,
+          updated_at = $2
+        WHERE escrow_id = $3
+      `,
+      [reservationStatus, approvedAt, escrowId]
+    );
+  });
+}
+
+/**
+ * Processes a milestone approval webhook with idempotency protection.
+ */
+export async function approveMilestone(
+  contractId: string,
+  milestoneId: string,
+  approver: string,
+  rawPayload: Record<string, unknown>
+): Promise<{ isDuplicate: boolean; eventId: string }> {
+  const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
+    contractId,
+    `milestone.approved:${milestoneId}`,
+    rawPayload
+  );
+
+  if (isDuplicate) {
+    await markWebhookEventProcessed(eventId);
+    return { isDuplicate: true, eventId };
+  }
+
+  const service = require('./milestone.service') as typeof import('./milestone.service');
+  const { escrowId } = await service.lookupEscrowByContractId(contractId);
+  await service.approveMilestoneAndUpdateReservation(escrowId, milestoneId, approver);
+
+  await markWebhookEventProcessed(eventId);
+
+  return { isDuplicate: false, eventId };
+}

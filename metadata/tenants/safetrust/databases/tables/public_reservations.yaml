@@ -1,22 +1,7 @@
-# NOTE: custom_name renames all generated GraphQL root fields.
-# Clients must update queries from 'reservations' to 'safetrust_reservations':
-#   reservations              → safetrust_reservations
-#   reservations_by_pk        → safetrust_reservations_by_pk
-#   insert_reservations_one   → insert_safetrust_reservations_one
-#   update_reservations       → update_safetrust_reservations
-#   delete_reservations       → delete_safetrust_reservations
 table:
   name: reservations
-  schema: public
+  schema: safetrust
 configuration:
-  # custom_name renames the GraphQL root fields for this table:
-  #   Query: reservations -> safetrust_reservations
-  #   Query (aggregate): reservations_aggregate -> safetrust_reservations_aggregate
-  #   Query (by PK): reservations_by_pk -> safetrust_reservations_by_pk
-  #   Mutation (insert): insert_reservations -> insert_safetrust_reservations
-  #   Mutation (update): update_reservations -> update_safetrust_reservations
-  #   Mutation (delete): delete_reservations -> delete_safetrust_reservations
-  # Client code querying "reservations" must update queries to use "safetrust_reservations"
   custom_name: safetrust_reservations
   column_config:
     apartment_id:
@@ -49,3 +34,57 @@ object_relationships:
   - name: escrow
     using:
       foreign_key_constraint_on: escrow_id
+select_permissions:
+  - role: guest
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - guest_id
+        - escrow_id
+        - check_in_date
+        - check_out_date
+        - total_amount
+        - asset_code
+        - status
+        - created_at
+        - updated_at
+      filter:
+        guest_id:
+          _eq: X-Hasura-User-Id
+    comment: "Guests can view their own reservations"
+  - role: host
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - guest_id
+        - escrow_id
+        - check_in_date
+        - check_out_date
+        - total_amount
+        - asset_code
+        - status
+        - created_at
+        - updated_at
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+    comment: "Hosts can view reservations for their owned apartments"
+  - role: admin
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - guest_id
+        - escrow_id
+        - check_in_date
+        - check_out_date
+        - total_amount
+        - asset_code
+        - status
+        - created_at
+        - updated_at
+      filter: {}
+    comment: "Admins can view all reservations"

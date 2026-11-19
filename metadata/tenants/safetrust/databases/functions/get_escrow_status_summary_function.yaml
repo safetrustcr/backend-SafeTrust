@@ -1,7 +1,8 @@
 function:
-  schema: public
+  schema: safetrust
   name: get_escrow_status_summary
 configuration:
   exposed_as: query
+permissions:
+  - role: host
 comment: |
-  Aggregated escrow lifecycle counts. Returns SETOF public.escrow_status_summary.

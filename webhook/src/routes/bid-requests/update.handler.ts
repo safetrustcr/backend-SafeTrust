@@ -4,6 +4,7 @@ import { Response } from 'express'
 import { pool } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { BidRequest } from './create.handler'
+import { logger } from '../../middleware/logger'
 
 export interface UpdateBidRequestPayload {
   status?: string
@@ -25,21 +26,21 @@ export const VALID_TRANSITIONS: Record<string, string[]> = {
 
 const GET_BID = `
   SELECT br.*, a.owner_id
-  FROM public.bid_requests br
-  JOIN public.apartments a ON br.apartment_id = a.id
+  FROM safetrust.bid_requests br
+  JOIN safetrust.apartments a ON br.apartment_id = a.id
   WHERE br.id = $1 AND br.deleted_at IS NULL
   FOR UPDATE OF br
 `
 
 const UPDATE_BID = `
-  UPDATE public.bid_requests
+  UPDATE safetrust.bid_requests
   SET current_status = $1, updated_at = NOW()
   WHERE id = $2
   RETURNING *
 `
 
 const INSERT_HISTORY = `
-  INSERT INTO public.bid_status_histories
+  INSERT INTO safetrust.bid_status_histories
     (bid_request_id, status, changed_by)
   VALUES ($1, $2, $3)
 `
@@ -55,7 +56,7 @@ export const updateBidRequestHandler = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<Response> => {
-  const { uid } = req.user || {}
+  const uid = req.context?.uid || req.user?.uid
   const { id } = req.params as { id: string }
   const { status: newStatus } = (req.body || {}) as UpdateBidRequestPayload
 
@@ -68,7 +69,7 @@ export const updateBidRequestHandler = async (
     await client.query('BEGIN')
 
     const userRow = await client.query<{ id: string }>(
-      'SELECT id FROM public.users WHERE id = $1 OR firebase_uid = $1 LIMIT 1',
+      'SELECT id FROM safetrust.users WHERE id = $1 OR firebase_uid = $1 LIMIT 1',
       [uid]
     )
     if (userRow.rows.length === 0) {
@@ -108,7 +109,7 @@ export const updateBidRequestHandler = async (
 
     await client.query('COMMIT')
 
-    console.log(`[bid-requests/update] ✅ ${id} → ${newStatus}`)
+    logger.info('bid_requests.update.succeeded', { bidId: id, status: newStatus })
     return res.status(200).json({ bid: updated.rows[0] })
   } catch (error) {
     const err = error as Error
@@ -116,9 +117,9 @@ export const updateBidRequestHandler = async (
       await client.query('ROLLBACK')
     } catch (rollbackErr) {
       const rErr = rollbackErr as Error
-      console.error('[bid-requests/update] rollback failed', rErr.message)
+      logger.error('bid_requests.update.rollback_failed', { error: rErr })
     }
-    console.error('[bid-requests/update] ❌', err.message)
+    logger.error('bid_requests.update.failed', { error: err })
     return res.status(500).json({ error: 'Failed to update bid request' })
   } finally {
     client.release()

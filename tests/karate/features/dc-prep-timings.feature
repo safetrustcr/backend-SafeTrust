@@ -1,3 +1,4 @@
+@timing
 Feature: start safetrust — phase timing baseline
 
   Background:

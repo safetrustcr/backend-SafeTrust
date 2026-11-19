@@ -1,45 +1,101 @@
 # SafeTrust Architecture Overview
 
-> **Status: Planned — post-Issue-03 behavior.** This document describes the
-> polling-based escrow flow intended by Issue 03. The route implementation in
+> **Status: Planned — post-Issue-03 behavior.** This page documents the
+> polling-based escrow flow planned by Issue 03. The route implementation in
 > this checkout has not yet been migrated to this contract.
 
-SafeTrust uses the frontend and backend to prepare escrow transactions, the
-user's wallet to sign them, and Trustless Work to submit them to Stellar. The
-backend reconciles escrow state from the Trustless Work V1 indexer; it does not
-depend on event delivery from Trustless Work.
+SafeTrust connects a Next.js frontend, an Express backend, Hasura, PostgreSQL,
+and the Stellar blockchain through Trustless Work. Rust crates handle
+security-critical and performance-critical operations via Neon bindings.
 
-## Escrow transaction flow
+## System diagram
+
+```mermaid
+flowchart TD
+    subgraph Client Layer
+        GU([Guest Browser])
+        HO([Host Browser])
+        AI([AI Agent / x402])
+    end
+
+    subgraph SafeTrust Frontend
+        FE[Next.js 14 dApp]
+        FW[Freighter Wallet]
+    end
+
+    subgraph SafeTrust Backend
+        BE[Express API\nNode.js TypeScript]
+        RC[Rust Crates\nNeon Bindings]
+        HG[Hasura GraphQL\nv2.47.0]
+    end
+
+    subgraph Data Layer
+        PG[(PostgreSQL 15\nPostGIS)]
+        ST[safetrust schema]
+        HI[hotel_industry schema]
+    end
+
+    subgraph Stellar Network
+        TW[Trustless Work API]
+        SC[Soroban Smart Contract]
+        USDC[USDC SEP-41]
+    end
+
+    GU --> FE
+    HO --> FE
+    AI -->|X-Payment header| BE
+    FE -->|request unsigned XDR| BE
+    BE -->|build transaction| TW
+    TW -->|unsigned XDR| BE
+    BE -->|unsigned XDR| FE
+    FE -->|sign in wallet| FW
+    FW -->|signed XDR| FE
+    FE -->|/helper/send-transaction| TW
+    TW -->|submit transaction| SC
+    BE --> RC
+    BE --> HG
+    HG --> PG
+    PG --> ST
+    PG --> HI
+    SC --> USDC
+```
+
+## Frontend-managed signing and submission
+
+For each escrow operation, the frontend requests an unsigned XDR from the
+SafeTrust operation route. SafeTrust asks Trustless Work to build the
+operation-specific transaction and returns the unsigned XDR. The connected
+wallet signs it locally, and the frontend submits the signed XDR through
+Trustless Work's `POST /helper/send-transaction`.
+
+SafeTrust does not hold user private keys. A build response or wallet signature
+alone does not mean that an escrow state transition has completed.
 
 ```mermaid
 sequenceDiagram
     participant FE as Frontend
     participant BE as SafeTrust backend
     participant TW as Trustless Work API
-    participant FW as User wallet
+    participant FW as Freighter wallet
     participant ST as Stellar
 
     FE->>BE: POST /api/escrows/{operation}
     BE->>TW: POST operation endpoint (build unsigned XDR)
     TW-->>BE: unsigned XDR
     BE-->>FE: unsigned XDR
-    FE->>FW: Sign unsigned XDR
-    FW-->>FE: Signed XDR
+    FE->>FW: signTransaction(unsigned XDR)
+    FW-->>FE: signed XDR
     FE->>TW: POST /helper/send-transaction
-    TW->>ST: Submit signed transaction
-    ST-->>TW: Transaction result
+    TW->>ST: submit transaction
+    ST-->>TW: transaction result
 ```
 
-The backend's SafeTrust route validates the request and asks Trustless Work to
-build the operation-specific unsigned XDR. The frontend returns that XDR to
-the connected wallet for signing, then submits the signed XDR to
-`POST /helper/send-transaction`. SafeTrust never receives the user's private
-key.
+## Reconciliation and transaction confirmation
 
-## State reconciliation
-
-Trustless Work has no webhooks. SafeTrust learns the resulting escrow state
-from the V1 indexer using the scheduled reconciliation flow:
+Trustless Work has no webhooks. SafeTrust learns the state of client-submitted
+escrow operations through scheduled reconciliation. The Hasura cron trigger
+calls `POST /reconciliation/sync-escrows`; SafeTrust polls the V1 indexer and
+reconciles escrow state from the returned flags and balance.
 
 ```mermaid
 sequenceDiagram
@@ -50,27 +106,22 @@ sequenceDiagram
 
     CR->>BE: POST /reconciliation/sync-escrows
     BE->>TW: GET /helper/get-escrow-by-contract-ids
-    TW-->>BE: Escrow flags, roles, and balance
-    BE->>DB: Reconcile escrow state
+    TW-->>BE: escrow flags, roles, and balance
+    BE->>DB: reconcile escrow state
 ```
 
-The cron route polls tracked contract IDs. Trustless Work's flags and balance
-are used to derive the escrow state and update SafeTrust's local record.
-See [Trustless Work Indexer](../stellar/trustless-work-indexer.md) for request
-parameters, status mapping, and field mapping.
+For transactions SafeTrust itself submits, the backend confirms the transaction
+result before applying the corresponding local state change. The five wallet
+flows documented here submit through Trustless Work from the frontend, so
+SafeTrust learns their results through reconciliation polling. The indexer's
+status and field mapping, including its snapshot-freshness limitation, is
+documented in [Trustless Work Indexer](../stellar/trustless-work-indexer.md).
 
-For transactions that SafeTrust itself submits, SafeTrust confirms the
-transaction result before applying the corresponding local state change. The
-five wallet flows in this documentation are client-signed and submitted via
-Trustless Work, so their resulting escrow state is learned through indexer
-reconciliation.
+## Escrow route map
 
-## Route map
-
-The SafeTrust routes below are the frontend-facing transaction-build routes
-specified for Issue 03. The Trustless Work path is selected according to the
-escrow type; paths shown here are REST paths relative to the configured
-Trustless Work API base URL.
+These are the frontend-facing SafeTrust operation routes for the planned
+Issue-03 flow. Trustless Work endpoint paths are relative to its configured API
+base URL; select the path that matches the escrow type.
 
 | Operation | SafeTrust route | Trustless Work build endpoint |
 |---|---|---|
@@ -80,6 +131,24 @@ Trustless Work API base URL.
 | Dispute | `POST /api/escrows/dispute` | `POST /escrow/single-release/dispute-escrow` or `POST /escrow/multi-release/dispute-milestone` |
 | Resolve | `POST /api/escrows/resolve-dispute` | `POST /escrow/single-release/resolve-dispute` or `POST /escrow/multi-release/resolve-milestone-dispute` |
 
-All five wallet flows submit signed XDR through Trustless Work's
-`POST /helper/send-transaction`. SafeTrust's scheduled reconciliation reads
-updated state through `GET /helper/get-escrow-by-contract-ids`.
+All five operations submit signed XDR with `POST /helper/send-transaction`.
+SafeTrust then uses `GET /helper/get-escrow-by-contract-ids` during
+reconciliation to learn the indexed escrow state.
+
+## Repository structure
+
+```mermaid
+flowchart LR
+    subgraph safetrustcr org
+        BE[backend-SafeTrust\nExpress + Hasura + Rust]
+        FE[frontend-SafeTrust\nNext.js 14 dApp]
+        DA[dApp-SafeTrust\nFreighter integration]
+        LA[landing-SafeTrust\nMarketing site]
+        ZK[safetrust-ZK\nNoir circuits]
+    end
+
+    BE -->|GraphQL API| FE
+    BE -->|GraphQL API| DA
+    DA -->|wallet signing| BE
+    ZK -->|cargo build| BE
+```

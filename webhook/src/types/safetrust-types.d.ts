@@ -25,6 +25,19 @@ declare module '@safetrust/types' {
     wallet_address: string
   }
 
+  export interface WalletDto {
+    address: string
+    chain: ChainType
+    isPrimary: boolean
+    createdAt: string
+  }
+
+  export interface ListWalletsResponse {
+    wallets: WalletDto[]
+    signInWallet: string | null
+  }
+
+
   export interface Apartment {
     id: string
     name: string
@@ -61,6 +74,25 @@ declare module '@safetrust/types' {
     total: number
     page: number
     totalPages: number
+  }
+
+  export type ReportCategory =
+    | 'inaccurate'
+    | 'scam_or_fraud'
+    | 'offensive'
+    | 'safety'
+    | 'duplicate'
+    | 'other'
+
+  export interface CreateListingReportPayload {
+    category: ReportCategory
+    details?: string
+    clientOpId: string
+  }
+
+  export interface ListingReportResponse {
+    id: string
+    status: string
   }
 
   export interface CreateReservationPayload {

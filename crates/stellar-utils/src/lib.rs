@@ -20,7 +20,10 @@ use stellar_strkey::Strkey;
 /// only accepted `G[A-Z2-7]{55}` (a plain `Strkey::from_string(...).is_ok()`
 /// would wrongly accept C…/M… strkeys).
 pub fn is_valid_stellar_address(address: &str) -> bool {
-    matches!(Strkey::from_string(address), Ok(Strkey::PublicKeyEd25519(_)))
+    matches!(
+        Strkey::from_string(address),
+        Ok(Strkey::PublicKeyEd25519(_))
+    )
 }
 
 /// Verify an Ed25519 signature over `message` against the given signer.
@@ -106,7 +109,7 @@ fn verify_stellar_ed25519(mut cx: FunctionContext) -> JsResult<JsBoolean> {
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("validateStellarAddress", validate_stellar_address)?;
-    cx.export_function("verifyStellarEd25519",   verify_stellar_ed25519)?;
+    cx.export_function("verifyStellarEd25519", verify_stellar_ed25519)?;
     Ok(())
 }
 
@@ -121,8 +124,7 @@ mod tests {
     /// sync-wallet tests (see tests/karate/features/auth/sync-wallet.feature).
     /// NOTE: the old "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z"
     /// fixture was fabricated (bad checksum) and is rejected here on purpose.
-    const KNOWN_GOOD_ADDRESS: &str =
-        "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57";
+    const KNOWN_GOOD_ADDRESS: &str = "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57";
 
     /// Deterministic signing key (no RNG needed) built from a fixed seed.
     fn signing_key() -> SigningKey {
@@ -190,7 +192,11 @@ mod tests {
 
         let signature_hex = hex::encode(key.sign(b"original message").to_bytes());
 
-        assert!(!verify_ed25519(b"tampered message", &signature_hex, &address));
+        assert!(!verify_ed25519(
+            b"tampered message",
+            &signature_hex,
+            &address
+        ));
     }
 
     #[test]
@@ -213,7 +219,11 @@ mod tests {
 
         assert!(!verify_ed25519(b"message", "not-hex", &address));
         assert!(!verify_ed25519(b"message", "abcd", &address)); // wrong length
-        assert!(!verify_ed25519(b"message", &valid_sig, "not-a-valid-strkey"));
+        assert!(!verify_ed25519(
+            b"message",
+            &valid_sig,
+            "not-a-valid-strkey"
+        ));
 
         // A contract strkey is not an account — verification must fail.
         let contract = Strkey::Contract(stellar_strkey::Contract([0u8; 32])).to_string();

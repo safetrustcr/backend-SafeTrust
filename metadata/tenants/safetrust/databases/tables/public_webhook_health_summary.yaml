@@ -1,0 +1,13 @@
+table:
+  name: webhook_health_summary
+  schema: safetrust
+select_permissions:
+  - role: admin
+    permission:
+      columns:
+        - pending_count
+        - failed_count
+        - oldest_unprocessed_age_minutes
+        - last_sync_at
+        - sync_lag_seconds
+      filter: {}

@@ -1,11 +1,9 @@
 import { Router } from 'express'
-import { authMiddleware } from '../../middleware/auth.middleware'
 import { createReservationHandler } from './create.handler'
 
-const router = Router()
+const router: Router = Router()
 
-// authMiddleware required — guest must be authenticated to book
-router.post('/', authMiddleware, createReservationHandler)
-router.post('/api/reservations', authMiddleware, createReservationHandler)
+// All routes under /api/reservations are authenticated upstream at the /api boundary
+router.post('/', createReservationHandler)
 
 export default router

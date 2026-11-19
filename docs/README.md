@@ -1,23 +1,70 @@
-# SafeTrust Backend Documentation
+# 📚 SafeTrust Backend Documentation
 
-Documentation for SafeTrust backend architecture and escrow flows.
+Reference documentation for the **SafeTrust** backend — Hasura GraphQL, PostgreSQL, the multi-tenant engine, smart contract escrow lifecycle, and operational tooling.
 
-> **Implementation status:** The escrow flow pages are marked
-> **Planned — post-Issue-03 behavior** because this checkout has not yet
-> migrated its route implementation to polling-based transaction flows.
+For setup and day-to-day commands, start with the [root README](../README.md).
 
-## Architecture
+---
 
+## 📖 Quick Links & Index
+
+### 🏗️ Architecture
 | Document | Description |
 |---|---|
-| [Architecture Overview](architecture/overview.md) | Planned frontend, wallet, Trustless Work, and polling responsibilities for escrow transactions |
+| [Architecture Overview](architecture/overview.md) | System layers, SafeTrust-built unsigned XDR, wallet signing, and indexer reconciliation |
+| [Multi-Tenant Architecture](architecture/multi-tenant.md) | Two-tenant isolation model (`safetrust` and `hotel_industry`), schema routing, and RBAC rules |
+| [Rust Crates in SafeTrust](architecture/rust-crates.md) | High-assurance native extensions via Neon bindings for cryptography and blockchain operations |
+| [Crate Boundaries](architecture/crate-boundaries.md) | Consumers, exports, fallbacks, dispositions, and quarantine gates for all eight Rust crates |
+| [Escrow Claims API](architecture/escrow-claims-api.md) | Request and response contract, error codes, idempotency and rate limit for claims on released escrows |
+| [Reservations API](architecture/reservations-api.md) | Lifecycle, allowed actions computation, read endpoints, and safe cancellation protocol |
+| [Wallet Registry API](architecture/wallets-api.md) | Verified wallet management lifecycle (list, unlink, and atomic set-primary endpoints) |
+| [Hotel Conversation Notifications](architecture/hotel-conversation-notifications.md) | In-process lifecycle notifications, time budget, idempotent conversation creation, and removal of the internal secret |
+| [Error Handling, Logging and CORS](architecture/error-handling-and-logging.md) | Typed `AppError` mapping, sanitized 5xx bodies, structured logs with `requestId`, raw-body capture, and the CORS origin policy |
 
-## Stellar and escrow flows
-
+### 📜 Architecture Decision Records (ADRs)
 | Document | Description |
 |---|---|
-| [Fund Escrow](stellar/fund-escrow.md) | Planned unsigned-XDR, wallet-signing, submission, and polling flow for funding |
-| [Approve Milestone](stellar/approve-milestone.md) | Planned milestone approval route and indexer reconciliation |
-| [Release Funds](stellar/release-funds.md) | Planned release route, Trustless Work transaction endpoint, and polling behavior |
-| [Dispute and Resolve](stellar/dispute-resolve.md) | Planned dispute and resolution transaction flows and reconciliation |
-| [Trustless Work Indexer](stellar/trustless-work-indexer.md) | V1 indexer endpoint, scheduled polling, and local state reconciliation |
+| [ADR-0001: ZK Eligibility Statement and Trust Model](adr/0001-zk-eligibility-statement-and-trust-model.md) | Predicate specification, trust boundaries, feasibility trade-offs, and verification key pinning for escrow admission |
+
+### 🔐 Stellar & Escrow Flows
+| Document | Description |
+|---|---|
+| [Escrow Lifecycle](stellar/escrow-lifecycle.md) | Full TrustlessWork Stellar smart contract escrow state machine and transitions |
+| [Fund Escrow](stellar/fund-escrow.md) | Funding transaction build, wallet signing, Trustless Work submission, and state confirmation |
+| [Approve Milestone](stellar/approve-milestone.md) | Milestone approval transaction build, wallet signing, and result reconciliation |
+| [Release Funds](stellar/release-funds.md) | Release transaction build, wallet signing, and result reconciliation |
+| [Dispute & Resolve](stellar/dispute-resolve.md) | Dispute and resolution transactions, signing roles, and indexer reconciliation |
+| [Escrow State Source](stellar/escrow-state-source.md) | Authoritative state source selection, removal of fabricated reads, and adapter validation |
+| [Trustless Work Indexer Sync](stellar/trustless-work-indexer.md) | How reconciliation reads the Trustless Work V1 indexer: configuration, request, status derivation from flags, field mapping, and the unversioned-snapshot limitation |
+| [x402 Protocol](stellar/x402-protocol.md) | Agentic payments on Stellar using Soroban authorization entries and USDC SEP-41 |
+
+
+### 🐘 Database & Migrations
+| Document | Description |
+|---|---|
+| [SafeTrust Schema Migration Architecture](migrations/safetrust-schema-migration.md) | Comprehensive architecture, Mermaid diagrams, deployment sequence, and rollback procedures for migration `1779300000001_migrate_to_safetrust_schema` |
+
+### 🚀 Infrastructure & Tooling
+| Document | Description |
+|---|---|
+| [bin/start Guide](infra/bin-start.md) | Container startup orchestration, database health checks, and tenant initialization |
+| [bin/deploy_init Guide](infra/deploy-init.md) | Sequential vs. parallel tenant deployment benchmarking protocol |
+
+---
+
+## 🛠️ Related Reading in the Root README
+
+- [🏗️ Metadata Architecture](../README.md#️-metadata-architecture) — how `metadata/base` and `metadata/tenants/*` are merged and deployed
+- [🛠️ Manual Commands](../README.md#️-manual-commands-optional) — per-tenant migration, metadata, and seed commands
+- [Rollback migrations](../README.md#rollback-migrations) — rolling back a tenant's migrations with `hasura migrate apply --type down`
+
+---
+
+## 🤝 Contributing to the Docs
+
+Documentation changes follow the same conventions as code changes — see [CONTRIBUTORS_GUIDELINE.md](../CONTRIBUTORS_GUIDELINE.md) and [GIT_GUIDELINE.md](../GIT_GUIDELINE.md). Use a `docs/` branch prefix and a `docs:` commit type.
+
+Diagrams are written as [Mermaid](https://mermaid.js.org) fenced code blocks so they render on GitHub without a build step. Two house rules keep them portable across GitHub, GitBook, and standalone Mermaid renderers:
+
+- At most **2** `\n` or `<br/>` line breaks per node label
+- No subgraph nested more than **1** level deep

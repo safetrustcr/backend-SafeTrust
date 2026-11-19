@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import type { Apartment, ApartmentListQuery, ApartmentListResponse } from '@safetrust/types'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import db, { query } from '../../services/db'
+import { logger } from '../../middleware/logger'
 
 /**
  * Format apartment entity so decimal columns (price, warranty_deposit) from pg driver are converted to numbers,
@@ -126,7 +127,7 @@ export const listApartments = async (
 
     const countQuery = `
       SELECT COUNT(*) as total
-      FROM public.apartments a
+      FROM safetrust.apartments a
       ${whereString}
     `
     const countResult = await query<{ total: string }>(countQuery, queryParams)
@@ -148,8 +149,8 @@ export const listApartments = async (
         a.category,
         a.created_at,
         u.email as owner_email
-      FROM public.apartments a
-      LEFT JOIN public.users u ON a.owner_id = u.id
+      FROM safetrust.apartments a
+      LEFT JOIN safetrust.users u ON a.owner_id = u.id
       ${whereString}
       ORDER BY ${orderClause}
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
@@ -167,7 +168,7 @@ export const listApartments = async (
     })
   } catch (error) {
     const err = error as Error
-    console.error('[apartments/list] ❌ error:', err.message)
+    logger.error('apartments.list.failed', { error: err })
     return res.status(500).json({ error: 'Database error' })
   }
 }
@@ -177,10 +178,10 @@ export const listApartments = async (
  * Create apartment listing for authenticated owner
  */
 export const createApartment = async (
-  req: Request,
+  req: AuthenticatedRequest,
   res: Response<ApartmentResponse>
 ): Promise<Response<ApartmentResponse>> => {
-  const ownerId = req.user?.uid
+  const ownerId = req.context?.uid || req.user?.uid
   const {
     name,
     location,
@@ -224,7 +225,7 @@ export const createApartment = async (
   }
 
   const insertSql = `
-    INSERT INTO public.apartments (
+    INSERT INTO safetrust.apartments (
       owner_id,
       name,
       description,
@@ -261,7 +262,7 @@ export const createApartment = async (
     return res.status(201).json({ apartment: formatApartment(result.rows[0]) })
   } catch (error) {
     const err = error as Error
-    console.error('[apartments/create] ❌', err.message)
+    logger.error('apartments.create.failed', { error: err })
     return res.status(500).json({ error: 'Failed to create apartment' })
   }
 }
@@ -278,8 +279,8 @@ export const getApartmentById = async (
     const { id } = req.params
     const querySql = `
       SELECT a.*, u.email as owner_email
-      FROM public.apartments a
-      LEFT JOIN public.users u ON a.owner_id = u.id
+      FROM safetrust.apartments a
+      LEFT JOIN safetrust.users u ON a.owner_id = u.id
       WHERE a.id = $1
     `
     const result = await query<Apartment & { owner_email: string }>(querySql, [id])
@@ -291,7 +292,7 @@ export const getApartmentById = async (
     return res.status(200).json({ apartment: formatApartment(result.rows[0]) })
   } catch (error) {
     const err = error as Error
-    console.error('[apartments/get] ❌', err.message)
+    logger.error('apartments.get.failed', { error: err })
     return res.status(500).json({ error: 'Database error' })
   }
 }

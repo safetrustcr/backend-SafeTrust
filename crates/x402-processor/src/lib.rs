@@ -13,6 +13,15 @@ static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
         .expect("Failed to initialize x402 tokio runtime")
 });
 
+/// Settlement is disabled unless the operator opts in. `X402_ENABLED` gates
+/// whether the eligibility path may call this crate at all; this second flag
+/// gates the unsafe, fire-and-forget `/settle` call.
+fn settlement_enabled() -> bool {
+    std::env::var("X402_SETTLE_ENABLED")
+        .map(|value| value == "true")
+        .unwrap_or(false)
+}
+
 /// Validate an X-Payment header against the required amount.
 /// Calls the facilitator /verify endpoint.
 /// Returns JSON X402ValidationResult.
@@ -33,8 +42,12 @@ fn validate_x402_payment(mut cx: FunctionContext) -> JsResult<JsString> {
             Ok(payment) => {
                 match facilitator::verify_with_facilitator(&payment, required_amount).await {
                     Ok(result) => {
-                        // Fire-and-forget settle if valid
-                        if result.is_valid {
+                        // Settlement is a separate, default-off step. `/verify`
+                        // confirms the payment authorization; it does not move
+                        // funds. The current settle task has no durable retry or
+                        // idempotency record (findings F2/F3/F8), so it must not
+                        // run unless an operator explicitly opts in.
+                        if result.is_valid && settlement_enabled() {
                             let p = payment.clone();
                             let f = if payment.facilitator_url.is_empty() {
                                 if payment.network.contains("mainnet") {
@@ -79,12 +92,8 @@ fn build_payment_requirement(mut cx: FunctionContext) -> JsResult<JsString> {
     let facilitator_url = cx.argument::<JsString>(2)?.value(&mut cx);
     let pay_to = cx.argument::<JsString>(3)?.value(&mut cx);
 
-    let requirement = parser::build_payment_requirement(
-        amount_usdc,
-        &network,
-        &facilitator_url,
-        &pay_to,
-    );
+    let requirement =
+        parser::build_payment_requirement(amount_usdc, &network, &facilitator_url, &pay_to);
 
     let json = match serde_json::to_string(&requirement) {
         Ok(j) => j,
@@ -169,8 +178,12 @@ mod tests {
     fn facilitator_allowlist_checks() {
         use super::facilitator::*;
         assert!(is_allowed_facilitator("https://x402.org/facilitator"));
-        assert!(is_allowed_facilitator("https://channels.openzeppelin.com/x402/testnet"));
-        assert!(is_allowed_facilitator("https://channels.openzeppelin.com/x402"));
+        assert!(is_allowed_facilitator(
+            "https://channels.openzeppelin.com/x402/testnet"
+        ));
+        assert!(is_allowed_facilitator(
+            "https://channels.openzeppelin.com/x402"
+        ));
         assert!(!is_allowed_facilitator("https://attacker.evil/facilitator"));
         assert!(!is_allowed_facilitator("http://insecure.site"));
     }
