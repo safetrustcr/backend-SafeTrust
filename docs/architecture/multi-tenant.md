@@ -50,16 +50,31 @@ volume, so development volumes need `bin/start --reset safetrust hotel_industry`
 
 ### Moving an existing deployment
 
-Existing data lives in the `postgres` database. Create the databases, then copy
-each schema across:
+Existing data lives in the `postgres` database. Stop every service that writes
+to it (webhook, Hasura, any clients) before you start, and keep them stopped
+until the new databases are verified: a write made after a dump is not copied,
+and dropping the old schema would lose it.
+
+Create the databases with their extensions, then copy each schema across.
+`psql` is run with `ON_ERROR_STOP=1` so a failed restore does not go unnoticed:
 
 ```bash
 createdb -U postgres safetrust && createdb -U postgres hotel_industry
-pg_dump -U postgres -n safetrust postgres | psql -U postgres -d safetrust
-pg_dump -U postgres -n hotel_industry postgres | psql -U postgres -d hotel_industry
+for db in safetrust hotel_industry; do
+  psql -U postgres -d "$db" -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS postgis;'
+  pg_dump -U postgres -n "$db" postgres | psql -U postgres -v ON_ERROR_STOP=1 -d "$db"
+done
 ```
 
-Then set the new env vars and restart. Drop the old schemas from `postgres`
+Hasura tracks applied migrations in its catalog state, which also lives in the
+`postgres` database. Because the schemas are copied rather than re-created,
+mark the existing migrations as applied so they are not replayed:
+`hasura migrate apply --skip-execution --database-name <tenant> --version <version>`
+for each version, or `hasura migrate status --database-name <tenant>` to check.
+
+Then set the new env vars and restart. `bin/start` and `bin/deploy_init` register each source with
+`replace_configuration: true`, so sources in existing Hasura metadata are repointed from
+`PG_DATABASE_URL` to the tenant URLs. Drop the old schemas from `postgres`
 once verified.
 
 ---

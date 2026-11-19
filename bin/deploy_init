@@ -100,6 +100,7 @@ for TENANT in "${TENANTS[@]}"; do
       \"type\": \"pg_add_source\",
       \"args\": {
         \"name\": \"${TENANT}\",
+        \"replace_configuration\": true,
         \"configuration\": {
           \"connection_info\": {
             \"database_url\": {\"from_env\": \"${TENANT_ENV}_DATABASE_URL\"},
