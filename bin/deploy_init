@@ -92,6 +92,7 @@ echo "🔌 Registering database sources..."
 SOURCE_START=$SECONDS
 
 for TENANT in "${TENANTS[@]}"; do
+  TENANT_ENV=$(printf '%s' "$TENANT" | tr '[:lower:]-' '[:upper:]_')
   curl -sf -X POST "${HASURA_ENDPOINT}/v1/metadata" \
     -H "X-Hasura-Admin-Secret: $HASURA_ADMIN_SECRET" \
     -H "Content-Type: application/json" \
@@ -99,9 +100,10 @@ for TENANT in "${TENANTS[@]}"; do
       \"type\": \"pg_add_source\",
       \"args\": {
         \"name\": \"${TENANT}\",
+        \"replace_configuration\": true,
         \"configuration\": {
           \"connection_info\": {
-            \"database_url\": {\"from_env\": \"PG_DATABASE_URL\"},
+            \"database_url\": {\"from_env\": \"${TENANT_ENV}_DATABASE_URL\"},
             \"isolation_level\": \"read-committed\",
             \"use_prepared_statements\": false
           }
@@ -127,7 +129,7 @@ apply_migration_for_tenant() {
   if [[ "$USE_INIT_SQL" == "true" ]] && [[ -f "$INIT_SQL" ]]; then
     echo " ⚡ [$TENANT] init.sql fast-path (1 psql transaction)"
     docker exec -i backend-safetrust-postgres-1 \
-      psql -U postgres -d postgres \
+      psql -U postgres -d "$TENANT" \
       -v ON_ERROR_STOP=1 \
       < "$INIT_SQL"
     echo " ✅ [$TENANT] init.sql applied ($((SECONDS - T_START))s)"
@@ -256,7 +258,7 @@ apply_seeds_for_tenant() {
     # Wrap entire seed file in one BEGIN/COMMIT — atomic per file
     # ON CONFLICT DO NOTHING required in seed files for idempotency
     docker exec -i backend-safetrust-postgres-1 \
-      psql -U postgres -d postgres \
+      psql -U postgres -d "$TENANT" \
       -v ON_ERROR_STOP=1 << EOF
 BEGIN;
 $(cat "$seed_file")

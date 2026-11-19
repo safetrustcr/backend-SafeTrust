@@ -99,7 +99,7 @@ jq '{status, failed_phase, total_ms, tenants: (.tenants | map_values(.total_ms))
   and the last 20 `graphql-engine` log lines are printed. Check
   `docker compose logs graphql-engine`.
 - **Failed to register source**: the error from Hasura is printed. Usually a
-  wrong `HASURA_ADMIN_SECRET` or an unreachable `PG_DATABASE_URL`.
+  wrong `HASURA_ADMIN_SECRET` or an unreachable `SAFETRUST_DATABASE_URL or HOTEL_INDUSTRY_DATABASE_URL`.
 - **Metadata deployment failed**: the tail of `<tenant>-metadata.log` is
   printed; Hasura's error names the table, role and column at fault.
 - **Seed errors**: the summary shows `failed in seeds` for the tenant; the full
