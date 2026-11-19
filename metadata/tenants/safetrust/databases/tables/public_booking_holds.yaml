@@ -1,0 +1,42 @@
+table:
+  name: booking_holds
+  schema: safetrust
+select_permissions:
+  - role: guest
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - check_in
+        - check_out
+        - guests
+        - status
+        - quote_total
+        - quote_deposit
+        - asset_code
+        - expires_at
+        - created_at
+      filter:
+        user_id:
+          _eq: X-Hasura-User-Id
+    comment: "Users can read their own holds. Read-only: holds are written only by the webhook service."
+  - role: admin
+    permission:
+      columns:
+        - id
+        - tenant_id
+        - apartment_id
+        - user_id
+        - check_in
+        - check_out
+        - guests
+        - status
+        - quote_total
+        - quote_deposit
+        - asset_code
+        - payer_address
+        - expires_at
+        - created_at
+        - updated_at
+      filter: {}
+    comment: "Admins can read all holds"
