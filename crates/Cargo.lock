@@ -1412,7 +1412,6 @@ version = "0.1.0"
 dependencies = [
  "soroban-reconciler",
  "x402-processor",
- "zk-verifier",
 ]
 
 [[package]]
@@ -2394,16 +2393,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
-]
-
-[[package]]
-name = "zk-verifier"
-version = "0.1.0"
-dependencies = [
- "barretenberg-rs",
- "hex",
- "neon 1.1.1",
- "serde_json",
 ]
 
 [[package]]
