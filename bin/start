@@ -284,6 +284,9 @@ wait_for_hasura() {
   echo ""
 }
 
+# Hasura env var holding a tenant's own database URL: safetrust -> SAFETRUST, hotel_industry -> HOTEL_INDUSTRY.
+tenant_env_name() { printf '%s' "$1" | tr '[:lower:]-' '[:upper:]_'; }
+
 # pg_add_source is idempotent: an existing source is reported, any other
 # error (wrong admin secret, bad connection info) fails the run.
 register_sources() {
@@ -292,13 +295,14 @@ register_sources() {
   local tenant payload response code
   for tenant in "${TENANTS[@]}"; do
     echo "   ▶ Registering source: $tenant"
-    payload=$(jq -cn --arg name "$tenant" '{
+    env_var="$(tenant_env_name "$tenant")_DATABASE_URL"
+    payload=$(jq -cn --arg name "$tenant" --arg env_var "$env_var" '{
       type: "pg_add_source",
       args: {
         name: $name,
         configuration: {
           connection_info: {
-            database_url: { from_env: "PG_DATABASE_URL" },
+            database_url: { from_env: $env_var },
             isolation_level: "read-committed",
             use_prepared_statements: false
           }

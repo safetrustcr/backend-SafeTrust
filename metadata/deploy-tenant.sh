@@ -63,6 +63,8 @@ EOL
 
     # Robust source existence check: list configured sources and test membership
     # with jq, instead of matching the string "error" in a response body.
+    local tenant_env_var
+    tenant_env_var="$(printf '%s' "$tenant_name" | tr '[:lower:]-' '[:upper:]_')_DATABASE_URL"
     echo "Checking if source ${tenant_name} already exists..." >&2
     local sources_resp
     sources_resp=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
@@ -88,7 +90,7 @@ EOL
                     \"name\": \"${tenant_name}\",
                     \"configuration\": {
                         \"connection_info\": {
-                            \"database_url\": {\"from_env\": \"PG_DATABASE_URL\"},
+                            \"database_url\": {\"from_env\": \"${tenant_env_var}\"},
                             \"isolation_level\": \"read-committed\",
                             \"use_prepared_statements\": false
                         }
