@@ -36,7 +36,7 @@ export function buildConnectionString(): string {
   const enc = encodeURIComponent
   const host = process.env.POSTGRES_HOST ?? 'localhost'
   const port = process.env.POSTGRES_PORT ?? '5432'
-  const database = process.env.POSTGRES_DB ?? 'postgres'
+  const database = process.env.POSTGRES_SAFETRUST_DB ?? process.env.POSTGRES_DB ?? 'safetrust'
   return `postgresql://${enc(user)}:${enc(password)}@${host}:${port}/${database}`
 }
 

@@ -14,7 +14,8 @@ for ((attempt=0; ; attempt++)); do
   sleep 2
 done
 for tenant in safetrust hotel_industry; do
-  payload=$(jq -cn --arg name "$tenant" '{type:"pg_add_source",args:{name:$name,replace_configuration:true,configuration:{connection_info:{database_url:{from_env:"PG_DATABASE_URL"},isolation_level:"read-committed"}}}}')
+  env_var="$(printf '%s' "$tenant" | tr '[:lower:]-' '[:upper:]_')_DATABASE_URL"
+  payload=$(jq -cn --arg name "$tenant" --arg env_var "$env_var" '{type:"pg_add_source",args:{name:$name,replace_configuration:true,configuration:{connection_info:{database_url:{from_env:$env_var},isolation_level:"read-committed"}}}}')
   curl -fsS -X POST "$ENDPOINT/v1/metadata" \
     -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
     -H 'Content-Type: application/json' -d "$payload" >/dev/null

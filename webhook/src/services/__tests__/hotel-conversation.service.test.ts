@@ -3,12 +3,12 @@ import {
   insertHotelMessage,
   upsertHotelConversation,
 } from '../../repositories/hotel-conversation.repository'
-import { withTransaction } from '../db'
+import { withHotelTransaction } from '../db'
 
 const mockClient = { query: jest.fn() }
 
 jest.mock('../db', () => ({
-  withTransaction: jest.fn(async (fn: (client: unknown) => Promise<unknown>) => fn(mockClient)),
+  withHotelTransaction: jest.fn(async (fn: (client: unknown) => Promise<unknown>) => fn(mockClient)),
 }))
 
 jest.mock('../../repositories/hotel-conversation.repository', () => ({
@@ -24,7 +24,7 @@ jest.mock('../hasura', () => ({
 
 const mockedUpsert = upsertHotelConversation as jest.MockedFunction<typeof upsertHotelConversation>
 const mockedInsert = insertHotelMessage as jest.MockedFunction<typeof insertHotelMessage>
-const mockedWithTransaction = withTransaction as jest.MockedFunction<typeof withTransaction>
+const mockedWithTransaction = withHotelTransaction as jest.MockedFunction<typeof withHotelTransaction>
 
 const input = {
   reservationId: 'res-1',

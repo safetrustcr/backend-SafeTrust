@@ -1,6 +1,6 @@
 'use strict'
 
-import { withTransaction } from './db'
+import { withHotelTransaction } from './db'
 import {
   HotelMessage,
   insertHotelMessage,
@@ -34,7 +34,7 @@ export interface SendHotelMessageInput {
 export async function sendHotelConversationMessage(
   input: SendHotelMessageInput
 ): Promise<{ conversationId: string; message: HotelMessage }> {
-  return withTransaction(async (client) => {
+  return withHotelTransaction(async (client) => {
     const conversationId = await upsertHotelConversation(client, {
       reservationId:       input.reservationId,
       hostId:              input.hostId,

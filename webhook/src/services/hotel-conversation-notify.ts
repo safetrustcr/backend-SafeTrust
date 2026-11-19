@@ -1,6 +1,6 @@
 'use strict'
 
-import { query } from './db'
+import { hotelQuery } from './db'
 import { sendHotelConversationMessage } from './hotel-conversation.service'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -47,7 +47,11 @@ class NotificationTimeoutError extends Error {
 export async function resolveHotelEscrowParties(
   contractId: string
 ): Promise<HotelEscrowParties | null> {
-  const result = await query<{
+  // Hotel escrows are rows of hotel_industry.escrow_transactions (they carry
+  // reservation_id; safetrust.escrow_transactions has no such column), so the
+  // whole lookup stays inside the hotel_industry database. A contract id that
+  // only exists in safetrust is not a hotel escrow and resolves to null.
+  const result = await hotelQuery<{
     reservation_id:        string
     escrow_transaction_id: string
     apartment_id:          string
@@ -60,7 +64,7 @@ export async function resolveHotelEscrowParties(
        r.apartment_id,
        host_u.id       AS host_id,
        guest_u.id      AS guest_id
-     FROM safetrust.escrow_transactions et
+     FROM hotel_industry.escrow_transactions et
      JOIN hotel_industry.reservations res
        ON et.reservation_id = res.id
      JOIN hotel_industry.rooms r

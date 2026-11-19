@@ -20,7 +20,7 @@ function fn() {
             if (typeof sql !== 'string')
                 sql = new java.lang.String(sql).toString();
             var DriverManager = Java.type('java.sql.DriverManager');
-            var conn = DriverManager.getConnection('jdbc:postgresql://postgres_test:5432/postgres', 'postgres', 'postgrespassword');
+            var conn = DriverManager.getConnection('jdbc:postgresql://postgres_test:5432/safetrust', 'postgres', 'postgrespassword');
             var stmt = conn.createStatement();
             var rs = stmt.executeQuery(sql);
             var meta = rs.getMetaData();
@@ -43,7 +43,7 @@ function fn() {
             if (typeof sql !== 'string')
                 sql = new java.lang.String(sql).toString();
             var DriverManager = Java.type('java.sql.DriverManager');
-            var conn = DriverManager.getConnection('jdbc:postgresql://postgres_test:5432/postgres', 'postgres', 'postgrespassword');
+            var conn = DriverManager.getConnection('jdbc:postgresql://postgres_test:5432/safetrust', 'postgres', 'postgrespassword');
             var stmt = conn.createStatement();
             stmt.execute(sql);
             stmt.close();

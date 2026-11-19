@@ -33,8 +33,34 @@ a `SELECT * FROM reservations` executed in the `safetrust` search path never
 touches `hotel_industry.reservations`. Row-level security policies in Hasura
 reinforce this via the `X-Hasura-Tenant-Id` claim on every JWT.
 
-Both sources point to the same `PG_DATABASE_URL`. There is no second database
-to operate or back up.
+Each tenant has its own PostgreSQL database on the same instance: `safetrust`
+and `hotel_industry`. Hasura sources read `SAFETRUST_DATABASE_URL` and
+`HOTEL_INDUSTRY_DATABASE_URL`; the webhook has one pool per tenant
+(`POSTGRES_SAFETRUST_DB` / `POSTGRES_HOTEL_INDUSTRY_DB`). The Hasura metadata
+stays in the default `postgres` database because it is shared by both sources.
+No SQL statement may name both schemas, since PostgreSQL cannot join across
+databases.
+
+### How the databases are created
+
+`docker/postgres-init/01-create-tenant-databases.sh` is mounted at
+`/docker-entrypoint-initdb.d` and creates both databases and their extensions
+(`uuid-ossp`, `postgis`) before any migration runs. It runs only on an empty
+volume, so development volumes need `bin/start --reset safetrust hotel_industry`.
+
+### Moving an existing deployment
+
+Existing data lives in the `postgres` database. Create the databases, then copy
+each schema across:
+
+```bash
+createdb -U postgres safetrust && createdb -U postgres hotel_industry
+pg_dump -U postgres -n safetrust postgres | psql -U postgres -d safetrust
+pg_dump -U postgres -n hotel_industry postgres | psql -U postgres -d hotel_industry
+```
+
+Then set the new env vars and restart. Drop the old schemas from `postgres`
+once verified.
 
 ---
 
@@ -148,7 +174,7 @@ flowchart LR
 |---|---|
 | Start containers | `docker compose up -d --build` starts `postgres`, `graphql-engine`, and `webhook` |
 | Health check | Polls `GET /healthz` up to 3 minutes before continuing |
-| Register sources | `pg_add_source` is called twice — once per tenant — both pointing at `PG_DATABASE_URL` |
+| Register sources | `pg_add_source` is called twice — once per tenant — each with its own `<TENANT>_DATABASE_URL` |
 | Apply migrations | `hasura migrate apply --database-name <tenant>` runs versioned SQL for each schema |
 | Deploy metadata | `metadata/setup-tenant.sh <tenant>` merges tenant YAML with base config and applies it to Hasura |
 | Apply seeds | Seed SQL files run inside PostgreSQL transactions; both tenants run concurrently |
