@@ -75,13 +75,15 @@ members and copies only their runtime artifacts. `crates/**/*.node` and
 
 - **`stellar-utils`** — retained. It is the authoritative wallet-address check
   used during auth; the JS regex is a degraded fallback only.
-- **`escrow-state-machine`** — retained. It prevents handlers from requesting
-  an XDR for an illegal prior state and is shared by every escrow callback.
-  `disputed → cancelled` was added so the local table matches the database
-  `valid_escrow_status` constraint.
-- **`webhook-verifier`** — retained. It is the authentication boundary for all
-  Trustless Work callbacks. The native and Node paths now hash the same raw
-  bytes and return `false` on every comparison error (see §5).
+- **`escrow-state-machine`** — retained. It prevents illegal prior-state
+  transitions in the reconciliation lifecycle service and is shared by the
+  remaining escrow services. `disputed → cancelled` was added so the local
+  table matches the database `valid_escrow_status` constraint.
+- **`webhook-verifier`** — retained but retired from runtime use. The callback
+  routes and their HMAC middleware were removed after polling became
+  authoritative; the native and Node paths remain for tests and rollback. Both
+  paths hash the same raw bytes and return `false` on every comparison error
+  (see §5).
 - **`chunk-processor`** — retained. It is an opt-in performance path with
   bounded concurrency and per-chunk timeouts; the sequential loop remains the
   default and the fallback.
@@ -155,8 +157,8 @@ flowchart TD
     E -->|Yes| G[accepted]
 ```
 
-The middleware builds the canonical payload as
-`Buffer.concat([timestamp, ".", req.rawBody])`, so the digest covers the exact
+The removed callback middleware built the canonical payload as
+`Buffer.concat([timestamp, ".", req.rawBody])`, so the digest covered the exact
 request bytes. The native addon accepts a `Buffer`/`Uint8Array` (raw bytes) or a
 string (UTF-8 encoded once); the Node fallback normalizes the same union to a
 `Buffer`. This removes the previous mismatch where one path could hash a
@@ -196,16 +198,16 @@ flowchart LR
   `x402-processor` module or its native addon.
 - With x402 disabled, a request carrying `X-Payment`,
   `X-Payment-Protocol`, or `X-Payment-Required` is **not** evaluated by x402;
-  it must pass the Trustless Work HMAC check like any other callback.
+  the initialize entrypoint follows its normal request path.
 - The middleware itself also fails closed with `503` if it is invoked while the
   flag is off, so a future route cannot accidentally mount it.
 - `X402_SETTLE_ENABLED=false` is the default. A successful facilitator
   `/verify` does not trigger `/settle`. The current settlement task has no
   durable retry, idempotency record, or reconciliation, so it must not run in
   production until F2/F3/F8 are closed.
-- The eligibility authority remains the HMAC-verified Trustless Work callback
-  and the `zk-verifier` proof check. `escrow.service.ts` does not import
-  `x402-processor`.
+- The eligibility authority remains the `zk-verifier` proof check and local
+  escrow validation; reconciliation is authoritative for externally confirmed
+  lifecycle state. `escrow.service.ts` does not import `x402-processor`.
 
 The x402 Karate suite runs with `X402_ENABLED=true` in the isolated test
 compose file to exercise the payment gate; settlement stays disabled.

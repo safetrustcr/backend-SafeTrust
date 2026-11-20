@@ -71,6 +71,13 @@ export class EscrowStateConflictError extends ConflictError {
   }
 }
 
+export class EscrowStaleObservationError extends EscrowStateConflictError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EscrowStaleObservationError';
+  }
+}
+
 
 export class EscrowValidationError extends AppError {
   constructor(message: string, statusCode = 400) {
@@ -97,6 +104,15 @@ function normalizeU64(value: unknown): string | null {
   const parsed = BigInt(value);
   if (parsed > U64_MAX) return null;
   return parsed.toString();
+}
+
+function toLedgerSeq(value: unknown): bigint | null {
+  if (value === null || value === undefined || value === '') return null;
+  try {
+    return BigInt(value as string | number | bigint);
+  } catch {
+    return null;
+  }
 }
 
 // ── Service functions ──────────────────────────────────────────────────────────
@@ -438,6 +454,7 @@ export interface EscrowLifecycleParams {
   amount?: number;
   validPriorStates?: string[];
   tenantId?: string;
+  observedLedgerSeq?: string | number | bigint | null;
 }
 
 export interface EscrowLifecycleResult {
@@ -462,6 +479,7 @@ export async function executeEscrowLifecycleTransition(
     amount,
     validPriorStates,
     tenantId = getPlatformTenantId(),
+    observedLedgerSeq,
   } = params;
   const eventIdentity = getWebhookEventIdentity(
     contractId,
@@ -510,8 +528,13 @@ export async function executeEscrowLifecycleTransition(
     const eventId = insertedEvent.rows[0].id;
 
     // 4 — Lock the escrow row and check current status
-    const escrowResult = await client.query<{ id: string; status: string; balance?: number }>(
-      `SELECT id, status, balance
+    const escrowResult = await client.query<{
+      id: string;
+      status: string;
+      balance?: number;
+      ledger_seq?: string | null;
+    }>(
+      `SELECT id, status, balance, ledger_seq::text AS ledger_seq
        FROM safetrust.trustless_work_escrows
        WHERE contract_id = $1
        FOR UPDATE`,
@@ -541,6 +564,14 @@ export async function executeEscrowLifecycleTransition(
         eventId,
         escrowId,
       };
+    }
+
+    const observedSeq = toLedgerSeq(observedLedgerSeq);
+    const storedSeq = toLedgerSeq(escrow.ledger_seq);
+    if (observedSeq !== null && storedSeq !== null && observedSeq <= storedSeq) {
+      throw new EscrowStaleObservationError(
+        `Observation at ledger ${observedSeq} is not newer than stored ledger ${storedSeq}`
+      );
     }
 
     // 6 — Prior-state guard: verify current state is legal for this transition

@@ -30,7 +30,7 @@ import { hasuraRequest } from './hasura'
 import { isRustBulkUpsertEnabled } from '../lib/native-adapters/rust-upsert.adapter'
 import { processPendingConfirmationRetries } from './confirmation.service'
 import type { ProcessRetriesSummary } from './confirmation.service'
-import { canTransitionStatus } from '../lib/escrow-freshness'
+import { CANONICAL_TRANSITIONS, canTransitionStatus } from '../lib/escrow-freshness'
 import { executeEscrowLifecycleTransition } from './escrow.service'
 import type { EscrowLifecycleParams } from './escrow.service'
 import { notifyHotelEscrowConversation } from './hotel-conversation-notify'
@@ -69,6 +69,7 @@ export interface ReconciliationTransition {
   reservationStatus: string
   amount?: number
   notification?: { eventType: string; body: string }
+  observedLedgerSeq?: string | null
 }
 
 interface ReconciliationTransitionSpec {
@@ -118,6 +119,32 @@ function transitionAmount(targetStatus: string, record: EscrowRecord): number | 
   return undefined
 }
 
+function observedLedgerSeq(record: EscrowRecord): string | null {
+  const seq = record.ledgerSeq ?? record.ledger_seq
+  if (seq === undefined || seq === null) return null
+  return typeof seq === 'bigint' ? seq.toString() : String(seq)
+}
+
+function buildLifecyclePath(from: string, to: string): string[] {
+  if (from === to) return []
+  const queue: string[][] = [[from]]
+  const visited = new Set([from])
+
+  while (queue.length > 0) {
+    const path = queue.shift()!
+    const current = path[path.length - 1]
+    for (const next of CANONICAL_TRANSITIONS[current] ?? []) {
+      if (!canTransitionStatus(current, next)) continue
+      if (next === to) return [...path.slice(1), next]
+      if (!LIFECYCLE_TRANSITION_SPECS[next] || visited.has(next)) continue
+      visited.add(next)
+      queue.push([...path, next])
+    }
+  }
+
+  return []
+}
+
 export function detectReconciliationTransitions(
   localStates: Array<{ contract_id: string; status?: string }>,
   observedEscrows: EscrowRecord[]
@@ -132,23 +159,26 @@ export function detectReconciliationTransitions(
   for (const record of observedEscrows) {
     const observedStatus = record.status
     if (!record.contractId || !observedStatus) continue
-
-    const spec = LIFECYCLE_TRANSITION_SPECS[observedStatus]
-    if (!spec) continue
+    if (!LIFECYCLE_TRANSITION_SPECS[observedStatus]) continue
 
     const localStatus = statusByContract.get(record.contractId)
     if (!localStatus || localStatus === observedStatus) continue
-    if (!canTransitionStatus(localStatus, observedStatus)) continue
 
-    transitions.push({
-      contractId: record.contractId,
-      observedStatus,
-      eventType: spec.eventType,
-      targetStatus: spec.targetStatus,
-      reservationStatus: spec.reservationStatus,
-      amount: transitionAmount(observedStatus, record),
-      notification: spec.notification,
-    })
+    const path = buildLifecyclePath(localStatus, observedStatus)
+    const seq = observedLedgerSeq(record)
+    for (const targetStatus of path) {
+      const spec = LIFECYCLE_TRANSITION_SPECS[targetStatus]
+      transitions.push({
+        contractId: record.contractId,
+        observedStatus,
+        eventType: spec.eventType,
+        targetStatus: spec.targetStatus,
+        reservationStatus: spec.reservationStatus,
+        amount: transitionAmount(targetStatus, record),
+        notification: spec.notification,
+        observedLedgerSeq: seq,
+      })
+    }
   }
 
   return transitions
@@ -161,6 +191,8 @@ export interface ApplyReconciliationTransitionsOptions {
     escrowId?: string
   }>
   notify?: typeof notifyHotelEscrowConversation
+  tenantId?: string
+  onFailed?: (contractId: string, error: unknown) => void
 }
 
 export async function applyReconciliationTransitions(
@@ -176,6 +208,7 @@ export async function applyReconciliationTransitions(
   }
   const execute = options.executeTransition ?? executeEscrowLifecycleTransition
   const notify = options.notify ?? notifyHotelEscrowConversation
+  const tenantId = options.tenantId ?? 'safetrust'
 
   for (const transition of transitions) {
     try {
@@ -185,6 +218,8 @@ export async function applyReconciliationTransitions(
         targetStatus: transition.targetStatus,
         reservationStatus: transition.reservationStatus,
         amount: transition.amount,
+        tenantId,
+        observedLedgerSeq: transition.observedLedgerSeq,
         rawPayload: {
           contractId: transition.contractId,
           status: transition.targetStatus,
@@ -223,6 +258,7 @@ export async function applyReconciliationTransitions(
       const message = (error as Error).message ?? String(error)
       summary.failed++
       summary.errors.push(`${transition.contractId}: ${message}`)
+      options.onFailed?.(transition.contractId, error)
       logger.warn('reconciliation.transition_failed', {
         contractId: transition.contractId,
         status: transition.targetStatus,
@@ -250,26 +286,47 @@ function mergeTransitionSummaries(
   target.errors.push(...source.errors)
 }
 
+interface ObservedStateChangeResult {
+  summary: ReconciliationTransitionSummary
+  failedContractIds: string[]
+}
+
 async function applyObservedStateChanges(
-  observedEscrows: EscrowRecord[]
-): Promise<ReconciliationTransitionSummary> {
-  if (observedEscrows.length === 0) return emptyTransitionSummary()
+  observedEscrows: EscrowRecord[],
+  options: ReconcileChunkOptions = {}
+): Promise<ObservedStateChangeResult> {
+  if (observedEscrows.length === 0) {
+    return { summary: emptyTransitionSummary(), failedContractIds: [] }
+  }
+
+  const tenantId = options.tenantId ?? 'safetrust'
   try {
     const localStates = await fetchEscrowTransitionStates(
-      observedEscrows.map((record) => record.contractId)
+      observedEscrows.map((record) => record.contractId),
+      tenantId
     )
-    return await applyReconciliationTransitions(
-      detectReconciliationTransitions(localStates, observedEscrows)
+    const failedContractIds = new Set<string>()
+    const summary = await applyReconciliationTransitions(
+      detectReconciliationTransitions(localStates, observedEscrows),
+      {
+        tenantId,
+        onFailed: (contractId) => failedContractIds.add(contractId),
+      }
     )
+    return { summary, failedContractIds: [...failedContractIds] }
   } catch (error) {
     const message = (error as Error).message ?? String(error)
     logger.warn('reconciliation.transition_detection_failed', { error: message })
-    return { ...emptyTransitionSummary(), failed: 1, errors: [message] }
+    return {
+      summary: { ...emptyTransitionSummary(), failed: 1, errors: [message] },
+      failedContractIds: observedEscrows.map((record) => record.contractId),
+    }
   }
 }
 
 export interface ReconcileChunkOptions {
   applyTransitions?: boolean
+  tenantId?: string
 }
 
 /**
@@ -288,13 +345,24 @@ async function writeIndexerEscrows(
     })
   }
 
-  const transitions = options.applyTransitions
-    ? await applyObservedStateChanges(escrows)
-    : undefined
-  const counts = await upsertEscrowBatch(escrows)
+  let transitions: ReconciliationTransitionSummary | undefined
+  let escrowsToUpsert = escrows
+  let withheld = 0
+
+  if (options.applyTransitions) {
+    const result = await applyObservedStateChanges(escrows, options)
+    transitions = result.summary
+    if (result.failedContractIds.length > 0) {
+      const failed = new Set(result.failedContractIds)
+      escrowsToUpsert = escrows.filter((record) => !failed.has(record.contractId))
+      withheld = escrows.length - escrowsToUpsert.length
+    }
+  }
+
+  const counts = await upsertEscrowBatch(escrowsToUpsert)
   return {
     ...counts,
-    skipped: counts.skipped + invalid.length,
+    skipped: counts.skipped + invalid.length + withheld,
     ...(transitions ? { transitions } : {}),
   }
 }
@@ -736,10 +804,12 @@ export function formatReconciliationSummary(
   retries?: ProcessRetriesSummary,
   transitions?: ReconciliationTransitionSummary
 ): ReconciliationResponse {
+  const effectiveTransitions = transitions ?? sync.transitions
   const totalErrors =
     (sync.errors?.length ?? 0) +
     (drift.errors?.length ?? 0) +
-    (retries?.errors?.length ?? 0)
+    (retries?.errors?.length ?? 0) +
+    (effectiveTransitions?.errors?.length ?? 0)
   const isNoEscrows = sync.totalEscrows === 0
 
   const response: ReconciliationResponse = {

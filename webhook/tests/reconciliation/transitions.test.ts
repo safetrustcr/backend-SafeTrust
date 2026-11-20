@@ -142,6 +142,18 @@ describe('reconciliation lifecycle transition detection', () => {
     ])
   })
 
+  test('builds every spec-covered lifecycle step when an observer skips intermediate states', () => {
+    const transitions = detectReconciliationTransitions(
+      [{ contract_id: 'C-SKIP', status: 'created' }],
+      [{ ...escrow('C-SKIP', 'completed', 100), ledgerSeq: '42' }]
+    )
+
+    expect(transitions.map((item) => item.targetStatus)).toEqual(['funded', 'completed'])
+    expect(transitions.map((item) => item.eventType)).toEqual(['escrow.funded', 'funds.released'])
+    expect(transitions.map((item) => item.amount)).toEqual([100, 0])
+    expect(transitions.every((item) => item.observedLedgerSeq === '42')).toBe(true)
+  })
+
   test('is idempotent for unchanged, new and backwards observations', () => {
     expect(detectReconciliationTransitions([{ contract_id: 'C1', status: 'funded' }], [escrow('C1', 'funded')])).toEqual([])
     expect(detectReconciliationTransitions([], [escrow('C2', 'funded')])).toEqual([])
@@ -183,6 +195,7 @@ describe('reconciliation transition application', () => {
         targetStatus: 'funded',
         reservationStatus: 'funded',
         amount: 100,
+        tenantId: 'safetrust',
         rawPayload: {
           contractId: 'C-FUND',
           status: 'funded',
@@ -192,6 +205,21 @@ describe('reconciliation transition application', () => {
     )
     expect(notifyMock).toHaveBeenCalledWith(
       expect.objectContaining({ contractId: 'C-FUND', eventType: 'escrow_funded' })
+    )
+  })
+
+  test('passes the selected tenant and observed ledger sequence to the lifecycle command', async () => {
+    await applyReconciliationTransitions([transition({ observedLedgerSeq: '99' })], {
+      executeTransition: executeMock,
+      notify: notifyMock,
+      tenantId: 'other-tenant',
+    })
+
+    expect(executeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'other-tenant',
+        observedLedgerSeq: '99',
+      })
     )
   })
 
@@ -239,9 +267,10 @@ describe('reconciliation transition application', () => {
       .mockRejectedValueOnce(new Error('state conflict'))
       .mockResolvedValueOnce({ isDuplicate: false, eventId: 'event-3' })
 
+    const onFailed = jest.fn()
     const result = await applyReconciliationTransitions(
       [transition({ contractId: 'C-BAD' }), transition({ contractId: 'C-OK' })],
-      { executeTransition: executeMock, notify: notifyMock }
+      { executeTransition: executeMock, notify: notifyMock, onFailed }
     )
 
     expect(result).toEqual({
@@ -253,6 +282,7 @@ describe('reconciliation transition application', () => {
     })
     expect(executeMock).toHaveBeenCalledTimes(2)
     expect(notifyMock).toHaveBeenCalledTimes(1)
+    expect(onFailed).toHaveBeenCalledWith('C-BAD', expect.any(Error))
   })
 })
 
@@ -266,7 +296,9 @@ describe('atomic lifecycle transaction used by reconciliation', () => {
     params?: unknown[]
   }
 
-  function mockTransaction(options: { existingEventId?: string; mirrorError?: Error } = {}) {
+  function mockTransaction(
+    options: { existingEventId?: string; mirrorError?: Error; ledgerSeq?: string } = {}
+  ) {
     const queries: TxQuery[] = []
     const client = {
       query: jest.fn(async (sql: string, params?: unknown[]) => {
@@ -282,7 +314,17 @@ describe('atomic lifecycle transaction used by reconciliation', () => {
           return { rows: [{ id: 'event-1' }], rowCount: 1 }
         }
         if (sql.includes('FROM safetrust.trustless_work_escrows')) {
-          return { rows: [{ id: 'escrow-1', status: 'created', balance: 0 }], rowCount: 1 }
+          return {
+            rows: [
+              {
+                id: 'escrow-1',
+                status: 'created',
+                balance: 0,
+                ledger_seq: options.ledgerSeq ?? null,
+              },
+            ],
+            rowCount: 1,
+          }
         }
         if (sql.startsWith('UPDATE safetrust.trustless_work_escrows')) return { rows: [], rowCount: 1 }
         if (sql.startsWith('UPDATE safetrust.trustless_work_webhook_events')) return { rows: [], rowCount: 1 }
@@ -338,10 +380,37 @@ describe('atomic lifecycle transaction used by reconciliation', () => {
     ).toBe(false)
   })
 
-  test('uses the same tenant identity as other lifecycle handlers', async () => {
-    mockTransaction()
-    await realExecute(params)
+  test('uses the explicitly selected tenant for event identity and reservation mirroring', async () => {
+    const { queries } = mockTransaction()
+    await realExecute({ ...params, tenantId: 'other-tenant' })
+
+    const eventInsert = queries.find((entry) =>
+      entry.sql.startsWith('INSERT INTO safetrust.trustless_work_webhook_events')
+    )
+    expect(eventInsert?.params?.[4]).toBe('other-tenant')
+    expect(mirrorMock).toHaveBeenCalledWith('escrow-1', 'funded', 'other-tenant', expect.anything())
     expect(getPlatformTenantId()).toBeTruthy()
+  })
+
+  test('rejects an observation that is not newer than the locked escrow ledger', async () => {
+    mockTransaction({ ledgerSeq: '20' })
+
+    await expect(realExecute({ ...params, observedLedgerSeq: '20' })).rejects.toThrow(
+      'not newer than stored ledger'
+    )
+    expect(mirrorMock).not.toHaveBeenCalled()
+  })
+
+  test('accepts a newer observation and reads ledger_seq inside the lifecycle transaction', async () => {
+    const { queries } = mockTransaction({ ledgerSeq: '20' })
+
+    await expect(realExecute({ ...params, observedLedgerSeq: '21' })).resolves.toEqual({
+      isDuplicate: false,
+      eventId: 'event-1',
+      escrowId: 'escrow-1',
+    })
+    expect(queries.some((entry) => entry.sql.includes('ledger_seq::text AS ledger_seq'))).toBe(true)
+    expect(mirrorMock).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -366,6 +435,47 @@ describe('reconciliation sync integration', () => {
     const executeOrder = executeMock.mock.invocationCallOrder[0]
     const upsertOrder = upsertMock.mock.invocationCallOrder[0]
     expect(executeOrder).toBeLessThan(upsertOrder)
+  })
+
+  test('applies skipped lifecycle states in order before the raw upsert', async () => {
+    adapterMock.mockResolvedValue([
+      { contractId: 'C-MULTI', amount: 100, balance: 100, flags: { released: true }, roles: {} },
+    ])
+    statesMock.mockResolvedValue([{ contract_id: 'C-MULTI', status: 'created' }])
+
+    const result = await syncEscrowsWithIndexer(['C-MULTI'], { applyTransitions: true })
+
+    expect(result.transitions?.applied).toBe(2)
+    expect(executeMock.mock.calls.map((call) => call[0].targetStatus)).toEqual([
+      'funded',
+      'completed',
+    ])
+    expect(upsertMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not advance raw status for escrows whose transition failed', async () => {
+    const failed = escrow('C-FAILED', 'funded')
+    const succeeded = escrow('C-SUCCEEDED', 'funded')
+    adapterMock.mockResolvedValue([failed, succeeded])
+    statesMock.mockResolvedValue([
+      { contract_id: 'C-FAILED', status: 'created' },
+      { contract_id: 'C-SUCCEEDED', status: 'created' },
+    ])
+    executeMock
+      .mockRejectedValueOnce(new Error('mirror unavailable'))
+      .mockResolvedValueOnce({ isDuplicate: false, eventId: 'event-ok' })
+    upsertMock.mockResolvedValue({ updated: 1, unchanged: 0, skipped: 0 })
+
+    const result = await syncEscrowsWithIndexer(['C-FAILED', 'C-SUCCEEDED'], {
+      applyTransitions: true,
+    })
+
+    expect(result.transitions?.failed).toBe(1)
+    expect(result.skipped).toBe(1)
+    expect(upsertMock).toHaveBeenCalledWith([
+      expect.objectContaining({ contractId: 'C-SUCCEEDED', status: 'funded' }),
+    ])
+    expect(upsertMock.mock.calls[0][0]).toHaveLength(1)
   })
 
   test('leaves legacy sync callers unchanged when transitions are not opted in', async () => {

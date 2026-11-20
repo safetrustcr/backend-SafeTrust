@@ -84,6 +84,10 @@ describe('syncEscrowsHandler', () => {
 
     await syncEscrowsHandler(req, res)
 
+    expect(reconciliationService.syncEscrowsWithIndexer).toHaveBeenCalledWith(['mock_1'], {
+      applyTransitions: true,
+      tenantId: 'safetrust',
+    })
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith(
       {

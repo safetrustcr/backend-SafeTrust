@@ -36,6 +36,7 @@ export {
 
 const STALE_ESCROW_DAYS = 7
 const NETWORK = process.env.STELLAR_NETWORK ?? 'testnet'
+const TENANT_ID = 'safetrust'
 
 /**
  * Handles the POST /reconciliation/sync-escrows trigger from Hasura cron job.
@@ -53,8 +54,11 @@ export const syncEscrowsHandler = async (
   logger.info('reconciliation.sync.started')
 
   try {
-    const contractIds = await fetchEscrowContractIds('safetrust')
-    const sync = await syncEscrowsWithIndexer(contractIds, { applyTransitions: true })
+    const contractIds = await fetchEscrowContractIds(TENANT_ID)
+    const sync = await syncEscrowsWithIndexer(contractIds, {
+      applyTransitions: true,
+      tenantId: TENANT_ID,
+    })
     const drift = await validateSorobanDrift(contractIds, NETWORK)
     const stale = await detectStaleEscrows(STALE_ESCROW_DAYS)
     const summary = formatReconciliationSummary(

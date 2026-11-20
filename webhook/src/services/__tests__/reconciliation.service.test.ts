@@ -583,6 +583,23 @@ describe('reconciliation.service', () => {
       expect(response.message).toBeUndefined()
     })
 
+    it('includes transition failures in the aggregate error count', () => {
+      const syncWithTransitions: SyncSummary = {
+        ...syncSample,
+        transitions: {
+          detected: 1,
+          applied: 0,
+          duplicates: 0,
+          failed: 1,
+          errors: ['C-BAD: mirror unavailable'],
+        },
+      }
+
+      const response = formatReconciliationSummary(syncWithTransitions, driftSample, [], 250)
+
+      expect(response.errors).toBe(3)
+    })
+
     it('adds message "No escrows to sync" when totalEscrows is 0', () => {
       const emptySync: SyncSummary = {
         totalEscrows: 0,
