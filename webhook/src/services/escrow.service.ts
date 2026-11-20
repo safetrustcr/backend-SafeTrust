@@ -1,5 +1,5 @@
 import { PoolClient } from 'pg';
-import { AppError, ConflictError, NotFoundError, ServiceUnavailableError } from '../utils/errors';
+import { AppError, ConflictError, NotFoundError } from '../utils/errors';
 import { withTransaction } from './db';
 import { getPlatformTenantId } from '../config/tenant';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
@@ -70,11 +70,29 @@ export class EscrowStateConflictError extends ConflictError {
   }
 }
 
+export class EscrowStaleObservationError extends EscrowStateConflictError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EscrowStaleObservationError';
+  }
+}
 
 export class EscrowValidationError extends AppError {
   constructor(message: string, statusCode = 400) {
     super(message, statusCode, { code: 'escrow_validation_error' });
     this.name = 'EscrowValidationError';
+  }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function toLedgerSeq(value: unknown): bigint | null {
+  if (value === null || value === undefined || value === '') return null;
+  try {
+    const parsed = BigInt(value as string | number | bigint);
+    return parsed < 0n ? null : parsed;
+  } catch {
+    return null;
   }
 }
 
@@ -353,6 +371,7 @@ export interface EscrowLifecycleParams {
   amount?: number;
   validPriorStates?: string[];
   tenantId?: string;
+  observedLedgerSeq?: string | number | bigint | null;
 }
 
 export interface EscrowLifecycleResult {
@@ -377,6 +396,7 @@ export async function executeEscrowLifecycleTransition(
     amount,
     validPriorStates,
     tenantId = getPlatformTenantId(),
+    observedLedgerSeq,
   } = params;
   const eventIdentity = getWebhookEventIdentity(
     contractId,
@@ -425,8 +445,13 @@ export async function executeEscrowLifecycleTransition(
     const eventId = insertedEvent.rows[0].id;
 
     // 4 — Lock the escrow row and check current status
-    const escrowResult = await client.query<{ id: string; status: string; balance?: number }>(
-      `SELECT id, status, balance
+    const escrowResult = await client.query<{
+      id: string;
+      status: string;
+      balance?: number;
+      ledger_seq?: string | null;
+    }>(
+      `SELECT id, status, balance, ledger_seq::text AS ledger_seq
        FROM safetrust.trustless_work_escrows
        WHERE contract_id = $1
        FOR UPDATE`,
@@ -458,6 +483,14 @@ export async function executeEscrowLifecycleTransition(
       };
     }
 
+    const observedSeq = toLedgerSeq(observedLedgerSeq);
+    const storedSeq = toLedgerSeq(escrow.ledger_seq);
+    if (observedSeq !== null && storedSeq !== null && observedSeq <= storedSeq) {
+      throw new EscrowStaleObservationError(
+        `Observation at ledger ${observedSeq} is not newer than stored ledger ${storedSeq}`
+      );
+    }
+
     // 6 — Prior-state guard: verify current state is legal for this transition
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
@@ -473,26 +506,26 @@ export async function executeEscrowLifecycleTransition(
       );
     }
 
-    // 7 — Update escrow state and balance in safetrust.trustless_work_escrows
+    // 7 — Update escrow state, balance and accepted ledger in safetrust.trustless_work_escrows
     const now = new Date().toISOString();
+    const updates = ['status = $1', 'updated_at = $2'];
+    const values: unknown[] = [targetStatus, now];
+    let paramIndex = 3;
     if (amount !== undefined) {
-      await client.query(
-        `UPDATE safetrust.trustless_work_escrows
-         SET status = $1,
-             balance = $2,
-             updated_at = $3
-         WHERE id = $4`,
-        [targetStatus, amount, now, escrowId]
-      );
-    } else {
-      await client.query(
-        `UPDATE safetrust.trustless_work_escrows
-         SET status = $1,
-             updated_at = $2
-         WHERE id = $3`,
-        [targetStatus, now, escrowId]
-      );
+      updates.push(`balance = $${paramIndex++}`);
+      values.push(amount);
     }
+    if (observedSeq !== null) {
+      updates.push(`ledger_seq = $${paramIndex++}`);
+      values.push(observedSeq.toString());
+    }
+    values.push(escrowId);
+    await client.query(
+      `UPDATE safetrust.trustless_work_escrows
+       SET ${updates.join(',\n           ')}
+       WHERE id = $${paramIndex}`,
+      values
+    );
 
     // 8 — Mirror status to safetrust.reservations within the SAME transaction client
     await mirrorReservationStatus(escrowId, reservationStatus, tenantId, client);

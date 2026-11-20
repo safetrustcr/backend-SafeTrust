@@ -1,5 +1,12 @@
 # Approve Milestone
 
+> **Deprecated:** the TrustlessWork `approve-milestone` callback was removed. Reconciliation
+> polling at `POST /reconciliation/sync-escrows` can record the escrow-level
+> `milestone_approved` status, but it does not update `escrow_milestones` rows (approved
+> status, approver, approval timestamp) or mirror `checked_in`/`checked_out` to reservations.
+> The removed callback performed those writes; no production path does now. This page is kept
+> for historical reference.
+
 > `POST /api/escrows/approve-milestone` — TrustlessWork callback recording a host-approved milestone.
 
 ## Overview

@@ -128,6 +128,12 @@ describe('normalizeIndexerEscrow', () => {
     })
   })
 
+  it('preserves a ledger sequence supplied by the adapter', () => {
+    expect(normalizeIndexerEscrow(single({ ledgerSeq: '30' } as never)).ledgerSeq).toBe('30')
+    expect(normalizeIndexerEscrow(single({ ledger_seq: 42 } as never)).ledgerSeq).toBe('42')
+    expect(normalizeIndexerEscrow(single({ ledgerSeq: {} } as never)).ledgerSeq).toBeNull()
+  })
+
   it('marks multi-release escrows', () => {
     expect(normalizeIndexerEscrow(multi([ms()])).escrowType).toBe('multi_release')
   })

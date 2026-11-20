@@ -1,5 +1,9 @@
 # Dispute Lifecycle and Resolution
 
+> **Deprecated callback endpoints:** the TrustlessWork `dispute` and `resolve-dispute` callbacks
+> were removed. Reconciliation polling at `POST /reconciliation/sync-escrows` now applies the
+> `disputed` and `resolved` transitions. Endpoint details below are kept for historical reference.
+
 SafeTrust escrows are single-release or multi-release Soroban contracts
 managed through Trustless Work. A dispute does not move funds by itself: it
 freezes the escrow in `disputed`, then the on-chain **Releaser** address signs
@@ -17,7 +21,7 @@ quarantined from this flow, see the [x402 protocol](./x402-protocol.md).
 
 | Concern | Source |
 |---|---|
-| Dispute callback handlers | [`dispute.handler.ts`](../../webhook/src/routes/escrows/dispute.handler.ts), [`resolve-dispute.handler.ts`](../../webhook/src/routes/escrows/resolve-dispute.handler.ts) |
+| Dispute and resolution transitions | [`reconciliation.service.ts`](../../webhook/src/services/reconciliation.service.ts) (`applyReconciliationTransitions`), [`escrow.service.ts`](../../webhook/src/services/escrow.service.ts) (`executeEscrowLifecycleTransition`) |
 | Valid states and transitions | [`crates/escrow-state-machine/src/states.rs`](../../crates/escrow-state-machine/src/states.rs), [`transitions.rs`](../../crates/escrow-state-machine/src/transitions.rs) |
 | `escrow_transactions` status constraint | [`1771690624593_create_escrows_table/up.sql`](../../migrations/safetrust/1771690624593_create_escrows_table/up.sql) |
 | `trustless_work_escrows` status constraint | [`1731909059420_create_trustless_work_escrows/up.sql`](../../migrations/safetrust/1731909059420_create_trustless_work_escrows/up.sql) |
@@ -40,9 +44,9 @@ sequenceDiagram
     ST-->>T: return unsigned XDR
     T->>SC: sign + submit XDR (Freighter)
     T->>TW: indexer/update-from-txHash
-    TW-->>ST: dispute callback (HMAC-signed)
-    Note over ST: reconciliation job also pulls from the TW indexer
-    ST->>ST: persist status → disputed
+    TW-->>TW: dispute recorded in indexer/Firebase
+    Note over ST: reconciliation polls the TW indexer
+    ST->>ST: lifecycle service persists status → disputed
 
     O->>ST: POST /escrows/resolve
     ST->>TW: resolve-dispute (unsigned XDR)
@@ -50,9 +54,9 @@ sequenceDiagram
     ST-->>O: return unsigned XDR
     O->>SC: sign + submit XDR (Freighter)
     O->>TW: indexer/update-from-txHash
-    TW-->>ST: resolve-dispute callback (HMAC-signed)
-    Note over ST: reconciliation job also pulls from the TW indexer
-    ST->>ST: persist status → resolved
+    TW-->>TW: resolution recorded in indexer/Firebase
+    Note over ST: reconciliation polls the TW indexer
+    ST->>ST: lifecycle service persists status → resolved
 ```
 
 ### How a dispute is raised
@@ -71,8 +75,8 @@ sequenceDiagram
    Soroban RPC client).
 6. The submitter calls Trustless Work's `indexer/update-from-txHash` endpoint
    with the transaction hash so the indexer records `disputed`. Soroban does
-   not call SafeTrust; the backend learns the result from the Trustless Work
-   callback and/or its reconciliation sync, then persists it.
+   not call SafeTrust; the backend learns the result from reconciliation polling
+   of the Trustless Work indexer, then the lifecycle service persists it.
 
 ### How a dispute is resolved
 
@@ -85,20 +89,21 @@ sequenceDiagram
 4. The signed transaction is submitted to Soroban. The contract releases or
    splits the disputed balance according to the resolution.
 5. The submitter calls `indexer/update-from-txHash` so Trustless Work records
-   the outcome, and SafeTrust syncs it from the Trustless Work callback or the
-   reconciliation job. The result is persisted as `resolved`; a resolution is
+   the outcome, and SafeTrust's reconciliation job syncs it through the
+   lifecycle service. The result is persisted as `resolved`; a resolution is
    never persisted as `cancelled` (see
    [resolve versus cancel](#6-resolve-dispute-versus-cancel)).
 
 > **Where the backend sits today.** "SafeTrust API" in the sequence is the
 > client-facing request layer; it may be the same service or a separate one.
-> The webhook routes in this repository
-> (`POST /api/escrows/dispute` and `POST /api/escrows/resolve-dispute`) are the
-> recording/callback leg: they verify the Trustless Work HMAC, enforce the
-> local state machine, and mirror the result into PostgreSQL. They do not
-> create, sign, or submit XDR, and they expose no private key. The
-> unsigned-XDR leg above is the integration contract the client uses with the
-> Trustless Work API.
+> The reconciliation service in this repository
+> (`POST /reconciliation/sync-escrows`) is the authoritative recording leg: it
+> reads Trustless Work indexer state and calls `executeEscrowLifecycleTransition`
+> to enforce the local state machine and mirror the result into PostgreSQL. The
+> removed callback routes performed that recording role historically. Neither
+> the reconciliation service nor the request layer creates, signs, or submits
+> XDR, and neither exposes a private key. The unsigned-XDR leg above is the
+> integration contract the client uses with the Trustless Work API.
 
 ---
 
@@ -115,11 +120,12 @@ flowchart LR
 |---|---|---|---|
 | `funded` → `disputed` | `dispute.raised` | `disputed` | Funds remain locked; neither party can release them unilaterally. |
 | `disputed` → `resolved` | `dispute.resolved` | `resolved` | The Releaser signed a resolution that releases/splits the balance. |
+| `disputed` → `cancelled` | `escrow.cancelled` | `cancelled` | The dispute was abandoned and funds were returned to the tenant. |
 
 `active` and `milestone_approved` can also enter `disputed`; they are omitted
 from the diagram to keep the happy path readable. `resolved` is terminal: it
-has no transition to `completed`. Cancellation is not a dispute outcome and is
-not reachable from `disputed`; it is a separate pre-check-in transition (see
+has no transition to `completed`. `disputed → cancelled` is legal and is the
+other terminal outcome of a dispute, distinct from `resolved` (see
 [resolve versus cancel](#6-resolve-dispute-versus-cancel)).
 
 ### Database constraint
@@ -155,12 +161,14 @@ the same name and nine lifecycle values (`created`, `pending_funding`, `funded`,
 
 ### Local enforcement
 
-The `escrow-state-machine` Rust crate is the local authority before any XDR is
-requested. It defines the status enum, a single transition table, and
-`getValidPriorStates(to, event)`; the dispute and resolve handlers parse that
-JSON list and use it as the Hasura `_in` status filter. The crate's `index.ts`
-provides a JavaScript fallback when the native addon is not built. An illegal
-prior state produces zero affected rows and a `404` instead of a transaction.
+The `escrow-state-machine` Rust crate is the local authority for escrow
+transitions and, for client-facing operations, before any XDR is requested. It
+defines the status enum, a single transition table, and
+`getValidPriorStates(to, event)`; the reconciliation service passes that list
+to the lifecycle service's prior-state guard through
+`executeEscrowLifecycleTransition`. The crate's `index.ts` provides a
+JavaScript fallback when the native addon is not built. An illegal prior state
+is rejected before the lifecycle transaction changes local state.
 
 ---
 
@@ -239,8 +247,8 @@ transaction is only final after the network accepts it.
 - **Smaller blast radius.** The backend can be compromised for data without
   becoming a signing oracle for every escrow.
 - **No submission authority.** The backend does not submit the signed
-  transaction, so a forged callback cannot be turned into an on-chain action.
-  It only mirrors state that the chain and Trustless Work already accepted.
+  transaction, so a forged recording request cannot be turned into an on-chain
+  action. It only mirrors state that the chain and Trustless Work already accepted.
 
 The backend's job is therefore: validate the local state, request the unsigned
 XDR, return it, and later persist the result. "Never holds the key" and "never
@@ -261,20 +269,24 @@ SafeTrust then synchronizes that external record into PostgreSQL:
 1. `indexer/update-from-txHash` has Trustless Work read the submitted
    transaction and update its indexer/Firebase state for the contract (the
    canonical off-chain mirror). Soroban sends nothing to SafeTrust directly.
-2. SafeTrust learns about the change either from the Trustless Work callback
-   (`POST /api/escrows/dispute` or `POST /api/escrows/resolve-dispute`, both
-   HMAC-verified in this repository) or from its reconciliation job
-   (`POST /reconciliation/sync-escrows`), which fetches escrow state through
-   `GET /helper/get-escrows-by-contract-ids` and upserts
-   `safetrust.trustless_work_escrows` (`status`, `balance`, roles, amounts).
-3. The callback handlers record the business event in
-   `trustless_work_webhook_events` and mirror the state onto
-   `safetrust.escrow_transactions` / `reservations`.
+2. Reconciliation polling at `POST /reconciliation/sync-escrows` is now
+   authoritative. The reconciliation service fetches escrow state through
+   `GET /helper/get-escrow-by-contract-ids` and detects legal local-to-observed
+   transitions.
+3. The lifecycle transaction
+   ([`executeEscrowLifecycleTransition`](../../webhook/src/services/escrow.service.ts))
+   records the business event in `safetrust.trustless_work_webhook_events`,
+   mirrors the status onto `safetrust.escrow_transactions` / `reservations`, and
+   persists the accepted observation ledger.
+4. Only after those lifecycle effects succeed does the raw upsert write the
+   remaining indexer fields (`status`, `balance`, roles, amounts) to
+   `safetrust.trustless_work_escrows`. Records whose transition failed are
+   withheld from this upsert so they remain retryable.
 
 `indexer/update-from-txHash` is a **Trustless Work** endpoint. It does not write
 SafeTrust PostgreSQL directly. Its purpose is to close the gap between an
 externally submitted transaction and the indexer; the PostgreSQL write remains
-SafeTrust's reconciliation responsibility.
+the responsibility of SafeTrust's reconciliation and lifecycle services.
 
 ---
 
@@ -302,18 +314,18 @@ cancellation. Both `resolved` and `cancelled` are terminal.
 
 ## 7. Idempotency and failure handling
 
-- **Idempotency key.** `(contract_id, event_type)` in
-  `trustless_work_webhook_events`; a duplicate `dispute.raised` or
-  `dispute.resolved` callback returns `200 { received: true }` without
-  re-running mutations.
-- **Status guard.** The Hasura mutation filters on the state machine's valid
-  prior states. A callback for an escrow in the wrong state affects zero rows
-  and returns `404`.
-- **HMAC authentication.** Callback routes require
-  `x-trustlesswork-signature` and a fresh `x-trustlesswork-timestamp`; the
-  verifier fails closed.
-- **No XDR in the callback.** A callback only records state. It cannot create a
-  transaction, so replaying a callback cannot move funds.
+- **Idempotency key.** `event_identity` derived from the contract and event in
+  `trustless_work_webhook_events`; the lifecycle service skips an already
+  processed `dispute.raised` or `dispute.resolved` event without re-running
+  mutations.
+- **Status guard.** The lifecycle transaction checks the state machine's valid
+  prior states. An escrow in the wrong state fails the transition before any
+  status is committed.
+- **Authoritative source.** The removed HMAC-verified callback routes no longer
+  apply; `POST /reconciliation/sync-escrows` is the supported ingestion path.
+- **No XDR in reconciliation.** The lifecycle service only records externally
+  confirmed state. It cannot create a transaction, so replaying a sync cannot
+  move funds.
 
 ---
 
@@ -324,4 +336,4 @@ cancellation. Both `resolved` and `cancelled` are terminal.
 - [x402 protocol](./x402-protocol.md) — agent payments, quarantined from the
   escrow eligibility path.
 - [Escrow lifecycle](./escrow-lifecycle.md) — the full state machine and
-  handler mapping.
+  reconciliation flow.
