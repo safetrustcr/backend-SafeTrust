@@ -186,7 +186,7 @@ process_metadata_tables() {
     local table_customizations
     table_customizations=$(jq -cn --arg source "$tenant_name" \
         --argjson metadata "$existing_metadata" --argjson desired "$all_desired_tables" \
-        'def norm: if . == null then {} else with_entries(select(((.key == "custom_root_fields" or .key == "column_config" or .key == "custom_column_names") and ((.value == null) or (.value == {}) or (.value == []))) | not)) end;
+        'def norm: if . == null then {} else . as $cfg | ((($cfg.column_config // {}) | to_entries | map(select(.value.custom_name? != null) | {key: .key, value: .value.custom_name}) | from_entries) as $derived | ($cfg + {custom_column_names: ((($cfg.custom_column_names // {}) + $derived)), column_config: {}}) | with_entries(select(((.key == "custom_root_fields" or .key == "column_config" or .key == "custom_column_names") and ((.value == null) or (.value == {}) or (.value == []))) | not))) end;
          [$metadata | (.metadata // .).sources[]? | select(.name == $source) | .tables[]?] as $tracked |
          $desired | map(. as $d | ($tracked | map(select(.table == $d.table)) | .[0]) as $current |
          select($current != null and (($current.configuration | norm) != ($d.configuration | norm))) |
