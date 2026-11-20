@@ -214,3 +214,151 @@ export async function expireHolds(): Promise<number> {
   )
   return (expired.rowCount ?? 0) + (stuck.rowCount ?? 0)
 }
+
+export interface ConvertHoldResult {
+  reservation_id: string
+  booking_hold_id: string
+  apartment_id: string
+  guest_id: string
+  check_in_date: Date
+  check_out_date: Date
+  total_amount: string
+  quote_deposit: string
+  asset_code: string
+  status: string
+}
+
+/**
+ * Atomically convert an active booking hold into a reservation.
+ * Repeated requests for the same hold return the existing reservation.
+ */
+export async function convertHoldToReservation(
+  holdId: string,
+  userId: string,
+  tenantId: string
+): Promise<ConvertHoldResult> {
+  return withTransaction(async (client: PoolClient) => {
+    const result = await client.query<{
+      id: string
+      tenant_id: string
+      apartment_id: string
+      user_id: string
+      check_in: Date
+      check_out: Date
+      status: string
+      quote_total: string
+      quote_deposit: string
+      asset_code: string
+      expires_at: Date
+      reservation_id: string | null
+      reservation_status: string | null
+      is_expired: boolean
+    }>(
+      `SELECT h.id, h.tenant_id, h.apartment_id, h.user_id,
+              h.check_in, h.check_out, h.status,
+              h.quote_total, h.quote_deposit, h.asset_code,
+              h.expires_at,
+              r.id AS reservation_id,
+              r.status AS reservation_status,
+              h.expires_at <= NOW() AS is_expired
+         FROM safetrust.booking_holds h
+         LEFT JOIN safetrust.reservations r
+           ON r.booking_hold_id = h.id
+        WHERE h.id = $1 AND h.tenant_id = $2
+        FOR UPDATE OF h`,
+      [holdId, tenantId]
+    )
+
+    const hold = result.rows[0]
+    if (!hold) throw new NotFoundError('Hold not found')
+    if (hold.user_id !== userId) {
+      throw new ForbiddenError('Not your hold')
+    }
+
+    // Idempotency: a converted hold must return its original reservation.
+    if (hold.status === 'converted') {
+      if (!hold.reservation_id) {
+        throw new ConflictError(
+          'Hold is converted but its reservation is missing',
+          { code: 'hold_reservation_missing' }
+        )
+      }
+
+      return {
+        reservation_id: hold.reservation_id,
+        booking_hold_id: hold.id,
+        apartment_id: hold.apartment_id,
+        guest_id: hold.user_id,
+        check_in_date: hold.check_in,
+        check_out_date: hold.check_out,
+        total_amount: hold.quote_total,
+        quote_deposit: hold.quote_deposit,
+        asset_code: hold.asset_code,
+        status: hold.reservation_status ?? 'pending',
+      }
+    }
+
+    if (hold.status !== 'active') {
+      throw new ConflictError(`Hold is ${hold.status}`, {
+        code: 'hold_not_active',
+      })
+    }
+
+    if (hold.is_expired) {
+      throw new ConflictError('Hold has expired', {
+        code: 'hold_expired',
+      })
+    }
+
+    if (Number(hold.quote_total) <= 0) {
+      throw new ValidationError('Booking total must be greater than zero')
+    }
+
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO safetrust.reservations
+         (apartment_id, guest_id, booking_hold_id,
+          check_in_date, check_out_date, total_amount,
+          asset_code, status, tenant_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)
+       RETURNING id`,
+      [
+        hold.apartment_id,
+        hold.user_id,
+        hold.id,
+        hold.check_in,
+        hold.check_out,
+        hold.quote_total,
+        hold.asset_code,
+        hold.tenant_id,
+      ]
+    )
+
+    const reservationId = inserted.rows[0].id
+
+    const updated = await client.query(
+      `UPDATE safetrust.booking_holds
+          SET status = 'converted', updated_at = NOW()
+        WHERE id = $1 AND status = 'active'`,
+      [hold.id]
+    )
+
+    if (updated.rowCount !== 1) {
+      throw new ConflictError('Hold could not be converted', {
+        code: 'hold_conversion_failed',
+      })
+    }
+
+    return {
+      reservation_id: reservationId,
+      booking_hold_id: hold.id,
+      apartment_id: hold.apartment_id,
+      guest_id: hold.user_id,
+      check_in_date: hold.check_in,
+      check_out_date: hold.check_out,
+      total_amount: hold.quote_total,
+      quote_deposit: hold.quote_deposit,
+      asset_code: hold.asset_code,
+      status: 'pending',
+    }
+  })
+}
