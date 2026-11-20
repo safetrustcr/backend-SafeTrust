@@ -209,7 +209,7 @@ enforces this on-chain.
 ## Test Coverage
 
 - **Unit tests (TypeScript):** `webhook/src/routes/escrows/__tests__/approve-milestone.handler.test.ts`
-- **Unit tests (JavaScript):** `webhook/src/routes/escrows/__tests__/approve-milestone.handler.test.js`
+- **Callback tests (TypeScript):** `webhook/src/routes/escrows/__tests__/approve-milestone.handler.callback.test.ts`
 - **Integration tests (Karate):** `tests/karate/features/escrows/approve-milestone.feature`
   - Valid approval updates milestone and escrow
   - Milestone-specific idempotency keys
