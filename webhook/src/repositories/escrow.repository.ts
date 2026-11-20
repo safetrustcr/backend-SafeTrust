@@ -75,6 +75,14 @@ export type EscrowStatus =
 export interface TrustlessWorkEscrow {
   id: string
   contractId: string
+  engagementId?: string | null
+  approver?: string | null
+  serviceProvider?: string | null
+  platformAddress?: string | null
+  releaseSigner?: string | null
+  disputeResolver?: string | null
+  receiver?: string | null
+  flags?: Record<string, boolean> | null
   status: EscrowStatus
   balance?: number
   createdAt?: string
@@ -83,9 +91,19 @@ export interface TrustlessWorkEscrow {
 
 export interface CreateEscrowInput {
   contractId: string
-  marker: string
+  engagementId?: string | null
   approver: string
-  releaser: string
+  serviceProvider?: string | null
+  platformAddress?: string | null
+  releaseSigner?: string | null
+  disputeResolver?: string | null
+  receiver?: string | null
+  flags?: Record<string, boolean> | null
+  /** @deprecated Pre-V1 alias retained while initialization callers migrate. */
+  marker?: string
+  /** @deprecated Pre-V1 alias retained while initialization callers migrate. */
+  releaser?: string
+  /** @deprecated Pre-V1 alias retained while initialization callers migrate. */
   resolver?: string | null
   escrowType: string
   status: string
@@ -116,6 +134,14 @@ export async function getEscrowByContractId(
       trustless_work_escrows(where: { contractId: { _eq: $contractId } }) {
         id
         contractId
+        engagementId
+        approver
+        serviceProvider
+        platformAddress
+        releaseSigner
+        disputeResolver
+        receiver
+        flags
         status
         balance
         createdAt
@@ -128,6 +154,14 @@ export async function getEscrowByContractId(
     trustless_work_escrows?: Array<{
       id: string
       contractId: string
+      engagementId?: string | null
+      approver?: string | null
+      serviceProvider?: string | null
+      platformAddress?: string | null
+      releaseSigner?: string | null
+      disputeResolver?: string | null
+      receiver?: string | null
+      flags?: Record<string, boolean> | null
       status: string
       balance?: number
       createdAt?: string
@@ -143,6 +177,14 @@ export async function getEscrowByContractId(
   return {
     id: escrow.id,
     contractId: escrow.contractId,
+    ...(escrow.engagementId !== undefined && { engagementId: escrow.engagementId }),
+    ...(escrow.approver !== undefined && { approver: escrow.approver }),
+    ...(escrow.serviceProvider !== undefined && { serviceProvider: escrow.serviceProvider }),
+    ...(escrow.platformAddress !== undefined && { platformAddress: escrow.platformAddress }),
+    ...(escrow.releaseSigner !== undefined && { releaseSigner: escrow.releaseSigner }),
+    ...(escrow.disputeResolver !== undefined && { disputeResolver: escrow.disputeResolver }),
+    ...(escrow.receiver !== undefined && { receiver: escrow.receiver }),
+    ...(escrow.flags !== undefined && { flags: escrow.flags }),
     status: escrow.status,
     balance: escrow.balance,
     createdAt: escrow.createdAt,

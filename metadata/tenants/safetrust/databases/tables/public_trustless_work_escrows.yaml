@@ -5,6 +5,11 @@ configuration:
   custom_name: trustless_work_escrows
   custom_column_names:
     contract_id: contractId
+    engagement_id: engagementId
+    service_provider: serviceProvider
+    platform_address: platformAddress
+    release_signer: releaseSigner
+    dispute_resolver: disputeResolver
     escrow_type: escrowType
     asset_code: assetCode
     asset_issuer: assetIssuer
