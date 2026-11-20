@@ -1,5 +1,5 @@
 import { PoolClient } from 'pg';
-import { AppError, ConflictError, NotFoundError, ServiceUnavailableError } from '../utils/errors';
+import { AppError, ConflictError, NotFoundError } from '../utils/errors';
 import { withTransaction } from './db';
 import { getPlatformTenantId } from '../config/tenant';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
@@ -16,7 +16,6 @@ import {
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
 import { amountToStroops } from '../lib/stellar-amounts';
-import { verifyProofOfFunds } from '../lib/zk-verifier';
 
 export { TenantMismatchError };
 
@@ -78,7 +77,6 @@ export class EscrowStaleObservationError extends EscrowStateConflictError {
   }
 }
 
-
 export class EscrowValidationError extends AppError {
   constructor(message: string, statusCode = 400) {
     super(message, statusCode, { code: 'escrow_validation_error' });
@@ -86,25 +84,7 @@ export class EscrowValidationError extends AppError {
   }
 }
 
-/** Thrown when the ZK verifier native addon is unavailable. */
-export class ZkVerifierUnavailableError extends ServiceUnavailableError {
-  constructor(message: string) {
-    super(message, { code: 'zk_verifier_unavailable' });
-    this.name = 'ZkVerifierUnavailableError';
-  }
-}
-
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-/** Normalize an untrusted decimal string to its canonical u64 representation. */
-function normalizeU64(value: unknown): string | null {
-  if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) return null;
-  if (value.length > 20) return null;
-  const U64_MAX = 18_446_744_073_709_551_615n;
-  const parsed = BigInt(value);
-  if (parsed > U64_MAX) return null;
-  return parsed.toString();
-}
 
 function toLedgerSeq(value: unknown): bigint | null {
   if (value === null || value === undefined || value === '') return null;
@@ -120,8 +100,8 @@ function toLedgerSeq(value: unknown): bigint | null {
 /**
  * Validate and normalize an escrow initialization payload.
  *
- * Checks required fields, escrow_type whitelist, and optional ZK proof bundle.
- * Throws EscrowValidationError (400) or ZkVerifierUnavailableError (503) on failure.
+ * Checks required fields and escrow_type whitelist.
+ * Throws EscrowValidationError (400) on failure.
  */
 export function validateEscrowInitializationPayload(
   body: unknown
@@ -141,10 +121,6 @@ export function validateEscrowInitializationPayload(
     hotel_id = null,
     guest_id = null,
     booking_metadata = null,
-    zk_proof,
-    zk_verification_key,
-    zk_threshold_stroops,
-    zk_balance_commitment,
   } = (body as InitializeEscrowPayload) ?? {};
   
   // 1 — Required fields
@@ -175,66 +151,6 @@ export function validateEscrowInitializationPayload(
     throw new EscrowValidationError(
       `escrow_type must be one of: ${validTypes.join(', ')}`
     );
-  }
-  
-  // 3 — Optional ZK proof bundle: must be all-or-nothing; validates threshold.
-  // Real-funds ZK enforcement remains disabled by default until the chosen
-  // eligibility architecture (ADR-0001) is fully implemented (blocks ZK-02 through ZK-09).
-  const isZkEnforced = process.env.ZK_ENFORCEMENT_ENABLED === 'true';
-  const zkValues = [zk_proof, zk_verification_key, zk_threshold_stroops, zk_balance_commitment];
-  const hasZkBundle = zkValues.some((v) => v !== undefined && v !== null);
-
-  if (isZkEnforced && !hasZkBundle) {
-    throw new EscrowValidationError(
-      'ZK proof of funds bundle is required for escrow initialization',
-      400
-    );
-  }
-
-  if (hasZkBundle && process.env.ZK_ENABLED !== 'true') {
-    throw new EscrowValidationError(
-      'Unsupported Feature: ZK proof verification is disabled'
-    );
-  }
-
-  if (hasZkBundle) {
-    const hasCompleteBundle =
-      typeof zk_proof === 'string' && zk_proof.length > 0 &&
-      typeof zk_verification_key === 'string' && zk_verification_key.length > 0 &&
-      typeof zk_threshold_stroops === 'string' && zk_threshold_stroops.length > 0 &&
-      typeof zk_balance_commitment === 'string' && zk_balance_commitment.length > 0;
-
-    if (!hasCompleteBundle) {
-      throw new EscrowValidationError(
-        'zk_proof, zk_verification_key, zk_threshold_stroops, and zk_balance_commitment must be supplied together'
-      );
-    }
-
-    const expectedThreshold = amountToStroops(amount);
-    const suppliedThreshold = normalizeU64(zk_threshold_stroops);
-    if (!expectedThreshold || !suppliedThreshold || suppliedThreshold !== expectedThreshold) {
-      throw new EscrowValidationError('Invalid ZK proof of funds');
-    }
-
-    try {
-      const isValidProof = verifyProofOfFunds(
-        zk_proof,
-        zk_verification_key,
-        suppliedThreshold,
-        zk_balance_commitment
-      );
-      if (!isValidProof) {
-        throw new EscrowValidationError('Invalid ZK proof of funds');
-      }
-    } catch (err) {
-      if (err instanceof EscrowValidationError) throw err;
-      const error = err as Error & { code?: string };
-      console.error('[escrow.service] ZK verifier error:', error.message);
-      if (error.code === 'ZK_VERIFIER_MISCONFIGURED') {
-        throw new EscrowValidationError('ZK proof verifier is misconfigured', 500);
-      }
-      throw new ZkVerifierUnavailableError('ZK proof verification is unavailable');
-    }
   }
 
   return {

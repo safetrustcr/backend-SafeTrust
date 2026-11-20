@@ -32,10 +32,6 @@ const crateConfigs = {
         libraryName: 'x402_processor',
         destination: 'index.node',
     },
-    'zk-verifier': {
-        libraryName: 'zk_verifier',
-        destination: 'index.node',
-    },
 };
 const cratesDir = path.resolve(__dirname, '..');
 function parseCrateArgument(args) {

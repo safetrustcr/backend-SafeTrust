@@ -8,7 +8,6 @@ jest.mock('../../../services/escrow.service', () => ({
   },
   ReservationNotFoundError: class ReservationNotFoundError extends Error {},
   TenantMismatchError: class TenantMismatchError extends Error {},
-  ZkVerifierUnavailableError: class ZkVerifierUnavailableError extends Error {},
   initializeEscrow: jest.fn(),
 }));
 
