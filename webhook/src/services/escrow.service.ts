@@ -1,6 +1,6 @@
 import { PoolClient } from 'pg';
 import { AppError, ConflictError, NotFoundError, ServiceUnavailableError } from '../utils/errors';
-import { withTransaction } from './db';
+import db, { withTransaction } from './db';
 import { getPlatformTenantId } from '../config/tenant';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
 import { EscrowEventType, EscrowStatus } from '../types/escrow.types';
@@ -77,6 +77,52 @@ export class EscrowValidationError extends AppError {
     this.name = 'EscrowValidationError';
   }
 }
+
+/**
+ * Check whether one of the caller's registered Stellar wallets matches a
+ * Trustless Work V1 role address for this escrow in the caller's tenant.
+ */
+export async function isEscrowParty(
+  uid: string,
+  contractId: string,
+  tenantId: string
+): Promise<boolean> {
+  const { rows } = await db.query<{ is_party: boolean }>(
+    `
+    SELECT EXISTS (
+      SELECT 1
+      FROM safetrust.trustless_work_escrows escrow
+      JOIN safetrust.user_wallets wallet
+        ON wallet.user_id = $1
+       AND wallet.chain_type = 'STELLAR'
+      WHERE escrow.contract_id = $2
+        AND escrow.tenant_id = $3
+        AND wallet.wallet_address = ANY(ARRAY[
+          escrow.escrow_metadata #>> '{roles,approver}',
+          escrow.escrow_metadata #>> '{roles,serviceProvider}',
+          escrow.escrow_metadata #>> '{roles,platformAddress}',
+          escrow.escrow_metadata #>> '{roles,releaseSigner}',
+          escrow.escrow_metadata #>> '{roles,disputeResolver}',
+          escrow.escrow_metadata #>> '{roles,receiver}',
+          escrow.escrow_metadata->>'approver',
+          escrow.escrow_metadata->>'serviceProvider',
+          escrow.escrow_metadata->>'platformAddress',
+          escrow.escrow_metadata->>'releaseSigner',
+          escrow.escrow_metadata->>'disputeResolver',
+          escrow.escrow_metadata->>'receiver',
+          escrow.marker,
+          escrow.approver,
+          escrow.releaser,
+          escrow.resolver
+        ])
+    ) AS is_party
+    `,
+    [uid, contractId, tenantId]
+  )
+
+  return rows[0]?.is_party === true
+}
+
 
 // ── Service functions ──────────────────────────────────────────────────────────
 
