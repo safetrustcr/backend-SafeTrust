@@ -56,7 +56,7 @@ sequenceDiagram
 ## Prerequisites
 
 - The escrow must exist with status `created` or `pending_funding` (set by the
-  [initialize](./initialize-escrow.md) operation).
+  [escrow lifecycle](./escrow-lifecycle.md) operation).
 - TrustlessWork must have completed the on-chain deposit and sent the signed callback.
 
 ## Request
@@ -182,7 +182,6 @@ Values are in USDC stroops — the smallest unit with 7 decimal places. For exam
 
 ## Test Coverage
 
-- **Unit tests:** `webhook/src/routes/escrows/__tests__/fund.handler.test.ts`
 - **Integration tests (Karate):** `tests/karate/features/escrows/fund.feature`
   - Valid fund callback updates status and balance
   - Duplicate callback is idempotent

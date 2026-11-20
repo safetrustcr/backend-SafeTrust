@@ -26,7 +26,7 @@ We’re excited you’re interested in contributing! Please follow these steps t
 
 ## 3️⃣ Create a New Branch
 
-1. **Follow branch naming conventions** outlined in the [Git Guidelines](/GIT_GUIDELINE.md).
+1. **Follow branch naming conventions** outlined in the [Git Guidelines](./GIT_GUIDELINE.md).
 2. Create a branch name based on the type of change (e.g., `feat/name-related-issue`, `fix/name-related-issue`).
 
    ```bash
@@ -92,7 +92,7 @@ We’re excited you’re interested in contributing! Please follow these steps t
 
 ## 💡 Additional Notes
 
-- Follow the [Git Guidelines](https://github.com/Tico4Chain-Coders/POC-Trustless-Work/blob/main/GIT_GUIDELINE.md) for branch naming, commit messages, and overall contribution standards.
+- Follow the [Git Guidelines](./GIT_GUIDELINE.md) for branch naming, commit messages, and overall contribution standards.
 - Make sure your code adheres to the repository’s coding standards.
 - Respect the project maintainers' feedback and requested changes.
 
