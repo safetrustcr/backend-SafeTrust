@@ -152,12 +152,11 @@ export async function verifyStellarTransaction(
 // ── Trustless Work Indexer Synchronization ────────────────────────────────────
 
 /**
- * Calls Trustless Work's indexer/update-from-txHash endpoint.
+ * Calls Trustless Work's PUT /indexer/update-from-txhash endpoint.
  * Guardrail: Only callable for TW-generated XDR contexts!
  */
 export async function updateTWIndexerFromTxHash(
   txHash: string,
-  network: StellarNetwork,
   isTWGenerated: boolean
 ): Promise<{ success: boolean; error?: string }> {
   if (!isTWGenerated) {
@@ -172,13 +171,13 @@ export async function updateTWIndexerFromTxHash(
   const twApiKey = getTrustlessWorkApiKey()
 
   try {
-    const response = await fetch(`${twBaseUrl}/indexer/update-from-txHash`, {
-      method: 'POST',
+    const response = await fetch(`${twBaseUrl}/indexer/update-from-txhash`, {
+      method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
       },
-      body: JSON.stringify({ txHash, network }),
+      body: JSON.stringify({ txHash }),
     })
 
     if (!response.ok) {
@@ -202,8 +201,7 @@ export async function updateTWIndexerFromTxHash(
  * Calls Trustless Work's helper/send-transaction endpoint (Path A).
  */
 export async function sendTransactionViaTWHelper(
-  signedXdr: string,
-  network: StellarNetwork
+  signedXdr: string
 ): Promise<{ success: boolean; txHash?: string; error?: string }> {
   const twBaseUrl = getTrustlessWorkApiUrl()
   const twApiKey = getTrustlessWorkApiKey()
@@ -215,7 +213,7 @@ export async function sendTransactionViaTWHelper(
         'Content-Type': 'application/json',
         ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
       },
-      body: JSON.stringify({ signedXdr, network }),
+      body: JSON.stringify({ signedXdr }),
     })
 
     if (!response.ok) {
@@ -452,7 +450,7 @@ export async function processHelperSubmission(params: {
   }
 
   // Submit via TW helper
-  const sendRes = await sendTransactionViaTWHelper(signedXdr, network)
+  const sendRes = await sendTransactionViaTWHelper(signedXdr)
   if (!sendRes.success || !sendRes.txHash) {
     return {
       success: false,
@@ -592,7 +590,7 @@ export async function processExternalSubmission(params: {
   }
 
   // 5. Invoke Trustless Work indexer/update-from-txHash
-  const twRes = await updateTWIndexerFromTxHash(txHash, network, isTWGenerated)
+  const twRes = await updateTWIndexerFromTxHash(txHash, isTWGenerated)
   if (!twRes.success) {
     const errorMsg = twRes.error ?? 'TW indexer synchronization failed'
     await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
@@ -716,7 +714,6 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
       if (record.submissionPath === 'external') {
         const twRes = await updateTWIndexerFromTxHash(
           record.txHash,
-          record.network,
           true
         )
         if (!twRes.success) {
