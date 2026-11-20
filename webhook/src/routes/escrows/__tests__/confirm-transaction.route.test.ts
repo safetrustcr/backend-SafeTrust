@@ -6,6 +6,10 @@ import confirmTransactionRoute from '../confirm-transaction.route'
 import * as confirmationService from '../../../services/confirmation.service'
 import * as escrowService from '../../../services/escrow.service'
 
+jest.mock('firebase-admin/auth', () => ({
+  getAuth: jest.fn(),
+}))
+
 jest.mock('../../../services/confirmation.service', () => ({
   ...jest.requireActual('../../../services/confirmation.service'),
   processHelperSubmission: jest.fn(),

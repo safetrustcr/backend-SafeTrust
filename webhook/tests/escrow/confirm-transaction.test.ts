@@ -4,6 +4,10 @@ import confirmTransactionRoute from '../../src/routes/escrows/confirm-transactio
 import db from '../../src/services/db'
 import { sendTransactionViaTWHelper } from '../../src/services/confirmation.service'
 
+jest.mock('firebase-admin/auth', () => ({
+  getAuth: jest.fn(),
+}))
+
 jest.mock('../../src/services/db', () => ({
   query: jest.fn(),
 }))
