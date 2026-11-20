@@ -186,9 +186,10 @@ process_metadata_tables() {
     local table_customizations
     table_customizations=$(jq -cn --arg source "$tenant_name" \
         --argjson metadata "$existing_metadata" --argjson desired "$all_desired_tables" \
-        '[$metadata | (.metadata // .).sources[]? | select(.name == $source) | .tables[]?] as $tracked |
+        'def norm: if . == null then {} else with_entries(select(((.key == "custom_root_fields" or .key == "column_config" or .key == "custom_column_names") and ((.value == null) or (.value == {}) or (.value == []))) | not)) end;
+         [$metadata | (.metadata // .).sources[]? | select(.name == $source) | .tables[]?] as $tracked |
          $desired | map(. as $d | ($tracked | map(select(.table == $d.table)) | .[0]) as $current |
-         select($current != null and (($current.configuration // {}) != ($d.configuration // {}))) |
+         select($current != null and (($current.configuration | norm) != ($d.configuration | norm))) |
          {type: "pg_set_table_customization", args: {source: $source, table: .table, configuration: .configuration}})') || return 1
 
     if [ -n "$table_customizations" ] && [ "$table_customizations" != "[]" ] && [ "$table_customizations" != "null" ]; then
@@ -196,10 +197,13 @@ process_metadata_tables() {
         local table_customizations_payload
         table_customizations_payload=$(jq -cn --argjson actions "$table_customizations" '{type:"bulk", args:$actions}')
         local table_customizations_response
-        table_customizations_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+        table_customizations_response=$(curl -sS --fail-with-body -X POST "${hasura_endpoint}/v1/metadata" \
             -H "X-Hasura-Admin-Secret: ${admin_secret}" \
             -H "Content-Type: application/json" \
-            -d "$table_customizations_payload") || return 1
+            -d "$table_customizations_payload") || {
+            echo "❌ Error reconciling table configurations for $tenant_name: $table_customizations_response" >&2
+            return 1
+        }
 
         if echo "$table_customizations_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
             echo "❌ Error reconciling table configurations for $tenant_name: $table_customizations_response" >&2
@@ -370,9 +374,10 @@ process_metadata_functions() {
     local function_customizations
     function_customizations=$(jq -cn --arg source "$tenant_name" \
         --argjson metadata "$existing_metadata" --argjson desired "$all_desired_functions" \
-        '[$metadata | (.metadata // .).sources[]? | select(.name == $source) | .functions[]?] as $tracked |
+        'def norm: if . == null then {} else with_entries(select(((.key == "custom_root_fields" or .key == "column_config" or .key == "custom_column_names") and ((.value == null) or (.value == {}) or (.value == []))) | not)) end;
+         [$metadata | (.metadata // .).sources[]? | select(.name == $source) | .functions[]?] as $tracked |
          $desired | map(. as $d | ($tracked | map(select(.function == $d.function)) | .[0]) as $current |
-         select($current != null and (($current.configuration // {}) != ($d.configuration // {}))) |
+         select($current != null and (($current.configuration | norm) != ($d.configuration | norm))) |
          {type: "pg_set_function_customization", args: {source: $source, function: .function, configuration: .configuration}})') || return 1
 
     if [ -n "$function_customizations" ] && [ "$function_customizations" != "[]" ] && [ "$function_customizations" != "null" ]; then
@@ -380,10 +385,13 @@ process_metadata_functions() {
         local fn_customizations_payload
         fn_customizations_payload=$(jq -cn --argjson actions "$function_customizations" '{type:"bulk", args:$actions}')
         local fn_customizations_response
-        fn_customizations_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+        fn_customizations_response=$(curl -sS --fail-with-body -X POST "${hasura_endpoint}/v1/metadata" \
             -H "X-Hasura-Admin-Secret: ${admin_secret}" \
             -H "Content-Type: application/json" \
-            -d "$fn_customizations_payload") || return 1
+            -d "$fn_customizations_payload") || {
+            echo "❌ Error reconciling function configurations for $tenant_name: $fn_customizations_response" >&2
+            return 1
+        }
 
         if echo "$fn_customizations_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
             echo "❌ Error reconciling function configurations for $tenant_name: $fn_customizations_response" >&2

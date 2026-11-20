@@ -154,7 +154,7 @@ bin/start --reset safetrust hotel_industry
 ### Clean Test Database per Run (`bin/test`)
 `bin/test` executes:
 ```bash
-docker compose -p safetrust-test -f docker-compose-test.yml "${ENV_FILE_FLAGS[@]}" down -v --remove-orphans 2>/dev/null || true
+docker compose -p safetrust-test -f docker-compose-test.yml "${ENV_FILE_FLAGS[@]}" down -v --remove-orphans
 ```
 prior to starting Karate tests. This ensures that:
 - The named volume `db_data_test` is deleted before the run begins, giving `postgres_test` and Hasura a pristine database every time.
