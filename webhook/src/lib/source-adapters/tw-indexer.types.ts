@@ -12,6 +12,12 @@
 export type TwEscrowType = 'single-release' | 'multi-release'
 
 export interface TwFlags {
+  /** Trustless Work V1 escrow-level lifecycle flags. */
+  isPending?: boolean
+  isCompleted?: boolean
+  isDisputed?: boolean
+  isCancelled?: boolean
+  /** Legacy indexer flags retained during the API transition. */
   approved?: boolean
   disputed?: boolean
   released?: boolean

@@ -6,6 +6,7 @@ configuration:
   custom_column_names:
     escrow_id: escrowId
     milestone_id: milestoneId
+    index: index
     due_date: dueDate
     approved_at: approvedAt
     approved_by: approvedBy
