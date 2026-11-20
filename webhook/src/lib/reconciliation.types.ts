@@ -27,6 +27,7 @@ export interface ReconciliationTransitionSummary {
   duplicates: number
   failed: number
   errors: string[]
+  failedContractIds: string[]
 }
 
 export interface UpsertResult {

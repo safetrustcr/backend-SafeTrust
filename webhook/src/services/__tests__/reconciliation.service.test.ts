@@ -357,6 +357,66 @@ describe('reconciliation.service', () => {
     })
 
 
+    it('corrects non-status drift but not status for a contract with a failed transition', async () => {
+      process.env.SOROBAN_VALIDATION_ENABLED = 'true'
+      process.env.SOROBAN_AUTO_CORRECT_ENABLED = 'true'
+
+      setSorobanReconcilerAddon({
+        queryEscrowStateBatch: jest.fn().mockReturnValue(
+          JSON.stringify({ status: 'COMPLETED', balance: 5_000_000 })
+        ),
+        reconcileBatch: jest.fn().mockReturnValue(
+          JSON.stringify({
+            in_sync: false,
+            discrepancies: [
+              {
+                field: 'status',
+                severity: 'critical',
+                in_database: 'ACTIVE',
+                on_chain: 'COMPLETED',
+              },
+              {
+                field: 'balance',
+                severity: 'critical',
+                in_database: '100',
+                on_chain: '0.5',
+              },
+            ],
+          })
+        ),
+      })
+
+      ;(db.query as jest.Mock).mockResolvedValueOnce({
+        rows: [
+          {
+            contract_id: 'c1',
+            status: 'ACTIVE',
+            balance: '10000000',
+            marker: 'm',
+            approver: 'a',
+          },
+        ],
+      })
+      ;(hasuraRequest as jest.Mock).mockResolvedValueOnce({ affected_rows: 1 })
+
+      const result = await validateSorobanDrift(['c1'], 'testnet', {
+        skipStatusCorrectionFor: ['c1'],
+      })
+
+      const [mutation, variables] = (hasuraRequest as jest.Mock).mock.calls[0]
+      expect(mutation).not.toContain('$status')
+      expect(mutation).not.toContain('status:')
+      expect(mutation).toContain('balance:')
+      expect(variables).toEqual({ contractId: 'c1', balance: 0.5 })
+      expect(result).toEqual({
+        enabled: true,
+        drift: 1,
+        corrected: 1,
+        unresolved: 0,
+        errors: [],
+      })
+    })
+
     it('does not auto-correct when discrepancy severity is non-critical', async () => {
       process.env.SOROBAN_VALIDATION_ENABLED = 'true'
 
@@ -592,6 +652,7 @@ describe('reconciliation.service', () => {
           duplicates: 0,
           failed: 1,
           errors: ['C-BAD: mirror unavailable'],
+          failedContractIds: ['C-BAD'],
         },
       }
 

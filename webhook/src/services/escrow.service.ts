@@ -89,7 +89,8 @@ export class EscrowValidationError extends AppError {
 function toLedgerSeq(value: unknown): bigint | null {
   if (value === null || value === undefined || value === '') return null;
   try {
-    return BigInt(value as string | number | bigint);
+    const parsed = BigInt(value as string | number | bigint);
+    return parsed < 0n ? null : parsed;
   } catch {
     return null;
   }
@@ -505,26 +506,26 @@ export async function executeEscrowLifecycleTransition(
       );
     }
 
-    // 7 — Update escrow state and balance in safetrust.trustless_work_escrows
+    // 7 — Update escrow state, balance and accepted ledger in safetrust.trustless_work_escrows
     const now = new Date().toISOString();
+    const updates = ['status = $1', 'updated_at = $2'];
+    const values: unknown[] = [targetStatus, now];
+    let paramIndex = 3;
     if (amount !== undefined) {
-      await client.query(
-        `UPDATE safetrust.trustless_work_escrows
-         SET status = $1,
-             balance = $2,
-             updated_at = $3
-         WHERE id = $4`,
-        [targetStatus, amount, now, escrowId]
-      );
-    } else {
-      await client.query(
-        `UPDATE safetrust.trustless_work_escrows
-         SET status = $1,
-             updated_at = $2
-         WHERE id = $3`,
-        [targetStatus, now, escrowId]
-      );
+      updates.push(`balance = $${paramIndex++}`);
+      values.push(amount);
     }
+    if (observedSeq !== null) {
+      updates.push(`ledger_seq = $${paramIndex++}`);
+      values.push(observedSeq.toString());
+    }
+    values.push(escrowId);
+    await client.query(
+      `UPDATE safetrust.trustless_work_escrows
+       SET ${updates.join(',\n           ')}
+       WHERE id = $${paramIndex}`,
+      values
+    );
 
     // 8 — Mirror status to safetrust.reservations within the SAME transaction client
     await mirrorReservationStatus(escrowId, reservationStatus, tenantId, client);

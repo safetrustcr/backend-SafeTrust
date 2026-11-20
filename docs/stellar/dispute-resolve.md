@@ -120,11 +120,12 @@ flowchart LR
 |---|---|---|---|
 | `funded` → `disputed` | `dispute.raised` | `disputed` | Funds remain locked; neither party can release them unilaterally. |
 | `disputed` → `resolved` | `dispute.resolved` | `resolved` | The Releaser signed a resolution that releases/splits the balance. |
+| `disputed` → `cancelled` | `escrow.cancelled` | `cancelled` | The dispute was abandoned and funds were returned to the tenant. |
 
 `active` and `milestone_approved` can also enter `disputed`; they are omitted
 from the diagram to keep the happy path readable. `resolved` is terminal: it
-has no transition to `completed`. Cancellation is not a dispute outcome and is
-not reachable from `disputed`; it is a separate pre-check-in transition (see
+has no transition to `completed`. `disputed → cancelled` is legal and is the
+other terminal outcome of a dispute, distinct from `resolved` (see
 [resolve versus cancel](#6-resolve-dispute-versus-cancel)).
 
 ### Database constraint
@@ -270,13 +271,17 @@ SafeTrust then synchronizes that external record into PostgreSQL:
    canonical off-chain mirror). Soroban sends nothing to SafeTrust directly.
 2. Reconciliation polling at `POST /reconciliation/sync-escrows` is now
    authoritative. The reconciliation service fetches escrow state through
-   `GET /helper/get-escrows-by-contract-ids`, detects legal local-to-observed
-   transitions, and upserts `safetrust.trustless_work_escrows` (`status`,
-   `balance`, roles, amounts).
+   `GET /helper/get-escrow-by-contract-ids` and detects legal local-to-observed
+   transitions.
 3. The lifecycle transaction
    ([`executeEscrowLifecycleTransition`](../../webhook/src/services/escrow.service.ts))
-   records the business event in `safetrust.trustless_work_webhook_events` and
-   mirrors the status onto `safetrust.escrow_transactions` / `reservations`.
+   records the business event in `safetrust.trustless_work_webhook_events`,
+   mirrors the status onto `safetrust.escrow_transactions` / `reservations`, and
+   persists the accepted observation ledger.
+4. Only after those lifecycle effects succeed does the raw upsert write the
+   remaining indexer fields (`status`, `balance`, roles, amounts) to
+   `safetrust.trustless_work_escrows`. Records whose transition failed are
+   withheld from this upsert so they remain retryable.
 
 `indexer/update-from-txHash` is a **Trustless Work** endpoint. It does not write
 SafeTrust PostgreSQL directly. Its purpose is to close the gap between an

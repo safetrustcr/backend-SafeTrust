@@ -141,10 +141,22 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
     updated_at = NOW()
   WHERE (
-    safetrust.trustless_work_escrows.status NOT IN ('completed', 'resolved', 'cancelled')
+    (
+      safetrust.trustless_work_escrows.status NOT IN ('completed', 'resolved', 'cancelled')
+      OR (
+        EXCLUDED.ledger_seq = safetrust.trustless_work_escrows.ledger_seq
+        AND safetrust.trustless_work_escrows.status = EXCLUDED.status
+        AND safetrust.trustless_work_escrows.balance = EXCLUDED.balance
+      )
+    )
     AND (
       safetrust.trustless_work_escrows.ledger_seq IS NULL
       OR EXCLUDED.ledger_seq > safetrust.trustless_work_escrows.ledger_seq
+      OR (
+        EXCLUDED.ledger_seq = safetrust.trustless_work_escrows.ledger_seq
+        AND safetrust.trustless_work_escrows.status = EXCLUDED.status
+        AND safetrust.trustless_work_escrows.balance = EXCLUDED.balance
+      )
     )
     AND (
       safetrust.trustless_work_escrows.status = EXCLUDED.status

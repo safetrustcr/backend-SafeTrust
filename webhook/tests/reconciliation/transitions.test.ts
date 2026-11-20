@@ -186,7 +186,14 @@ describe('reconciliation transition application', () => {
       notify: notifyMock,
     })
 
-    expect(result).toEqual({ detected: 1, applied: 1, duplicates: 0, failed: 0, errors: [] })
+    expect(result).toEqual({
+      detected: 1,
+      applied: 1,
+      duplicates: 0,
+      failed: 0,
+      errors: [],
+      failedContractIds: [],
+    })
     expect(executeMock).toHaveBeenCalledTimes(1)
     expect(executeMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -230,7 +237,14 @@ describe('reconciliation transition application', () => {
       notify: notifyMock,
     })
 
-    expect(result).toEqual({ detected: 1, applied: 0, duplicates: 1, failed: 0, errors: [] })
+    expect(result).toEqual({
+      detected: 1,
+      applied: 0,
+      duplicates: 1,
+      failed: 0,
+      errors: [],
+      failedContractIds: [],
+    })
     expect(notifyMock).not.toHaveBeenCalled()
   })
 
@@ -279,6 +293,7 @@ describe('reconciliation transition application', () => {
       duplicates: 0,
       failed: 1,
       errors: ['C-BAD: state conflict'],
+      failedContractIds: ['C-BAD'],
     })
     expect(executeMock).toHaveBeenCalledTimes(2)
     expect(notifyMock).toHaveBeenCalledTimes(1)
@@ -410,6 +425,11 @@ describe('atomic lifecycle transaction used by reconciliation', () => {
       escrowId: 'escrow-1',
     })
     expect(queries.some((entry) => entry.sql.includes('ledger_seq::text AS ledger_seq'))).toBe(true)
+    const escrowUpdate = queries.find((entry) =>
+      entry.sql.startsWith('UPDATE safetrust.trustless_work_escrows')
+    )
+    expect(escrowUpdate?.sql).toContain('ledger_seq = $4')
+    expect(escrowUpdate?.params).toContain('21')
     expect(mirrorMock).toHaveBeenCalledTimes(1)
   })
 })
@@ -423,7 +443,14 @@ describe('reconciliation sync integration', () => {
 
     const result = await syncEscrowsWithIndexer(['C-SYNC'], { applyTransitions: true })
 
-    expect(result.transitions).toEqual({ detected: 1, applied: 1, duplicates: 0, failed: 0, errors: [] })
+    expect(result.transitions).toEqual({
+      detected: 1,
+      applied: 1,
+      duplicates: 0,
+      failed: 0,
+      errors: [],
+      failedContractIds: [],
+    })
     expect(executeMock).toHaveBeenCalledWith(
       expect.objectContaining({ contractId: 'C-SYNC', eventType: 'escrow.funded' })
     )
@@ -476,6 +503,36 @@ describe('reconciliation sync integration', () => {
       expect.objectContaining({ contractId: 'C-SUCCEEDED', status: 'funded' }),
     ])
     expect(upsertMock.mock.calls[0][0]).toHaveLength(1)
+  })
+
+  test('keeps a stale observation out of the lifecycle after a newer lifecycle commit with failed raw upsert', async () => {
+    adapterMock.mockResolvedValueOnce([
+      { contractId: 'C-LEDGER', amount: 100, balance: 100, ledgerSeq: '30', roles: {} },
+    ])
+    statesMock.mockResolvedValueOnce([{ contract_id: 'C-LEDGER', status: 'created' }])
+    executeMock.mockResolvedValueOnce({ isDuplicate: false, eventId: 'event-a' })
+    upsertMock.mockRejectedValueOnce(new Error('raw upsert failed'))
+
+    await syncEscrowsWithIndexer(['C-LEDGER'], { applyTransitions: true })
+
+    expect(executeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ contractId: 'C-LEDGER', observedLedgerSeq: '30' })
+    )
+
+    adapterMock.mockResolvedValueOnce([
+      { contractId: 'C-LEDGER', amount: 50, balance: 50, ledgerSeq: '20', roles: {} },
+    ])
+    statesMock.mockResolvedValueOnce([
+      { contract_id: 'C-LEDGER', status: 'funded', ledger_seq: '30' },
+    ])
+    upsertMock.mockResolvedValueOnce({ updated: 0, unchanged: 1, skipped: 0 })
+
+    await syncEscrowsWithIndexer(['C-LEDGER'], { applyTransitions: true })
+
+    expect(executeMock).toHaveBeenCalledTimes(1)
+    expect(upsertMock).toHaveBeenLastCalledWith([
+      expect.objectContaining({ contractId: 'C-LEDGER', ledgerSeq: '20', balance: 50 }),
+    ])
   })
 
   test('leaves legacy sync callers unchanged when transitions are not opted in', async () => {

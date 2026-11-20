@@ -74,6 +74,14 @@ describe('syncEscrowsHandler', () => {
       unchanged: 0,
       skipped: 0,
       errors: [],
+      transitions: {
+        detected: 1,
+        applied: 0,
+        duplicates: 0,
+        failed: 1,
+        errors: ['mock_1: mirror unavailable'],
+        failedContractIds: ['mock_1'],
+      },
     })
 
     const req = {} as Request
@@ -88,6 +96,12 @@ describe('syncEscrowsHandler', () => {
       applyTransitions: true,
       tenantId: 'safetrust',
     })
+    expect(reconciliationService.validateSorobanDrift).toHaveBeenCalledWith(
+      ['mock_1'],
+      'testnet',
+      { skipStatusCorrectionFor: ['mock_1'] }
+    )
+
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith(
       {

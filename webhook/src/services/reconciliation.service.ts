@@ -205,6 +205,7 @@ export async function applyReconciliationTransitions(
     duplicates: 0,
     failed: 0,
     errors: [],
+    failedContractIds: [],
   }
   const execute = options.executeTransition ?? executeEscrowLifecycleTransition
   const notify = options.notify ?? notifyHotelEscrowConversation
@@ -258,6 +259,7 @@ export async function applyReconciliationTransitions(
       const message = (error as Error).message ?? String(error)
       summary.failed++
       summary.errors.push(`${transition.contractId}: ${message}`)
+      summary.failedContractIds.push(transition.contractId)
       options.onFailed?.(transition.contractId, error)
       logger.warn('reconciliation.transition_failed', {
         contractId: transition.contractId,
@@ -271,7 +273,14 @@ export async function applyReconciliationTransitions(
 }
 
 function emptyTransitionSummary(): ReconciliationTransitionSummary {
-  return { detected: 0, applied: 0, duplicates: 0, failed: 0, errors: [] }
+  return {
+    detected: 0,
+    applied: 0,
+    duplicates: 0,
+    failed: 0,
+    errors: [],
+    failedContractIds: [],
+  }
 }
 
 function mergeTransitionSummaries(
@@ -284,6 +293,9 @@ function mergeTransitionSummaries(
   target.duplicates += source.duplicates
   target.failed += source.failed
   target.errors.push(...source.errors)
+  for (const contractId of source.failedContractIds) {
+    if (!target.failedContractIds.includes(contractId)) target.failedContractIds.push(contractId)
+  }
 }
 
 interface ObservedStateChangeResult {
@@ -318,7 +330,12 @@ async function applyObservedStateChanges(
     const message = (error as Error).message ?? String(error)
     logger.warn('reconciliation.transition_detection_failed', { error: message })
     return {
-      summary: { ...emptyTransitionSummary(), failed: 1, errors: [message] },
+      summary: {
+        ...emptyTransitionSummary(),
+        failed: 1,
+        errors: [message],
+        failedContractIds: observedEscrows.map((record) => record.contractId),
+      },
       failedContractIds: observedEscrows.map((record) => record.contractId),
     }
   }
@@ -482,6 +499,10 @@ export interface SyncSummary {
   transitions?: ReconciliationTransitionSummary
 }
 
+export interface SorobanValidationOptions {
+  skipStatusCorrectionFor?: Set<string> | string[]
+}
+
 export interface DriftSummary {
   enabled: boolean
   drift: number
@@ -596,8 +617,12 @@ export async function syncEscrowsWithIndexer(
 export async function runSorobanValidation(
   chunk: string[],
   dbStateMap: Record<string, EscrowDbRow>,
-  network: string
+  network: string,
+  options: SorobanValidationOptions = {}
 ): Promise<{ drifted: number; corrected: number; unresolved: number }> {
+  const skipStatusCorrectionFor = options.skipStatusCorrectionFor instanceof Set
+    ? options.skipStatusCorrectionFor
+    : new Set(options.skipStatusCorrectionFor ?? [])
   let drifted = 0
   let corrected = 0
   let unresolved = 0
@@ -649,28 +674,41 @@ export async function runSorobanValidation(
             )
           )
 
+          const skipStatus = skipStatusCorrectionFor.has(contractId)
+          const hasNonStatusCorrection = criticalDiscrepancies.some(
+            (discrepancy) => discrepancy.field !== 'status'
+          )
+
           // Auto-correction runs ONLY if explicitly enabled by the operator and state is validated
-          if (autoCorrectEnabled) {
+          if (autoCorrectEnabled && (!skipStatus || hasNonStatusCorrection)) {
+            const setClause = skipStatus
+              ? `balance:   $balance
+                     updatedAt: "now()"`
+              : `status:    $status
+                     balance:   $balance
+                     updatedAt: "now()"`
+            const variables = skipStatus
+              ? { contractId, balance: onChain.balance / 10_000_000 }
+              : {
+                  contractId,
+                  status: onChain.status,
+                  balance: onChain.balance / 10_000_000,
+                }
+            const statusVariable = skipStatus ? '' : '$status: String!\n                 '
+
             await hasuraRequest(
               `mutation CorrectDriftFromSoroban(
                  $contractId: String!
-                 $status: String!
-                 $balance: numeric!
+                 ${statusVariable}$balance: numeric!
                ) {
                  update_trustless_work_escrows(
                    where: { contractId: { _eq: $contractId } }
                    _set: {
-                     status:    $status
-                     balance:   $balance
-                     updatedAt: "now()"
+                     ${setClause}
                    }
                  ) { affected_rows }
                }`,
-              {
-                contractId,
-                status: onChain.status,
-                balance: onChain.balance / 10_000_000,
-              }
+              variables
             )
             corrected++
           }
@@ -699,7 +737,8 @@ export async function runSorobanValidation(
  */
 export async function validateSorobanDrift(
   contractIds: string[],
-  network: string
+  network: string,
+  options: SorobanValidationOptions = {}
 ): Promise<DriftSummary> {
   const sorobanValidationEnabled = process.env.SOROBAN_VALIDATION_ENABLED === 'true'
 
@@ -729,7 +768,8 @@ export async function validateSorobanDrift(
       const { drifted, corrected, unresolved } = await runSorobanValidation(
         chunks[i],
         dbStateMap,
-        network
+        network,
+        options
       )
       totalSorobanDrift += drifted
       totalSorobanCorrected += corrected

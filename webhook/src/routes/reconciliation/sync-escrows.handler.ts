@@ -59,7 +59,9 @@ export const syncEscrowsHandler = async (
       applyTransitions: true,
       tenantId: TENANT_ID,
     })
-    const drift = await validateSorobanDrift(contractIds, NETWORK)
+    const drift = await validateSorobanDrift(contractIds, NETWORK, {
+      skipStatusCorrectionFor: sync.transitions?.failedContractIds,
+    })
     const stale = await detectStaleEscrows(STALE_ESCROW_DAYS)
     const summary = formatReconciliationSummary(
       sync,
