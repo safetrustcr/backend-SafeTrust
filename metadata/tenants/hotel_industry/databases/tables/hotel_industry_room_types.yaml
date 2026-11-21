@@ -1,3 +1,18 @@
 table:
   name: room_types
   schema: hotel_industry
+array_relationships:
+  - name: rooms
+    using:
+      foreign_key_constraint_on:
+        table:
+          schema: hotel_industry
+          name: rooms
+        column: room_type_id
+  - name: pricing_rules
+    using:
+      foreign_key_constraint_on:
+        table:
+          schema: hotel_industry
+          name: pricing_rules
+        column: room_type_id
