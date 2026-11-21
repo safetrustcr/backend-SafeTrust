@@ -455,7 +455,8 @@ describe('persistEscrow', () => {
     const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
     expect(callArgs.object.assetCode).toBe('USDC');
     expect(callArgs.object.resolver).toBeNull();
-    expect(callArgs.object.bookingId).toBeNull();
+    expect(callArgs.object).not.toHaveProperty('bookingId');
+    expect(callArgs.object).not.toHaveProperty('bookingMetadata');
   });
 });
 

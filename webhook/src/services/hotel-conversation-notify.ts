@@ -60,7 +60,7 @@ export async function resolveHotelEscrowParties(
        r.apartment_id,
        host_u.id       AS host_id,
        guest_u.id      AS guest_id
-     FROM safetrust.escrow_transactions et
+     FROM hotel_industry.escrow_transactions et
      JOIN hotel_industry.reservations res
        ON et.reservation_id = res.id
      JOIN hotel_industry.rooms r

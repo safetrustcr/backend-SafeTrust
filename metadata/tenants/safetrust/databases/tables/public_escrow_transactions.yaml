@@ -1,0 +1,11 @@
+# Backend-only escrow transaction log. Reads happen through
+# trustless_work_escrows.transactions; ownership is expressed on
+# safetrust.reservations (guest_id / apartment.owner_id), so no guest or host
+# select permission is granted here directly.
+table:
+  name: escrow_transactions
+  schema: safetrust
+object_relationships:
+  - name: escrow
+    using:
+      foreign_key_constraint_on: escrow_id

@@ -127,9 +127,17 @@ declare module '@safetrust/types' {
     escrow_type: 'single_release' | 'multi_release' | string
     asset_code?: string
     asset_issuer?: string | null
+    /**
+     * @deprecated Booking facts are stored on safetrust.reservations. These
+     * request fields are accepted for compatibility and are not persisted on
+     * trustless_work_escrows anymore.
+     */
     booking_id?: string | null
+    /** @deprecated See booking_id. */
     room_id?: string | null
+    /** @deprecated See booking_id. */
     hotel_id?: string | null
+    /** @deprecated See booking_id. */
     guest_id?: string | null
     booking_metadata?: {
       reservation_id?: string

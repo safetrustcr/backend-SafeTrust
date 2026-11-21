@@ -93,13 +93,8 @@ export interface CreateEscrowInput {
   assetIssuer?: string | null
   amount: number
   balance: number
-  bookingId?: string | null
-  roomId?: string | null
-  hotelId?: string | null
-  guestId?: string | null
   tenantId: string
   escrowMetadata?: unknown
-  bookingMetadata?: unknown
 }
 
 /**
@@ -645,14 +640,17 @@ export interface EscrowObservationInput {
 }
 
 /**
- * Executes an atomic freshness-checked write on escrow_transactions.
+ * Executes an atomic freshness-checked write on trustless_work_escrows.
+ *
+ * trustless_work_escrows is the single source of truth for escrow state, so
+ * status, balance and ledger freshness are written here and nowhere else.
  *
  * Implements the atomic transaction pattern:
  * ```sql
  * BEGIN;
- * SELECT ledger_seq, status FROM escrow_transactions WHERE id = $1 FOR UPDATE;
+ * SELECT ledger_seq, status FROM trustless_work_escrows WHERE id = $1 FOR UPDATE;
  * -- compare in application code
- * UPDATE escrow_transactions SET status = $2, balance = $3, ledger_seq = $4 WHERE id = $1;
+ * UPDATE trustless_work_escrows SET status = $2, balance = $3, ledger_seq = $4 WHERE id = $1;
  * COMMIT;
  * ```
  *
@@ -688,7 +686,7 @@ export async function updateEscrowWithFreshness(
     // Supports either UUID id or contract_id string
     const selectSql = `
       SELECT id, contract_id, status, balance::text, ledger_seq, network
-      FROM safetrust.escrow_transactions
+      FROM safetrust.trustless_work_escrows
       WHERE id::text = $1 OR contract_id = $1
       FOR UPDATE
     `
@@ -701,10 +699,10 @@ export async function updateEscrowWithFreshness(
     } catch (err) {
       await executeQuery('ROLLBACK TO SAVEPOINT sp_select')
       if (!isUndefinedTableError(err)) throw err
-      // Fall back to unqualified escrow_transactions table if safetrust schema is not configured
+      // Fall back to the unqualified table if the safetrust schema is not configured
       const fallbackSql = `
         SELECT id, contract_id, status, balance::text, ledger_seq, network
-        FROM escrow_transactions
+        FROM trustless_work_escrows
         WHERE id::text = $1 OR contract_id = $1
         FOR UPDATE
       `
@@ -743,9 +741,9 @@ export async function updateEscrowWithFreshness(
     if (outcome.type === 'WRITE' && storedRow) {
       // Update existing row
       const updateSql = `
-        UPDATE safetrust.escrow_transactions
+        UPDATE safetrust.trustless_work_escrows
         SET status = $2, balance = $3::numeric, ledger_seq = $4,
-            network = COALESCE(safetrust.escrow_transactions.network, $5),
+            network = COALESCE(safetrust.trustless_work_escrows.network, $5),
             updated_at = NOW()
         WHERE id::text = $1 OR contract_id = $1
       `
@@ -763,9 +761,9 @@ export async function updateEscrowWithFreshness(
         await executeQuery('ROLLBACK TO SAVEPOINT sp_update')
         if (!isUndefinedTableError(err)) throw err
         const fallbackUpdate = `
-          UPDATE escrow_transactions
+          UPDATE trustless_work_escrows
           SET status = $2, balance = $3::numeric, ledger_seq = $4,
-              network = COALESCE(escrow_transactions.network, $5),
+              network = COALESCE(trustless_work_escrows.network, $5),
               updated_at = NOW()
           WHERE id::text = $1 OR contract_id = $1
         `
