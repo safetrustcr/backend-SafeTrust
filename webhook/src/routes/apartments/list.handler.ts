@@ -3,6 +3,7 @@ import type { Apartment, ApartmentListQuery, ApartmentListResponse } from '@safe
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import db, { query } from '../../services/db'
 import { logger } from '../../middleware/logger'
+import { liveHoldOverlapSql } from '../../repositories/hold.repository'
 
 /**
  * Format apartment entity so decimal columns (price, warranty_deposit) from pg driver are converted to numbers,
@@ -38,6 +39,8 @@ export const listApartments = async (
       bedrooms,
       petFriendly,
       category,
+      checkIn,
+      checkOut,
       page = '1',
       limit = '10',
       sort = 'created_at',
@@ -109,6 +112,20 @@ export const listApartments = async (
       whereClause.push(`a.category = $${paramIndex}`)
       queryParams.push(category)
       paramIndex++
+    }
+
+    // Dates held by someone else (pending_payment or active) are unavailable.
+    if (checkIn || checkOut) {
+      const dateRe = /^\d{4}-\d{2}-\d{2}$/
+      if (
+        typeof checkIn !== 'string' || typeof checkOut !== 'string' ||
+        !dateRe.test(checkIn) || !dateRe.test(checkOut) || checkOut <= checkIn
+      ) {
+        return res.status(400).json({ error: 'checkIn and checkOut must both be YYYY-MM-DD dates with checkOut after checkIn.' })
+      }
+      whereClause.push(`NOT ${liveHoldOverlapSql('a', `$${paramIndex}`, `$${paramIndex + 1}`)}`)
+      queryParams.push(checkIn, checkOut)
+      paramIndex += 2
     }
 
     const whereString = `WHERE ${whereClause.join(' AND ')}`
