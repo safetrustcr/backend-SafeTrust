@@ -16,9 +16,18 @@ import {
 import { assertSignedXdrCannotAdvanceStatus, EscrowValidationError } from '../escrow.service'
 import db from '../db'
 
-jest.mock('../db', () => ({
-  query: jest.fn(),
-}))
+jest.mock('../db', () => {
+  const query = jest.fn()
+  return {
+    __esModule: true,
+    default: { query },
+    query,
+    // Run the callback against the same mock, without BEGIN/COMMIT queries so
+    // call-order fixtures stay focused on the writes.
+    withTransaction: async (fn: (client: { query: jest.Mock }) => Promise<unknown>) =>
+      fn({ query }),
+  }
+})
 
 const mockedDbQuery = db.query as jest.MockedFunction<typeof db.query>
 
@@ -93,8 +102,10 @@ describe('Confirmation Service - Issue #660', () => {
             },
           ],
         } as any)
-        .mockResolvedValueOnce({ rows: [] } as any) // update trustless_work_escrows
-        .mockResolvedValueOnce({ rows: [] } as any) // update escrow_transactions
+        .mockResolvedValueOnce({
+          rows: [{ id: 'escrow-uuid-1', marker: 'GMARKER', approver: 'GAPPROVER' }],
+        } as any) // update trustless_work_escrows
+        .mockResolvedValueOnce({ rows: [] } as any) // insert escrow_transactions
         .mockResolvedValueOnce({ rows: [] } as any) // updateRetryRecordStatus completed
 
       const result = await processHelperSubmission({
@@ -161,7 +172,9 @@ describe('Confirmation Service - Issue #660', () => {
             },
           ],
         } as any)
-        .mockResolvedValueOnce({ rows: [] } as any)
+        .mockResolvedValueOnce({
+          rows: [{ id: 'escrow-uuid-2', marker: 'GMARKER', approver: 'GAPPROVER' }],
+        } as any)
         .mockResolvedValueOnce({ rows: [] } as any)
         .mockResolvedValueOnce({ rows: [] } as any)
 
@@ -287,11 +300,15 @@ describe('Confirmation Service - Issue #660', () => {
   // ── 5. Deployment vs. Funding separation ──────────────────────────────────
   describe('Criterion 5: Strict separation of Deployment vs Funding', () => {
     it('promotes deployment to created status without setting balance or marking funded', async () => {
+      mockedDbQuery.mockResolvedValueOnce({
+        rows: [{ id: 'escrow-uuid-d', marker: 'GMARKER', approver: 'GAPPROVER' }],
+      } as any)
+
       await promoteEscrowStatus(ESCROW_ID, 'deploy', VALID_TX_HASH, 'testnet')
 
       expect(mockedDbQuery).toHaveBeenCalledWith(
-        expect.stringContaining("status = 'created'"),
-        [VALID_TX_HASH, 'testnet', ESCROW_ID]
+        expect.stringContaining('UPDATE safetrust.trustless_work_escrows'),
+        ['created', false, VALID_TX_HASH, 'testnet', ESCROW_ID]
       )
       expect(mockedDbQuery).not.toHaveBeenCalledWith(
         expect.stringContaining("status = 'funded'"),
@@ -300,11 +317,32 @@ describe('Confirmation Service - Issue #660', () => {
     })
 
     it('promotes funding to funded status and updates balance', async () => {
+      mockedDbQuery.mockResolvedValueOnce({
+        rows: [{ id: 'escrow-uuid-f', marker: 'GMARKER', approver: 'GAPPROVER' }],
+      } as any)
+
       await promoteEscrowStatus(ESCROW_ID, 'fund', VALID_TX_HASH, 'testnet')
 
       expect(mockedDbQuery).toHaveBeenCalledWith(
-        expect.stringContaining("status = 'funded'"),
-        [VALID_TX_HASH, 'testnet', ESCROW_ID]
+        expect.stringContaining('UPDATE safetrust.trustless_work_escrows'),
+        ['funded', true, VALID_TX_HASH, 'testnet', ESCROW_ID]
+      )
+    })
+
+    it('records the signed transaction against the escrow exactly once', async () => {
+      mockedDbQuery.mockResolvedValueOnce({
+        rows: [{ id: 'escrow-uuid-t', marker: 'GMARKER', approver: 'GAPPROVER' }],
+      } as any)
+
+      await promoteEscrowStatus(ESCROW_ID, 'fund', VALID_TX_HASH, 'testnet')
+
+      expect(mockedDbQuery).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO safetrust.escrow_transactions'),
+        ['escrow-uuid-t', 'fund', 'funded', VALID_TX_HASH, 'GMARKER', 'GAPPROVER']
+      )
+      expect(mockedDbQuery).toHaveBeenCalledWith(
+        expect.stringContaining('ON CONFLICT (escrow_id, kind, tx_hash)'),
+        expect.anything()
       )
     })
   })
@@ -387,8 +425,10 @@ describe('Confirmation Service - Issue #660', () => {
         })
 
       mockedDbQuery
-        .mockResolvedValueOnce({ rows: [] } as any) // promote trustless_work_escrows
-        .mockResolvedValueOnce({ rows: [] } as any) // promote escrow_transactions
+        .mockResolvedValueOnce({
+          rows: [{ id: 'escrow-uuid-3', marker: 'GMARKER', approver: 'GAPPROVER' }],
+        } as any) // promote trustless_work_escrows
+        .mockResolvedValueOnce({ rows: [] } as any) // insert escrow_transactions
         .mockResolvedValueOnce({ rows: [] } as any) // updateRetryRecordStatus completed
 
       const summary = await processPendingConfirmationRetries()

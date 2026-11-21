@@ -196,13 +196,10 @@ export async function persistEscrow(
       assetIssuer: payload.asset_issuer,
       amount: payload.amount,
       balance: 0,
-      bookingId: payload.booking_id,
-      roomId: payload.room_id,
-      hotelId: payload.hotel_id,
-      guestId: payload.guest_id,
       tenantId,
+      // Booking facts live in safetrust.reservations; the raw payload keeps
+      // booking_metadata.reservation_id for the reservation link.
       escrowMetadata: payload.raw,
-      bookingMetadata: payload.booking_metadata,
     },
   });
 
