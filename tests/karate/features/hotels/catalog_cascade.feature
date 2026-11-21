@@ -12,7 +12,7 @@ Background:
   * def room = db.query("SELECT id FROM hotel_industry.rooms WHERE hotel_id = '" + hotelId + "'")
   * def roomId = room[0].id
   * def roomAvailability = db.query("SELECT is_active FROM hotel_industry.rooms WHERE id = '" + roomId + "'")
-  * match roomAvailability[0].is_active == 'true'
+  * match roomAvailability[0].is_active == '#? _ == "true" || _ == "t" || _ == true'
   * db.execute("DO $$ BEGIN INSERT INTO hotel_industry.rooms (hotel_id, room_number, room_type_id, price_night, capacity) VALUES ('" + hotelId + "', '902', '" + roomTypeId + "', 100, 0); RAISE EXCEPTION 'capacity check did not reject zero'; EXCEPTION WHEN check_violation THEN NULL; END $$")
   * db.execute("INSERT INTO hotel_industry.room_images (room_id, image_url) VALUES ('" + roomId + "', '" + longImageUrl + "')")
   * db.execute("INSERT INTO hotel_industry.hotel_images (hotel_id, image_url) VALUES ('" + hotelId + "', '" + longImageUrl + "')")
