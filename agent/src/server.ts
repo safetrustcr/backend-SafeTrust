@@ -459,6 +459,16 @@ export function createBookingAgentServer(
         if (!booking) {
           throw new Error(`Booking "${pending.bookingId}" not found.`);
         }
+        if (
+          booking.contractId !== pending.contractId ||
+          Math.abs(booking.depositUsdc - pending.amountUsdc) > 1e-7
+        ) {
+          pendingConfirmations.delete(args.confirmation_id);
+          throw new DepositVerificationError(
+            'HUMAN_CONFIRMATION_REQUIRED',
+            `Booking "${pending.bookingId}" terms changed since confirmation "${args.confirmation_id}" was issued. Call prepare_deposit again.`
+          );
+        }
 
         const unsignedXdr = args.unsigned_xdr ?? booking.unsignedXdr;
         const result = await executeSignedDeposit({
@@ -524,6 +534,16 @@ export function createBookingAgentServer(
             throw new DepositVerificationError(
               'HUMAN_CONFIRMATION_REQUIRED',
               `Invalid or expired confirmation_id "${args.confirmation_id}" for booking "${booking.bookingId}".`
+            );
+          }
+          if (
+            booking.contractId !== pending.contractId ||
+            Math.abs(booking.depositUsdc - pending.amountUsdc) > 1e-7
+          ) {
+            pendingConfirmations.delete(args.confirmation_id);
+            throw new DepositVerificationError(
+              'HUMAN_CONFIRMATION_REQUIRED',
+              `Booking "${booking.bookingId}" terms changed since confirmation "${args.confirmation_id}" was issued. Call prepare_deposit again.`
             );
           }
           if (!args.human_confirmed) {

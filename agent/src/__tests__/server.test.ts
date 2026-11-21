@@ -338,6 +338,33 @@ describe('MCP Booking Agent Server', () => {
     expect(parsed.status).toBe('confirmation_required');
     expect(parsed.confirmation_id).toMatch(/^conf_/);
 
+    // If booking terms (contractId or depositUsdc) change before confirmation, both confirm_deposit and fund_deposit reject
+    api.registerBooking({
+      bookingId: 'b_url_only',
+      propertyId: 'p1',
+      propertyName: 'Villa Arenal Vista',
+      contractId: StrKey.encodeContract(Buffer.alloc(32, 9)),
+      checkIn: '2026-12-15',
+      checkOut: '2026-12-20',
+      totalUsdc: 150,
+      depositUsdc: 49,
+      assetCode: 'USDC',
+      assetContract: TESTNET_USDC,
+      unsignedXdr,
+      status: 'escrow_created',
+      feePaidUsdc: 0.1,
+    });
+
+    const tamperedOut = await client.callTool({
+      name: 'confirm_deposit',
+      arguments: {
+        confirmation_id: parsed.confirmation_id,
+        human_confirmed: true,
+      },
+    });
+    expect(tamperedOut.isError).toBe(true);
+    expect(getToolText(tamperedOut)).toContain('terms changed');
+
     await client.close();
   });
 
