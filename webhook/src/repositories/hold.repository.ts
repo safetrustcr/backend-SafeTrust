@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg'
 import { query, withTransaction } from '../services/db'
 import { ConflictError, NotFoundError, ForbiddenError, ValidationError } from '../utils/errors'
+import { calculateQuote } from '../services/quote'
 
 export const HOLD_DURATION_MS = 10 * 60 * 1000
 export const MAX_ACTIVE_HOLDS_PER_USER = 3
@@ -118,11 +119,8 @@ export async function createHold(input: CreateHoldInput): Promise<HoldRow & { pr
       throw new ConflictError('Dates are not available', { code: 'dates_unavailable' })
     }
 
-    const nights = Math.max(
-      1,
-      Math.round((Date.parse(input.checkOut) - Date.parse(input.checkIn)) / 86_400_000)
-    )
-    const priceTotal = (Number(apartment.price) * nights).toFixed(2)
+    const quote = calculateQuote(apartment, input.checkIn, input.checkOut)
+    const priceTotal = quote.total
 
     try {
       const inserted = await client.query<HoldRow>(
