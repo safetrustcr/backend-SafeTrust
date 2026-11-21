@@ -160,7 +160,7 @@ describe('updateBidRequestHandler', () => {
       id: 'bid-1',
       current_status: 'APPROVED',
       apartment_id: 'apt-1',
-      tenant_id: 'tenant-1',
+      bidder_id: 'tenant-1',
     }
 
     mockClient.query
