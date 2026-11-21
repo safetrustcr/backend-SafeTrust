@@ -64,7 +64,7 @@ export async function resolveHotelEscrowParties(
      JOIN hotel_industry.reservations res
        ON et.reservation_id = res.id
      JOIN hotel_industry.rooms r
-       ON res.room_id = r.room_id
+       ON res.room_id = r.id
      LEFT JOIN hotel_industry.escrow_transaction_users host_etu
        ON host_etu.escrow_transaction_id = et.id
       AND UPPER(host_etu.role) IN ('OWNER', 'HOST')
