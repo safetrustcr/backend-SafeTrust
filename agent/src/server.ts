@@ -535,11 +535,16 @@ export function createBookingAgentServer(
           pendingConfirmations.delete(args.confirmation_id);
           humanConfirmed = true;
         } else {
-          // Path B: Use MCP elicitation if the connected client supports it
-          const clientCaps = server.server.getClientCapabilities();
-          const supportsElicitation = Boolean(clientCaps?.elicitation);
+          // Path B: Use MCP form elicitation if the connected client supports it
+          const elicitationCaps =
+            server.server.getClientCapabilities()?.elicitation;
+          const supportsFormElicitation =
+            Boolean(elicitationCaps) &&
+            (Boolean(elicitationCaps?.form) ||
+              Object.keys(elicitationCaps as Record<string, unknown>).length ===
+                0);
 
-          if (supportsElicitation) {
+          if (supportsFormElicitation) {
             const elicitResult = await server.server.elicitInput({
               mode: 'form',
               message: `Book ${booking.propertyName ?? booking.propertyId} and lock ${booking.depositUsdc.toFixed(2)} USDC in escrow (${booking.contractId})?`,

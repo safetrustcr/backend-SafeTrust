@@ -278,6 +278,69 @@ describe('MCP Booking Agent Server', () => {
     await client.close();
   });
 
+  it('falls back to a confirmation_id when the client only supports URL elicitation', async () => {
+    const kp = Keypair.random();
+    const secretKey = kp.secret();
+    const contractId = StrKey.encodeContract(Buffer.alloc(32, 8));
+    const unsignedXdr = buildUnsignedFundEscrowXdr({
+      contractId,
+      signerPublicKey: kp.publicKey(),
+      amountUsdc: 45,
+      network: 'testnet',
+    });
+
+    const { server, api } = createBookingAgentServer({
+      secretKey,
+      apiBaseUrl: 'https://testnet.safetrust.local',
+      spendingConfig: {
+        maxFeePerCallUsdc: 0.1,
+        feeBudgetUsdc: 0.5,
+        maxDepositUsdc: 50,
+        network: 'testnet',
+        expectedPayTo: PLATFORM_WALLET,
+        expectedAssetContract: TESTNET_USDC,
+      },
+    });
+
+    api.registerBooking({
+      bookingId: 'b_url_only',
+      propertyId: 'p1',
+      propertyName: 'Villa Arenal Vista',
+      contractId,
+      checkIn: '2026-12-15',
+      checkOut: '2026-12-20',
+      totalUsdc: 150,
+      depositUsdc: 45,
+      assetCode: 'USDC',
+      assetContract: TESTNET_USDC,
+      unsignedXdr,
+      status: 'escrow_created',
+      feePaidUsdc: 0.1,
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client(
+      { name: 'url-only-elicit-client', version: '1.0.0' },
+      { capabilities: { elicitation: { url: {} } } }
+    );
+
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    const res = await client.callTool({
+      name: 'fund_deposit',
+      arguments: { booking_id: 'b_url_only' },
+    });
+    expect(res.isError).toBeFalsy();
+    const parsed = JSON.parse(getToolText(res));
+    expect(parsed.status).toBe('confirmation_required');
+    expect(parsed.confirmation_id).toMatch(/^conf_/);
+
+    await client.close();
+  });
+
   it('produces the expected end-to-end testnet transcript', async () => {
     const lines = await runTestnetTranscript();
     expect(lines[0]).toContain('search_properties   FREE (session)  2 found');
