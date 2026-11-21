@@ -51,7 +51,7 @@ BEGIN
     r.room_number,
     h.name AS hotel_name,
     COUNT(res.id) AS reservation_count,
-    COALESCE(SUM(res.total_amount), 0) AS total_revenue
+    COALESCE(SUM(res.total_amount), 0)::NUMERIC(12,2) AS total_revenue
   FROM hotel_industry.rooms r
   INNER JOIN hotel_industry.hotels h ON r.hotel_id = h.id
   LEFT JOIN hotel_industry.reservations res ON r.room_id = res.room_id
