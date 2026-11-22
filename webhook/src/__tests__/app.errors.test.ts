@@ -131,16 +131,24 @@ describe('app error classification', () => {
 
     it('verifies the signature over the exact bytes sent', async () => {
       mockedFund.mockResolvedValue({ isDuplicate: false } as Awaited<ReturnType<typeof fundEscrowTransactional>>)
+      const originalTenantId = process.env.PLATFORM_TENANT_ID
+      const testTenantId = 'test-platform'
+      process.env.PLATFORM_TENANT_ID = testTenantId
 
-      const res = await signed(body)
+      try {
+        const res = await signed(body)
 
       expect(res.status).toBe(200)
       expect(mockedFund).toHaveBeenCalledWith(
         'C-1',
         25,
         expect.objectContaining({ contractId: 'C-1' }),
-        'safetrust'
+          testTenantId
       )
+      } finally {
+        if (originalTenantId === undefined) delete process.env.PLATFORM_TENANT_ID
+        else process.env.PLATFORM_TENANT_ID = originalTenantId
+      }
     })
 
     it('rejects a signature computed over re-serialized JSON', async () => {

@@ -167,6 +167,9 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
         isDuplicate: true,
         eventId: 'event-dup-123',
       })
+      const originalTenantId = process.env.PLATFORM_TENANT_ID
+      const testTenantId = 'test-platform'
+      process.env.PLATFORM_TENANT_ID = testTenantId
 
       const req = {
         body: {
@@ -180,23 +183,28 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
         json: jest.fn().mockReturnThis(),
       } as unknown as Response
 
-      await releaseFundsHandler(req, res)
+      try {
+        await releaseFundsHandler(req, res)
 
-      expect(mockedReleaseFundsTransactional).toHaveBeenCalledWith(
-        'contract-123',
-        req.body,
-        'safetrust'
-      )
-      expect(res.status).toHaveBeenCalledWith(200)
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          success: true,
-          duplicate: true,
-          eventId: 'event-dup-123',
-        })
-      )
-      // No side effect should occur on duplicate replay
-      expect(mockedNotify).not.toHaveBeenCalled()
+        expect(mockedReleaseFundsTransactional).toHaveBeenCalledWith(
+          'contract-123',
+          req.body,
+          testTenantId
+        )
+        expect(res.status).toHaveBeenCalledWith(200)
+        expect(res.json).toHaveBeenCalledWith(
+          expect.objectContaining({
+            success: true,
+            duplicate: true,
+            eventId: 'event-dup-123',
+          })
+        )
+        // No side effect should occur on duplicate replay
+        expect(mockedNotify).not.toHaveBeenCalled()
+      } finally {
+        if (originalTenantId === undefined) delete process.env.PLATFORM_TENANT_ID
+        else process.env.PLATFORM_TENANT_ID = originalTenantId
+      }
     })
 
     it('returns 409 Conflict when releaseFunds throws StateConflictError in handler', async () => {
