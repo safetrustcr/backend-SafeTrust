@@ -90,4 +90,28 @@ describe('createEscrowClaim service', () => {
     expect(insert).not.toHaveBeenCalled()
     expect(client.query).toHaveBeenCalledWith('ROLLBACK')
   })
+
+  it('releases normally when an error rollback succeeds', async () => {
+    const error = new Error('lock failed')
+    ;(lockClaimScope as jest.Mock).mockRejectedValue(error)
+
+    await expect(createEscrowClaim(input)).rejects.toBe(error)
+    expect(client.query).toHaveBeenCalledWith('ROLLBACK')
+    expect(client.release).toHaveBeenCalledWith(undefined)
+  })
+
+  it('discards the client when an error rollback fails', async () => {
+    const error = new Error('lock failed')
+    const rollbackError = new Error('rollback failed')
+    ;(lockClaimScope as jest.Mock).mockRejectedValue(error)
+    client.query.mockImplementation(async (sql: string) => {
+      if (sql === 'ROLLBACK') {
+        throw rollbackError
+      }
+      return {}
+    })
+
+    await expect(createEscrowClaim(input)).rejects.toBe(error)
+    expect(client.release).toHaveBeenCalledWith(rollbackError)
+  })
 })

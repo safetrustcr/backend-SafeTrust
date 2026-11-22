@@ -25,6 +25,7 @@ export async function createEscrowClaim(input: {
 }): Promise<CreateClaimResult> {
   const client = await pool.connect()
   let transactionOpen = false
+  let releaseError: Error | undefined
   try {
     await client.query('BEGIN')
     transactionOpen = true
@@ -78,12 +79,12 @@ export async function createEscrowClaim(input: {
     if (transactionOpen) {
       try {
         await client.query('ROLLBACK')
-      } catch {
-        // The connection is released below, discarding an unusable transaction.
+      } catch (rollbackError) {
+        releaseError = rollbackError as Error
       }
     }
     throw error
   } finally {
-    client.release()
+    client.release(releaseError)
   }
 }
