@@ -60,7 +60,9 @@ export async function resolveHotelEscrowParties(
        r.apartment_id,
        host_u.id       AS host_id,
        guest_u.id      AS guest_id
-     FROM safetrust.escrow_transactions et
+     FROM safetrust.trustless_work_escrows twe
+     JOIN safetrust.escrow_transactions et
+       ON et.escrow_id = twe.id
      JOIN hotel_industry.reservations res
        ON et.reservation_id = res.id
      JOIN hotel_industry.rooms r
@@ -75,7 +77,7 @@ export async function resolveHotelEscrowParties(
       AND UPPER(guest_etu.role) IN ('RENTER', 'GUEST')
      LEFT JOIN hotel_industry.users guest_u
        ON guest_u.email = guest_etu.user_email
-     WHERE et.contract_id = $1
+     WHERE twe.contract_id = $1
      LIMIT 1`,
     [contractId]
   )
