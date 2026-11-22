@@ -143,21 +143,22 @@ process_metadata_tables() {
     fi
 
     # One yq pass over all table YAML, then a single jq pass to shape the args.
-    local tables_json
-    tables_json=$(yq -o json e '.' "${table_files[@]}" 2>/dev/null \
+    local all_desired_tables
+    all_desired_tables=$(yq -o json e '.' "${table_files[@]}" 2>/dev/null \
         | jq -s 'map(select(type == "object" and ((.table.name? // "") != ""))) | map({ table: { name: .table.name, schema: (.table.schema // "public") }, configuration: (.configuration // {}) })') || {
         echo "❌ Failed to read table metadata for $tenant_name" >&2
         return 1
     }
 
-    # Skip objects already tracked so deployment can safely resume.
+    # Fetch current metadata to find missing tables and reconcile existing configurations.
     local existing_metadata
     existing_metadata=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
         -H "X-Hasura-Admin-Secret: ${admin_secret}" \
         -H "Content-Type: application/json" \
         -d '{"type":"export_metadata","args":{}}') || return 1
+    local tables_json
     tables_json=$(jq -cn --arg source "$tenant_name" \
-        --argjson metadata "$existing_metadata" --argjson desired "$tables_json" \
+        --argjson metadata "$existing_metadata" --argjson desired "$all_desired_tables" \
         '[$metadata | (.metadata // .).sources[] | select(.name == $source) | .tables[]?.table] as $tracked | $desired | map(select(.table as $object | $tracked | index($object) | not))') || return 1
 
     if [ -n "$tables_json" ] && [ "$tables_json" != "[]" ] && [ "$tables_json" != "null" ]; then
@@ -179,6 +180,36 @@ process_metadata_tables() {
         echo "✅ Successfully tracked tables for $tenant_name"
     else
         echo "ℹ️  All tables already tracked for $tenant_name"
+    fi
+
+    # Reconcile configuration for already-tracked tables whose configuration differs from YAML
+    local table_customizations
+    table_customizations=$(jq -cn --arg source "$tenant_name" \
+        --argjson metadata "$existing_metadata" --argjson desired "$all_desired_tables" \
+        'def norm: if . == null then {} else . as $cfg | ((($cfg.column_config // {}) | to_entries | map(select(.value.custom_name? != null) | {key: .key, value: .value.custom_name}) | from_entries) as $derived | ($cfg + {custom_column_names: ((($cfg.custom_column_names // {}) + $derived)), column_config: {}}) | with_entries(select(((.key == "custom_root_fields" or .key == "column_config" or .key == "custom_column_names") and ((.value == null) or (.value == {}) or (.value == []))) | not))) end;
+         [$metadata | (.metadata // .).sources[]? | select(.name == $source) | .tables[]?] as $tracked |
+         $desired | map(. as $d | ($tracked | map(select(.table == $d.table)) | .[0]) as $current |
+         select($current != null and (($current.configuration | norm) != ($d.configuration | norm))) |
+         {type: "pg_set_table_customization", args: {source: $source, table: .table, configuration: .configuration}})') || return 1
+
+    if [ -n "$table_customizations" ] && [ "$table_customizations" != "[]" ] && [ "$table_customizations" != "null" ]; then
+        echo "🔎 Reconciling table configurations for $tenant_name..."
+        local table_customizations_payload
+        table_customizations_payload=$(jq -cn --argjson actions "$table_customizations" '{type:"bulk", args:$actions}')
+        local table_customizations_response
+        table_customizations_response=$(curl -sS --fail-with-body -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d "$table_customizations_payload") || {
+            echo "❌ Error reconciling table configurations for $tenant_name: $table_customizations_response" >&2
+            return 1
+        }
+
+        if echo "$table_customizations_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+            echo "❌ Error reconciling table configurations for $tenant_name: $table_customizations_response" >&2
+            return 1
+        fi
+        echo "✅ Successfully reconciled table configurations for $tenant_name"
     fi
 
     local raw_tables_json
@@ -304,17 +335,18 @@ process_metadata_functions() {
         return 1
     }
 
-    local functions_json
-    functions_json=$(echo "$raw_functions_json" | jq 'map({ function: .function, configuration: .configuration })')
+    local all_desired_functions
+    all_desired_functions=$(echo "$raw_functions_json" | jq 'map({ function: .function, configuration: .configuration })')
 
-    # Skip objects already tracked so deployment can safely resume.
+    # Fetch current metadata to find missing functions and reconcile existing configurations.
     local existing_metadata
     existing_metadata=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
         -H "X-Hasura-Admin-Secret: ${admin_secret}" \
         -H "Content-Type: application/json" \
         -d '{"type":"export_metadata","args":{}}') || return 1
+    local functions_json
     functions_json=$(jq -cn --arg source "$tenant_name" \
-        --argjson metadata "$existing_metadata" --argjson desired "$functions_json" \
+        --argjson metadata "$existing_metadata" --argjson desired "$all_desired_functions" \
         '[$metadata | (.metadata // .).sources[] | select(.name == $source) | .functions[]?.function] as $tracked | $desired | map(select(.function as $object | $tracked | index($object) | not))') || return 1
 
     if [ -n "$functions_json" ] && [ "$functions_json" != "[]" ] && [ "$functions_json" != "null" ]; then
@@ -336,6 +368,36 @@ process_metadata_functions() {
         echo "✅ Successfully tracked functions for $tenant_name"
     else
         echo "ℹ️  All functions already tracked for $tenant_name"
+    fi
+
+    # Reconcile configuration for already-tracked functions whose configuration differs from YAML
+    local function_customizations
+    function_customizations=$(jq -cn --arg source "$tenant_name" \
+        --argjson metadata "$existing_metadata" --argjson desired "$all_desired_functions" \
+        'def norm: if . == null then {} else with_entries(select(((.key == "custom_root_fields" or .key == "column_config" or .key == "custom_column_names") and ((.value == null) or (.value == {}) or (.value == []))) | not)) end;
+         [$metadata | (.metadata // .).sources[]? | select(.name == $source) | .functions[]?] as $tracked |
+         $desired | map(. as $d | ($tracked | map(select(.function == $d.function)) | .[0]) as $current |
+         select($current != null and (($current.configuration | norm) != ($d.configuration | norm))) |
+         {type: "pg_set_function_customization", args: {source: $source, function: .function, configuration: .configuration}})') || return 1
+
+    if [ -n "$function_customizations" ] && [ "$function_customizations" != "[]" ] && [ "$function_customizations" != "null" ]; then
+        echo "🔎 Reconciling function configurations for $tenant_name..."
+        local fn_customizations_payload
+        fn_customizations_payload=$(jq -cn --argjson actions "$function_customizations" '{type:"bulk", args:$actions}')
+        local fn_customizations_response
+        fn_customizations_response=$(curl -sS --fail-with-body -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d "$fn_customizations_payload") || {
+            echo "❌ Error reconciling function configurations for $tenant_name: $fn_customizations_response" >&2
+            return 1
+        }
+
+        if echo "$fn_customizations_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+            echo "❌ Error reconciling function configurations for $tenant_name: $fn_customizations_response" >&2
+            return 1
+        fi
+        echo "✅ Successfully reconciled function configurations for $tenant_name"
     fi
 
     # Re-fetch metadata so the permissions idempotency diff uses the post-tracking state.
