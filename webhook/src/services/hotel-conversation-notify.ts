@@ -69,12 +69,12 @@ export async function resolveHotelEscrowParties(
        ON host_etu.escrow_transaction_id = et.id
       AND UPPER(host_etu.role) IN ('OWNER', 'HOST')
      LEFT JOIN hotel_industry.users host_u
-       ON host_u.email = host_etu.user_email
+       ON host_u.id = host_etu.user_id
      LEFT JOIN hotel_industry.escrow_transaction_users guest_etu
        ON guest_etu.escrow_transaction_id = et.id
       AND UPPER(guest_etu.role) IN ('RENTER', 'GUEST')
      LEFT JOIN hotel_industry.users guest_u
-       ON guest_u.email = guest_etu.user_email
+       ON guest_u.id = guest_etu.user_id
      WHERE et.contract_id = $1
      LIMIT 1`,
     [contractId]
