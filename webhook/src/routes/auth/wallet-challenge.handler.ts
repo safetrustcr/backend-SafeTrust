@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto'
+import { validateStellarAddress, verifyStellarEd25519 } from '../../lib/stellar'
 import { Response } from 'express'
 import { connect } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
@@ -8,17 +9,7 @@ const TENANT_ID = 'safetrust'
 const CHALLENGE_TTL_MS = 5 * 60 * 1000
 const VALID_STELLAR_ADDRESS = /^G[A-Z2-7]{55}$/
 
-interface StellarUtils {
-  validateStellarAddress(address: string): boolean
-  verifyStellarEd25519(message: string, signature: string, address: string): boolean
-}
-
-let stellarUtils: StellarUtils | null = null
-try {
-  stellarUtils = require('../../../../crates/stellar-utils') as StellarUtils
-} catch {
-  // Fail closed during verification when the native Ed25519 verifier is unavailable.
-}
+const stellarUtils = { validateStellarAddress, verifyStellarEd25519 }
 
 function getWalletConfig(): { domain: string; network: string } | null {
   const domain = process.env.WALLET_CHALLENGE_DOMAIN?.trim().toLowerCase()
@@ -87,9 +78,6 @@ export async function createWalletChallengeHandler(
   }
   const config = getWalletConfig()
   if (!config) return res.status(503).json({ error: 'WALLET_CHALLENGE_NOT_CONFIGURED' })
-  if (!stellarUtils?.verifyStellarEd25519) {
-    return res.status(503).json({ error: 'WALLET_SIGNATURE_VERIFIER_UNAVAILABLE' })
-  }
 
   try {
     if (!await isSingleSignerAccount(address, config.network)) {

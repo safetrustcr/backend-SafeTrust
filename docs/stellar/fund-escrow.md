@@ -93,7 +93,7 @@ created ──────────┐
 pending_funding ──┘
 ```
 
-The Rust state machine (`crates/escrow-state-machine/src/transitions.rs`) enforces that
+The webhook transition module enforces that
 only `created` and `pending_funding` are valid prior states for the `funded` target via
 the `escrow.funded` event.
 

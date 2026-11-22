@@ -321,10 +321,8 @@ npm --prefix webhook test
 npm --prefix webhook run build
 ```
 
-Native-addon helpers, fallback loaders, benchmarks, and examples use TypeScript
-sources under `crates/`. Run `npm --prefix webhook run build:tooling` before invoking
-their JavaScript entry points directly. `build:rust` and `test` do this automatically.
-The adjacent `.js` files are generated compatibility outputs; edit the `.ts` sources.
+The webhook is a Node.js/TypeScript service. Its production build emits
+`webhook/dist/index.js`, and the test command runs Jest directly.
 
 Karate configuration and token helpers are also authored in TypeScript. The test
 image compiles them automatically. For a local Java runner, first run

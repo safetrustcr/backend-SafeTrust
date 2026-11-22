@@ -137,7 +137,8 @@ authentication does not create an exemption on this route.
 
 This quarantine exists because findings **F2, F3, and F8** from the security
 review are unresolved. x402 must not be able to grant booking eligibility
-until they are closed. See [Crate Boundaries](../architecture/crate-boundaries.md).
+until they are closed. The webhook returns a clear unavailable response while
+the feature remains disabled.
 
 ## Rust crate wiring
 

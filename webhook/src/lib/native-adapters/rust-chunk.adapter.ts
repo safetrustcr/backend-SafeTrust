@@ -1,8 +1,6 @@
 import type { ChunkProcessorAddon } from '../reconciliation.types'
 import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../source-adapters/tw.adapter'
 
-const CHUNK_PROCESSOR_MODULE = '../../../../crates/chunk-processor'
-
 let chunkProcessor: ChunkProcessorAddon | null = null
 let chunkProcessorLoadFailed = false
 let chunkProcessorOverride: ChunkProcessorAddon | null | undefined
@@ -15,15 +13,7 @@ function envInt(name: string, fallback: number): number {
 function loadChunkProcessor(): ChunkProcessorAddon | null {
   if (chunkProcessorOverride !== undefined) return chunkProcessorOverride
   if (chunkProcessor || chunkProcessorLoadFailed) return chunkProcessor
-  try {
-    chunkProcessor = require(CHUNK_PROCESSOR_MODULE)
-  } catch (err) {
-    chunkProcessorLoadFailed = true
-    console.error(
-      '[reconciliation] ⚠️  chunk-processor addon unavailable — ' +
-        `falling back to sequential sync: ${(err as Error).message}`
-    )
-  }
+  chunkProcessorLoadFailed = true
   return chunkProcessor
 }
 

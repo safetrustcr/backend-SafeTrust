@@ -6,8 +6,8 @@ This document describes the full escrow lifecycle: canonical state machine, stri
 
 | Concern | Source of truth |
 |---|---|
-| Valid states | [`crates/escrow-state-machine/src/states.rs`](../../crates/escrow-state-machine/src/states.rs) (`EscrowStatus`) |
-| Valid transitions | [`crates/escrow-state-machine/src/transitions.rs`](../../crates/escrow-state-machine/src/transitions.rs) (`transition_table()`) |
+| Valid states | [`webhook/src/types/escrow.types.ts`](../../webhook/src/types/escrow.types.ts) (`EscrowStatus`) |
+| Valid transitions | [`webhook/src/lib/escrow-transitions.ts`](../../webhook/src/lib/escrow-transitions.ts) |
 | Persisted escrow values | [`migrations/safetrust/1731909059420_create_trustless_work_escrows/up.sql`](../../migrations/safetrust/1731909059420_create_trustless_work_escrows/up.sql) |
 | Retry & tx confirmation schema | [`migrations/safetrust/1793000000000_create_escrow_confirmation_retries/up.sql`](../../migrations/safetrust/1793000000000_create_escrow_confirmation_retries/up.sql) |
 | Confirmation Engine | [`webhook/src/services/confirmation.service.ts`](../../webhook/src/services/confirmation.service.ts) |

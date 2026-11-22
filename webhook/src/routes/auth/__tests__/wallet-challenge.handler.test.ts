@@ -4,11 +4,10 @@ import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { createWalletChallengeHandler, verifyWalletChallengeHandler } from '../wallet-challenge.handler'
 
 jest.mock('../../../services/db', () => ({ connect: jest.fn() }))
-jest.mock('../../../../../crates/stellar-utils', () => ({
+jest.mock('../../../lib/stellar', () => ({
   validateStellarAddress: jest.fn(() => true),
   verifyStellarEd25519: jest.fn(() => true),
-}), { virtual: true })
-
+}))
 const ADDRESS = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
 
 function makeResponse(): Response {

@@ -9,8 +9,7 @@
     "dev": "npm --prefix webhook run dev",
     "build": "npm --prefix webhook run build",
     "type-check": "npm --prefix webhook run type-check",
-    "test": "npm --prefix webhook test",
-    "crates:clean": "node scripts/clean-crates.js"
+    "test": "npm --prefix webhook test"
   },
   "engines": {
     "node": ">=20.13"

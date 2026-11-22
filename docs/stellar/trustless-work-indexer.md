@@ -17,7 +17,7 @@ graph LR
 | File | Responsibility |
 |---|---|
 | `webhook/src/lib/source-adapters/tw.adapter.ts` | Configuration, request URL, sequential fetch |
-| `crates/chunk-processor` | Parallel fetch of the same URL (`RUST_CHUNKS_ENABLED=true`) |
+| Node.js reconciliation | Sequential fetch and persistence of the same URL |
 | `webhook/src/lib/source-adapters/tw-indexer.types.ts` | V1 response type |
 | `webhook/src/lib/source-adapters/tw-indexer.normalize.ts` | Mapping onto table columns (both paths) |
 | `webhook/src/repositories/reconciliation.repository.ts` | Guarded UPSERT |
@@ -118,7 +118,7 @@ invalid transitions, other networks and nonzero balances stay protected.
 
 ## Soroban drift reader
 
-The optional drift check (`SOROBAN_VALIDATION_ENABLED`, `crates/soroban-reconciler`)
+The optional drift check (`SOROBAN_VALIDATION_ENABLED`)
 reads the same endpoint. `normalize_tw_v1_response` applies the status table
 above before the crate's existing identity, status and exact-balance checks.
 It requires the V1 `balance` and never substitutes the configured `amount`.

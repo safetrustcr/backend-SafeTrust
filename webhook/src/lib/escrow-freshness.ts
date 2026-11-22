@@ -104,16 +104,9 @@ export function isPendingStatus(status: string | null | undefined): boolean {
   return s === 'created' || s === 'pending_funding'
 }
 
-let nativeStateMachine: any = null
-try {
-  nativeStateMachine = require('../../../crates/escrow-state-machine')
-} catch {
-  // Addon not available, using canonical TS table
-}
-
 /**
  * Canonical transition table defining all legal target statuses reachable from
- * each source status, matching crates/escrow-state-machine/src/transitions.rs.
+ * each source status.
  */
 export const CANONICAL_TRANSITIONS: Record<string, readonly string[]> = {
   created: ['funded', 'cancelled'],
@@ -150,15 +143,6 @@ export function canTransitionStatus(
 
   // Same status is always valid (idempotent)
   if (from === to) return true
-
-  // Delegate to native state machine if loaded
-  if (nativeStateMachine && typeof nativeStateMachine.canTransition === 'function') {
-    try {
-      return nativeStateMachine.canTransition(from, to)
-    } catch {
-      // Fall through to canonical table
-    }
-  }
 
   const allowed = CANONICAL_TRANSITIONS[from]
   return allowed ? allowed.includes(to) : false

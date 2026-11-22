@@ -17,24 +17,8 @@ let x402Addon: X402Addon | null | undefined
 function getX402Addon(): X402Addon | null {
   if (x402Addon !== undefined) return x402Addon
 
-  try {
-    // Load the experimental native addon only when x402 is enabled and used.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    x402Addon = require('../../../crates/x402-processor')
-  } catch (error) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      x402Addon = require('../../crates/x402-processor')
-    } catch (fallbackError) {
-      x402Addon = null
-      logger.warn('x402.native_addon_unavailable', {
-        effect: 'payment validation fails closed',
-        primaryPathError: error instanceof Error ? error.message : error,
-        fallbackPathError:
-          fallbackError instanceof Error ? fallbackError.message : fallbackError,
-      })
-    }
-  }
+  x402Addon = null
+  logger.warn('x402.processor_unavailable', { effect: 'payment validation fails closed' })
 
   return x402Addon ?? null
 }

@@ -1,5 +1,5 @@
 export {};
-type ProcessChunksArgs = Parameters<typeof import('../../../../crates/chunk-processor').processChunksParallel>;
+type ProcessChunksArgs = [string, string, string, number, number];
 'use strict';
 
 /**

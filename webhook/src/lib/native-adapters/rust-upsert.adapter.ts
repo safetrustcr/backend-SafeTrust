@@ -1,7 +1,5 @@
 import type { BulkUpsertAddon } from '../reconciliation.types'
 
-const BULK_UPSERT_MODULE = '../../../../crates/pg-bulk-upsert'
-
 let bulkUpsert: BulkUpsertAddon | null = null
 let bulkUpsertLoadFailed = false
 let bulkUpsertOverride: BulkUpsertAddon | null | undefined
@@ -9,15 +7,7 @@ let bulkUpsertOverride: BulkUpsertAddon | null | undefined
 function loadBulkUpsert(): BulkUpsertAddon | null {
   if (bulkUpsertOverride !== undefined) return bulkUpsertOverride
   if (bulkUpsert || bulkUpsertLoadFailed) return bulkUpsert
-  try {
-    bulkUpsert = require(BULK_UPSERT_MODULE)
-  } catch (err) {
-    bulkUpsertLoadFailed = true
-    console.error(
-      '[reconciliation] ⚠️  pg-bulk-upsert addon unavailable — ' +
-        `falling back to row-by-row upsert: ${(err as Error).message}`
-    )
-  }
+  bulkUpsertLoadFailed = true
   return bulkUpsert
 }
 

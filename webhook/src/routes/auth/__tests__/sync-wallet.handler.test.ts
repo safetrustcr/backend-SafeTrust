@@ -16,17 +16,6 @@ const VALID_STELLAR = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
 const BAD_CHECKSUM_STELLAR = 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z'
 const VALID_ETH = '0x71C845137c37D73F4085411A3194134134944111'
 
-// Whether the Rust stellar-utils addon is built in this environment. When it
-// is, validation is stricter (checksum + Ed25519-public-key-only) than the JS
-// fallback regex, so addon-only assertions are gated on its presence.
-let hasNativeAddon = false
-try {
-  require('../../../../../crates/stellar-utils')
-  hasNativeAddon = true
-} catch {
-  // Addon not built — JS fallback regex is in use.
-}
-
 function makeResponse(): Response {
   const res: Partial<Response> = {}
   res.status = jest.fn().mockReturnValue(res)
@@ -42,8 +31,6 @@ function makeRequest(
     body: Partial<SyncWalletPayload>
   }
 }
-
-const withNativeAddon = hasNativeAddon ? it : it.skip
 
 describe('syncWalletHandler', () => {
   beforeEach(() => {
@@ -141,9 +128,9 @@ describe('syncWalletHandler', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Failed to sync wallet' })
   })
 
-  // ── Stricter checks only enforced by the Rust addon ───────────────────────
+  // ── Stellar address checks ────────────────────────────────────────────────
 
-  withNativeAddon('rejects a G-address with a bad SEP-23 checksum', async () => {
+  it('rejects a G-address with a bad SEP-23 checksum', async () => {
     const req = makeRequest({
       wallet_address: BAD_CHECKSUM_STELLAR,
       chain_type: 'STELLAR',
@@ -158,9 +145,8 @@ describe('syncWalletHandler', () => {
     expect(query).not.toHaveBeenCalled()
   })
 
-  withNativeAddon('rejects a valid contract (C…) strkey, which is not an account', async () => {
-    // Valid SEP-23 contract strkey — passes checksum but is not an Ed25519
-    // public key, so it is not a Stellar account address.
+  it('rejects a valid contract (C…) strkey, which is not an account', async () => {
+    // Valid SEP-23 contract strkey — it is not a Stellar account address.
     const req = makeRequest({
       wallet_address: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4',
       chain_type: 'STELLAR',

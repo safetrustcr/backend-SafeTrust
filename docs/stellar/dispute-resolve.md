@@ -18,7 +18,7 @@ quarantined from this flow, see the [x402 protocol](./x402-protocol.md).
 | Concern | Source |
 |---|---|
 | Dispute callback handlers | [`dispute.handler.ts`](../../webhook/src/routes/escrows/dispute.handler.ts), [`resolve-dispute.handler.ts`](../../webhook/src/routes/escrows/resolve-dispute.handler.ts) |
-| Valid states and transitions | [`crates/escrow-state-machine/src/states.rs`](../../crates/escrow-state-machine/src/states.rs), [`transitions.rs`](../../crates/escrow-state-machine/src/transitions.rs) |
+| Valid states and transitions | [`webhook/src/lib/escrow-transitions.ts`](../../webhook/src/lib/escrow-transitions.ts) |
 | `escrow_transactions` status constraint | [`1771690624593_create_escrows_table/up.sql`](../../migrations/safetrust/1771690624593_create_escrows_table/up.sql) |
 | `trustless_work_escrows` status constraint | [`1731909059420_create_trustless_work_escrows/up.sql`](../../migrations/safetrust/1731909059420_create_trustless_work_escrows/up.sql) |
 
@@ -139,7 +139,7 @@ column may hold. It cannot see the row's previous value, so it does not
 validate prior-state transitions and does not, by itself, authorize any
 transition. Transition legality belongs to the `escrow-state-machine` Rust
 crate (`transitions.rs` / `validator.rs`) and its JavaScript fallback in
-`crates/escrow-state-machine/index.ts`. `disputed → resolved` is legal because
+`webhook/src/lib/escrow-transitions.ts`. `disputed → resolved` is legal because
 that rule exists in the transition table, not because both values appear in the
 CHECK.
 
@@ -155,7 +155,7 @@ the same name and nine lifecycle values (`created`, `pending_funding`, `funded`,
 
 ### Local enforcement
 
-The `escrow-state-machine` Rust crate is the local authority before any XDR is
+The webhook transition module is the local authority before any XDR is
 requested. It defines the status enum, a single transition table, and
 `getValidPriorStates(to, event)`; the dispute and resolve handlers parse that
 JSON list and use it as the Hasura `_in` status filter. The crate's `index.ts`

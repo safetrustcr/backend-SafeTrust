@@ -44,7 +44,7 @@ describe('AppError hierarchy', () => {
       code: 'internal_error',
       message: 'Internal server error',
     })
-    expect(classifyError(new ServiceUnavailableError('service index.node missing')).message)
+    expect(classifyError(new ServiceUnavailableError('service module missing')).message)
       .toBe('Service unavailable')
   })
 

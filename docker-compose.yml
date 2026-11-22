@@ -48,8 +48,7 @@ services:
 
   webhook:
     build:
-      # Repo root: the webhook image needs the root Cargo workspace (Cargo.toml,
-      # Cargo.lock, crates/) alongside webhook/, so it cannot build from ./webhook.
+      # Build from the repository root so the image can copy the webhook source.
       context: .
       dockerfile: webhook/Dockerfile
       # Cross-platform layer cache — works on Linux, macOS Docker Desktop,

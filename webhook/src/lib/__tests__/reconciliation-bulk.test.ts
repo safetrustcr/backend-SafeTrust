@@ -1,19 +1,18 @@
 export {};
-type BulkUpsertArgs = Parameters<typeof import('../../../../crates/pg-bulk-upsert').bulkUpsertEscrows>;
+type BulkUpsertArgs = [string, string];
 'use strict';
 
 /**
  * @file src/lib/__tests__/reconciliation-bulk.test.ts
  *
- * Unit tests for the Rust bulk-upsert integration:
+ * Unit tests for the bulk-upsert integration:
  *   • upsertEscrows  — original per-row path (counts + isolation)
  *   • upsertEscrowsBulk      — Rust glue, addon faked via the test seam
  *   • upsertEscrowBatch      — path selection on RUST_BULK_UPSERT_ENABLED, plus
  *                              fallback to row-by-row when the bulk path fails
  *   • buildConnectionString  — URL-encoded libpq string from POSTGRES_* env
  *
- * The native addon is never loaded here; a fake is injected via the exported
- * test seam so these run with zero Rust build.
+ * A fake is injected via the exported test seam.
  */
 
 jest.mock('../../services/db', () => ({ query: jest.fn() }));
@@ -108,8 +107,8 @@ describe('upsertEscrowsBulk', () => {
         approver: '',
         releaser: '',
         escrow_type: 'single_release',
-        ledger_seq: null,
-        network: null,
+        ledger_seq: null,
+        network: null,
       },
     ]);
     expect(connString).toContain('@db:');

@@ -3,7 +3,7 @@
 SafeTrust connects four layers: a Next.js frontend, an Express
 webhook backend, a Hasura GraphQL engine, and the Stellar
 blockchain via TrustlessWork. Rust crates handle security-critical
-and performance-critical work via Neon bindings.
+and communicates with Stellar through the existing service clients.
 
 ## System diagram
 
@@ -22,7 +22,7 @@ flowchart TD
 
     subgraph SafeTrust Backend
         WH[Express Webhook\nNode.js TypeScript]
-        RC[Rust Crates\nNeon Bindings]
+        WH[Node.js Webhook]
         HG[Hasura GraphQL\nv2.47.0]
     end
 
@@ -138,5 +138,5 @@ flowchart LR
     BE -->|GraphQL API| FE
     BE -->|GraphQL API| DA
     DA -->|wallet signing| BE
-    ZK -->|cargo build| BE
+        ZK -->|integration boundary| BE
 ```

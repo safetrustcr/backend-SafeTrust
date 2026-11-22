@@ -4,18 +4,6 @@ type ReconcileBatch = (onChainJson: string, dbJson: string) => string
 let queryEscrowStateBatch: QueryEscrowState | null = null
 let reconcileBatch: ReconcileBatch | null = null
 
-try {
-  const sorobanReconciler = require('../../../../crates/soroban-reconciler')
-  queryEscrowStateBatch = sorobanReconciler.queryEscrowStateBatch
-  reconcileBatch = sorobanReconciler.reconcileBatch
-} catch (err) {
-  const error = err as Error
-  console.warn(
-    '[reconciliation] ⚠️ soroban-reconciler native addon unavailable:',
-    error.message
-  )
-}
-
 export function setSorobanReconcilerAddon(addon: {
   queryEscrowStateBatch?: QueryEscrowState | null
   reconcileBatch?: ReconcileBatch | null

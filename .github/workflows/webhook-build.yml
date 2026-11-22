@@ -1,10 +1,6 @@
-# Builds the webhook Docker image and smoke-tests the Rust Neon addons
-# (stellar-utils, webhook-verifier, escrow-state-machine, soroban-reconciler)
-# inside the container.
+# Builds the webhook Docker image and smoke-tests the running service.
 #
-# This is the verification that requires Docker (Debian bookworm glibc
-# toolchain + cargo build, matching the node:24-bookworm-slim image), so it runs
-# for free on GitHub runners instead of locally.
+# This is the verification that requires Docker, so it runs on GitHub runners.
 # A failing build or a broken addon will show up directly on the PR.
 name: webhook build
 
@@ -15,10 +11,6 @@ on:
       - 'webhook/tsconfig*.json'
       - 'webhook/package*.json'
       - 'webhook/Dockerfile'
-      # Copied into the image and compiled by the crates tsconfig, so a change
-      # here must rebuild CI even though it lives outside webhook/.
-      - 'tsconfig.crates.json'
-      - 'crates/**'
       - 'tests/karate/**'
       - '.github/workflows/webhook-build.yml'
   pull_request:
@@ -27,8 +19,6 @@ on:
       - 'webhook/tsconfig*.json'
       - 'webhook/package*.json'
       - 'webhook/Dockerfile'
-      - 'tsconfig.crates.json'
-      - 'crates/**'
       - 'tests/karate/**'
       - '.github/workflows/webhook-build.yml'
 
@@ -50,37 +40,15 @@ jobs:
       - name: Build webhook image
         run: docker build -t safetrust-webhook:verify -f webhook/Dockerfile .
 
-      - name: Smoke-test native addons inside the image
+      - name: Smoke-test running service
         run: |
-          docker run --rm safetrust-webhook:verify node -e "
-            const stellar = require('/app/crates/stellar-utils');
-            const verifier = require('/app/crates/webhook-verifier');
-            const escrow = require('/app/crates/escrow-state-machine');
-            const soroban = require('/app/crates/soroban-reconciler');
-            const good = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57';
-            const checks = [
-              stellar.validateStellarAddress(good) === true,
-              stellar.validateStellarAddress('not-a-stellar-address') === false,
-              stellar.validateStellarAddress('GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z') === false,
-              Object.keys(stellar).sort().join(',') === 'validateStellarAddress,verifyStellarEd25519',
-              typeof verifier.verifyHmacSignature === 'function',
-              typeof verifier.validateStellarAddress === 'function',
-              typeof escrow.validateTransition === 'function',
-              typeof escrow.getValidPriorStates === 'function',
-              typeof escrow.getTransitionTable === 'function',
-              escrow.validateTransition('created', 'funded', 'escrow.funded') === true,
-              escrow.validateTransition('completed', 'created', 'escrow.initialized') === false,
-              escrow.getValidPriorStates('funded', 'escrow.funded') === '[\"created\",\"pending_funding\"]',
-              (() => { try { escrow.getValidPriorStates('completed', 'dispute.raised'); return false; } catch (e) { return /No valid prior states/.test(e.message); } })(),
-              typeof soroban.queryEscrowStateBatch === 'function',
-              typeof soroban.reconcileBatch === 'function'
-            ];
-            if (checks.includes(false)) {
-              console.error('addon smoke test FAILED:', checks);
-              process.exit(1);
-            }
-            console.log('addon smoke test OK - exports and validation behave as expected');
-          "
+          docker run -d --name safetrust-webhook-verify -p 3001:3001 safetrust-webhook:verify
+          for attempt in $(seq 1 30); do
+            curl --fail http://localhost:3001/health/live && exit 0
+            sleep 1
+          done
+          docker logs safetrust-webhook-verify
+          exit 1
 
   webhook-checks:
     runs-on: ubuntu-latest
@@ -106,8 +74,8 @@ jobs:
       - name: Run reconciliation tests
         working-directory: webhook
         run: >-
-          npm run build:tooling &&
-          npx jest --runInBand --runTestsByPath
+          npm run test:ci --
+          --runTestsByPath
           src/lib/__tests__/reconciliation.test.ts
           src/lib/__tests__/reconciliation-parallel.test.ts
           src/lib/__tests__/reconciliation-bulk.test.ts
@@ -119,28 +87,6 @@ jobs:
           src/services/__tests__/reconciliation.service.test.ts
           src/routes/reconciliation/__tests__/sync-escrows.handler.test.ts
 
-  cargo-test:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo build artifacts
-        uses: actions/cache@v4
-        with:
-          path: crates/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('crates/Cargo.lock') }}
-
-      - name: Run workspace unit tests
-        run: cargo test --workspace
-        working-directory: crates
-
   # TypeScript gate for the webhook service: `npm run type-check` plus the Jest
   # suite. Both steps fail the build on any type error or test failure.
   #
@@ -150,9 +96,7 @@ jobs:
   # with jest.mock factories — so Jest runs entirely in-process under
   # testEnvironment: node and never opens a connection.
   #
-  # The Jest suites that exercise the Neon addons load their compiled binaries,
-  # so this job builds those addons before running Jest. Other addon-backed
-  # suites inject a fake through the exported test seam.
+  # The Jest suites run directly against the TypeScript webhook service.
   webhook-test:
     runs-on: ubuntu-latest
     permissions:
@@ -168,27 +112,9 @@ jobs:
           cache: npm
           cache-dependency-path: webhook/package-lock.json
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo build artifacts
-        uses: actions/cache@v4
-        with:
-          path: crates/target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('crates/Cargo.lock') }}
-
       - name: Install Node dependencies
         run: npm ci
         working-directory: webhook
-
-      - name: Build native addons used by the Jest suite
-        run: |
-          cargo build --release --manifest-path crates/Cargo.toml \
-            -p webhook-verifier -p escrow-state-machine -p x402-processor \
-            -p stellar-utils -p soroban-reconciler
-          for addon in webhook-verifier escrow-state-machine x402-processor stellar-utils soroban-reconciler; do
-            node crates/scripts/copy-native.js --crate="$addon"
-          done
 
       - name: Type-check
         run: npm --prefix webhook run type-check

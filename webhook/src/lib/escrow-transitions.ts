@@ -24,52 +24,16 @@ export interface TransitionRule {
   reason?: string
 }
 
-export interface EscrowStateMachineBindings {
-  validateTransition(from: string, to: string, event: string): boolean
-  getValidPriorStates(to: string, event: string): string
-  getTransitionTable(): string
-  getGraphqlFilter(to: string, event: string): string
-}
-
-let _bindings: EscrowStateMachineBindings | null = null
-let _bindingsOverride: EscrowStateMachineBindings | null | undefined
-
-/**
- * Loads the native or fallback escrow-state-machine bindings.
- *
- * @returns EscrowStateMachineBindings interface implementation
- */
-function loadBindings(): EscrowStateMachineBindings {
-  if (_bindingsOverride !== undefined && _bindingsOverride !== null) {
-    return _bindingsOverride
-  }
-  if (_bindings) return _bindings
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    _bindings = require('../../../crates/escrow-state-machine')
-    return _bindings!
-  } catch (err) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      _bindings = require('../../../crates/escrow-state-machine/index.js')
-      return _bindings!
-    } catch {
-      throw new Error(
-        `Failed to load escrow-state-machine transition engine: ${(err as Error).message}`
-      )
-    }
-  }
-}
-
-/**
- * Test seam to inject mock or fake bindings for testing without native binaries.
- */
-export function __setEscrowStateMachineBindingsForTests(
-  mock: EscrowStateMachineBindings | null | undefined
-): void {
-  _bindingsOverride = mock
-  _bindings = null
-}
+const TRANSITION_TABLE: TransitionRule[] = [
+  { from: ['pending_funding'], to: 'created', event: 'escrow.initialized', reason: 'Escrow deployed on Stellar — awaiting guest funding' },
+  { from: ['created', 'pending_funding'], to: 'funded', event: 'escrow.funded', reason: 'Guest deposited USDC — funds locked in escrow contract' },
+  { from: ['funded'], to: 'active', event: 'escrow.funded', reason: 'Escrow fully funded — booking is confirmed and active' },
+  { from: ['active', 'funded'], to: 'milestone_approved', event: 'milestone.approved', reason: 'Host approved milestone (check-in or check-out)' },
+  { from: ['funded', 'milestone_approved'], to: 'completed', event: 'funds.released', reason: 'Funds released to host (single-release or all milestones approved)' },
+  { from: ['funded', 'active', 'milestone_approved'], to: 'disputed', event: 'dispute.raised', reason: 'Guest or host raised a dispute' },
+  { from: ['disputed'], to: 'resolved', event: 'dispute.resolved', reason: 'Dispute resolved by arbitrator' },
+  { from: ['created', 'pending_funding', 'funded', 'disputed'], to: 'cancelled', event: 'escrow.cancelled', reason: 'Booking cancelled, or disputed funds returned to the tenant' },
+]
 
 /**
  * Returns an array of valid prior states for a target status and webhook event.
@@ -79,9 +43,9 @@ export function getValidPriorStates(
   to: EscrowStatus | string,
   event: EscrowEventType | string
 ): string[] {
-  const bindings = loadBindings()
-  const raw = bindings.getValidPriorStates(String(to), String(event))
-  return JSON.parse(raw) as string[]
+  const rule = TRANSITION_TABLE.find((candidate) => candidate.to === String(to) && candidate.event === String(event))
+  if (!rule) throw new Error(`No valid prior states for ${String(to)} via ${String(event)}`)
+  return [...rule.from]
 }
 
 /**
@@ -92,8 +56,9 @@ export function validateTransition(
   to: EscrowStatus | string,
   event: EscrowEventType | string
 ): boolean {
-  const bindings = loadBindings()
-  return bindings.validateTransition(String(from), String(to), String(event))
+  return TRANSITION_TABLE.some(
+    (rule) => rule.to === String(to) && rule.event === String(event) && rule.from.includes(String(from))
+  )
 }
 
 /**
@@ -116,7 +81,5 @@ export function assertValidTransition(
  * Returns the complete canonical transition table.
  */
 export function getTransitionTable(): TransitionRule[] {
-  const bindings = loadBindings()
-  const raw = bindings.getTransitionTable()
-  return JSON.parse(raw) as TransitionRule[]
+  return TRANSITION_TABLE.map((rule) => ({ ...rule, from: [...rule.from] }))
 }

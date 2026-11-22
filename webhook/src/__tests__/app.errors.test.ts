@@ -10,15 +10,6 @@ import { fundEscrowTransactional } from '../services/escrow.service'
 // dependency cannot be loaded by Jest's CommonJS runtime.
 jest.mock('firebase-admin/auth', () => ({ getAuth: jest.fn() }))
 
-// Importing the whole app would load the real stellar-utils native addon (the
-// wallet handlers require it at import time). Node caches native addons per
-// process, outside Jest's module registry, so a real load here bypasses the
-// mocks in later test files of the same worker (wallet-challenge.handler.test).
-jest.mock('../../../crates/stellar-utils', () => ({
-  validateStellarAddress: jest.fn(() => true),
-  verifyStellarEd25519: jest.fn(() => false),
-}), { virtual: true })
-
 jest.mock('../services/escrow.service', () => ({
   ...jest.requireActual('../services/escrow.service'),
   fundEscrowTransactional: jest.fn(),
