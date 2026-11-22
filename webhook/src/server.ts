@@ -2,12 +2,13 @@ import app from './app'
 import { getHasuraAdminSecret } from './services/hasura'
 import { initializeFirebaseAdmin } from './config/firebase-admin'
 import { pool } from './services/db'
+import { logger } from './middleware/logger'
 
 const rawPort = process.env.WEBHOOK_PORT ?? process.env.PORT
 const port = rawPort === undefined ? 3001 : Number(rawPort)
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
-  console.error(`❌ Invalid WEBHOOK_PORT: "${rawPort}" — must be between 1 and 65535`)
+  logger.error('server.port.invalid', { rawPort })
   process.exit(1)
 }
 
@@ -15,12 +16,12 @@ try {
   getHasuraAdminSecret()
   initializeFirebaseAdmin()
 } catch (error) {
-  console.error(`❌ ${error instanceof Error ? error.message : String(error)}`)
+  logger.error('server.initialization_failed', { error })
   process.exit(1)
 }
 
 const server = app.listen(port, () => {
-  console.log(`[api] Webhook service running at http://localhost:${port}`)
+  logger.info('server.started', { port })
 })
 
 const shutdownTimeoutMs = 30_000
@@ -31,10 +32,10 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
     return
   }
   shuttingDown = true
-  console.log(`[api] ${signal} received; stopping server and draining requests`)
+  logger.info('server.shutdown.started', { signal })
 
   const timeout = setTimeout(() => {
-    console.warn(`[api] Shutdown deadline reached; closing active connections`)
+    logger.error('server.shutdown.timeout', { timeoutMs: shutdownTimeoutMs })
     server.closeAllConnections()
     process.exit(1)
   }, shutdownTimeoutMs)
@@ -50,10 +51,10 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
       })
     })
     await pool.end()
-    console.log('[api] Shutdown complete')
+    logger.info('server.shutdown.completed')
     process.exitCode = 0
   } catch (error) {
-    console.error('[api] Graceful shutdown failed:', error)
+    logger.error('server.shutdown.failed', { error })
     process.exitCode = 1
   } finally {
     clearTimeout(timeout)

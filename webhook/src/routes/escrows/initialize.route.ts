@@ -2,6 +2,8 @@ import { Router, Request, Response, NextFunction, RequestHandler } from 'express
 import { initializeEscrowHandler } from './initialize.handler'
 import { requireX402Payment } from '../../middleware/x402-payment.middleware'
 import verifyTrustlessWorkSignature from '../../middleware/trustlesswork-signature.middleware'
+import { validate } from '../../middleware/validate'
+import { escrowInitializationSchema } from '../../validation'
 
 const router = Router()
 const x402Middleware = requireX402Payment(0.10)
@@ -26,6 +28,7 @@ router.post(
     // Do not fall through to the handler when x402 is disabled.
     return x402Middleware(req, res, next)
   },
+  validate(escrowInitializationSchema),
   initializeEscrowHandler
 )
 

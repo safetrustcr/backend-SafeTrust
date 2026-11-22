@@ -15,6 +15,7 @@ import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 import { getValidPriorStates } from '../../lib/escrow-transitions';
 import { logger } from '../../middleware/logger';
+import type { DisputeEscrowBody } from '../../validation';
 
 const EVENT_TYPE = EscrowEventType.DisputeOpened;
 
@@ -28,33 +29,23 @@ const EVENT_TYPE = EscrowEventType.DisputeOpened;
  * @returns Express response indicating success, duplicate, or error
  */
 export const disputeEscrowHandler = async (
-  req: Request<{}, {}, DisputeEscrowPayload>,
+  req: Request<{}, {}, DisputeEscrowBody>,
   res: Response
 ): Promise<Response> => {
-  const { contractId, disputeFlag, disputer } = req.body;
-
-  if (!contractId || disputeFlag === undefined || !disputer) {
-    return badRequest(res, {
-      error: 'Missing required fields: contractId, disputeFlag, disputer'
-    });
-  }
-
-  if (disputeFlag !== true) {
-    return badRequest(res, {
-      error: 'disputeFlag must be true to open a dispute'
-    });
-  }
+  const { contractId, disputer } = req.body;
 
   try {
     // 1 — Idempotency check
+    const tenantId = getPlatformTenantId()
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contractId,
       EVENT_TYPE,
-      req.body as unknown as Record<string, unknown>
+      req.body as unknown as Record<string, unknown>,
+      tenantId
     );
 
     if (isDuplicate) {
-      await markWebhookEventProcessed(eventId);
+      await markWebhookEventProcessed(eventId, tenantId);
       return duplicate(res, eventId);
     }
 
@@ -64,7 +55,7 @@ export const disputeEscrowHandler = async (
       EscrowEventType.DisputeOpened
     );
 
-    const updated = await disputeEscrow(contractId, validStates);
+    const updated = await disputeEscrow(contractId, validStates, tenantId);
 
     if (!updated) {
       return notFound(res, {
@@ -75,9 +66,9 @@ export const disputeEscrowHandler = async (
     const escrowId = updated.id;
 
     // 3 — Mirror status to safetrust.reservations
-    await mirrorReservationStatus(escrowId, 'disputed', getPlatformTenantId());
+    await mirrorReservationStatus(escrowId, 'disputed', tenantId);
 
-    await markWebhookEventProcessed(eventId);
+    await markWebhookEventProcessed(eventId, tenantId);
 
     logger.info('escrow.dispute.succeeded', { contractId, disputer });
     return ok(res);

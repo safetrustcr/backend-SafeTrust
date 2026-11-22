@@ -15,26 +15,16 @@ import {
   TenantMismatchError,
   ZkVerifierUnavailableError,
 } from '../../services/escrow.service';
-import { amountToStroops } from '../../lib/stellar-amounts';
 import { getPlatformTenantId } from '../../config/tenant';
 import { logger } from '../../middleware/logger';
+import type { EscrowInitializationPayload } from '../../validation';
 
-export { amountToStroops };
+export { amountToStroops } from '../../lib/stellar-amounts'
 
 export const initializeEscrowHandler = async (
-  req: Request,
+  req: Request<{}, unknown, EscrowInitializationPayload>,
   res: Response
 ): Promise<Response> => {
-  const amount = req.body?.amount;
-  if (
-    Object.prototype.hasOwnProperty.call(req.body ?? {}, 'amount') &&
-    amountToStroops(amount) === null
-  ) {
-      return badRequest(res, {
-        error: 'amount must be a positive finite numeric value',
-      });
-  }
-
   try {
     const result = await initializeEscrowService(req.body, getPlatformTenantId());
 

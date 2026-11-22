@@ -291,7 +291,7 @@ describe('Confirmation Service - Issue #660', () => {
 
       expect(mockedDbQuery).toHaveBeenCalledWith(
         expect.stringContaining("status = 'created'"),
-        [VALID_TX_HASH, 'testnet', ESCROW_ID]
+        [VALID_TX_HASH, 'testnet', ESCROW_ID, 'safetrust']
       )
       expect(mockedDbQuery).not.toHaveBeenCalledWith(
         expect.stringContaining("status = 'funded'"),
@@ -304,7 +304,7 @@ describe('Confirmation Service - Issue #660', () => {
 
       expect(mockedDbQuery).toHaveBeenCalledWith(
         expect.stringContaining("status = 'funded'"),
-        [VALID_TX_HASH, 'testnet', ESCROW_ID]
+        [VALID_TX_HASH, 'testnet', ESCROW_ID, 'safetrust']
       )
     })
   })
@@ -352,7 +352,7 @@ describe('Confirmation Service - Issue #660', () => {
       // Verify retry was updated with status 'retrying' and attempt 1
       expect(mockedDbQuery).toHaveBeenCalledWith(
         expect.stringContaining("status = $1"),
-        ['retrying', 1, expect.stringContaining('503'), expect.any(Number), 'retry-temp-fail']
+        ['retrying', 1, expect.stringContaining('503'), expect.any(Number), 'retry-temp-fail', 'safetrust']
       )
     })
 
@@ -424,7 +424,7 @@ describe('Confirmation Service - Issue #660', () => {
 
       expect(mockedDbQuery).toHaveBeenCalledWith(
         expect.stringContaining("status = $1"),
-        ['dead_letter', 5, expect.stringContaining('Exceeded maximum'), 0, 'retry-dead-letter-1']
+        ['dead_letter', 5, expect.stringContaining('Exceeded maximum'), 0, 'retry-dead-letter-1', 'safetrust']
       )
     })
   })

@@ -9,6 +9,7 @@
 import { fetchEscrowsByContractIds } from '../lib/source-adapters/tw.adapter'
 import { normalizeIndexerEscrows } from '../lib/source-adapters/tw-indexer.normalize'
 import { logger } from '../middleware/logger'
+import { getPlatformTenantId } from '../config/tenant'
 import {
   isRustChunkProcessingEnabled,
   processChunksWithRust,
@@ -58,7 +59,7 @@ export function chunkArray<T>(arr: T[], size: number): T[][] {
  * Normalize raw indexer escrows and write the valid ones. Invalid records are
  * logged and counted as skipped; they never block their siblings.
  */
-async function writeIndexerEscrows(raw: unknown[]): Promise<UpsertResult> {
+async function writeIndexerEscrows(raw: unknown[], tenantId: string): Promise<UpsertResult> {
   const { escrows, invalid } = normalizeIndexerEscrows(raw)
   for (const record of invalid) {
     logger.warn('reconciliation.invalid_indexer_escrow', {
@@ -66,16 +67,22 @@ async function writeIndexerEscrows(raw: unknown[]): Promise<UpsertResult> {
       reason: record.reason,
     })
   }
-  const counts = await upsertEscrowBatch(escrows)
+  const counts = await upsertEscrowBatch(escrows, tenantId)
   return { ...counts, skipped: counts.skipped + invalid.length }
 }
 
-export async function syncChunk(contractIds: string[]): Promise<UpsertResult> {
+export async function syncChunk(
+  contractIds: string[],
+  tenantId: string = getPlatformTenantId()
+): Promise<UpsertResult> {
   const escrows = await fetchEscrowsByContractIds(contractIds)
-  return writeIndexerEscrows(escrows)
+  return writeIndexerEscrows(escrows, tenantId)
 }
 
-export async function syncChunksParallel(chunks: string[][]): Promise<ChunkSyncResult> {
+export async function syncChunksParallel(
+  chunks: string[][],
+  tenantId: string = getPlatformTenantId()
+): Promise<ChunkSyncResult> {
   const resultsJson = await processChunksWithRust(chunks)
   const chunkResults: ChunkResult[] = JSON.parse(resultsJson)
 
@@ -89,21 +96,26 @@ export async function syncChunksParallel(chunks: string[][]): Promise<ChunkSyncR
       errors.push(`chunk_${result.chunk_index}: ${result.error}`)
       continue
     }
-    const counts = await writeIndexerEscrows(result.escrows || [])
+    const counts = await writeIndexerEscrows(result.escrows || [], tenantId)
     updated += counts.updated
     unchanged += counts.unchanged
     skipped += counts.skipped
-    console.log(
-      `[reconciliation]   chunk ${result.chunk_index + 1}/${chunks.length}` +
-        ` (${chunks[result.chunk_index]?.length ?? 0} ids, ${result.duration_ms}ms) —` +
-        ` updated: ${counts.updated}, unchanged: ${counts.unchanged}, skipped: ${counts.skipped}`
-    )
+    logger.info('reconciliation.chunk.completed', {
+      chunk: result.chunk_index + 1,
+      chunks: chunks.length,
+      contractCount: chunks[result.chunk_index]?.length ?? 0,
+      durationMs: result.duration_ms,
+      ...counts,
+    })
   }
 
   return { updated, unchanged, skipped, errors }
 }
 
-export async function syncAllChunks(contractIds: string[]): Promise<SyncAllResult> {
+export async function syncAllChunks(
+  contractIds: string[],
+  tenantId: string = getPlatformTenantId()
+): Promise<SyncAllResult> {
   const chunks = chunkArray(contractIds, CHUNK_SIZE)
   if (chunks.length === 0) {
     return { chunks: 0, updated: 0, unchanged: 0, skipped: 0, errors: [] }
@@ -111,12 +123,13 @@ export async function syncAllChunks(contractIds: string[]): Promise<SyncAllResul
 
   if (isRustChunkProcessingEnabled()) {
     try {
-      const result = await syncChunksParallel(chunks)
+      const result = await syncChunksParallel(chunks, tenantId)
       return { chunks: chunks.length, ...result }
     } catch (err) {
-      console.error(
-        `[reconciliation] ⚠️  Parallel chunk path failed, using sequential: ${(err as Error).message}`
-      )
+      logger.error('reconciliation.parallel_chunks.failed', {
+        fallback: 'sequential',
+        error: err,
+      })
     }
   }
 
@@ -127,19 +140,23 @@ export async function syncAllChunks(contractIds: string[]): Promise<SyncAllResul
 
   for (let i = 0; i < chunks.length; i++) {
     try {
-      const result = await syncChunk(chunks[i])
+      const result = await syncChunk(chunks[i], tenantId)
       updated += result.updated
       unchanged += result.unchanged
       skipped += result.skipped
-      console.log(
-        `[reconciliation]   chunk ${i + 1}/${chunks.length}` +
-          ` (${chunks[i].length} ids) — updated: ${result.updated}, unchanged: ${result.unchanged}, skipped: ${result.skipped}`
-      )
+      logger.info('reconciliation.chunk.completed', {
+        chunk: i + 1,
+        chunks: chunks.length,
+        contractCount: chunks[i].length,
+        ...result,
+      })
     } catch (chunkError) {
       const errMsg = (chunkError as Error).message || String(chunkError)
-      console.error(
-        `[reconciliation] ⚠️  Chunk ${i + 1}/${chunks.length} failed: ${errMsg}`
-      )
+      logger.error('reconciliation.chunk.failed', {
+        chunk: i + 1,
+        chunks: chunks.length,
+        error: chunkError,
+      })
       errors.push(`chunk_${i}: ${errMsg}`)
     }
   }
@@ -217,11 +234,11 @@ export interface ReconciliationReport {
 /**
  * Step 1: Fetches all known contract IDs for a given tenant from safetrust.trustless_work_escrows.
  *
- * @param tenantId - Tenant identifier (defaults to 'safetrust')
+ * @param tenantId - Tenant identifier
  * @returns Array of contract IDs
  */
 export async function fetchEscrowContractIds(
-  tenantId: string = 'safetrust'
+  tenantId: string = getPlatformTenantId()
 ): Promise<string[]> {
   return loadEscrowContractIds(tenantId)
 }
@@ -233,7 +250,8 @@ export async function fetchEscrowContractIds(
  * @returns Summary of synchronized chunks and record counts
  */
 export async function syncEscrowsWithIndexer(
-  contractIds: string[]
+  contractIds: string[],
+  tenantId: string = getPlatformTenantId()
 ): Promise<SyncSummary> {
   if (contractIds.length === 0) {
     return {
@@ -246,7 +264,7 @@ export async function syncEscrowsWithIndexer(
     }
   }
 
-  const result = await syncAllChunks(contractIds)
+  const result = await syncAllChunks(contractIds, tenantId)
   return {
     totalEscrows: contractIds.length,
     chunks: result.chunks,
@@ -315,12 +333,10 @@ export async function runSorobanValidation(
         )
 
         if (criticalDiscrepancies.length > 0) {
-          console.warn(
-            `[reconciliation] 🚨 Soroban drift for ${contractId}:`,
-            criticalDiscrepancies.map(
-              (d) => `${d.field}: ${d.in_database} → ${d.on_chain}`
-            )
-          )
+          logger.warn('reconciliation.soroban.drift_detected', {
+            contractId,
+            discrepancies: criticalDiscrepancies,
+          })
 
           // Auto-correction runs ONLY if explicitly enabled by the operator and state is validated
           if (autoCorrectEnabled) {
@@ -354,9 +370,10 @@ export async function runSorobanValidation(
       unresolved++
       // "Preserve last confirmed" rule: when authoritative state cannot be established,
       // the last DB-confirmed value is kept as-is and flagged as unresolved — never invented.
-      console.warn(
-        `[reconciliation] ⚠️  Unresolved escrow ${contractId} (preserved last confirmed DB value): ${e.message}`
-      )
+      logger.warn('reconciliation.soroban.validation_unresolved', {
+        contractId,
+        error: e,
+      })
     }
   }
 
@@ -372,7 +389,8 @@ export async function runSorobanValidation(
  */
 export async function validateSorobanDrift(
   contractIds: string[],
-  network: string
+  network: string,
+  tenantId: string = getPlatformTenantId()
 ): Promise<DriftSummary> {
   const sorobanValidationEnabled = process.env.SOROBAN_VALIDATION_ENABLED === 'true'
 
@@ -386,7 +404,7 @@ export async function validateSorobanDrift(
     }
   }
 
-  const currentRows = await fetchSorobanEscrowRows()
+  const currentRows = await fetchSorobanEscrowRows(tenantId)
   const dbStateMap = Object.fromEntries(
     currentRows.map((r) => [r.contract_id, r])
   )
@@ -409,17 +427,19 @@ export async function validateSorobanDrift(
       totalSorobanUnresolved += unresolved
 
       if (drifted > 0) {
-        console.warn(
-          `[reconciliation] ⚠️  Soroban drift in chunk ${i + 1}:` +
-            ` ${drifted} contracts, ${corrected} auto-corrected, ${unresolved} unresolved`
-        )
+        logger.warn('reconciliation.soroban.chunk_drift', {
+          chunk: i + 1,
+          drifted,
+          corrected,
+          unresolved,
+        })
       }
     } catch (sorobanError) {
       const sErr = sorobanError as Error
-      console.error(
-        `[reconciliation] ⚠️  Soroban validation failed for chunk ${i + 1}:`,
-        sErr.message
-      )
+      logger.error('reconciliation.soroban.chunk_failed', {
+        chunk: i + 1,
+        error: sErr,
+      })
       errors.push(`soroban_chunk_${i + 1}: ${sErr.message}`)
     }
   }
@@ -440,14 +460,16 @@ export async function validateSorobanDrift(
  * @returns Array of stale contract IDs
  */
 export async function detectStaleEscrows(
-  staleDays: number = 7
+  staleDays: number = 7,
+  tenantId: string = getPlatformTenantId()
 ): Promise<string[]> {
-  const staleContractIds = (await findStaleEscrows(staleDays)) || []
+  const staleContractIds = (await findStaleEscrows(staleDays, tenantId)) || []
   if (staleContractIds.length > 0) {
-    console.warn(
-      `[reconciliation] ⚠️  ${staleContractIds.length} escrows not updated in ${staleDays}+ days:`,
-      staleContractIds.slice(0, 5)
-    )
+    logger.warn('reconciliation.stale_escrows.detected', {
+      count: staleContractIds.length,
+      staleDays,
+      contractIds: staleContractIds.slice(0, 5),
+    })
   }
   return staleContractIds
 }
@@ -456,7 +478,7 @@ export async function detectStaleEscrows(
  * Step 5: Background sweep that processes durable confirmation retries.
  */
 export async function reconcileConfirmationRetries(): Promise<ProcessRetriesSummary> {
-  return processPendingConfirmationRetries()
+  return processPendingConfirmationRetries(getPlatformTenantId())
 }
 
 /**

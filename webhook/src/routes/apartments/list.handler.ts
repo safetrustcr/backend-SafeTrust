@@ -1,8 +1,9 @@
 import { Request, Response } from 'express'
-import type { Apartment, ApartmentListQuery, ApartmentListResponse } from '@safetrust/types'
+import type { Apartment, ApartmentListResponse } from '@safetrust/types'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import db, { query } from '../../services/db'
 import { logger } from '../../middleware/logger'
+import type { ApartmentListQuery, CreateApartmentBody } from '../../validation'
 
 /**
  * Format apartment entity so decimal columns (price, warranty_deposit) from pg driver are converted to numbers,
@@ -43,13 +44,8 @@ export const listApartments = async (
       sort = 'created_at',
     } = req.query
 
-    const MAX_LIMIT = 100
-    let validatedPage = parseInt(String(page), 10)
-    let validatedLimit = parseInt(String(limit), 10)
-
-    if (isNaN(validatedPage) || validatedPage < 1) validatedPage = 1
-    if (isNaN(validatedLimit) || validatedLimit < 1) validatedLimit = 10
-    if (validatedLimit > MAX_LIMIT) validatedLimit = MAX_LIMIT
+    const validatedPage = Number(page)
+    const validatedLimit = Number(limit)
 
     const offset = (validatedPage - 1) * validatedLimit
 
@@ -63,45 +59,38 @@ export const listApartments = async (
       paramIndex++
     }
 
-    if (minPrice) {
-      const min = parseFloat(String(minPrice))
-      if (isNaN(min)) return res.status(400).json({ error: 'Invalid minPrice value. Expected a number.' })
+    if (minPrice !== undefined) {
+      const min = Number(minPrice)
       whereClause.push(`a.price >= $${paramIndex}`)
       queryParams.push(min)
       paramIndex++
     }
 
-    if (maxPrice) {
-      const max = parseFloat(String(maxPrice))
-      if (isNaN(max)) return res.status(400).json({ error: 'Invalid maxPrice value. Expected a number.' })
+    if (maxPrice !== undefined) {
+      const max = Number(maxPrice)
       whereClause.push(`a.price <= $${paramIndex}`)
       queryParams.push(max)
       paramIndex++
     }
 
-    if (bedrooms) {
-      const beds = parseInt(String(bedrooms), 10)
-      if (isNaN(beds)) return res.status(400).json({ error: 'Invalid bedrooms value. Expected an integer.' })
+    if (bedrooms !== undefined) {
+      const beds = Number(bedrooms)
       whereClause.push(`a.bedrooms = $${paramIndex}`)
       queryParams.push(beds)
       paramIndex++
     }
 
     if (petFriendly !== undefined) {
-      const normalizedPet = String(petFriendly).toLowerCase()
-      const truthy = ['true', '1', 'yes']
-      const falsy = ['false', '0', 'no']
+      const normalizedPet = petFriendly.toLowerCase()
 
-      if (truthy.includes(normalizedPet)) {
+      if (['true', '1', 'yes'].includes(normalizedPet)) {
         whereClause.push(`a.pet_friendly = $${paramIndex}`)
         queryParams.push(true)
         paramIndex++
-      } else if (falsy.includes(normalizedPet)) {
+      } else if (['false', '0', 'no'].includes(normalizedPet)) {
         whereClause.push(`a.pet_friendly = $${paramIndex}`)
         queryParams.push(false)
         paramIndex++
-      } else {
-        return res.status(400).json({ error: 'Invalid petFriendly value. Expected true, false, 1, 0, yes, or no.' })
       }
     }
 
@@ -112,11 +101,6 @@ export const listApartments = async (
     }
 
     const whereString = `WHERE ${whereClause.join(' AND ')}`
-
-    const allowedSorts = ['price_asc', 'price_desc', 'created_at']
-    if (sort && !allowedSorts.includes(sort)) {
-      return res.status(400).json({ error: `Invalid sort parameter. Supported values: ${allowedSorts.join(', ')}` })
-    }
 
     const sortMapping: Record<string, string> = {
       price_asc: 'a.price ASC',
@@ -178,7 +162,7 @@ export const listApartments = async (
  * Create apartment listing for authenticated owner
  */
 export const createApartment = async (
-  req: AuthenticatedRequest,
+  req: AuthenticatedRequest & { body: CreateApartmentBody },
   res: Response<ApartmentResponse>
 ): Promise<Response<ApartmentResponse>> => {
   const ownerId = req.context?.uid || req.user?.uid
@@ -198,31 +182,10 @@ export const createApartment = async (
 
   if (!ownerId) return res.status(401).json({ error: 'Unauthorized' })
 
-  if (!normalizedName || !normalizedLocation || pricePerMonth === undefined || pricePerMonth === null) {
-    return res.status(400).json({ error: 'Missing required fields: name, location, pricePerMonth' })
-  }
-
   const parsedPrice = Number(pricePerMonth)
-  if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
-    return res.status(400).json({ error: 'Invalid pricePerMonth' })
-  }
 
   const parsedRooms = Number(rooms)
-  if (!Number.isInteger(parsedRooms) || parsedRooms < 1) {
-    return res.status(400).json({ error: 'Invalid rooms value' })
-  }
-
-  if (promotionPercent !== null) {
-    const promo = Number(promotionPercent)
-    if (!Number.isFinite(promo) || promo < 0 || promo > 100) {
-      return res.status(400).json({ error: 'Invalid promotionPercent' })
-    }
-  }
-
   const parsedBathrooms = Number(bathrooms)
-  if (!Number.isFinite(parsedBathrooms) || parsedBathrooms < 1) {
-    return res.status(400).json({ error: 'Invalid bathrooms value' })
-  }
 
   const insertSql = `
     INSERT INTO safetrust.apartments (

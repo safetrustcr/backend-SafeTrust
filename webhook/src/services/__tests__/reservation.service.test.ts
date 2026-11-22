@@ -98,6 +98,12 @@ describe('reservation.service createReservation', () => {
 
     await createReservation(input())
 
-    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('quote: 500 USDC'))
+    const log = JSON.parse((console.log as jest.Mock).mock.calls[0][0])
+    expect(log).toMatchObject({
+      event: 'reservation.quote.recorded',
+      amount: 500,
+      assetCode: 'USDC',
+      billable: false,
+    })
   })
 })

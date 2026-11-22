@@ -1,5 +1,6 @@
 import type { ChunkProcessorAddon } from '../reconciliation.types'
 import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../source-adapters/tw.adapter'
+import { logger } from '../../middleware/logger'
 
 const CHUNK_PROCESSOR_MODULE = '../../../../crates/chunk-processor'
 
@@ -19,10 +20,10 @@ function loadChunkProcessor(): ChunkProcessorAddon | null {
     chunkProcessor = require(CHUNK_PROCESSOR_MODULE)
   } catch (err) {
     chunkProcessorLoadFailed = true
-    console.error(
-      '[reconciliation] ⚠️  chunk-processor addon unavailable — ' +
-        `falling back to sequential sync: ${(err as Error).message}`
-    )
+    logger.error('reconciliation.chunk_processor.unavailable', {
+      fallback: 'sequential',
+      error: err,
+    })
   }
   return chunkProcessor
 }

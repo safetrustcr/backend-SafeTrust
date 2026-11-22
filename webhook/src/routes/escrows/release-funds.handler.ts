@@ -11,6 +11,8 @@ import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
 import { logger } from '../../middleware/logger';
+import { getPlatformTenantId } from '../../config/tenant';
+import type { ReleaseFundsBody } from '../../validation';
 
 /**
  * Handles the escrow release-funds webhook event.
@@ -22,22 +24,17 @@ import { logger } from '../../middleware/logger';
  * @returns Express response indicating success, duplicate, conflict, or error
  */
 export const releaseFundsHandler = async (
-  req: Request<{}, {}, ReleaseFundsPayload>,
+  req: Request<{}, {}, ReleaseFundsBody>,
   res: Response
 ): Promise<Response> => {
-  const { contractId, releaseSigner } = req.body;
-
-  if (!contractId || !releaseSigner) {
-    return badRequest(res, {
-      error: 'Missing required fields: contractId, releaseSigner',
-    });
-  }
+  const { contractId } = req.body;
 
   try {
     // 1 — Atomic lifecycle transaction: claim event + update escrow + mirror reservation
     const result = await releaseFundsTransactional(
       contractId,
-      req.body as unknown as Record<string, unknown>
+      req.body as unknown as Record<string, unknown>,
+      getPlatformTenantId()
     );
 
     if (result.isDuplicate) {

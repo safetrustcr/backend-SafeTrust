@@ -20,6 +20,7 @@ import {
   runSorobanValidation,
 } from '../../services/reconciliation.service'
 import { logger } from '../../middleware/logger'
+import { getPlatformTenantId } from '../../config/tenant'
 
 export interface SyncEscrowsPayload {
   [key: string]: unknown
@@ -53,10 +54,11 @@ export const syncEscrowsHandler = async (
   logger.info('reconciliation.sync.started')
 
   try {
-    const contractIds = await fetchEscrowContractIds('safetrust')
-    const sync = await syncEscrowsWithIndexer(contractIds)
-    const drift = await validateSorobanDrift(contractIds, NETWORK)
-    const stale = await detectStaleEscrows(STALE_ESCROW_DAYS)
+    const tenantId = getPlatformTenantId()
+    const contractIds = await fetchEscrowContractIds(tenantId)
+    const sync = await syncEscrowsWithIndexer(contractIds, tenantId)
+    const drift = await validateSorobanDrift(contractIds, NETWORK, tenantId)
+    const stale = await detectStaleEscrows(STALE_ESCROW_DAYS, tenantId)
     const summary = formatReconciliationSummary(sync, drift, stale, Date.now() - startTime)
 
     const level = summary.errors > 0 ? 'warn' : 'info'

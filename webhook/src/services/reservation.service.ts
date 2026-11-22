@@ -3,6 +3,7 @@ import {
   createReservation as createReservationRecord,
   type CreateReservationRecordInput,
 } from '../repositories/reservation.repository'
+import { logger } from '../middleware/logger'
 import { TenantMismatchError } from './tenant-scoped-hasura'
 
 export { TenantMismatchError }
@@ -27,11 +28,13 @@ export async function createReservation(
     throw new TenantMismatchError()
   }
 
-  console.log(
-    `[reservation.service] total_amount quote recorded (not billable) — ` +
-      `guestId: ${input.guestId}, apartmentId: ${input.apartmentId}, ` +
-      `quote: ${input.totalAmount} ${input.assetCode}`
-  )
+  logger.info('reservation.quote.recorded', {
+    guestId: input.guestId,
+    apartmentId: input.apartmentId,
+    amount: input.totalAmount,
+    assetCode: input.assetCode,
+    billable: false,
+  })
 
   return createReservationRecord(input)
 }

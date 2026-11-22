@@ -9,6 +9,7 @@
 import db from './db'
 import { hasuraRequest } from './hasura'
 import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
+import { getPlatformTenantId } from '../config/tenant'
 
 // ── Types & Constants ─────────────────────────────────────────────────────────
 
@@ -259,6 +260,7 @@ export async function upsertRetryRecord(params: {
   action: EscrowAction
   network: StellarNetwork
   submissionPath: SubmissionPath
+  tenantId?: string
   status?: RetryStatus
   lastError?: string | null
   attemptCount?: number
@@ -287,7 +289,7 @@ export async function upsertRetryRecord(params: {
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8,
       NOW() + ($9 * INTERVAL '1 millisecond'),
-      $10, $11, 'safetrust', NOW()
+      $10, $11, $12, NOW()
     )
     ON CONFLICT (tx_hash, escrow_action)
     DO UPDATE SET
@@ -324,6 +326,7 @@ export async function upsertRetryRecord(params: {
       nextRetryMs,
       params.lastError ?? null,
       JSON.stringify(params.metadata ?? {}),
+      params.tenantId ?? getPlatformTenantId(),
     ]
   )
 
@@ -334,7 +337,8 @@ export async function updateRetryRecordStatus(
   id: string,
   status: RetryStatus,
   attemptCount: number,
-  lastError: string | null
+  lastError: string | null,
+  tenantId: string = getPlatformTenantId()
 ): Promise<void> {
   const nextRetryMs = status === 'retrying' ? calculateBackoffMs(attemptCount) : 0
 
@@ -348,8 +352,9 @@ export async function updateRetryRecordStatus(
       next_retry_at = NOW() + ($4 * INTERVAL '1 millisecond'),
       updated_at = NOW()
     WHERE id = $5
+      AND tenant_id = $6
     `,
-    [status, attemptCount, lastError, nextRetryMs, id]
+    [status, attemptCount, lastError, nextRetryMs, id, tenantId]
   )
 }
 
@@ -365,7 +370,8 @@ export async function promoteEscrowStatus(
   escrowId: string,
   action: EscrowAction,
   txHash: string,
-  network: StellarNetwork
+  network: StellarNetwork,
+  tenantId: string = getPlatformTenantId()
 ): Promise<void> {
   if (action === 'deploy') {
     // Check if contract exists in trustless_work_escrows
@@ -378,8 +384,9 @@ export async function promoteEscrowStatus(
         network = $2,
         updated_at = NOW()
       WHERE contract_id = $3
+        AND tenant_id = $4
       `,
-      [txHash, network, escrowId]
+      [txHash, network, escrowId, tenantId]
     )
 
     await db.query(
@@ -390,9 +397,10 @@ export async function promoteEscrowStatus(
         tx_hash = $1,
         network = $2,
         updated_at = NOW()
-      WHERE contract_id = $3 OR engagement_id = $3
+      WHERE (contract_id = $3 OR engagement_id = $3)
+        AND tenant_id = $4
       `,
-      [txHash, network, escrowId]
+      [txHash, network, escrowId, tenantId]
     )
   } else if (action === 'fund') {
     await db.query(
@@ -405,8 +413,9 @@ export async function promoteEscrowStatus(
         network = $2,
         updated_at = NOW()
       WHERE contract_id = $3
+        AND tenant_id = $4
       `,
-      [txHash, network, escrowId]
+      [txHash, network, escrowId, tenantId]
     )
 
     await db.query(
@@ -417,9 +426,10 @@ export async function promoteEscrowStatus(
         tx_hash = $1,
         network = $2,
         updated_at = NOW()
-      WHERE contract_id = $3 OR engagement_id = $3
+      WHERE (contract_id = $3 OR engagement_id = $3)
+        AND tenant_id = $4
       `,
-      [txHash, network, escrowId]
+      [txHash, network, escrowId, tenantId]
     )
   }
 }
@@ -435,8 +445,9 @@ export async function processHelperSubmission(params: {
   action: EscrowAction
   network: StellarNetwork
   isTWGenerated?: boolean
+  tenantId?: string
 }): Promise<ConfirmationResult> {
-  const { signedXdr, escrowId, action, network } = params
+  const { signedXdr, escrowId, action, network, tenantId = getPlatformTenantId() } = params
 
   if (!signedXdr || typeof signedXdr !== 'string') {
     return {
@@ -477,13 +488,14 @@ export async function processHelperSubmission(params: {
     submissionPath: 'helper',
     status: 'retrying',
     attemptCount: 1,
+    tenantId,
   })
 
   // Independently verify ledger execution against the Stellar network
   const ledgerRes = await verifyStellarTransaction(txHash, network)
   if (!ledgerRes.verified) {
     const errorMsg = ledgerRes.error ?? 'Ledger confirmation failed'
-    await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
+    await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg, tenantId)
     return {
       success: false,
       stage: 'pending_confirmation',
@@ -498,8 +510,8 @@ export async function processHelperSubmission(params: {
   }
 
   // Promote SafeTrust DB record
-  await promoteEscrowStatus(escrowId, action, txHash, network)
-  await updateRetryRecordStatus(retryRecord.id, 'completed', 1, null)
+  await promoteEscrowStatus(escrowId, action, txHash, network, tenantId)
+  await updateRetryRecordStatus(retryRecord.id, 'completed', 1, null, tenantId)
 
   return {
     success: true,
@@ -524,8 +536,16 @@ export async function processExternalSubmission(params: {
   action: EscrowAction
   network: StellarNetwork
   isTWGenerated: boolean
+  tenantId?: string
 }): Promise<ConfirmationResult> {
-  const { txHash, escrowId, action, network, isTWGenerated } = params
+  const {
+    txHash,
+    escrowId,
+    action,
+    network,
+    isTWGenerated,
+    tenantId = getPlatformTenantId(),
+  } = params
 
   // 1. Validate hash format
   if (!txHash || !VALID_TX_HASH.test(txHash)) {
@@ -565,6 +585,7 @@ export async function processExternalSubmission(params: {
     submissionPath: 'external',
     status: 'retrying',
     attemptCount: 1,
+    tenantId,
   })
 
   // 4. Verify directly against the Stellar network
@@ -573,9 +594,9 @@ export async function processExternalSubmission(params: {
     const errorMsg = ledgerRes.error ?? 'Ledger verification failed'
     // If the failure is terminal (e.g. failed on-ledger or format error), mark dead letter
     if (ledgerRes.successful === false) {
-      await updateRetryRecordStatus(retryRecord.id, 'dead_letter', 1, errorMsg)
+      await updateRetryRecordStatus(retryRecord.id, 'dead_letter', 1, errorMsg, tenantId)
     } else {
-      await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
+      await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg, tenantId)
     }
 
     return {
@@ -595,7 +616,7 @@ export async function processExternalSubmission(params: {
   const twRes = await updateTWIndexerFromTxHash(txHash, network, isTWGenerated)
   if (!twRes.success) {
     const errorMsg = twRes.error ?? 'TW indexer synchronization failed'
-    await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
+    await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg, tenantId)
     return {
       success: false,
       stage: 'ledger_confirmed',
@@ -611,8 +632,8 @@ export async function processExternalSubmission(params: {
   }
 
   // 6. Both ledger_confirmed and tw_indexed succeeded -> promote SafeTrust DB record
-  await promoteEscrowStatus(escrowId, action, txHash, network)
-  await updateRetryRecordStatus(retryRecord.id, 'completed', 1, null)
+  await promoteEscrowStatus(escrowId, action, txHash, network, tenantId)
+  await updateRetryRecordStatus(retryRecord.id, 'completed', 1, null, tenantId)
 
   return {
     success: true,
@@ -634,7 +655,9 @@ export async function processExternalSubmission(params: {
  * Sweeps pending confirmation retries from the database, executing with
  * exponential backoff, dead-lettering after MAX_ATTEMPTS, and maintaining idempotency.
  */
-export async function processPendingConfirmationRetries(): Promise<ProcessRetriesSummary> {
+export async function processPendingConfirmationRetries(
+  tenantId: string = getPlatformTenantId()
+): Promise<ProcessRetriesSummary> {
   const summary: ProcessRetriesSummary = {
     processed: 0,
     succeeded: 0,
@@ -660,9 +683,11 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
     FROM safetrust.escrow_confirmation_retries
     WHERE status = 'retrying'
       AND next_retry_at <= NOW()
+      AND tenant_id = $1
     ORDER BY next_retry_at ASC
     LIMIT 50
-    `
+    `,
+    [tenantId]
   )
 
   if (rows.length === 0) {
@@ -679,7 +704,8 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
         record.id,
         'dead_letter',
         record.attemptCount,
-        'Exceeded maximum confirmation retry attempts'
+        'Exceeded maximum confirmation retry attempts',
+        tenantId
       )
       summary.deadLettered++
       continue
@@ -697,7 +723,8 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
             record.id,
             'dead_letter',
             nextAttempt,
-            ledgerRes.error ?? 'Transaction failed on-ledger'
+            ledgerRes.error ?? 'Transaction failed on-ledger',
+            tenantId
           )
           summary.deadLettered++
         } else {
@@ -705,7 +732,8 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
             record.id,
             'retrying',
             nextAttempt,
-            ledgerRes.error ?? 'Ledger confirmation pending'
+            ledgerRes.error ?? 'Ledger confirmation pending',
+            tenantId
           )
           summary.retried++
         }
@@ -725,7 +753,8 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
               record.id,
               'dead_letter',
               nextAttempt,
-              twRes.error ?? 'TW indexer failed'
+              twRes.error ?? 'TW indexer failed',
+              tenantId
             )
             summary.deadLettered++
           } else {
@@ -733,7 +762,8 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
               record.id,
               'retrying',
               nextAttempt,
-              twRes.error ?? 'TW indexer synchronization failed'
+              twRes.error ?? 'TW indexer synchronization failed',
+              tenantId
             )
             summary.retried++
           }
@@ -746,9 +776,10 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
         record.escrowId,
         record.escrowAction,
         record.txHash,
-        record.network
+        record.network,
+        tenantId
       )
-      await updateRetryRecordStatus(record.id, 'completed', nextAttempt, null)
+      await updateRetryRecordStatus(record.id, 'completed', nextAttempt, null, tenantId)
       summary.succeeded++
     } catch (workerErr) {
       const errMessage = (workerErr as Error).message
@@ -758,7 +789,8 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
           record.id,
           'dead_letter',
           nextAttempt,
-          errMessage
+          errMessage,
+          tenantId
         )
         summary.deadLettered++
       } else {
@@ -766,7 +798,8 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
           record.id,
           'retrying',
           nextAttempt,
-          errMessage
+          errMessage,
+          tenantId
         )
         summary.retried++
       }

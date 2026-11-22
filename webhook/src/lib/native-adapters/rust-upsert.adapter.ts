@@ -1,4 +1,5 @@
 import type { BulkUpsertAddon } from '../reconciliation.types'
+import { logger } from '../../middleware/logger'
 
 const BULK_UPSERT_MODULE = '../../../../crates/pg-bulk-upsert'
 
@@ -13,10 +14,10 @@ function loadBulkUpsert(): BulkUpsertAddon | null {
     bulkUpsert = require(BULK_UPSERT_MODULE)
   } catch (err) {
     bulkUpsertLoadFailed = true
-    console.error(
-      '[reconciliation] ⚠️  pg-bulk-upsert addon unavailable — ' +
-        `falling back to row-by-row upsert: ${(err as Error).message}`
-    )
+    logger.error('reconciliation.bulk_upsert.unavailable', {
+      fallback: 'row_by_row',
+      error: err,
+    })
   }
   return bulkUpsert
 }

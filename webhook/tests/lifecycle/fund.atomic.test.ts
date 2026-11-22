@@ -12,7 +12,7 @@ import {
 import { notifyHotelEscrowConversation } from '../../src/services/hotel-conversation-notify';
 import { mirrorReservationStatus } from '../../src/repositories/reservation.repository';
 import { connect } from '../../src/services/db';
-import { FundEscrowPayload, ReleaseFundsPayload } from '@safetrust/types';
+import type { FundEscrowBody, ReleaseFundsBody } from '../../src/validation'
 
 jest.mock('../../src/services/hotel-conversation-notify', () => ({
   notifyHotelEscrowConversation: jest.fn().mockResolvedValue(undefined),
@@ -60,8 +60,8 @@ function makeResponse(): Response {
   return res as Response;
 }
 
-function makeRequest(body: Partial<FundEscrowPayload>): Request<{}, {}, FundEscrowPayload> {
-  return { body } as Request<{}, {}, FundEscrowPayload>;
+function makeRequest(body: Partial<FundEscrowBody>): Request<{}, {}, FundEscrowBody> {
+  return { body } as Request<{}, {}, FundEscrowBody>;
 }
 
 describe('Issue #705: Atomic Escrow Lifecycle & Rollback', () => {
@@ -552,7 +552,7 @@ describe('Issue #705: Atomic Escrow Lifecycle & Rollback', () => {
           contractId: 'contract-release-1',
           releaseSigner: 'GRELEASER',
         },
-      } as Request<{}, {}, ReleaseFundsPayload>;
+      } as Request<{}, {}, ReleaseFundsBody>;
       const res = makeResponse();
 
       await releaseFundsHandler(req, res);
@@ -603,7 +603,7 @@ describe('Issue #705: Atomic Escrow Lifecycle & Rollback', () => {
           contractId: 'contract-release-fail',
           releaseSigner: 'GRELEASER',
         },
-      } as Request<{}, {}, ReleaseFundsPayload>;
+      } as Request<{}, {}, ReleaseFundsBody>;
       const res = makeResponse();
 
       await releaseFundsHandler(req, res);

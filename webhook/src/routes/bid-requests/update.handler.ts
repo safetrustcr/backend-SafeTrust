@@ -5,10 +5,9 @@ import { pool } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { BidRequest } from './create.handler'
 import { logger } from '../../middleware/logger'
+import type { UpdateBidRequestBody } from '../../validation'
 
-export interface UpdateBidRequestPayload {
-  status?: string
-}
+export type UpdateBidRequestPayload = UpdateBidRequestBody
 
 export interface UpdateBidRequestParams {
   id: string
@@ -53,16 +52,12 @@ const INSERT_HISTORY = `
  * @returns JSON response with updated bid or error message
  */
 export const updateBidRequestHandler = async (
-  req: AuthenticatedRequest,
+  req: AuthenticatedRequest & { body: UpdateBidRequestBody },
   res: Response
 ): Promise<Response> => {
   const uid = req.context?.uid || req.user?.uid
   const { id } = req.params as { id: string }
-  const { status: newStatus } = (req.body || {}) as UpdateBidRequestPayload
-
-  if (!newStatus) {
-    return res.status(400).json({ error: 'Missing required field: status' })
-  }
+  const { status: newStatus } = req.body
 
   const client = await pool.connect()
   try {

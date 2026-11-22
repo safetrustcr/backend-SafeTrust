@@ -1,7 +1,6 @@
 import { PoolClient } from 'pg';
 import { AppError, ConflictError, NotFoundError, ServiceUnavailableError } from '../utils/errors';
 import { withTransaction } from './db';
-import { getPlatformTenantId } from '../config/tenant';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
 import { EscrowEventType, EscrowStatus } from '../types/escrow.types';
 import { InitializeEscrowPayload } from '@safetrust/types';
@@ -17,6 +16,8 @@ import {
 } from '../repositories/webhook-event.repository';
 import { amountToStroops } from '../lib/stellar-amounts';
 import { verifyProofOfFunds } from '../lib/zk-verifier';
+import { logger } from '../middleware/logger';
+import { escrowInitializationSchema } from '../validation';
 
 export { TenantMismatchError };
 
@@ -24,7 +25,7 @@ export { TenantMismatchError };
 
 /**
  * The validated, normalized form of an escrow initialization payload.
- * Produced by validateEscrowInitializationPayload.
+ * Normalized form produced from the escrow initialization schema.
  */
 export interface EscrowInitPayload {
   contract_id: string;
@@ -107,9 +108,12 @@ function normalizeU64(value: unknown): string | null {
  * Checks required fields, escrow_type whitelist, and optional ZK proof bundle.
  * Throws EscrowValidationError (400) or ZkVerifierUnavailableError (503) on failure.
  */
-export function validateEscrowInitializationPayload(
-  body: unknown
-): EscrowInitPayload {
+export function parseEscrowInitializationPayload(body: unknown): EscrowInitPayload {
+  const parsed = escrowInitializationSchema.safeParse(body)
+  if (!parsed.success) {
+    throw new EscrowValidationError(parsed.error.issues[0]?.message ?? 'Invalid escrow initialization payload')
+  }
+  const input = parsed.data
   const {
     contract_id,
     marker,
@@ -129,37 +133,7 @@ export function validateEscrowInitializationPayload(
     zk_verification_key,
     zk_threshold_stroops,
     zk_balance_commitment,
-  } = (body as InitializeEscrowPayload) ?? {};
-  
-  // 1 — Required fields
-  if (
-    !contract_id ||
-    !marker ||
-    !approver ||
-    !releaser ||
-    amount === undefined ||
-    amount === null ||
-    !escrow_type
-  ) {
-    throw new EscrowValidationError(
-      'Missing required fields: contract_id, marker, approver, releaser, amount, escrow_type'
-    );
-  }
-
-  // 2 — Runtime type validation
-  if (amountToStroops(amount) === null || typeof escrow_type !== 'string') {
-    throw new EscrowValidationError(
-      'amount must be a positive finite numeric value and escrow_type must be a string'
-    );
-  }
-
-  // 3 — Escrow type whitelist (matches DB CHECK constraint)
-  const validTypes = ['single_release', 'multi_release'];
-  if (!validTypes.includes(escrow_type)) {
-    throw new EscrowValidationError(
-      `escrow_type must be one of: ${validTypes.join(', ')}`
-    );
-  }
+  } = input;
   
   // 3 — Optional ZK proof bundle: must be all-or-nothing; validates threshold.
   // Real-funds ZK enforcement remains disabled by default until the chosen
@@ -182,18 +156,6 @@ export function validateEscrowInitializationPayload(
   }
 
   if (hasZkBundle) {
-    const hasCompleteBundle =
-      typeof zk_proof === 'string' && zk_proof.length > 0 &&
-      typeof zk_verification_key === 'string' && zk_verification_key.length > 0 &&
-      typeof zk_threshold_stroops === 'string' && zk_threshold_stroops.length > 0 &&
-      typeof zk_balance_commitment === 'string' && zk_balance_commitment.length > 0;
-
-    if (!hasCompleteBundle) {
-      throw new EscrowValidationError(
-        'zk_proof, zk_verification_key, zk_threshold_stroops, and zk_balance_commitment must be supplied together'
-      );
-    }
-
     const expectedThreshold = amountToStroops(amount);
     const suppliedThreshold = normalizeU64(zk_threshold_stroops);
     if (!expectedThreshold || !suppliedThreshold || suppliedThreshold !== expectedThreshold) {
@@ -202,10 +164,10 @@ export function validateEscrowInitializationPayload(
 
     try {
       const isValidProof = verifyProofOfFunds(
-        zk_proof,
-        zk_verification_key,
+        zk_proof!,
+        zk_verification_key!,
         suppliedThreshold,
-        zk_balance_commitment
+        zk_balance_commitment!
       );
       if (!isValidProof) {
         throw new EscrowValidationError('Invalid ZK proof of funds');
@@ -213,7 +175,7 @@ export function validateEscrowInitializationPayload(
     } catch (err) {
       if (err instanceof EscrowValidationError) throw err;
       const error = err as Error & { code?: string };
-      console.error('[escrow.service] ZK verifier error:', error.message);
+      logger.error('escrow.zk_verification.failed', { error });
       if (error.code === 'ZK_VERIFIER_MISCONFIGURED') {
         throw new EscrowValidationError('ZK proof verifier is misconfigured', 500);
       }
@@ -236,7 +198,7 @@ export function validateEscrowInitializationPayload(
     hotel_id: hotel_id ?? null,
     guest_id: guest_id ?? null,
     booking_metadata: booking_metadata ?? null,
-    raw: body as InitializeEscrowPayload,
+    raw: input as InitializeEscrowPayload,
   };
 }
 
@@ -344,9 +306,7 @@ export async function linkReservationToEscrow(
 ): Promise<void> {
   await linkEscrowToReservation(reservationId, escrowId, tenantId);
 
-  console.log(
-    `[escrow.service] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrowId}`
-  );
+  logger.info('escrow.reservation.linked', { reservationId, escrowId, tenantId });
 }
 
 
@@ -357,17 +317,18 @@ export async function initializeEscrow(
   body: unknown,
   tenantId: string
 ): Promise<{ isDuplicate: boolean; eventId: string; escrow?: TrustlessWorkEscrow }> {
-  const payload = validateEscrowInitializationPayload(body);
+  const payload = parseEscrowInitializationPayload(body);
   const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
     payload.contract_id,
     'escrow.initialized',
-    payload.raw as unknown as Record<string, unknown>
+    payload.raw as unknown as Record<string, unknown>,
+    tenantId
   );
 
   // Retry a duplicate whose earlier delivery failed part-way; persistEscrow
   // upserts on contract_id, so re-running it is safe.
   if (isDuplicate && processed !== false) {
-    await markWebhookEventProcessed(eventId);
+    await markWebhookEventProcessed(eventId, tenantId);
     return { isDuplicate: true, eventId };
   }
 
@@ -390,7 +351,7 @@ export async function initializeEscrow(
     await linkReservationToEscrow(reservationId, escrow.id, escrowTenantId);
   }
 
-  await markWebhookEventProcessed(eventId);
+  await markWebhookEventProcessed(eventId, tenantId);
 
   return { isDuplicate: false, eventId, escrow };
 }
@@ -437,7 +398,7 @@ export interface EscrowLifecycleParams {
   rawPayload: Record<string, unknown>;
   amount?: number;
   validPriorStates?: string[];
-  tenantId?: string;
+  tenantId: string;
 }
 
 export interface EscrowLifecycleResult {
@@ -461,7 +422,7 @@ export async function executeEscrowLifecycleTransition(
     rawPayload,
     amount,
     validPriorStates,
-    tenantId = getPlatformTenantId(),
+    tenantId,
   } = params;
   const eventIdentity = getWebhookEventIdentity(
     contractId,
@@ -514,8 +475,9 @@ export async function executeEscrowLifecycleTransition(
       `SELECT id, status, balance
        FROM safetrust.trustless_work_escrows
        WHERE contract_id = $1
+         AND tenant_id = $2
        FOR UPDATE`,
-      [contractId]
+      [contractId, tenantId]
     );
 
     if (escrowResult.rowCount === 0) {
@@ -533,8 +495,9 @@ export async function executeEscrowLifecycleTransition(
         `UPDATE safetrust.trustless_work_webhook_events
          SET processed = true,
              processed_at = NOW()
-         WHERE id = $1`,
-        [eventId]
+         WHERE id = $1
+           AND tenant_id = $2`,
+        [eventId, tenantId]
       );
       return {
         isDuplicate: true,
@@ -566,16 +529,18 @@ export async function executeEscrowLifecycleTransition(
          SET status = $1,
              balance = $2,
              updated_at = $3
-         WHERE id = $4`,
-        [targetStatus, amount, now, escrowId]
+         WHERE id = $4
+           AND tenant_id = $5`,
+        [targetStatus, amount, now, escrowId, tenantId]
       );
     } else {
       await client.query(
         `UPDATE safetrust.trustless_work_escrows
          SET status = $1,
              updated_at = $2
-         WHERE id = $3`,
-        [targetStatus, now, escrowId]
+         WHERE id = $3
+           AND tenant_id = $4`,
+        [targetStatus, now, escrowId, tenantId]
       );
     }
 
@@ -587,8 +552,9 @@ export async function executeEscrowLifecycleTransition(
       `UPDATE safetrust.trustless_work_webhook_events
        SET processed = true,
            processed_at = $2
-       WHERE id = $1`,
-      [eventId, now]
+       WHERE id = $1
+         AND tenant_id = $3`,
+      [eventId, now, tenantId]
     );
 
     return {
@@ -606,7 +572,8 @@ export async function executeEscrowLifecycleTransition(
 export async function fundEscrowTransactional(
   contractId: string,
   amount: number,
-  rawPayload: Record<string, unknown>
+  rawPayload: Record<string, unknown>,
+  tenantId: string
 ): Promise<EscrowLifecycleResult> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
@@ -624,6 +591,7 @@ export async function fundEscrowTransactional(
     amount,
     validPriorStates: validStates,
     rawPayload,
+    tenantId,
   });
 }
 
@@ -633,7 +601,8 @@ export async function fundEscrowTransactional(
  */
 export async function releaseFundsTransactional(
   contractId: string,
-  rawPayload: Record<string, unknown>
+  rawPayload: Record<string, unknown>,
+  tenantId: string
 ): Promise<EscrowLifecycleResult> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
@@ -651,6 +620,7 @@ export async function releaseFundsTransactional(
     amount: 0,
     validPriorStates: validStates,
     rawPayload,
+    tenantId,
   });
 }
 

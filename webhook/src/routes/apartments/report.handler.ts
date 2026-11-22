@@ -1,22 +1,12 @@
 import { Response } from 'express'
-import type { CreateListingReportPayload, ListingReportResponse, ReportCategory } from '@safetrust/types'
+import type { ListingReportResponse } from '@safetrust/types'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { query } from '../../services/db'
 import { logger } from '../../middleware/logger'
+import type { CreateListingReportBody } from '../../validation'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-const REPORT_CATEGORIES: ReportCategory[] = [
-  'inaccurate',
-  'scam_or_fraud',
-  'offensive',
-  'safety',
-  'duplicate',
-  'other',
-]
-
-const MAX_DETAILS_LENGTH = 1000
-const MIN_OTHER_DETAILS_LENGTH = 10
 const RATE_LIMIT_MAX_REPORTS = 10
 const RATE_LIMIT_WINDOW = '24 hours'
 
@@ -29,7 +19,7 @@ type ReportResponse = ListingReportResponse | { error: string }
  * Reports a listing. Idempotent per (reporter, clientOpId); rate-limited per reporter.
  */
 export const createReportHandler = async (
-  req: AuthenticatedRequest,
+  req: AuthenticatedRequest & { body: CreateListingReportBody },
   res: Response<ReportResponse>
 ): Promise<Response<ReportResponse>> => {
   const reporterId = req.user?.uid
@@ -40,23 +30,8 @@ export const createReportHandler = async (
     return res.status(400).json({ error: 'INVALID_REPORT' satisfies ReportErrorCode })
   }
 
-  const { category, details, clientOpId } = (req.body || {}) as Partial<CreateListingReportPayload>
-
-  if (!category || !REPORT_CATEGORIES.includes(category)) {
-    return res.status(400).json({ error: 'INVALID_REPORT' satisfies ReportErrorCode })
-  }
-
-  const normalizedDetails = typeof details === 'string' ? details.trim() : undefined
-  if (normalizedDetails && normalizedDetails.length > MAX_DETAILS_LENGTH) {
-    return res.status(400).json({ error: 'INVALID_REPORT' satisfies ReportErrorCode })
-  }
-  if (category === 'other' && (!normalizedDetails || normalizedDetails.length < MIN_OTHER_DETAILS_LENGTH)) {
-    return res.status(400).json({ error: 'INVALID_REPORT' satisfies ReportErrorCode })
-  }
-
-  if (typeof clientOpId !== 'string' || !UUID_RE.test(clientOpId)) {
-    return res.status(400).json({ error: 'INVALID_REPORT' satisfies ReportErrorCode })
-  }
+  const { category, details, clientOpId } = req.body
+  const normalizedDetails = details?.trim()
 
   try {
     const apartmentResult = await query<{ id: string; owner_id: string | null }>(

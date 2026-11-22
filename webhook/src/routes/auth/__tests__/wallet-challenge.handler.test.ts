@@ -19,7 +19,11 @@ function makeResponse(): Response {
 }
 
 function makeRequest(body: Record<string, unknown>, uid = 'user-1'): AuthenticatedRequest {
-  return { user: { uid }, body } as AuthenticatedRequest
+  return {
+    user: { uid },
+    context: { uid, tenantId: 'safetrust', roles: ['guest'] },
+    body,
+  } as AuthenticatedRequest
 }
 
 function makeClient(query: jest.Mock) {
@@ -65,7 +69,10 @@ describe('wallet ownership challenge handlers', () => {
     expect(payload.challenge).toContain('"domain":"safetrust.example"')
     expect(payload.challenge).toContain('"network":"testnet"')
     expect(payload.challenge).toContain(`"walletAddress":"${ADDRESS}"`)
-    expect(query).toHaveBeenCalledWith('DELETE FROM safetrust.wallet_challenges WHERE expires_at <= NOW()')
+    expect(query).toHaveBeenCalledWith(
+      'DELETE FROM safetrust.wallet_challenges WHERE tenant_id = $1 AND expires_at <= NOW()',
+      ['safetrust']
+    )
     expect(query.mock.calls[1][0]).toContain('INSERT INTO safetrust.wallet_challenges')
   })
 

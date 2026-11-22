@@ -16,6 +16,7 @@ import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
 import { getValidPriorStates } from '../../lib/escrow-transitions';
 import { logger } from '../../middleware/logger';
+import type { ResolveDisputeBody } from '../../validation';
 
 const EVENT_TYPE = EscrowEventType.DisputeResolved;
 
@@ -29,27 +30,23 @@ const EVENT_TYPE = EscrowEventType.DisputeResolved;
  * @returns Express response indicating success, duplicate, or error
  */
 export const resolveDisputeHandler = async (
-  req: Request<{}, {}, ResolveDisputePayload>,
+  req: Request<{}, {}, ResolveDisputeBody>,
   res: Response
 ): Promise<Response> => {
   const { contractId, resolver, resolutionNote } = req.body;
 
-  if (!contractId || !resolver) {
-    return badRequest(res, {
-      error: 'Missing required fields: contractId, resolver'
-    });
-  }
-
   try {
     // 1 — Idempotency check
+    const tenantId = getPlatformTenantId()
     const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
       contractId,
       EVENT_TYPE,
-      req.body as unknown as Record<string, unknown>
+      req.body as unknown as Record<string, unknown>,
+      tenantId
     );
 
     if (isDuplicate) {
-      await markWebhookEventProcessed(eventId);
+      await markWebhookEventProcessed(eventId, tenantId);
       return duplicate(res, eventId);
     }
 
@@ -59,7 +56,7 @@ export const resolveDisputeHandler = async (
       EscrowEventType.DisputeResolved
     );
 
-    const updated = await resolveDispute(contractId, validStates);
+    const updated = await resolveDispute(contractId, validStates, tenantId);
 
     if (!updated) {
       return notFound(res, {
@@ -70,7 +67,7 @@ export const resolveDisputeHandler = async (
     const escrowId = updated.id;
 
     // 3 — Mirror status to safetrust.reservations
-    await mirrorReservationStatus(escrowId, 'resolved', getPlatformTenantId());
+    await mirrorReservationStatus(escrowId, 'resolved', tenantId);
 
     // 4 — Store resolution note in escrow_metadata if provided
     if (resolutionNote) {
@@ -78,10 +75,10 @@ export const resolveDisputeHandler = async (
         resolver,
         resolutionNote,
         resolvedAt: new Date().toISOString(),
-      });
+      }, tenantId);
     }
 
-    await markWebhookEventProcessed(eventId);
+    await markWebhookEventProcessed(eventId, tenantId);
 
     logger.info('escrow.resolve_dispute.succeeded', { contractId, resolver });
     return ok(res);

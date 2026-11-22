@@ -3,8 +3,8 @@ import { Response } from 'express'
 import { connect } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { logger } from '../../middleware/logger'
+import type { CreateWalletChallengeBody, VerifyWalletChallengeBody } from '../../validation'
 
-const TENANT_ID = 'safetrust'
 const CHALLENGE_TTL_MS = 5 * 60 * 1000
 const VALID_STELLAR_ADDRESS = /^G[A-Z2-7]{55}$/
 
@@ -74,10 +74,12 @@ function challengeMessage(input: {
 }
 
 export async function createWalletChallengeHandler(
-  req: AuthenticatedRequest & { body: { wallet_address?: unknown } },
+  req: AuthenticatedRequest & { body: CreateWalletChallengeBody },
   res: Response
 ): Promise<Response> {
   const { uid } = req.user!
+  const tenantId = req.context?.tenantId
+  if (!tenantId) return res.status(401).json({ error: 'UNAUTHORIZED' })
   const address = req.body.wallet_address
   if (typeof address === 'string' && address.startsWith('C')) {
     return res.status(400).json({ error: 'UNSUPPORTED_STELLAR_ACCOUNT_TYPE' })
@@ -106,7 +108,7 @@ export async function createWalletChallengeHandler(
   const message = challengeMessage({
     uid,
     walletAddress: address,
-    tenant: TENANT_ID,
+    tenant: tenantId,
     domain: config.domain,
     network: config.network,
     nonce,
@@ -118,12 +120,15 @@ export async function createWalletChallengeHandler(
     // index keeps this opportunistic TTL cleanup bounded as the table grows.
     const client = await connect()
     try {
-      await client.query('DELETE FROM safetrust.wallet_challenges WHERE expires_at <= NOW()')
+      await client.query(
+        'DELETE FROM safetrust.wallet_challenges WHERE tenant_id = $1 AND expires_at <= NOW()',
+        [tenantId]
+      )
       await client.query(
         `INSERT INTO safetrust.wallet_challenges
           (challenge_id, user_id, wallet_address, tenant_id, domain, network, nonce, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [challengeId, uid, address, TENANT_ID, config.domain, config.network, nonce, expiresAt]
+        [challengeId, uid, address, tenantId, config.domain, config.network, nonce, expiresAt]
       )
     } finally {
       client.release()
@@ -136,15 +141,13 @@ export async function createWalletChallengeHandler(
 }
 
 export async function verifyWalletChallengeHandler(
-  req: AuthenticatedRequest & { body: { challengeId?: unknown; signature?: unknown; is_primary?: unknown } },
+  req: AuthenticatedRequest & { body: VerifyWalletChallengeBody },
   res: Response
 ): Promise<Response> {
   const { uid } = req.user!
+  const tenantId = req.context?.tenantId
+  if (!tenantId) return res.status(401).json({ error: 'UNAUTHORIZED' })
   const { challengeId, signature, is_primary = false } = req.body
-  if (typeof challengeId !== 'string' || !challengeId || typeof signature !== 'string' || !/^[a-fA-F0-9]{128}$/.test(signature)) {
-    return res.status(400).json({ error: 'INVALID_WALLET_CHALLENGE_REQUEST' })
-  }
-  if (typeof is_primary !== 'boolean') return res.status(400).json({ error: 'INVALID_IS_PRIMARY' })
   if (!stellarUtils?.verifyStellarEd25519) return res.status(503).json({ error: 'WALLET_SIGNATURE_VERIFIER_UNAVAILABLE' })
   const config = getWalletConfig()
   if (!config) return res.status(503).json({ error: 'WALLET_CHALLENGE_NOT_CONFIGURED' })
@@ -164,8 +167,10 @@ export async function verifyWalletChallengeHandler(
       expires_at: Date | string
     }>(
       `SELECT user_id, wallet_address, tenant_id, domain, network, nonce, expires_at
-       FROM safetrust.wallet_challenges WHERE challenge_id = $1 FOR UPDATE`,
-      [challengeId]
+       FROM safetrust.wallet_challenges
+       WHERE challenge_id = $1 AND tenant_id = $2
+       FOR UPDATE`,
+      [challengeId, tenantId]
     )
     const challenge = challengeResult.rows[0]
     if (!challenge) {
@@ -182,12 +187,15 @@ export async function verifyWalletChallengeHandler(
       ? challenge.expires_at
       : new Date(challenge.expires_at)
     if (expiresAt.getTime() <= Date.now()) {
-      await client.query('DELETE FROM safetrust.wallet_challenges WHERE challenge_id = $1', [challengeId])
+      await client.query(
+        'DELETE FROM safetrust.wallet_challenges WHERE challenge_id = $1 AND tenant_id = $2',
+        [challengeId, tenantId]
+      )
       await client.query('COMMIT')
       transactionOpen = false
       return res.status(401).json({ error: 'WALLET_CHALLENGE_EXPIRED' })
     }
-    if (challenge.tenant_id !== TENANT_ID || challenge.domain !== config.domain || challenge.network !== config.network) {
+    if (challenge.tenant_id !== tenantId || challenge.domain !== config.domain || challenge.network !== config.network) {
       await client.query('ROLLBACK')
       transactionOpen = false
       return res.status(401).json({ error: 'WALLET_CHALLENGE_CONTEXT_MISMATCH' })
@@ -212,7 +220,10 @@ export async function verifyWalletChallengeHandler(
       [challenge.wallet_address]
     )
     if (existing.rows[0] && existing.rows[0].user_id !== uid) {
-      await client.query('DELETE FROM safetrust.wallet_challenges WHERE challenge_id = $1', [challengeId])
+      await client.query(
+        'DELETE FROM safetrust.wallet_challenges WHERE challenge_id = $1 AND tenant_id = $2',
+        [challengeId, tenantId]
+      )
       await client.query('COMMIT')
       transactionOpen = false
       return res.status(409).json({ error: 'WALLET_ALREADY_REGISTERED' })
@@ -224,7 +235,10 @@ export async function verifyWalletChallengeHandler(
         [uid, challenge.wallet_address, is_primary]
       )
     }
-    await client.query('DELETE FROM safetrust.wallet_challenges WHERE challenge_id = $1', [challengeId])
+    await client.query(
+      'DELETE FROM safetrust.wallet_challenges WHERE challenge_id = $1 AND tenant_id = $2',
+      [challengeId, tenantId]
+    )
     await client.query('COMMIT')
     transactionOpen = false
     return res.status(200).json({ success: true, wallet_address: challenge.wallet_address })

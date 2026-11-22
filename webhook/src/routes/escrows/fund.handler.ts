@@ -10,6 +10,8 @@ import {
   notifyHotelEscrowConversation,
 } from '../../services/hotel-conversation-notify';
 import { logger } from '../../middleware/logger';
+import { getPlatformTenantId } from '../../config/tenant';
+import type { FundEscrowBody } from '../../validation';
 
 /**
   * Handles the escrow funded webhook event.
@@ -21,30 +23,18 @@ import { logger } from '../../middleware/logger';
   * @returns Express response indicating success, duplicate, or error
   */
 export const fundEscrowHandler = async (
-  req: Request<{}, {}, FundEscrowPayload>,
+  req: Request<{}, {}, FundEscrowBody>,
   res: Response
 ): Promise<Response> => {
-  const { contractId, signer, amount } = req.body;
-
-  // 1 — Validate required fields
-  if (!contractId || !signer || amount === undefined || amount === null) {
-    return badRequest(res, {
-      error: 'Missing required fields: contractId, signer, amount',
-    });
-  }
-
-  if (amount <= 0) {
-    return badRequest(res, {
-      error: 'Amount cannot be zero or negative',
-    });
-  }
+  const { contractId, amount } = req.body;
 
   try {
     // 2 — Atomic lifecycle transaction: claim event + update escrow + mirror reservation
     const result = await fundEscrowTransactional(
       contractId,
       amount,
-      req.body as unknown as Record<string, unknown>
+      req.body as unknown as Record<string, unknown>,
+      getPlatformTenantId()
     );
 
     if (result.isDuplicate) {

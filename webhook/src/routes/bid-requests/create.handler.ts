@@ -4,15 +4,9 @@ import { Response } from 'express'
 import { query } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { logger } from '../../middleware/logger'
+import type { CreateBidRequestBody } from '../../validation'
 
-export interface CreateBidRequestPayload {
-  apartmentId?: string
-  apartment_id?: string
-  proposedPrice?: number | string
-  proposed_price?: number | string
-  desiredMoveIn?: string
-  desired_move_in?: string
-}
+export type CreateBidRequestPayload = CreateBidRequestBody
 
 export interface BidRequest {
   id: string
@@ -78,24 +72,11 @@ export const createBidRequestHandler = async (
   res: Response
 ): Promise<Response> => {
   const uid = req.context?.uid || req.user?.uid
-  const apartmentId = req.body?.apartmentId || req.body?.apartment_id
-  const proposedPrice = req.body?.proposedPrice || req.body?.proposed_price
-  const desiredMoveIn = req.body?.desiredMoveIn || req.body?.desired_move_in
-
-  if (apartmentId == null || proposedPrice == null || desiredMoveIn == null) {
-    return res.status(400).json({
-      error: 'Missing required fields',
-    })
-  }
+  const apartmentId = req.body.apartmentId ?? req.body.apartment_id!
+  const proposedPrice = req.body.proposedPrice ?? req.body.proposed_price!
+  const desiredMoveIn = req.body.desiredMoveIn ?? req.body.desired_move_in!
 
   const price = Number(proposedPrice)
-  if (!Number.isFinite(price) || price <= 0) {
-    return res.status(400).json({ error: 'proposedPrice must be a positive number' })
-  }
-
-  if (typeof desiredMoveIn !== 'string' || !isValidCalendarDate(desiredMoveIn)) {
-    return res.status(400).json({ error: 'desiredMoveIn must be a valid date' })
-  }
 
   const moveIn = new Date(desiredMoveIn)
 

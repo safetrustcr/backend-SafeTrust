@@ -1,14 +1,9 @@
 import { Response } from 'express'
 import { query } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
-import type {
-  ChainType,
-  SyncWalletPayload,
-  SyncWalletResponse,
-} from '@safetrust/types'
+import type { SyncWalletResponse } from '@safetrust/types'
 import { logger } from '../../middleware/logger'
-
-const VALID_CHAIN_TYPES: readonly ChainType[] = ['ETH', 'STELLAR', 'BSC']
+import type { SyncWalletBody } from '../../validation'
 
 interface StellarUtils {
   validateStellarAddress(address: string): boolean
@@ -48,26 +43,16 @@ interface WalletRow {
 }
 
 export async function syncWalletHandler(
-  req: AuthenticatedRequest & { body: Partial<SyncWalletPayload> },
+  req: AuthenticatedRequest & { body: SyncWalletBody },
   res: Response
 ): Promise<Response> {
   const uid = req.context?.uid || req.user?.uid
   if (!uid) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
-  const { wallet_address, chain_type, is_primary = false } = req.body
-
-  if (!wallet_address || typeof wallet_address !== 'string') {
-    return res.status(400).json({ error: 'wallet_address is required' })
-  }
-  if (!VALID_CHAIN_TYPES.includes(chain_type as ChainType)) {
-    return res.status(400).json({ error: `chain_type must be one of: ${VALID_CHAIN_TYPES.join(', ')}` })
-  }
+  const { wallet_address, chain_type, is_primary } = req.body
   if (chain_type === 'STELLAR' && !isStellarAddress(wallet_address)) {
     return res.status(400).json({ error: 'Invalid Stellar wallet address' })
-  }
-  if (typeof is_primary !== 'boolean') {
-    return res.status(400).json({ error: 'is_primary must be a boolean' })
   }
   if (
     chain_type === 'STELLAR' ||

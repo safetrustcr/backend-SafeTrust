@@ -2,6 +2,8 @@
 
 import { Router } from 'express'
 import { confirmTransactionHandler } from './confirm-transaction.handler'
+import { validate } from '../../middleware/validate'
+import { confirmTransactionSchema } from '../../validation'
 
 const router = Router()
 
@@ -11,6 +13,10 @@ const router = Router()
  *  - Helper submission (Path A)
  *  - External submission & TW indexer sync (Path B)
  */
-router.post('/api/escrows/confirm-transaction', confirmTransactionHandler)
+router.post(
+  '/api/escrows/confirm-transaction',
+  validate(confirmTransactionSchema),
+  confirmTransactionHandler
+)
 
 export default router

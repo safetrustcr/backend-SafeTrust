@@ -105,10 +105,38 @@ let `sendError` or the global handler respond.
   otherwise a UUID is generated.
 - `LOG_LEVEL` is `debug`, `info` (default), `warn`, `error` or `silent`.
 
-Route handlers and middleware must not call `console.*` directly.
-`routes/__tests__/structured-logging-boundary.test.ts` enforces this. Services
-and libraries still use `console` in places and move to the logger
-incrementally.
+Application code under `webhook/src` must not call `console.*` directly;
+`middleware/logger.ts` is the only exception because it writes the structured
+JSON lines to stdout/stderr. `routes/__tests__/structured-logging-boundary.test.ts`
+enforces this across every source directory. Use a stable dotted event and
+structured fields; request-scoped calls automatically include `requestId`.
+
+## Request validation
+
+Routes with a body or query string validate it with a Zod schema in
+`webhook/src/validation/`, applied through `validate(schema)` before the
+handler. Handler payload types are inferred from those schemas. Invalid input
+returns HTTP 400 with this format:
+
+```json
+{
+  "error": "validation_failed",
+  "fields": {
+    "name": "Required"
+  }
+}
+```
+
+`fields` maps each invalid field path to its first validation message. This
+format is shared across routes and replaces route-specific 400 response shapes
+for schema validation failures; frontend clients should check
+`error === "validation_failed"` and display `fields`. Domain-level errors that
+occur after schema validation keep their existing response formats.
+
+Authenticated user requests take their tenant from the verified session at
+`req.context.tenantId`; request bodies and headers cannot select another
+tenant. Reconciliation and other jobs without a user session pass
+`getPlatformTenantId()` explicitly through the service and repository calls.
 
 ## Raw body for signed webhooks
 

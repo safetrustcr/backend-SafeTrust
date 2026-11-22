@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response';
 import { ApproveMilestonePayload } from '@safetrust/types';
 import { logger } from '../../middleware/logger';
+import { getPlatformTenantId } from '../../config/tenant';
+import type { ApproveMilestoneBody } from '../../validation';
 import {
   approveMilestone,
   EscrowStateConflictError,
@@ -9,22 +11,10 @@ import {
   MilestoneNotFoundError,
 } from '../../services/milestone.service';
 export async function approveMilestoneHandler(
-  req: Request<{}, {}, ApproveMilestonePayload>,
+  req: Request<{}, {}, ApproveMilestoneBody>,
   res: Response
 ): Promise<Response> {
-  const { contractId, milestoneId, approver, flag } = req.body || {};
-
-  if (!contractId || !milestoneId || !approver || flag === undefined) {
-    return badRequest(res, {
-      error: 'Missing required fields: contractId, milestoneId, approver, flag',
-    });
-  }
-
-  if (flag !== true) {
-    return badRequest(res, {
-      error: 'flag must be true to approve a milestone',
-    });
-  }
+  const { contractId, milestoneId, approver } = req.body;
 
   try {
     const result = await approveMilestone(
@@ -32,7 +22,8 @@ export async function approveMilestoneHandler(
       contractId,
       milestoneId,
       approver,
-      req.body as unknown as Record<string, unknown>
+      req.body as unknown as Record<string, unknown>,
+      getPlatformTenantId()
     );
 
     if (result.isDuplicate) {

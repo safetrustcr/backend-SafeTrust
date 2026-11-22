@@ -10,25 +10,15 @@ import { Request, Response } from 'express'
 import {
   processHelperSubmission,
   processExternalSubmission,
-  EscrowAction,
-  StellarNetwork,
-  SubmissionPath,
+  type StellarNetwork,
 } from '../../services/confirmation.service'
-import { assertSignedXdrCannotAdvanceStatus } from '../../services/escrow.service'
+import type { ConfirmTransactionBody } from '../../validation'
+import { getPlatformTenantId } from '../../config/tenant'
 
-export interface ConfirmTransactionPayload {
-  submissionPath?: SubmissionPath
-  txHash?: string
-  signedXdr?: string
-  escrowId?: string
-  action?: EscrowAction
-  network?: StellarNetwork
-  isTWGenerated?: boolean
-  signingOnly?: boolean
-}
+export type ConfirmTransactionPayload = ConfirmTransactionBody
 
 export async function confirmTransactionHandler(
-  req: Request<{}, {}, ConfirmTransactionPayload>,
+  req: Request<{}, {}, ConfirmTransactionBody>,
   res: Response
 ): Promise<Response> {
   const {
@@ -39,31 +29,10 @@ export async function confirmTransactionHandler(
     action,
     network = (process.env.STELLAR_NETWORK as StellarNetwork) || 'testnet',
     isTWGenerated = true,
-    signingOnly = false,
   } = req.body
+  const tenantId = getPlatformTenantId()
 
-  // 1. Guard against advancing status via client signing alone
-  if (signingOnly || (signedXdr && !submissionPath && !txHash)) {
-    return res.status(400).json({
-      error:
-        'Client-side wallet signing cannot advance escrow status; transaction must be submitted with a txHash',
-    })
-  }
-
-  // 2. Validate required fields
-  if (!escrowId) {
-    return res.status(400).json({ error: 'escrowId is required' })
-  }
-
-  if (!action || !['deploy', 'fund'].includes(action)) {
-    return res.status(400).json({ error: 'action must be either "deploy" or "fund"' })
-  }
-
-  if (!['testnet', 'mainnet'].includes(network)) {
-    return res.status(400).json({ error: 'network must be either "testnet" or "mainnet"' })
-  }
-
-  // 3. Dispatch according to submission path
+  // Dispatch according to the validated submission path.
   if (submissionPath === 'helper') {
     if (!signedXdr) {
       return res.status(400).json({ error: 'signedXdr is required for helper submission' })
@@ -75,6 +44,7 @@ export async function confirmTransactionHandler(
       action,
       network,
       isTWGenerated,
+      tenantId,
     })
 
     if (!result.success) {
@@ -107,6 +77,7 @@ export async function confirmTransactionHandler(
       action,
       network,
       isTWGenerated,
+      tenantId,
     })
 
     if (!result.success) {

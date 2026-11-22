@@ -1,4 +1,5 @@
 import { initializeApp, cert, getApp, type ServiceAccount } from 'firebase-admin/app'
+import { logger } from '../middleware/logger'
 
 /**
  * Firebase Admin initialization.
@@ -35,11 +36,11 @@ export function initializeFirebaseAdmin(): void {
     if (process.env.NODE_ENV === 'production') {
       throw new Error(msg)
     }
-    console.warn(`${msg} — skipping cert init (non-production)`)
+    logger.warn('firebase_admin.initialization_skipped', { reason: msg })
     return
   }
 
   const serviceAccount: ServiceAccount = { projectId, clientEmail, privateKey }
   initializeApp({ credential: cert(serviceAccount) })
-  console.log('[Firebase Admin] Initialized successfully')
+  logger.info('firebase_admin.initialized')
 }

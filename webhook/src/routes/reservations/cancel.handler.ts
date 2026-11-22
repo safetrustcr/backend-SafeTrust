@@ -9,13 +9,14 @@ import {
   toReservationDto,
 } from '../../services/reservation-actions'
 import { logger } from '../../middleware/logger'
+import type { CancelReservationBody } from '../../validation'
 
 type CancelReservationResponse =
   | ReservationDto
   | { error: string; status?: string }
 
 export const cancelReservationHandler = async (
-  req: AuthenticatedRequest,
+  req: AuthenticatedRequest & { body: CancelReservationBody },
   res: Response<CancelReservationResponse>
 ): Promise<Response<CancelReservationResponse>> => {
   const userId = req.context?.uid || req.user?.uid
@@ -29,16 +30,6 @@ export const cancelReservationHandler = async (
   }
 
   const { reason } = req.body || {}
-  if (reason !== undefined && reason !== null) {
-    if (typeof reason !== 'string') {
-      return res.status(400).json({ error: 'Reason must be a string' })
-    }
-    if (reason.length > 500) {
-      return res.status(400).json({
-        error: 'Cancellation reason must be 500 characters or less',
-      })
-    }
-  }
 
   try {
     const reservation = await findReservationById(id)

@@ -16,6 +16,8 @@
 
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
 import { syncEscrowsHandler } from './sync-escrows.handler'
+import { validate } from '../../middleware/validate'
+import { reconciliationSyncSchema } from '../../validation'
 import { logger } from '../../middleware/logger'
 
 const router = Router()
@@ -48,6 +50,11 @@ export function hasuraSecretGuard(req: Request, res: Response, next: NextFunctio
  *         of 50 → upserts changed rows → returns sync summary.
  * @access Server-to-server (Hasura cron trigger)
  */
-router.post('/sync-escrows', hasuraSecretGuard, syncEscrowsHandler as unknown as RequestHandler)
+router.post(
+  '/sync-escrows',
+  hasuraSecretGuard,
+  validate(reconciliationSyncSchema),
+  syncEscrowsHandler as unknown as RequestHandler
+)
 
 export default router

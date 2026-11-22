@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "build:rust": "npm run build:tooling && cargo build --release --manifest-path ../crates/Cargo.toml -p webhook-verifier -p stellar-utils -p chunk-processor -p pg-bulk-upsert -p escrow-state-machine -p x402-processor -p soroban-reconciler && node ../crates/scripts/copy-native.js --crate=webhook-verifier && node ../crates/scripts/copy-native.js --crate=stellar-utils && node ../crates/scripts/copy-native.js --crate=chunk-processor && node ../crates/scripts/copy-native.js --crate=pg-bulk-upsert && node ../crates/scripts/copy-native.js --crate=escrow-state-machine && node ../crates/scripts/copy-native.js --crate=x402-processor && node ../crates/scripts/copy-native.js --crate=soroban-reconciler",
+    "build:rust": "npm run build:tooling && cargo build --release --manifest-path ../crates/Cargo.toml -p webhook-verifier -p stellar-utils -p chunk-processor -p pg-bulk-upsert -p escrow-state-machine -p x402-processor -p soroban-reconciler && node ../crates/scripts/copy-native.js --crate=webhook-verifier && node ../crates/scripts/copy-native.js --crate=stellar-utils && node ../crates/scripts/copy-native.js --crate=chunk-processor && node ../crates/scripts/copy-native.js --crate=pg-bulk-upsert && node ../crates/scripts/copy-native.js --crate=escrow-state-machine && node ../crates/scripts/copy-native.js --crate=x402-processor && node ../crates/scripts/copy-native.js --crate=soroban-reconciler",
     "build": "npm run build:rust && tsc",
     "dev": "nodemon --exec ts-node src/index.ts",
     "start": "node dist/index.js",
@@ -49,6 +49,7 @@
     "express": "^5.2.1",
     "firebase-admin": "^14.5.0",
     "helmet": "^8.3.0",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "zod": "^4.6.7"
   }
 }

@@ -13,9 +13,8 @@ import {
 } from '../../repositories/escrow-claims.repository'
 import { UUID_PATTERN } from './validation'
 import { logger } from '../../middleware/logger'
+import type { CreateEscrowClaimBody } from '../../validation'
 
-const MIN_BODY = 10
-const MAX_BODY = 2000
 const RETRY_AFTER_SECONDS = '86400'
 
 const toResponse = (row: EscrowClaimRow) => ({
@@ -29,25 +28,16 @@ const toResponse = (row: EscrowClaimRow) => ({
  * Idempotent per (author, clientOpId); at most 5 claims per author per escrow per 24h.
  */
 export const createClaimHandler = async (
-  req: AuthenticatedRequest,
+  req: AuthenticatedRequest & { body: CreateEscrowClaimBody },
   res: Response
 ): Promise<Response> => {
   const { escrowId } = req.params as { escrowId: string }
-  const { body, clientOpId } = (req.body || {}) as { body?: unknown; clientOpId?: unknown }
-
-  if (
-    !UUID_PATTERN.test(escrowId ?? '') ||
-    typeof clientOpId !== 'string' ||
-    !UUID_PATTERN.test(clientOpId)
-  ) {
+  const { body, clientOpId } = req.body
+  if (!UUID_PATTERN.test(escrowId ?? '')) {
     return res.status(400).json({ error: 'INVALID_CLAIM_REQUEST' })
   }
 
-  const text = typeof body === 'string' ? body.trim() : ''
-  const length = Array.from(text).length
-  if (length < MIN_BODY || length > MAX_BODY) {
-    return res.status(400).json({ error: 'INVALID_CLAIM_BODY' })
-  }
+  const text = body.trim()
 
   const uid = req.user?.uid
   if (!uid) {

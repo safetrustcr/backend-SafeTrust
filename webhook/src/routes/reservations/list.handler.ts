@@ -8,13 +8,14 @@ import {
   toReservationDto,
 } from '../../services/reservation-actions'
 import { logger } from '../../middleware/logger'
+import type { ReservationListQuery } from '../../validation'
 
 type ListReservationsResponse =
   | { reservations: ReservationDto[] }
   | { error: string }
 
 export const listReservationsHandler = async (
-  req: AuthenticatedRequest,
+  req: AuthenticatedRequest & { query: ReservationListQuery },
   res: Response<ListReservationsResponse>
 ): Promise<Response<ListReservationsResponse>> => {
   const userId = req.context?.uid || req.user?.uid
@@ -24,30 +25,17 @@ export const listReservationsHandler = async (
 
   const { role, limit, offset, page } = req.query
 
-  let parsedRole: 'guest' | 'host' | undefined
-  if (role && role !== 'both') {
-    if (role === 'guest' || role === 'host') {
-      parsedRole = role
-    } else {
-      return res.status(400).json({
-        error: "Invalid role parameter. Must be 'guest', 'host' or 'both'",
-      })
-    }
-  }
+  const parsedRole = role === 'both' ? undefined : role
 
   const MAX_LIMIT = 100
-  let parsedLimit = parseInt(String(limit ?? 50), 10)
-  if (isNaN(parsedLimit) || parsedLimit < 1) parsedLimit = 50
+  let parsedLimit = Number(limit ?? 50)
   if (parsedLimit > MAX_LIMIT) parsedLimit = MAX_LIMIT
 
-  let parsedOffset = parseInt(String(offset ?? 0), 10)
-  if (isNaN(parsedOffset) || parsedOffset < 0) {
-    parsedOffset = 0
-  }
+  let parsedOffset = Number(offset ?? 0)
 
-  if (page && !offset) {
-    const parsedPage = parseInt(String(page), 10)
-    if (!isNaN(parsedPage) && parsedPage > 1) {
+  if (page && offset === undefined) {
+    const parsedPage = Number(page)
+    if (parsedPage > 1) {
       parsedOffset = (parsedPage - 1) * parsedLimit
     }
   }

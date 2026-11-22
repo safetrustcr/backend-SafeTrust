@@ -50,49 +50,6 @@ describe('syncWalletHandler', () => {
     jest.clearAllMocks()
   })
 
-  it('returns 400 when wallet_address is missing', async () => {
-    const req = makeRequest({ chain_type: 'STELLAR', is_primary: false })
-    const res = makeResponse()
-
-    await syncWalletHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'wallet_address is required' })
-    expect(query).not.toHaveBeenCalled()
-  })
-
-  it('returns 400 when chain_type is invalid', async () => {
-    const req = makeRequest({
-      wallet_address: VALID_STELLAR,
-      chain_type: 'INVALID',
-      is_primary: false,
-    })
-    const res = makeResponse()
-
-    await syncWalletHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'chain_type must be one of: ETH, STELLAR, BSC',
-    })
-    expect(query).not.toHaveBeenCalled()
-  })
-
-  it('returns 400 when is_primary is not a boolean', async () => {
-    const req = makeRequest({
-      wallet_address: VALID_STELLAR,
-      chain_type: 'STELLAR',
-      is_primary: 'yes',
-    })
-    const res = makeResponse()
-
-    await syncWalletHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'is_primary must be a boolean' })
-    expect(query).not.toHaveBeenCalled()
-  })
-
   it('returns 400 for a malformed Stellar address', async () => {
     const req = makeRequest({
       wallet_address: 'not-a-stellar-address',
