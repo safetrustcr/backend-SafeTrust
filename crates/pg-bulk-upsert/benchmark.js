@@ -25,6 +25,13 @@ const assert = require("node:assert");
 const crypto = require("node:crypto");
 // The addon.
 const { bulkUpsertEscrows } = require('./index.node');
+function getTenantId() {
+    const tenantId = process.env.PLATFORM_TENANT_ID;
+    if (!tenantId)
+        throw new Error('PLATFORM_TENANT_ID is required to run the bulk-upsert benchmark');
+    return tenantId;
+}
+const tenantId = getTenantId();
 // node-postgres lives in webhook/node_modules; resolve it from there so this
 // script runs from the repo root without its own install.
 function loadPg() {
@@ -127,7 +134,7 @@ async function runRowByRow(client) {
 async function runBulk() {
     const updates = updatesWithBalance('100.0000000');
     const start = Date.now();
-    const result = JSON.parse(await bulkUpsertEscrows(JSON.stringify(updates), benchConnStr));
+    const result = JSON.parse(await bulkUpsertEscrows(JSON.stringify(updates), benchConnStr, tenantId));
     return { durationMs: Date.now() - start, result };
 }
 async function main() {

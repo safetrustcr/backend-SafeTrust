@@ -8,7 +8,6 @@ jest.mock('../../../services/escrow.service', () => ({
   },
   ReservationNotFoundError: class ReservationNotFoundError extends Error {},
   TenantMismatchError: class TenantMismatchError extends Error {},
-  ZkVerifierUnavailableError: class ZkVerifierUnavailableError extends Error {},
   initializeEscrow: jest.fn(),
 }));
 
@@ -77,31 +76,6 @@ describe('initializeEscrowHandler', () => {
       duplicate: true,
       eventId: 'event-duplicate',
     });
-  });
-
-  it.each([
-    ['a non-numeric value', 'not-an-amount'],
-    ['a non-finite value', Number.POSITIVE_INFINITY],
-    ['a NaN value', Number.NaN],
-    ['zero', 0],
-    ['a null value', null],
-    ['a negative value', -1],
-  ])('rejects %s before calling the service', async (_description, amount) => {
-    const res = makeResponse();
-
-    await initializeEscrowHandler(makeRequest({ amount }), res);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(initializeEscrow).not.toHaveBeenCalled();
-  });
-
-  it('rejects malformed amount types before calling the service', async () => {
-    const res = makeResponse();
-
-    await initializeEscrowHandler(makeRequest({ amount: { value: 100 } }), res);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(initializeEscrow).not.toHaveBeenCalled();
   });
 
   it('maps service validation errors to a bad request', async () => {

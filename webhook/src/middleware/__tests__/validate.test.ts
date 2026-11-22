@@ -25,6 +25,7 @@ import {
   updateBidRequestSchema,
   verifyWalletChallengeSchema,
 } from '../../validation'
+import reservationsRouter from '../../routes/reservations'
 
 interface InvalidRouteCase {
   route: string
@@ -47,8 +48,20 @@ const invalidRoutes: InvalidRouteCase[] = [
   { route: 'POST /api/reservations', schema: createReservationSchema, source: 'body', payload: {} },
   { route: 'GET /api/reservations', schema: reservationListQuerySchema, source: 'query', payload: {}, query: '?role=admin' },
   { route: 'POST /api/reservations/:id/cancel', schema: cancelReservationSchema, source: 'body', payload: { reason: 7 } },
-  { route: 'POST /api/escrow-claims/:escrowId', schema: createEscrowClaimSchema, source: 'body', payload: {} },
-  { route: 'POST /api/escrows/initialize', schema: escrowInitializationSchema, source: 'body', payload: {} },
+  { route: 'POST /api/escrow-claims/:escrowId', schema: createEscrowClaimSchema, source: 'body', payload: { body: 'short', clientOpId: '33333333-3333-4333-8333-333333333333' } },
+  {
+    route: 'POST /api/escrows/initialize',
+    schema: escrowInitializationSchema,
+    source: 'body',
+    payload: {
+      contract_id: 'contract-1',
+      marker: 'marker',
+      approver: 'approver',
+      releaser: 'releaser',
+      amount: 0,
+      escrow_type: 'single_release',
+    },
+  },
   { route: 'POST /api/escrows/confirm-transaction', schema: confirmTransactionSchema, source: 'body', payload: {} },
   { route: 'POST /api/escrows/fund', schema: fundEscrowSchema, source: 'body', payload: {} },
   { route: 'POST /api/escrows/approve-milestone', schema: approveMilestoneSchema, source: 'body', payload: {} },
@@ -113,5 +126,44 @@ describe('request validation middleware', () => {
 
     expect(bodyResponse.body).toMatchObject({ is_primary: false })
     expect(queryResponse.body).toEqual({ page: '2', limit: '10' })
+  })
+
+  it('mounts reservation creation validation before the handler', async () => {
+    const app = express()
+    app.use(express.json())
+    app.use('/api/reservations', reservationsRouter)
+
+    const response = await request(app).post('/api/reservations').send({})
+
+    expect(response.status).toBe(400)
+    expect(response.body).toEqual({
+      error: 'validation_failed',
+      fields: expect.any(Object),
+    })
+  })
+
+  it('accepts cancellation requests with no body', async () => {
+    const app = express()
+    app.use(express.json())
+    app.post('/cancel', validate(cancelReservationSchema), (req, res) => res.json(req.body))
+
+    const response = await request(app).post('/cancel')
+
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({})
+  })
+
+  it('rejects boolean funding amounts instead of coercing them to numbers', async () => {
+    const app = express()
+    app.use(express.json())
+    app.post('/', validate(fundEscrowSchema), (_req, res) => res.sendStatus(204))
+
+    const response = await request(app)
+      .post('/')
+      .send({ contractId: 'contract-1', signer: 'signer-1', amount: true })
+
+    expect(response.status).toBe(400)
+    expect(response.body.error).toBe('validation_failed')
+    expect(response.body.fields.amount).toEqual(expect.any(String))
   })
 })

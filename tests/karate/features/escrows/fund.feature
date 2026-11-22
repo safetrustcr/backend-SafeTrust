@@ -59,7 +59,8 @@ Feature: POST /api/escrows/fund — TrustlessWork fund confirmation callback
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: contractId, signer, amount'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: Missing signer returns 400
     * def body = { "contractId": "escrow-created-001", "amount": 2500.00 }
@@ -70,7 +71,8 @@ Feature: POST /api/escrows/fund — TrustlessWork fund confirmation callback
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: contractId, signer, amount'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: Amount zero returns 400
     * def body = { "contractId": "escrow-created-001", "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "amount": 0 }

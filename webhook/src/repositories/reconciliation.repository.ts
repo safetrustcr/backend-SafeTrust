@@ -298,10 +298,6 @@ export async function upsertEscrowsBulk(
   tenantId: string = getPlatformTenantId()
 ): Promise<UpsertResult> {
   assertBulkUpsertAvailable()
-  if (tenantId !== getPlatformTenantId() || process.env.PLATFORM_TENANT_ID?.trim()) {
-    return upsertEscrows(escrows, tenantId)
-  }
-
   let skipped = 0
   const valid: EscrowRecord[] = []
   for (const escrow of escrows) {
@@ -338,7 +334,8 @@ export async function upsertEscrowsBulk(
 
   const resultJson = await bulkUpsertWithRust(
     JSON.stringify(updates),
-    buildConnectionString()
+    buildConnectionString(),
+    tenantId
   )
   const result: BulkUpsertResult = JSON.parse(resultJson)
 

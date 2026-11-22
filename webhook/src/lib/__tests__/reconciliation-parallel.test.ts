@@ -97,9 +97,9 @@ describe('upsertEscrows', () => {
 
     const params = db.query.mock.calls[0][1];
     // $1 contract_id, $2 status, $3 amount, $4 balance, $5 marker, $6 approver,
-    // $7 releaser, $8 escrow_type, $9 network
+    // $7 releaser, $8 escrow_type, $9 network, $10 tenant_id
     expect(params).toEqual([
-      'C1', 'funded', '100.0000000', '50.0000000', 'M', 'A', 'R', 'single_release', null,
+      'C1', 'funded', '100.0000000', '50.0000000', 'M', 'A', 'R', 'single_release', null, 'safetrust',
     ]);
   });
 
@@ -116,9 +116,12 @@ describe('upsertEscrows', () => {
     ]);
 
     expect(result).toEqual({ updated: 0, unchanged: 1, skipped: 0 });
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Equal-sequence conflict on contract "C1" at seq 100')
-    );
+    const [jsonLog] = warnSpy.mock.calls[0] as [string]
+    expect(JSON.parse(jsonLog)).toMatchObject({
+      event: 'reconciliation.escrow.equal_sequence_conflict',
+      contractId: 'C1',
+      sequence: '100',
+    })
     warnSpy.mockRestore();
   });
 

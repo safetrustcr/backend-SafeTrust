@@ -66,21 +66,6 @@ describe('reservations/list.handler', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
   })
 
-  it('returns 400 for invalid role parameter', async () => {
-    const req = {
-      user: { uid: 'user-1' },
-      query: { role: 'superadmin' },
-    } as unknown as AuthenticatedRequest
-    const res = makeResponse()
-
-    await listReservationsHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: "Invalid role parameter. Must be 'guest', 'host' or 'both'",
-    })
-  })
-
   it('accepts role=both and queries both guest and host (parsedRole undefined)', async () => {
     ;(reservationRepo.findReservationsByParty as jest.Mock).mockResolvedValue(mockRows)
 

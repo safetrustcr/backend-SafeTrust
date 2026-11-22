@@ -27,7 +27,8 @@ Feature: POST /api/escrows/dispute — TrustlessWork dispute callback
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: contractId, disputeFlag, disputer'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: disputeFlag false returns 400
     * def body = { "contractId": "escrow-funded-001", "disputeFlag": false, "disputer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z" }

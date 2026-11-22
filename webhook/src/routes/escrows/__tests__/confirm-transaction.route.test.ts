@@ -39,7 +39,10 @@ describe('POST /api/escrows/confirm-transaction', () => {
       })
 
     expect(res.status).toBe(400)
-    expect(res.body.error).toContain('Client-side wallet signing cannot advance escrow status')
+    expect(res.body).toEqual({
+      error: 'validation_failed',
+      fields: expect.any(Object),
+    })
   })
 
   it('validates required fields: missing escrowId', async () => {
@@ -50,7 +53,10 @@ describe('POST /api/escrows/confirm-transaction', () => {
       })
 
     expect(res.status).toBe(400)
-    expect(res.body.error).toContain('escrowId is required')
+    expect(res.body).toEqual({
+      error: 'validation_failed',
+      fields: expect.any(Object),
+    })
   })
 
   it('validates required fields: invalid action', async () => {
@@ -62,7 +68,32 @@ describe('POST /api/escrows/confirm-transaction', () => {
       })
 
     expect(res.status).toBe(400)
-    expect(res.body.error).toContain('action must be either "deploy" or "fund"')
+    expect(res.body).toEqual({
+      error: 'validation_failed',
+      fields: expect.any(Object),
+    })
+  })
+
+  it('rejects an unsupported configured network before processing', async () => {
+    const originalNetwork = process.env.STELLAR_NETWORK
+    process.env.STELLAR_NETWORK = 'invalid-network'
+
+    try {
+      const res = await request(app)
+        .post('/api/escrows/confirm-transaction')
+        .send({
+          txHash: VALID_TX_HASH,
+          escrowId: ESCROW_ID,
+          action: 'fund',
+        })
+
+      expect(res.status).toBe(500)
+      expect(res.body).toEqual({ error: 'Invalid STELLAR_NETWORK configuration' })
+      expect(mockedExternal).not.toHaveBeenCalled()
+    } finally {
+      if (originalNetwork === undefined) delete process.env.STELLAR_NETWORK
+      else process.env.STELLAR_NETWORK = originalNetwork
+    }
   })
 
   it('handles Helper submission successfully (Path A)', async () => {

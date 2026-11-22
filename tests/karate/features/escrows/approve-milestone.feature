@@ -32,7 +32,8 @@ Feature: POST /api/escrows/approve-milestone — TrustlessWork milestone approva
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: contractId, milestoneId, approver, flag'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: Missing milestoneId returns 400
     * def body = { "contractId": "escrow-funded-001", "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "flag": true }
@@ -43,7 +44,8 @@ Feature: POST /api/escrows/approve-milestone — TrustlessWork milestone approva
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: contractId, milestoneId, approver, flag'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: flag false returns 400
     * def body = { "contractId": "escrow-funded-001", "milestoneId": "check_in", "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "flag": false }

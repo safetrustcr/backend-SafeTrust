@@ -144,7 +144,7 @@ export type ReservationListQuery = z.infer<typeof reservationListQuerySchema>
 
 export const cancelReservationSchema = z.object({
   reason: z.string().max(500).nullable().optional(),
-}).passthrough()
+}).passthrough().default({})
 export type CancelReservationBody = z.infer<typeof cancelReservationSchema>
 
 export const createEscrowClaimSchema = z.object({
@@ -170,33 +170,9 @@ const initializeEscrowBaseSchema = z.object({
   hotel_id: z.string().nullable().optional(),
   guest_id: z.string().nullable().optional(),
   booking_metadata: z.object({ reservation_id: z.string().optional() }).passthrough().nullable().optional(),
-  zk_proof: z.string().optional().nullable(),
-  zk_verification_key: z.string().optional().nullable(),
-  zk_threshold_stroops: z.string().optional().nullable(),
-  zk_balance_commitment: z.string().optional().nullable(),
 }).passthrough()
 
 export const escrowInitializationSchema = initializeEscrowBaseSchema
-  .superRefine((value, context) => {
-    const zkFields = [
-      'zk_proof',
-      'zk_verification_key',
-      'zk_threshold_stroops',
-      'zk_balance_commitment',
-    ] as const
-    const hasAny = zkFields.some((field) => value[field] != null)
-    if (hasAny) {
-      for (const field of zkFields) {
-        if (typeof value[field] !== 'string' || value[field]?.length === 0) {
-          context.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [field],
-            message: 'All ZK proof fields must be supplied together',
-          })
-        }
-      }
-    }
-  })
 export type EscrowInitializationPayload = z.infer<typeof escrowInitializationSchema>
 
 export const confirmTransactionSchema = z.object({
@@ -225,7 +201,9 @@ export type ConfirmTransactionBody = z.infer<typeof confirmTransactionSchema>
 export const fundEscrowSchema = z.object({
   contractId: nonEmptyString,
   signer: nonEmptyString,
-  amount: z.coerce.number().finite().positive(),
+  amount: z.union([z.number(), z.string()])
+    .refine((value) => Number.isFinite(Number(value)) && Number(value) > 0, 'Must be a positive number')
+    .transform(Number),
 }).passthrough()
 export type FundEscrowBody = z.infer<typeof fundEscrowSchema>
 

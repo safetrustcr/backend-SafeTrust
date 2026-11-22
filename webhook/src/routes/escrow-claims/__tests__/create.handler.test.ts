@@ -168,24 +168,6 @@ describe('createClaimHandler', () => {
     expect(sqls()).toContain('ROLLBACK')
   })
 
-  it('counts code points, not UTF-16 units, for the body length', async () => {
-    script({ participation: released, insert: [claimRow()] })
-    const ok = makeRes()
-    await createClaimHandler(
-      makeReq({ body: { body: '\u{1F600}'.repeat(1000), clientOpId: OP_ID } }),
-      ok
-    )
-    expect(ok.status).toHaveBeenCalledWith(201)
-
-    const tooLong = makeRes()
-    await createClaimHandler(
-      makeReq({ body: { body: '\u{1F600}'.repeat(2001), clientOpId: OP_ID } }),
-      tooLong
-    )
-    expect(tooLong.status).toHaveBeenCalledWith(400)
-    expect(tooLong.json).toHaveBeenCalledWith({ error: 'INVALID_CLAIM_BODY' })
-  })
-
   it('returns 409 CLIENT_OP_ID_REUSED when the clientOpId belongs to another escrow', async () => {
     script({ participation: released, existing: [claimRow({ escrow_id: OTHER_ESCROW_ID })] })
     const res = makeRes()
@@ -220,19 +202,6 @@ describe('createClaimHandler', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'ESCROW_NOT_RELEASED' })
   })
 
-  it.each([
-    ['9 characters', 'a'.repeat(9)],
-    ['2001 characters', 'a'.repeat(2001)],
-    ['only whitespace', ' '.repeat(20)],
-    ['not a string', 12345],
-  ])('returns 400 INVALID_CLAIM_BODY for a body with %s', async (_label, body) => {
-    const res = makeRes()
-    await createClaimHandler(makeReq({ body: { body, clientOpId: OP_ID } }), res)
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'INVALID_CLAIM_BODY' })
-    expect(pool.connect).not.toHaveBeenCalled()
-  })
-
   it('accepts a body of exactly 10 and exactly 2000 characters', async () => {
     for (const body of ['a'.repeat(10), 'a'.repeat(2000)]) {
       script({ participation: released, insert: [claimRow()] })
@@ -240,18 +209,6 @@ describe('createClaimHandler', () => {
       await createClaimHandler(makeReq({ body: { body, clientOpId: OP_ID } }), res)
       expect(res.status).toHaveBeenCalledWith(201)
     }
-  })
-
-  it('returns 400 INVALID_CLAIM_REQUEST for a malformed escrowId or clientOpId', async () => {
-    const res1 = makeRes()
-    await createClaimHandler(makeReq({ params: { escrowId: 'nope' } }), res1)
-    expect(res1.status).toHaveBeenCalledWith(400)
-    expect(res1.json).toHaveBeenCalledWith({ error: 'INVALID_CLAIM_REQUEST' })
-
-    const res2 = makeRes()
-    await createClaimHandler(makeReq({ body: { body: BODY, clientOpId: 'nope' } }), res2)
-    expect(res2.status).toHaveBeenCalledWith(400)
-    expect(res2.json).toHaveBeenCalledWith({ error: 'INVALID_CLAIM_REQUEST' })
   })
 
   it('returns 429 with Retry-After on the sixth claim', async () => {

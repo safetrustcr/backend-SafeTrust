@@ -123,60 +123,6 @@ describe('apartments/list.handler', () => {
       expect(query).toHaveBeenCalledTimes(2)
     })
 
-    it('returns 400 for invalid minPrice', async () => {
-      const req = { query: { minPrice: 'abc' } } as Request<any, any, any, any>
-      const res = makeResponse()
-
-      await listApartments(req, res)
-
-      expect(res.status).toHaveBeenCalledWith(400)
-      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid minPrice value. Expected a number.' })
-    })
-
-    it('returns 400 for invalid maxPrice', async () => {
-      const req = { query: { maxPrice: 'abc' } } as Request<any, any, any, any>
-      const res = makeResponse()
-
-      await listApartments(req, res)
-
-      expect(res.status).toHaveBeenCalledWith(400)
-      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid maxPrice value. Expected a number.' })
-    })
-
-    it('returns 400 for invalid bedrooms', async () => {
-      const req = { query: { bedrooms: 'abc' } } as Request<any, any, any, any>
-      const res = makeResponse()
-
-      await listApartments(req, res)
-
-      expect(res.status).toHaveBeenCalledWith(400)
-      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid bedrooms value. Expected an integer.' })
-    })
-
-    it('returns 400 for invalid petFriendly value', async () => {
-      const req = { query: { petFriendly: 'maybe' } } as Request<any, any, any, any>
-      const res = makeResponse()
-
-      await listApartments(req, res)
-
-      expect(res.status).toHaveBeenCalledWith(400)
-      expect(res.json).toHaveBeenCalledWith({
-        error: 'Invalid petFriendly value. Expected true, false, 1, 0, yes, or no.',
-      })
-    })
-
-    it('returns 400 for invalid sort parameter', async () => {
-      const req = { query: { sort: 'invalid_sort' } } as Request<any, any, any, any>
-      const res = makeResponse()
-
-      await listApartments(req, res)
-
-      expect(res.status).toHaveBeenCalledWith(400)
-      expect(res.json).toHaveBeenCalledWith({
-        error: 'Invalid sort parameter. Supported values: price_asc, price_desc, created_at',
-      })
-    })
-
     it('returns 500 when database query throws an error', async () => {
       ;(query as jest.Mock).mockRejectedValueOnce(new Error('DB failure'))
 
@@ -199,21 +145,6 @@ describe('apartments/list.handler', () => {
 
       expect(res.status).toHaveBeenCalledWith(401)
       expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
-    })
-
-    it('returns 400 when missing required fields', async () => {
-      const req = {
-        user: { uid: 'owner-1' },
-        body: { name: 'Apartment' },
-      } as AuthenticatedRequest
-      const res = makeResponse()
-
-      await createApartment(req, res)
-
-      expect(res.status).toHaveBeenCalledWith(400)
-      expect(res.json).toHaveBeenCalledWith({
-        error: 'Missing required fields: name, location, pricePerMonth',
-      })
     })
 
     it('creates apartment on valid input and formats decimal numbers', async () => {

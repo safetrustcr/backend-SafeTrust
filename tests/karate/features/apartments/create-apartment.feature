@@ -35,7 +35,8 @@ Feature: POST /api/apartments
     And request { "price": 1000 }
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: name, location, pricePerMonth'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: Missing pricePerMonth → 400
     Given path '/api/apartments'
@@ -43,7 +44,8 @@ Feature: POST /api/apartments
     And request { "name": "No Price" }
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: name, location, pricePerMonth'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: No token → 401
     Given path '/api/apartments'

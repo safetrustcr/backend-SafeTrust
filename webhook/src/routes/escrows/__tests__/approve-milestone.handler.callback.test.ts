@@ -59,41 +59,6 @@ describe('approveMilestoneHandler', () => {
     process.env = originalEnv;
   });
 
-  it('returns 400 when required fields are missing', async () => {
-    const req = { body: { contractId: 'contract-1' } };
-    const res = makeResponse();
-
-    await approveMilestoneHandler(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({
-      success: false,
-      error: 'Missing required fields: contractId, milestoneId, approver, flag',
-    });
-    expect(approveMilestone).not.toHaveBeenCalled();
-  });
-
-  it('returns 400 when flag is not true', async () => {
-    const req = {
-      body: {
-        contractId: 'contract-1',
-        milestoneId: 'check_in',
-        approver: 'GABC',
-        flag: false,
-      },
-    };
-    const res = makeResponse();
-
-    await approveMilestoneHandler(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({
-      success: false,
-      error: 'flag must be true to approve a milestone',
-    });
-    expect(approveMilestone).not.toHaveBeenCalled();
-  });
-
   it('passes milestone-specific approval data to the service', async () => {
     const req = {
       body: {
@@ -111,7 +76,8 @@ describe('approveMilestoneHandler', () => {
       'contract-1',
       'check_in',
       'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z',
-      req.body
+      req.body,
+      'safetrust'
     );
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ success: true });

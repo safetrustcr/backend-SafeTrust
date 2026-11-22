@@ -65,7 +65,8 @@ Feature: POST /api/bid-requests
     And request { "proposed_price": 1000 }
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: Non-UUID apartmentId → 400
     Given path '/api/bid-requests'
@@ -81,7 +82,8 @@ Feature: POST /api/bid-requests
     """
     When method POST
     Then status 400
-    And match response.error == 'apartmentId must be a valid UUID'
+    And match response.error == 'validation_failed'
+    And match response.fields.apartmentId == '#string'
 
   Scenario: Boolean proposedPrice → 400
     Given path '/api/bid-requests'

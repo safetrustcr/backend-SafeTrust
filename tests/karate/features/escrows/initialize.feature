@@ -49,7 +49,8 @@ Feature: POST /api/escrows/initialize — TrustlessWork initialize callback
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: contract_id, marker, approver, releaser, amount, escrow_type'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: Invalid escrow type returns 400
     * def body =

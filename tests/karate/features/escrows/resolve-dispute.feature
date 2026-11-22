@@ -28,7 +28,8 @@ Feature: POST /api/escrows/resolve-dispute — TrustlessWork dispute resolution 
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: contractId, resolver'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: Missing resolver returns 400
     * def body = { "contractId": "escrow-disputed-001" }
@@ -39,7 +40,8 @@ Feature: POST /api/escrows/resolve-dispute — TrustlessWork dispute resolution 
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: contractId, resolver'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: Unknown contractId returns 404
     * def body = { "contractId": "non-existent-xyz", "resolver": "GRESOLVER111WALLETADDRESS111111111111111111111111111111111" }

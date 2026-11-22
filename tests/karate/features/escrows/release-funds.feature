@@ -28,7 +28,8 @@ Feature: POST /api/escrows/release-funds
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: contractId, releaseSigner'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: Missing releaseSigner -> 400 Bad Request
     * def body = { contractId: '#(contractId)' }
@@ -38,7 +39,8 @@ Feature: POST /api/escrows/release-funds
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'Missing required fields: contractId, releaseSigner'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: Escrow not found -> 404 Not Found
     * def body = { contractId: 'non-existent-contract', releaseSigner: '#(releaseSigner)' }

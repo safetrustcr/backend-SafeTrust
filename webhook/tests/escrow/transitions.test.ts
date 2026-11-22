@@ -184,7 +184,8 @@ describe('Escrow Transition Guard and Replay Protection (ARCH-A5)', () => {
 
       expect(mockedReleaseFundsTransactional).toHaveBeenCalledWith(
         'contract-123',
-        req.body
+        req.body,
+        'safetrust'
       )
       expect(res.status).toHaveBeenCalledWith(200)
       expect(res.json).toHaveBeenCalledWith(

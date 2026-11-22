@@ -43,11 +43,12 @@ export function buildConnectionString(): string {
 
 export async function bulkUpsertWithRust(
   updatesJson: string,
-  connString: string
+  connString: string,
+  tenantId: string
 ): Promise<string> {
   const addon = loadBulkUpsert()
   if (!addon) throw new Error('pg-bulk-upsert addon not loaded')
-  return addon.bulkUpsertEscrows(updatesJson, connString)
+  return addon.bulkUpsertEscrows(updatesJson, connString, tenantId)
 }
 
 export function assertBulkUpsertAvailable(): void {

@@ -76,9 +76,11 @@ describe('initializeFirebaseAdmin', () => {
     delete process.env.FIREBASE_PROJECT_ID
 
     expect(() => initializeFirebaseAdmin()).not.toThrow()
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('skipping cert init (non-production)')
-    )
+    const [jsonLog] = warnSpy.mock.calls[0] as [string]
+    expect(JSON.parse(jsonLog)).toMatchObject({
+      event: 'firebase_admin.initialization_skipped',
+      level: 'warn',
+    })
     expect(initializeApp).not.toHaveBeenCalled()
     warnSpy.mockRestore()
   })

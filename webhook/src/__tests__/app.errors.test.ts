@@ -135,7 +135,12 @@ describe('app error classification', () => {
       const res = await signed(body)
 
       expect(res.status).toBe(200)
-      expect(mockedFund).toHaveBeenCalledWith('C-1', 25, expect.objectContaining({ contractId: 'C-1' }))
+      expect(mockedFund).toHaveBeenCalledWith(
+        'C-1',
+        25,
+        expect.objectContaining({ contractId: 'C-1' }),
+        'safetrust'
+      )
     })
 
     it('rejects a signature computed over re-serialized JSON', async () => {

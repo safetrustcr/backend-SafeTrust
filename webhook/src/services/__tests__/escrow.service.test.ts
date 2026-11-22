@@ -1,6 +1,6 @@
 'use strict';
 
-// Mock hasura service and zk-verifier before imports
+// Mock hasura service before imports
 jest.mock('../../services/hasura', () => ({
   hasuraRequest: jest.fn(),
 }));
@@ -13,10 +13,6 @@ jest.mock('../../repositories/webhook-event.repository', () => ({
   getWebhookEventIdentity: jest.fn(() => 'test-event-identity'),
   logAndCheckWebhookEvent: jest.fn(),
   markWebhookEventProcessed: jest.fn(),
-}));
-
-jest.mock('../../lib/zk-verifier', () => ({
-  verifyProofOfFunds: jest.fn(),
 }));
 
 // Mock amountToStroops from the shared lib to avoid any native addon chain
@@ -35,7 +31,6 @@ import {
   persistEscrow,
   linkReservationToEscrow,
   EscrowValidationError,
-  ZkVerifierUnavailableError,
   ReservationNotFoundError,
   EscrowInitPayload,
 } from '../../services/escrow.service';
@@ -46,7 +41,6 @@ import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../../repositories/webhook-event.repository';
-import { verifyProofOfFunds } from '../../lib/zk-verifier';
 
 const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>;
 const mockedLogAndCheckWebhookEvent =
@@ -54,7 +48,6 @@ const mockedLogAndCheckWebhookEvent =
 const mockedMarkWebhookEventProcessed =
   markWebhookEventProcessed as jest.MockedFunction<typeof markWebhookEventProcessed>;
 const mockedQuery = query as jest.MockedFunction<typeof query>;
-const mockedVerifyProof = verifyProofOfFunds as jest.MockedFunction<typeof verifyProofOfFunds>;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -97,8 +90,6 @@ function validPayload(overrides: Partial<EscrowInitPayload> = {}): EscrowInitPay
 describe('parseEscrowInitializationPayload', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.ZK_ENABLED = 'true'
-    mockedVerifyProof.mockReturnValue(true);
   });
 
   it('returns a normalized payload for a valid body', () => {
@@ -156,120 +147,18 @@ describe('parseEscrowInitializationPayload', () => {
     ).not.toThrow();
   });
 
-  it('allows ZK bundle to be absent', () => {
-    const result = parseEscrowInitializationPayload(validBody());
-    expect(mockedVerifyProof).not.toHaveBeenCalled();
+  it('ignores legacy zk_* fields in the payload and initializes successfully', () => {
+    const payload = validBody({
+      zk_proof: 'proof-hex',
+      zk_verification_key: 'vk-hex',
+      zk_threshold_stroops: '1000000000',
+      zk_balance_commitment: 'ab'.repeat(32),
+    });
+    const result = parseEscrowInitializationPayload(payload);
+    expect(result).toBeDefined();
     expect(result.contract_id).toBe('contract-1');
-  });
-
-  it('throws EscrowValidationError for a partial ZK bundle', () => {
-    expect(() =>
-      parseEscrowInitializationPayload(validBody({ zk_proof: 'proof-hex' }))
-    ).toThrow(EscrowValidationError);
-    expect(mockedVerifyProof).not.toHaveBeenCalled();
-  });
-
-  it('throws EscrowValidationError when ZK threshold does not match amount', () => {
-    expect(() =>
-      parseEscrowInitializationPayload(
-        validBody({
-          zk_proof: 'proof-hex',
-          zk_verification_key: 'vk-hex',
-          zk_threshold_stroops: '999999999', // does not match 100 => 1000000000
-          zk_balance_commitment: 'ab'.repeat(32),
-        })
-      )
-    ).toThrow(EscrowValidationError);
-    expect(mockedVerifyProof).not.toHaveBeenCalled();
-  });
-
-  it('throws EscrowValidationError when verifyProofOfFunds returns false', () => {
-    mockedVerifyProof.mockReturnValue(false);
-    expect(() =>
-      parseEscrowInitializationPayload(
-        validBody({
-          zk_proof: 'bad-proof',
-          zk_verification_key: 'vk-hex',
-          zk_threshold_stroops: '1000000000',
-          zk_balance_commitment: 'ab'.repeat(32),
-        })
-      )
-    ).toThrow(EscrowValidationError);
-  });
-
-  it('throws ZkVerifierUnavailableError (503) when native verifier throws', () => {
-    mockedVerifyProof.mockImplementation(() => {
-      throw new Error('native addon missing');
-    });
-    let caught: unknown;
-    try {
-      parseEscrowInitializationPayload(
-        validBody({
-          zk_proof: 'proof-hex',
-          zk_verification_key: 'vk-hex',
-          zk_threshold_stroops: '1000000000',
-          zk_balance_commitment: 'ab'.repeat(32),
-        })
-      );
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ZkVerifierUnavailableError);
-    expect((caught as ZkVerifierUnavailableError).statusCode).toBe(503);
-  });
-
-  it('calls verifyProofOfFunds with correct arguments for a complete bundle', () => {
-    parseEscrowInitializationPayload(
-      validBody({
-        zk_proof: 'proof-hex',
-        zk_verification_key: 'vk-hex',
-        zk_threshold_stroops: '1000000000',
-        zk_balance_commitment: 'ab'.repeat(32),
-      })
-    );
-    expect(mockedVerifyProof).toHaveBeenCalledWith(
-      'proof-hex',
-      'vk-hex',
-      '1000000000',
-      'ab'.repeat(32)
-    );
-  });
-
-  it('throws EscrowValidationError (500) when ZK verifier is misconfigured', () => {
-    const error = new Error('misconfigured') as Error & { code?: string };
-    error.code = 'ZK_VERIFIER_MISCONFIGURED';
-    mockedVerifyProof.mockImplementation(() => {
-      throw error;
-    });
-
-    expect(() =>
-      parseEscrowInitializationPayload(
-        validBody({
-          zk_proof: 'proof-hex',
-          zk_verification_key: 'vk-hex',
-          zk_threshold_stroops: '1000000000',
-          zk_balance_commitment: 'ab'.repeat(32),
-        })
-      )
-    ).toThrow(expect.objectContaining({
-      message: 'ZK proof verifier is misconfigured',
-      statusCode: 500,
-    }));
-  });
-
-  it('throws EscrowValidationError when ZK_ENFORCEMENT_ENABLED is true and bundle is missing', () => {
-    const originalFlag = process.env.ZK_ENFORCEMENT_ENABLED;
-    try {
-      process.env.ZK_ENFORCEMENT_ENABLED = 'true';
-      expect(() =>
-        parseEscrowInitializationPayload(validBody())
-      ).toThrow(expect.objectContaining({
-        message: 'ZK proof of funds bundle is required for escrow initialization',
-        statusCode: 400,
-      }));
-    } finally {
-      process.env.ZK_ENFORCEMENT_ENABLED = originalFlag;
-    }
+    expect(result.amount).toBe(100);
+    expect(result.escrow_type).toBe('single_release');
   });
 });
 

@@ -51,36 +51,6 @@ describe('reservations/cancel.handler', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
   })
 
-  it('returns 400 when reason is not a string', async () => {
-    const req = {
-      user: { uid: 'guest-1' },
-      params: { id: 'res-123' },
-      body: { reason: 12345 },
-    } as unknown as AuthenticatedRequest
-    const res = makeResponse()
-
-    await cancelReservationHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Reason must be a string' })
-  })
-
-  it('returns 400 when reason exceeds 500 characters', async () => {
-    const req = {
-      user: { uid: 'guest-1' },
-      params: { id: 'res-123' },
-      body: { reason: 'a'.repeat(501) },
-    } as unknown as AuthenticatedRequest
-    const res = makeResponse()
-
-    await cancelReservationHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'Cancellation reason must be 500 characters or less',
-    })
-  })
-
   it('returns 404 when reservation does not exist', async () => {
     ;(reservationRepo.findReservationById as jest.Mock).mockResolvedValue(null)
 

@@ -27,9 +27,13 @@ export async function confirmTransactionHandler(
     signedXdr,
     escrowId,
     action,
-    network = (process.env.STELLAR_NETWORK as StellarNetwork) || 'testnet',
     isTWGenerated = true,
   } = req.body
+  const configuredNetwork = req.body.network ?? process.env.STELLAR_NETWORK ?? 'testnet'
+  if (configuredNetwork !== 'testnet' && configuredNetwork !== 'mainnet') {
+    return res.status(500).json({ error: 'Invalid STELLAR_NETWORK configuration' })
+  }
+  const network: StellarNetwork = configuredNetwork
   const tenantId = getPlatformTenantId()
 
   // Dispatch according to the validated submission path.

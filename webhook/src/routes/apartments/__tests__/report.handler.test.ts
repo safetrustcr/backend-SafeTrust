@@ -57,48 +57,6 @@ describe('apartments/report.handler', () => {
     expect(query).not.toHaveBeenCalled()
   })
 
-  it('returns 400 INVALID_REPORT for an unknown category', async () => {
-    const req = makeRequest({ body: { category: 'not_a_category', clientOpId: CLIENT_OP_ID } })
-    const res = makeResponse()
-
-    await createReportHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'INVALID_REPORT' })
-  })
-
-  it('returns 400 INVALID_REPORT when details exceed 1000 characters', async () => {
-    const req = makeRequest({
-      body: { category: 'inaccurate', details: 'x'.repeat(1001), clientOpId: CLIENT_OP_ID },
-    })
-    const res = makeResponse()
-
-    await createReportHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'INVALID_REPORT' })
-  })
-
-  it("returns 400 INVALID_REPORT when category is 'other' without enough details", async () => {
-    const req = makeRequest({ body: { category: 'other', details: 'too short', clientOpId: CLIENT_OP_ID } })
-    const res = makeResponse()
-
-    await createReportHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'INVALID_REPORT' })
-  })
-
-  it('returns 400 INVALID_REPORT when clientOpId is not a valid uuid', async () => {
-    const req = makeRequest({ body: { category: 'inaccurate', clientOpId: 'nope' } })
-    const res = makeResponse()
-
-    await createReportHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'INVALID_REPORT' })
-  })
-
   it('returns 404 when the apartment does not exist or is deleted', async () => {
     ;(query as jest.Mock).mockResolvedValueOnce({ rows: [] })
 

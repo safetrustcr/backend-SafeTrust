@@ -13,7 +13,6 @@ import {
   initializeEscrow as initializeEscrowService,
   ReservationNotFoundError,
   TenantMismatchError,
-  ZkVerifierUnavailableError,
 } from '../../services/escrow.service';
 import { getPlatformTenantId } from '../../config/tenant';
 import { logger } from '../../middleware/logger';
@@ -45,8 +44,7 @@ export const initializeEscrowHandler = async (
       return badRequest(res, { error: error.message });
     }
     if (error instanceof AppError) {
-      // Not found keeps its message; 5xx (a misconfigured or unavailable ZK
-      // verifier) is logged and answered with a generic message.
+      // Not found keeps its message; 5xx is logged and answered with a generic message.
       if (error.statusCode >= 500) {
         logger.error('escrow.initialize.failed', { contractId: req.body?.contract_id, error });
       }

@@ -40,64 +40,6 @@ describe('reservations/create.handler', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
   })
 
-  it('returns 400 when required fields are missing', async () => {
-    const req = {
-      user: { uid: 'guest-123' },
-      context: SESSION,
-      body: { apartment_id: 'apt-1' },
-    } as AuthenticatedRequest & { body: CreateReservationPayload }
-    const res = makeResponse()
-
-    await createReservationHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'Missing required fields: apartment_id, check_in_date, check_out_date, total_amount',
-    })
-  })
-
-  it('returns 400 when check_out_date is not after check_in_date', async () => {
-    const req = {
-      user: { uid: 'guest-123' },
-      context: SESSION,
-      body: {
-        apartment_id: 'apt-1',
-        check_in_date: '2026-09-10',
-        check_out_date: '2026-09-05',
-        total_amount: 500,
-      },
-    } as AuthenticatedRequest & { body: CreateReservationPayload }
-    const res = makeResponse()
-
-    await createReservationHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'check_out_date must be a valid date after check_in_date',
-    })
-  })
-
-  it('returns 400 when total_amount is invalid', async () => {
-    const req = {
-      user: { uid: 'guest-123' },
-      context: SESSION,
-      body: {
-        apartment_id: 'apt-1',
-        check_in_date: '2026-09-01',
-        check_out_date: '2026-09-05',
-        total_amount: -100,
-      },
-    } as AuthenticatedRequest & { body: CreateReservationPayload }
-    const res = makeResponse()
-
-    await createReservationHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'total_amount must be greater than zero',
-    })
-  })
-
   it('creates reservation successfully through the service', async () => {
     const mockReservation = {
       id: 'res-1',

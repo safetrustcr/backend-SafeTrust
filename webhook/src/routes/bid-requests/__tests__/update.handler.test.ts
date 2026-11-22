@@ -31,24 +31,6 @@ describe('updateBidRequestHandler', () => {
     expect(VALID_TRANSITIONS.APPROVED).toEqual(['CONFIRMED', 'CANCELLED'])
   })
 
-  it('returns 400 when status is missing from body', async () => {
-    const req = {
-      user: { uid: 'owner-1' },
-      params: { id: 'bid-1' },
-      body: {},
-    } as unknown as AuthenticatedRequest
-
-    const res = {
-      status: jest.fn().mockReturnThis(),
-      json: jest.fn(),
-    } as unknown as Response
-
-    await updateBidRequestHandler(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Missing required field: status' })
-  })
-
   it('returns 409 when user profile is not found', async () => {
     mockClient.query
       .mockResolvedValueOnce({}) // BEGIN

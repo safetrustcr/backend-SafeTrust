@@ -36,7 +36,7 @@ export interface SyncAllResult extends ChunkSyncResult {
 }
 
 export interface BulkUpsertAddon {
-  bulkUpsertEscrows: (updatesJson: string, connString: string) => Promise<string>
+  bulkUpsertEscrows: (updatesJson: string, connString: string, tenantId: string) => Promise<string>
 }
 
 export interface ChunkProcessorAddon {
