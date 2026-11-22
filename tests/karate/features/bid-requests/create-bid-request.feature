@@ -99,7 +99,8 @@ Feature: POST /api/bid-requests
     """
     When method POST
     Then status 400
-    And match response.error == 'proposedPrice must be a positive number'
+    And match response.error == 'validation_failed'
+    And match response.fields == '#object'
 
   Scenario: No token → 401
     Given path '/api/bid-requests'

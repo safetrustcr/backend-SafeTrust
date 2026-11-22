@@ -166,4 +166,14 @@ describe('request validation middleware', () => {
     expect(response.body.error).toBe('validation_failed')
     expect(response.body.fields.amount).toEqual(expect.any(String))
   })
+
+  it('accepts PostgreSQL UUID syntax with zero-filled version and variant bits', () => {
+    const result = createBidRequestSchema.safeParse({
+      apartment_id: '00000000-0000-0000-0000-000000000001',
+      proposed_price: 4500,
+      desired_move_in: '2026-06-01T00:00:00Z',
+    })
+
+    expect(result.success).toBe(true)
+  })
 })

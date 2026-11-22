@@ -39,7 +39,8 @@ Feature: POST /api/escrows/dispute — TrustlessWork dispute callback
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'disputeFlag must be true to open a dispute'
+    And match response.error == 'validation_failed'
+    And match response.fields.disputeFlag == '#string'
 
   Scenario: Unknown contractId returns 404
     * def body = { "contractId": "non-existent-xyz", "disputeFlag": true, "disputer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z" }

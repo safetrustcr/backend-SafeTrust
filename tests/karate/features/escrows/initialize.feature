@@ -72,7 +72,8 @@ Feature: POST /api/escrows/initialize — TrustlessWork initialize callback
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'escrow_type must be one of: single_release, multi_release'
+    And match response.error == 'validation_failed'
+    And match response.fields.escrow_type == '#string'
 
   Scenario: Existing contract_id returns the existing escrow without duplication
     * def body =

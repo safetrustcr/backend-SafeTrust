@@ -56,7 +56,8 @@ Feature: POST /api/escrows/approve-milestone — TrustlessWork milestone approva
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'flag must be true to approve a milestone'
+    And match response.error == 'validation_failed'
+    And match response.fields.flag == '#string'
 
   Scenario: Missing signature header returns 401
     * def body = { "contractId": "escrow-funded-001", "milestoneId": "check_in", "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "flag": true }

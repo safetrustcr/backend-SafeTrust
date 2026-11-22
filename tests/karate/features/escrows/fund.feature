@@ -83,7 +83,8 @@ Feature: POST /api/escrows/fund — TrustlessWork fund confirmation callback
     And request bodyStr
     When method POST
     Then status 400
-    And match response.error == 'Amount cannot be zero or negative'
+    And match response.error == 'validation_failed'
+    And match response.fields.amount == '#string'
 
   Scenario: Unknown contractId returns 404
     * def body = { "contractId": "non-existent-contract-xyz", "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "amount": 1000.00 }

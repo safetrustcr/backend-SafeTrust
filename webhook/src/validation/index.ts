@@ -7,6 +7,7 @@ const positiveNumber = z.union([z.number(), z.string()]).refine((value) => {
   return Number.isFinite(parsed) && parsed > 0
 }, 'Must be a positive number')
 const uuid = z.string().uuid()
+const databaseUuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
 
 export const emptyBodySchema = z.object({}).passthrough().optional()
 
@@ -92,8 +93,8 @@ const calendarDate = z.string().refine((value) => {
 }, 'Must be a valid calendar date')
 
 export const createBidRequestSchema = z.object({
-  apartmentId: uuid.optional(),
-  apartment_id: uuid.optional(),
+  apartmentId: databaseUuid.optional(),
+  apartment_id: databaseUuid.optional(),
   proposedPrice: positiveNumber.optional(),
   proposed_price: positiveNumber.optional(),
   desiredMoveIn: calendarDate.optional(),
