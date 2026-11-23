@@ -1,6 +1,6 @@
 # SafeTrust schema normalization (issue #790)
 
-Migration `1793300000000_normalize_duplicated_facts` gives each fact one home.
+Migration `1793400000000_normalize_duplicated_facts` gives each fact one home.
 
 | Before | After |
 | --- | --- |

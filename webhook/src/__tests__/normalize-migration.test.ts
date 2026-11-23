@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
-const dir = join(__dirname, '../../../migrations/safetrust/1793300000000_normalize_duplicated_facts')
+const dir = join(__dirname, '../../../migrations/safetrust/1793400000000_normalize_duplicated_facts')
 const up = readFileSync(join(dir, 'up.sql'), 'utf8')
 const down = readFileSync(join(dir, 'down.sql'), 'utf8')
 
