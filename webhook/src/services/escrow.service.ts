@@ -1,6 +1,7 @@
 import { PoolClient } from 'pg';
-import { AppError, ConflictError, NotFoundError } from '../utils/errors';
-import { withTransaction } from './db';
+import { AppError, ConflictError, NotFoundError, ServiceUnavailableError } from '../utils/errors';
+import { withTransaction, query } from './db';
+import { getPlatformTenantId } from '../config/tenant';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
 import { EscrowEventType, EscrowStatus } from '../types/escrow.types';
 import { InitializeEscrowPayload } from '@safetrust/types';
@@ -35,10 +36,7 @@ export interface EscrowInitPayload {
   escrow_type: string;
   asset_code: string;
   asset_issuer: string | null;
-  booking_id: string | null;
-  room_id: string | null;
-  hotel_id: string | null;
-  guest_id: string | null;
+  reservation_id: string | null;
   booking_metadata: { reservation_id?: string; [key: string]: unknown } | null;
   raw: InitializeEscrowPayload;
 }
@@ -102,12 +100,13 @@ export function parseEscrowInitializationPayload(body: unknown): EscrowInitPaylo
     escrow_type,
     asset_code,
     asset_issuer = null,
-    booking_id = null,
-    room_id = null,
-    hotel_id = null,
-    guest_id = null,
+    reservation_id = null,
     booking_metadata = null,
   } = input;
+  const metadataReservationId = typeof booking_metadata?.reservation_id === 'string'
+    ? booking_metadata.reservation_id
+    : null
+  const explicitReservationId = typeof reservation_id === 'string' ? reservation_id : null
 
   return {
     contract_id,
@@ -119,10 +118,7 @@ export function parseEscrowInitializationPayload(body: unknown): EscrowInitPaylo
     escrow_type,
     asset_code: asset_code ?? 'USDC',
     asset_issuer: asset_issuer ?? null,
-    booking_id: booking_id ?? null,
-    room_id: room_id ?? null,
-    hotel_id: hotel_id ?? null,
-    guest_id: guest_id ?? null,
+    reservation_id: explicitReservationId ?? metadataReservationId,
     booking_metadata: booking_metadata ?? null,
     raw: input as InitializeEscrowPayload,
   };
@@ -169,13 +165,8 @@ export async function persistEscrow(
       assetIssuer: payload.asset_issuer,
       amount: payload.amount,
       balance: 0,
-      bookingId: payload.booking_id,
-      roomId: payload.room_id,
-      hotelId: payload.hotel_id,
-      guestId: payload.guest_id,
       tenantId,
       escrowMetadata: payload.raw,
-      bookingMetadata: payload.booking_metadata,
     },
   });
 
@@ -258,7 +249,7 @@ export async function initializeEscrow(
     return { isDuplicate: true, eventId };
   }
 
-  const reservationId = payload.booking_metadata?.reservation_id;
+  const reservationId = payload.reservation_id ?? payload.booking_metadata?.reservation_id;
   const escrowTenantId = reservationId
     ? await resolveReservationTenant(reservationId, tenantId)
     : tenantId;
@@ -280,6 +271,66 @@ export async function initializeEscrow(
   await markWebhookEventProcessed(eventId, tenantId);
 
   return { isDuplicate: false, eventId, escrow };
+}
+
+/**
+ * Reads booking details for an escrow by joining safetrust.reservations.
+ * Replaces direct reads of booking fields on trustless_work_escrows.
+ */
+export async function getBookingByEscrowId(escrowId: string): Promise<{
+  reservationId: string;
+  apartmentId: string;
+  guestId: string;
+  checkInDate: string;
+  checkOutDate: string;
+  totalAmount: number;
+  assetCode: string;
+  status: string;
+  createdAt: string;
+} | null> {
+  const result = await query<{
+    id: string;
+    apartment_id: string;
+    guest_id: string;
+    check_in_date: string;
+    check_out_date: string;
+    total_amount: number;
+    asset_code: string;
+    status: string;
+    created_at: string;
+  }>(
+    `SELECT
+       r.id,
+       r.apartment_id,
+       r.guest_id,
+       r.check_in_date,
+       r.check_out_date,
+       r.total_amount,
+       r.asset_code,
+       r.status,
+       r.created_at
+     FROM safetrust.reservations r
+     WHERE r.escrow_id = $1
+     LIMIT 1`,
+    [escrowId]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    reservationId: row.id,
+    apartmentId: row.apartment_id,
+    guestId: row.guest_id,
+    checkInDate: row.check_in_date,
+    checkOutDate: row.check_out_date,
+    totalAmount: row.total_amount,
+    assetCode: row.asset_code,
+    status: row.status,
+    createdAt: row.created_at,
+  };
 }
 
 

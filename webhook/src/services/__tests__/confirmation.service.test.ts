@@ -16,9 +16,17 @@ import {
 import { assertSignedXdrCannotAdvanceStatus, EscrowValidationError } from '../escrow.service'
 import db from '../db'
 
-jest.mock('../db', () => ({
-  query: jest.fn(),
-}))
+jest.mock('../db', () => {
+  const query = jest.fn()
+  return {
+    query,
+    withTransaction: jest.fn(async (fn: any) => fn({ query })),
+    default: {
+      query,
+      withTransaction: jest.fn(async (fn: any) => fn({ query })),
+    },
+  }
+})
 
 const mockedDbQuery = db.query as jest.MockedFunction<typeof db.query>
 
@@ -287,6 +295,16 @@ describe('Confirmation Service - Issue #660', () => {
   // ── 5. Deployment vs. Funding separation ──────────────────────────────────
   describe('Criterion 5: Strict separation of Deployment vs Funding', () => {
     it('promotes deployment to created status without setting balance or marking funded', async () => {
+      mockedDbQuery.mockResolvedValue({
+        rows: [{
+          id: 'escrow-uuid-1',
+          tenant_id: 'safetrust',
+          contract_id: ESCROW_ID,
+          amount: '100',
+          marker: 'marker',
+          approver: 'approver',
+        }],
+      } as any)
       await promoteEscrowStatus(ESCROW_ID, 'deploy', VALID_TX_HASH, 'testnet')
 
       expect(mockedDbQuery).toHaveBeenCalledWith(
@@ -300,6 +318,16 @@ describe('Confirmation Service - Issue #660', () => {
     })
 
     it('promotes funding to funded status and updates balance', async () => {
+      mockedDbQuery.mockResolvedValue({
+        rows: [{
+          id: 'escrow-uuid-1',
+          tenant_id: 'safetrust',
+          contract_id: ESCROW_ID,
+          amount: '100',
+          marker: 'marker',
+          approver: 'approver',
+        }],
+      } as any)
       await promoteEscrowStatus(ESCROW_ID, 'fund', VALID_TX_HASH, 'testnet')
 
       expect(mockedDbQuery).toHaveBeenCalledWith(

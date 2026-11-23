@@ -1,14 +1,9 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { createReportHandler } from '../report.handler'
-import { query } from '../../../services/db'
+import { createListingReport as reportService } from '../../../services/listing-report.service'
 
-jest.mock('../../../services/db', () => ({
-  query: jest.fn(),
-  default: {
-    query: jest.fn(),
-  },
-}))
+jest.mock('../../../services/listing-report.service', () => ({ createListingReport: jest.fn() }))
 
 function makeResponse(): Response {
   const res: Partial<Response> = {}
@@ -20,7 +15,6 @@ function makeResponse(): Response {
 const APARTMENT_ID = '11111111-1111-1111-1111-111111111111'
 const CLIENT_OP_ID = '22222222-2222-2222-2222-222222222222'
 const REPORTER_ID = 'reporter-1'
-const OWNER_ID = 'owner-1'
 
 function makeRequest(overrides: Partial<AuthenticatedRequest> = {}): AuthenticatedRequest {
   return {
@@ -34,6 +28,10 @@ function makeRequest(overrides: Partial<AuthenticatedRequest> = {}): Authenticat
 describe('apartments/report.handler', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(reportService as jest.Mock).mockResolvedValue({
+      kind: 'created',
+      report: { id: 'report-1', status: 'open', apartment_id: APARTMENT_ID },
+    })
   })
 
   it('returns 401 when unauthorized (no user on request)', async () => {
@@ -54,11 +52,11 @@ describe('apartments/report.handler', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'INVALID_REPORT' })
-    expect(query).not.toHaveBeenCalled()
+    expect(reportService).not.toHaveBeenCalled()
   })
 
   it('returns 404 when the apartment does not exist or is deleted', async () => {
-    ;(query as jest.Mock).mockResolvedValueOnce({ rows: [] })
+    ;(reportService as jest.Mock).mockResolvedValueOnce({ kind: 'not-found' })
 
     const req = makeRequest()
     const res = makeResponse()
@@ -70,7 +68,7 @@ describe('apartments/report.handler', () => {
   })
 
   it("returns 400 CANNOT_REPORT_OWN_LISTING when the reporter owns the apartment", async () => {
-    ;(query as jest.Mock).mockResolvedValueOnce({ rows: [{ id: APARTMENT_ID, owner_id: REPORTER_ID }] })
+    ;(reportService as jest.Mock).mockResolvedValueOnce({ kind: 'own-listing' })
 
     const req = makeRequest()
     const res = makeResponse()
@@ -82,9 +80,7 @@ describe('apartments/report.handler', () => {
   })
 
   it('returns 429 when the reporter has hit the rate limit', async () => {
-    ;(query as jest.Mock)
-      .mockResolvedValueOnce({ rows: [{ id: APARTMENT_ID, owner_id: OWNER_ID }] })
-      .mockResolvedValueOnce({ rows: [{ count: '10' }] })
+    ;(reportService as jest.Mock).mockResolvedValueOnce({ kind: 'rate-limited' })
 
     const req = makeRequest()
     const res = makeResponse()
@@ -95,11 +91,6 @@ describe('apartments/report.handler', () => {
   })
 
   it('creates a report and returns 201 { id, status }', async () => {
-    ;(query as jest.Mock)
-      .mockResolvedValueOnce({ rows: [{ id: APARTMENT_ID, owner_id: OWNER_ID }] })
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
-      .mockResolvedValueOnce({ rows: [{ id: 'report-1', status: 'open' }] })
-
     const req = makeRequest()
     const res = makeResponse()
 
@@ -110,11 +101,10 @@ describe('apartments/report.handler', () => {
   })
 
   it('is idempotent — the same clientOpId returns the existing report on conflict', async () => {
-    ;(query as jest.Mock)
-      .mockResolvedValueOnce({ rows: [{ id: APARTMENT_ID, owner_id: OWNER_ID }] })
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
-      .mockResolvedValueOnce({ rows: [] }) // ON CONFLICT DO NOTHING -> no row returned
-      .mockResolvedValueOnce({ rows: [{ id: 'report-existing', status: 'open', apartment_id: APARTMENT_ID }] })
+    ;(reportService as jest.Mock).mockResolvedValueOnce({
+      kind: 'created',
+      report: { id: 'report-existing', status: 'open', apartment_id: APARTMENT_ID },
+    })
 
     const req = makeRequest()
     const res = makeResponse()
@@ -125,8 +115,16 @@ describe('apartments/report.handler', () => {
     expect(res.json).toHaveBeenCalledWith({ id: 'report-existing', status: 'open' })
   })
 
-  it('returns 500 when the database throws', async () => {
-    ;(query as jest.Mock).mockRejectedValueOnce(new Error('DB failure'))
+  it('returns 409 when a client operation id is reused for another apartment', async () => {
+    ;(reportService as jest.Mock).mockResolvedValueOnce({ kind: 'operation-reused' })
+    const res = makeResponse()
+    await createReportHandler(makeRequest(), res)
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith({ error: 'INVALID_REPORT' })
+  })
+
+  it('returns 500 when an idempotency conflict cannot be resolved', async () => {
+    ;(reportService as jest.Mock).mockResolvedValueOnce({ kind: 'missing-after-conflict' })
 
     const req = makeRequest()
     const res = makeResponse()
@@ -139,11 +137,6 @@ describe('apartments/report.handler', () => {
 
   it('never logs the details field', async () => {
     const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined)
-    ;(query as jest.Mock)
-      .mockResolvedValueOnce({ rows: [{ id: APARTMENT_ID, owner_id: OWNER_ID }] })
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
-      .mockResolvedValueOnce({ rows: [{ id: 'report-1', status: 'open' }] })
-
     const secretDetails = 'personal data goes here'
     const req = makeRequest({ body: { category: 'safety', details: secretDetails, clientOpId: CLIENT_OP_ID } })
     const res = makeResponse()

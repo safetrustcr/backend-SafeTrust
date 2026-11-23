@@ -14,7 +14,7 @@ one round trip instead of fifty.
 
 | JS export           | Signature |
 | ------------------- | --------- |
-| `bulkUpsertEscrows` | `(updatesJson: string, connString: string) => string` |
+| `bulkUpsertEscrows` | `(updatesJson: string, connString: string, tenantId: string) => string` |
 
 `updatesJson` is a JSON array of escrow rows. The return value is a JSON
 `BulkUpsertResult`:

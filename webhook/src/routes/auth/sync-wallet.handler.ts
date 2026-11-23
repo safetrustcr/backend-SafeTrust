@@ -1,9 +1,9 @@
 import { Response } from 'express'
-import { query } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import type { SyncWalletResponse } from '@safetrust/types'
 import { logger } from '../../middleware/logger'
 import type { SyncWalletBody } from '../../validation'
+import { syncWallet } from '../../repositories/wallet.repository'
 
 interface StellarUtils {
   validateStellarAddress(address: string): boolean
@@ -24,22 +24,6 @@ function isStellarAddress(address: unknown): boolean {
   if (typeof address !== 'string') return false
   if (nativeStellarUtils) return nativeStellarUtils.validateStellarAddress(address)
   return /^G[A-Z2-7]{55}$/.test(address)
-}
-
-const UPSERT_WALLET = `
-  INSERT INTO safetrust.user_wallets (user_id, wallet_address, chain_type, is_primary)
-  VALUES ($1, $2, $3, $4)
-  ON CONFLICT (wallet_address)
-  DO UPDATE SET
-    chain_type = EXCLUDED.chain_type,
-    is_primary = EXCLUDED.is_primary,
-    updated_at = NOW()
-  WHERE safetrust.user_wallets.user_id = EXCLUDED.user_id
-  RETURNING id, wallet_address, chain_type, is_primary
-`
-
-interface WalletRow {
-  wallet_address: string
 }
 
 export async function syncWalletHandler(
@@ -66,8 +50,12 @@ export async function syncWalletHandler(
   }
 
   try {
-    const result = await query<WalletRow>(UPSERT_WALLET, [uid, wallet_address, chain_type, is_primary])
-    const wallet = result.rows[0]
+    const wallet = await syncWallet({
+      uid,
+      address: wallet_address,
+      chainType: chain_type,
+      isPrimary: is_primary,
+    })
     if (!wallet) {
       return res.status(409).json({ error: 'WALLET_ALREADY_REGISTERED' })
     }
