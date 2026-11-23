@@ -2,16 +2,18 @@
 
 import { Response } from 'express'
 import { createBidRequestHandler, isValidCalendarDate } from '../create.handler'
-import { query } from '../../../services/db'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
+import { createBidRequest as createBid } from '../../../services/bid-request.service'
 
-jest.mock('../../../services/db', () => ({
-  query: jest.fn(),
-}))
+jest.mock('../../../services/bid-request.service', () => ({ createBidRequest: jest.fn() }))
 
 describe('createBidRequestHandler', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(createBid as jest.Mock).mockResolvedValue({
+      kind: 'created',
+      bid: { id: 'bid-new-1', current_status: 'PENDING' },
+    })
   })
 
   describe('isValidCalendarDate', () => {
@@ -111,9 +113,7 @@ describe('createBidRequestHandler', () => {
   })
 
   it('returns 409 when user already has an active bid in DB pre-check', async () => {
-    ;(query as jest.Mock).mockResolvedValueOnce({
-      rows: [{ id: 'existing-bid-id' }],
-    })
+    ;(createBid as jest.Mock).mockResolvedValueOnce({ kind: 'duplicate' })
 
     const req = {
       user: { uid: 'tenant-123' },
@@ -136,20 +136,17 @@ describe('createBidRequestHandler', () => {
   })
 
   it('returns 201 on successful bid creation', async () => {
-    ;(query as jest.Mock)
-      .mockResolvedValueOnce({ rows: [] }) // EXISTING_ACTIVE check
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: 'bid-new-1',
-            apartment_id: '123e4567-e89b-12d3-a456-426614174000',
-            tenant_id: 'tenant-123',
-            proposed_price: 1000,
-            desired_move_in: '2026-09-01T00:00:00.000Z',
-            current_status: 'PENDING',
-          },
-        ],
-      })
+    ;(createBid as jest.Mock).mockResolvedValue({
+      kind: 'created',
+      bid: {
+        id: 'bid-new-1',
+        apartment_id: '123e4567-e89b-12d3-a456-426614174000',
+        tenant_id: 'tenant-123',
+        proposed_price: 1000,
+        desired_move_in: '2026-09-01T00:00:00.000Z',
+        current_status: 'PENDING',
+      },
+    })
 
     const req = {
       user: { uid: 'tenant-123' },
@@ -177,9 +174,7 @@ describe('createBidRequestHandler', () => {
   })
 
   it('returns 409 when database trigger raises active bid exception', async () => {
-    ;(query as jest.Mock)
-      .mockResolvedValueOnce({ rows: [] })
-      .mockRejectedValueOnce(new Error('Tenant already has an active bid on file'))
+    ;(createBid as jest.Mock).mockResolvedValue({ kind: 'duplicate' })
 
     const req = {
       user: { uid: 'tenant-123' },
@@ -202,9 +197,7 @@ describe('createBidRequestHandler', () => {
   })
 
   it('returns 500 when database throws general error', async () => {
-    ;(query as jest.Mock)
-      .mockResolvedValueOnce({ rows: [] })
-      .mockRejectedValueOnce(new Error('Database unavailable'))
+    ;(createBid as jest.Mock).mockRejectedValue(new Error('Database unavailable'))
 
     const req = {
       user: { uid: 'tenant-123' },

@@ -1,0 +1,65 @@
+table:
+  schema: safetrust
+  name: escrow_transactions
+configuration:
+  custom_name: escrow_transactions
+  column_config:
+    escrow_id:
+      custom_name: escrowId
+    unsigned_xdr:
+      custom_name: unsignedXdr
+    tx_hash:
+      custom_name: txHash
+    created_at:
+      custom_name: createdAt
+    updated_at:
+      custom_name: updatedAt
+    tenant_id:
+      custom_name: tenantId
+object_relationships:
+  - name: escrow
+    using:
+      foreign_key_constraint_on: escrow_id
+select_permissions:
+  - role: guest
+    permission:
+      columns:
+        - id
+        - escrow_id
+        - kind
+        - unsigned_xdr
+        - tx_hash
+        - status
+        - created_at
+        - updated_at
+        - tenant_id
+      filter:
+        escrow:
+          reservation:
+            guest_id:
+              _eq: X-Hasura-User-Id
+    comment: "Guests can view transactions for their escrows"
+  - role: host
+    permission:
+      columns:
+        - id
+        - escrow_id
+        - kind
+        - unsigned_xdr
+        - tx_hash
+        - status
+        - created_at
+        - updated_at
+        - tenant_id
+      filter:
+        escrow:
+          reservation:
+            apartment:
+              owner_id:
+                _eq: X-Hasura-User-Id
+    comment: "Hosts can view transactions for escrows on their apartments"
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+    comment: "Admins can view all escrow transactions"
