@@ -30,7 +30,7 @@ export async function confirmTransactionHandler(
   } = req.body
   const configuredNetwork = req.body.network ?? process.env.STELLAR_NETWORK ?? 'testnet'
   if (configuredNetwork !== 'testnet' && configuredNetwork !== 'mainnet') {
-    return res.status(500).json({ error: 'Invalid STELLAR_NETWORK configuration' })
+    return res.status(400).json({ error: 'network must be either "testnet" or "mainnet"' })
   }
   const network: StellarNetwork = configuredNetwork
   const tenantId = req.context?.tenantId

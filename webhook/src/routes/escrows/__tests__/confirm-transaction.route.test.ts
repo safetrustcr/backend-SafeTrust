@@ -85,7 +85,7 @@ describe('POST /api/escrows/confirm-transaction', () => {
     })
   })
 
-  it('rejects an unsupported configured network before processing', async () => {
+  it('rejects an unsupported configured network with the existing response', async () => {
     const originalNetwork = process.env.STELLAR_NETWORK
     process.env.STELLAR_NETWORK = 'invalid-network'
 
@@ -98,8 +98,8 @@ describe('POST /api/escrows/confirm-transaction', () => {
           action: 'fund',
         })
 
-      expect(res.status).toBe(500)
-      expect(res.body).toEqual({ error: 'Invalid STELLAR_NETWORK configuration' })
+      expect(res.status).toBe(400)
+      expect(res.body).toEqual({ error: 'network must be either "testnet" or "mainnet"' })
       expect(mockedExternal).not.toHaveBeenCalled()
     } finally {
       if (originalNetwork === undefined) delete process.env.STELLAR_NETWORK
