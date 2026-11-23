@@ -239,22 +239,16 @@ export async function persistEscrow(
 
 function buildInitialEscrowMetadata(payload: EscrowInitPayload): Record<string, unknown> {
   const raw = payload.raw as unknown as Record<string, unknown>;
-  const rawRoles = raw.roles;
-  const roles =
-    rawRoles !== null && typeof rawRoles === 'object' && !Array.isArray(rawRoles)
-      ? (rawRoles as Record<string, unknown>)
-      : {};
 
   return {
     ...raw,
     roles: {
-      ...roles,
-      approver: roles.approver ?? payload.approver,
-      serviceProvider: roles.serviceProvider ?? payload.marker,
-      platformAddress: roles.platformAddress ?? null,
-      releaseSigner: roles.releaseSigner ?? payload.releaser,
-      disputeResolver: roles.disputeResolver ?? payload.resolver,
-      receiver: roles.receiver ?? null,
+      approver: payload.approver,
+      serviceProvider: payload.marker,
+      platformAddress: null,
+      releaseSigner: payload.releaser,
+      disputeResolver: payload.resolver,
+      receiver: null,
     },
   };
 }

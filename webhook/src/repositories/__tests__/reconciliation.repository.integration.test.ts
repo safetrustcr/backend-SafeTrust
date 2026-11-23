@@ -48,16 +48,6 @@ async function stored(contractId: string) {
   return rows[0]
 }
 
-async function storedRoles(contractId: string) {
-  const { rows } = await db.query<{ roles: Record<string, unknown> }>(
-    `SELECT escrow_metadata->'roles' AS roles
-       FROM safetrust.trustless_work_escrows
-      WHERE contract_id = $1`,
-    [contractId]
-  )
-  return rows[0]?.roles
-}
-
 describeDb('reconciliation UPSERT for unversioned snapshots (database)', () => {
   const cleanup = () =>
     db.query(`DELETE FROM safetrust.trustless_work_escrows WHERE contract_id LIKE $1`, [`${PREFIX}%`])
@@ -105,37 +95,6 @@ describeDb('reconciliation UPSERT for unversioned snapshots (database)', () => {
 
     expect(result.updated).toBe(0)
     expect(await stored(id('CONFIRMED'))).toEqual({ status: 'funded', balance: '100.0000000' })
-  })
-
-  it('refreshes authoritative V1 roles after funding without changing lifecycle state', async () => {
-    await seed(id('ROLE_REFRESH'), 'funded', 100)
-
-    await upsertEscrows([
-      snapshot(id('ROLE_REFRESH'), {
-        status: 'funded',
-        roles: {
-          marker: 'GNEW_MARKER',
-          approver: 'GNEW_APPROVER',
-          releaser: 'GNEW_RELEASER',
-          platformAddress: 'GNEW_PLATFORM',
-          disputeResolver: 'GNEW_RESOLVER',
-          receiver: 'GNEW_RECEIVER',
-        },
-      }),
-    ])
-
-    expect(await stored(id('ROLE_REFRESH'))).toEqual({
-      status: 'funded',
-      balance: '100.0000000',
-    })
-    expect(await storedRoles(id('ROLE_REFRESH'))).toEqual({
-      approver: 'GNEW_APPROVER',
-      serviceProvider: 'GNEW_MARKER',
-      platformAddress: 'GNEW_PLATFORM',
-      releaseSigner: 'GNEW_RELEASER',
-      disputeResolver: 'GNEW_RESOLVER',
-      receiver: 'GNEW_RECEIVER',
-    })
   })
 
   it('keeps the transition guard: created cannot jump to completed', async () => {

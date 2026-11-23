@@ -420,6 +420,23 @@ describe('persistEscrow', () => {
     });
   });
 
+  it('does not trust payer-supplied receiver role metadata', async () => {
+    mockedHasuraRequest.mockResolvedValue({
+      insert_trustless_work_escrows_one: escrowResponse,
+    });
+
+    await persistEscrow(validPayload({
+      raw: {
+        ...validBody(),
+        roles: { receiver: 'PAYER_CONTROLLED_WALLET' },
+      } as any,
+    }), 'safetrust');
+
+    const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
+    expect(callArgs.object.escrowMetadata.roles.receiver).toBeNull();
+    expect(callArgs.object.escrowMetadata.roles.receiver).not.toBe('PAYER_CONTROLLED_WALLET');
+  });
+
   it('writes the tenant passed by the caller instead of a literal', async () => {
     mockedHasuraRequest.mockResolvedValue({
       insert_trustless_work_escrows_one: escrowResponse,

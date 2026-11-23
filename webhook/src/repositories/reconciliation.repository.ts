@@ -178,85 +178,6 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
   )
   RETURNING contract_id, (xmax = 0) AS inserted
 `
-
-const REFRESH_ESCROW_ROLES_SQL = `
-  UPDATE safetrust.trustless_work_escrows AS escrow
-  SET escrow_metadata = jsonb_set(
-        CASE
-          WHEN jsonb_typeof(escrow.escrow_metadata) = 'object'
-            THEN escrow.escrow_metadata
-          ELSE '{}'::jsonb
-        END,
-        '{roles}',
-        role_snapshot.roles,
-        true
-      ),
-      marker = COALESCE(NULLIF(role_snapshot.roles->>'serviceProvider', ''), escrow.marker),
-      approver = COALESCE(NULLIF(role_snapshot.roles->>'approver', ''), escrow.approver),
-      releaser = COALESCE(NULLIF(role_snapshot.roles->>'releaseSigner', ''), escrow.releaser),
-      resolver = NULLIF(role_snapshot.roles->>'disputeResolver', ''),
-      updated_at = NOW()
-  FROM jsonb_to_recordset($1::jsonb) AS role_snapshot(
-    contract_id text,
-    roles jsonb,
-    ledger_seq text,
-    network text
-  )
-  WHERE escrow.contract_id = role_snapshot.contract_id
-    AND escrow.tenant_id = 'safetrust'
-    AND (
-      role_snapshot.ledger_seq IS NULL
-      OR escrow.ledger_seq IS NULL
-      OR role_snapshot.ledger_seq::numeric > escrow.ledger_seq::numeric
-    )
-    AND (
-      escrow.network IS NULL
-      OR NULLIF(TRIM(escrow.network), '') IS NULL
-      OR role_snapshot.network IS NULL
-      OR NULLIF(TRIM(role_snapshot.network), '') IS NULL
-      OR LOWER(REGEXP_REPLACE(escrow.network, '^stellar:', '', 'i')) =
-         LOWER(REGEXP_REPLACE(role_snapshot.network, '^stellar:', '', 'i'))
-    )
-`
-
-async function refreshEscrowRoles(escrows: EscrowRecord[]): Promise<void> {
-  const roleSnapshots = new Map<
-    string,
-    {
-      contract_id: string
-      roles: Record<string, string | null>
-      ledger_seq: string | null
-      network: string | null
-    }
-  >()
-
-  for (const escrow of escrows) {
-    if (!escrow.contractId || !escrow.roles) continue
-
-    const roles = escrow.roles
-    roleSnapshots.set(escrow.contractId, {
-      contract_id: escrow.contractId,
-      roles: {
-        approver: roles.approver ?? null,
-        serviceProvider: roles.marker ?? null,
-        platformAddress: roles.platformAddress ?? null,
-        releaseSigner: roles.releaser ?? null,
-        disputeResolver: roles.disputeResolver ?? null,
-        receiver: roles.receiver ?? null,
-      },
-      ledger_seq:
-        escrow.ledgerSeq == null && escrow.ledger_seq == null
-          ? null
-          : String(escrow.ledgerSeq ?? escrow.ledger_seq),
-      network: escrow.network ?? null,
-    })
-  }
-
-  if (roleSnapshots.size === 0) return
-
-  await db.query(REFRESH_ESCROW_ROLES_SQL, [JSON.stringify([...roleSnapshots.values()])])
-}
-
 export async function fetchEscrowContractIds(
   tenantId = 'safetrust'
 ): Promise<string[]> {
@@ -282,7 +203,6 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
   let updated = 0
   let unchanged = 0
   let skipped = 0
-  const roleSnapshots: EscrowRecord[] = []
 
   for (const escrow of escrows) {
     if (!escrow?.contractId) {
@@ -344,7 +264,6 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
         }
         unchanged++
       }
-      roleSnapshots.push(escrow)
     } catch (rowError) {
       console.error(
         `[reconciliation] ⚠️  Row error for contract_id "${escrow.contractId}":`,
@@ -353,8 +272,6 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
       skipped++
     }
   }
-
-  await refreshEscrowRoles(roleSnapshots)
 
   return { updated, unchanged, skipped }
 }
@@ -398,8 +315,6 @@ export async function upsertEscrowsBulk(escrows: EscrowRecord[]): Promise<Upsert
     buildConnectionString()
   )
   const result: BulkUpsertResult = JSON.parse(resultJson)
-
-  await refreshEscrowRoles(valid)
 
   return {
     updated: result.rows_affected,

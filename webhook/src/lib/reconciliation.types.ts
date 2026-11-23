@@ -2,15 +2,12 @@ export interface EscrowRoles {
   marker?: string
   approver?: string
   releaser?: string
-  platformAddress?: string
-  disputeResolver?: string
-  receiver?: string
 }
 
 /**
- * Normalized escrow written by reconciliation. The three legacy role columns
- * map V1 serviceProvider/approver/releaseSigner; all six V1 roles are also
- * retained in escrow_metadata for current party authorization.
+ * Normalized escrow written by the reconciliation UPSERT. Built from the
+ * Trustless Work V1 indexer response by `normalizeIndexerEscrow`; field names
+ * follow the current `trustless_work_escrows` columns.
  */
 export interface EscrowRecord {
   contractId: string

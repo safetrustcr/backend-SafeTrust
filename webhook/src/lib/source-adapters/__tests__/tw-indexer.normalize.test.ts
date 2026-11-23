@@ -123,14 +123,7 @@ describe('normalizeIndexerEscrow', () => {
       amount: 500,
       balance: 500,
       escrowType: 'single_release',
-      roles: {
-        marker: 'GHOST',
-        approver: 'GAPPROVER',
-        releaser: 'GRELEASER',
-        platformAddress: 'GPLATFORM',
-        disputeResolver: 'GRESOLVER',
-        receiver: 'GHOST',
-      },
+      roles: { marker: 'GHOST', approver: 'GAPPROVER', releaser: 'GRELEASER' },
       ledgerSeq: null,
     })
   })
@@ -153,24 +146,14 @@ describe('normalizeIndexerEscrow', () => {
 
   it('leaves missing roles empty instead of guessing', () => {
     expect(normalizeIndexerEscrow(single({ roles: undefined })).roles).toEqual({
-      marker: '',
-      approver: '',
-      releaser: '',
-      platformAddress: '',
-      disputeResolver: '',
-      receiver: '',
+      marker: '', approver: '', releaser: '',
     })
   })
 
   it('ignores non-string role values instead of writing them', () => {
     const roles = { serviceProvider: 42, approver: { a: 1 }, releaseSigner: 'GRELEASER' }
     expect(normalizeIndexerEscrow(single({ roles: roles as never })).roles).toEqual({
-      marker: '',
-      approver: '',
-      releaser: 'GRELEASER',
-      platformAddress: '',
-      disputeResolver: '',
-      receiver: '',
+      marker: '', approver: '', releaser: 'GRELEASER',
     })
   })
 })
