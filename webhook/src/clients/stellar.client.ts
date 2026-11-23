@@ -25,14 +25,27 @@ export function getHorizonTimeoutMs(): number {
 }
 
 export function getHorizonBaseUrl(network?: StellarNetwork): string {
-  if (process.env.STELLAR_HORIZON_URL?.trim()) {
-    return process.env.STELLAR_HORIZON_URL.trim().replace(/\/+$/, '')
+  const effectiveNetwork = network ?? (process.env.STELLAR_NETWORK as StellarNetwork) ?? 'testnet'
+
+  if (effectiveNetwork === 'mainnet') {
+    if (process.env.STELLAR_HORIZON_URL_MAINNET?.trim()) {
+      return process.env.STELLAR_HORIZON_URL_MAINNET.trim().replace(/\/+$/, '')
+    }
+    const genericUrl = process.env.STELLAR_HORIZON_URL?.trim()
+    if (genericUrl && !genericUrl.toLowerCase().includes('testnet')) {
+      return genericUrl.replace(/\/+$/, '')
+    }
+    return 'https://horizon.stellar.org'
   }
 
-  const effectiveNetwork = network ?? (process.env.STELLAR_NETWORK as StellarNetwork) ?? 'testnet'
-  return effectiveNetwork === 'mainnet'
-    ? 'https://horizon.stellar.org'
-    : 'https://horizon-testnet.stellar.org'
+  if (process.env.STELLAR_HORIZON_URL_TESTNET?.trim()) {
+    return process.env.STELLAR_HORIZON_URL_TESTNET.trim().replace(/\/+$/, '')
+  }
+  const genericUrl = process.env.STELLAR_HORIZON_URL?.trim()
+  if (genericUrl && !genericUrl.includes('horizon.stellar.org')) {
+    return genericUrl.replace(/\/+$/, '')
+  }
+  return 'https://horizon-testnet.stellar.org'
 }
 
 /**

@@ -6,6 +6,7 @@
  *              and durable PostgreSQL retry mechanism for escrow transactions.
  */
 
+import crypto from 'crypto'
 import db from './db'
 import { hasuraRequest } from './hasura'
 import {
@@ -106,7 +107,7 @@ export async function updateTWIndexerFromTxHash(
 export async function sendTransactionViaTWHelper(
   signedXdr: string,
   network: StellarNetwork
-): Promise<{ success: boolean; txHash?: string; error?: string }> {
+): Promise<{ success: boolean; txHash?: string; isTimeout?: boolean; error?: string }> {
   return sendTransactionViaHelper(signedXdr, network)
 }
 
@@ -320,6 +321,30 @@ export async function processHelperSubmission(params: {
   // Submit via TW helper
   const sendRes = await sendTransactionViaTWHelper(signedXdr, network)
   if (!sendRes.success || !sendRes.txHash) {
+    if (sendRes.isTimeout) {
+      const derivedId = crypto.createHash('sha256').update(signedXdr).digest('hex')
+      const retryRecord = await upsertRetryRecord({
+        txHash: derivedId,
+        escrowId,
+        action,
+        network,
+        submissionPath: 'helper',
+        status: 'retrying',
+        attemptCount: 1,
+        metadata: { ambiguousTimeout: true, signedXdr },
+      })
+      return {
+        success: false,
+        stage: 'pending_confirmation',
+        txHash: derivedId,
+        escrowId,
+        action,
+        network,
+        submissionPath: 'helper',
+        retryRecordId: retryRecord.id,
+        error: `Submission timed out (ambiguous state): ${sendRes.error}`,
+      }
+    }
     return {
       success: false,
       stage: 'xdr_issued',
@@ -346,7 +371,12 @@ export async function processHelperSubmission(params: {
   })
 
   // Independently verify ledger execution against the Stellar network
-  const ledgerRes = await verifyStellarTransaction(txHash, network)
+  let ledgerRes: StellarVerificationResult
+  try {
+    ledgerRes = await verifyStellarTransaction(txHash, network)
+  } catch (err: unknown) {
+    ledgerRes = { verified: false, error: (err as Error).message }
+  }
   if (!ledgerRes.verified) {
     const errorMsg = ledgerRes.error ?? 'Ledger confirmation failed'
     await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)

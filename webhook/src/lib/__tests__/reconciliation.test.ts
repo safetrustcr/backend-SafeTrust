@@ -64,9 +64,25 @@ function makeEscrow(overrides = {}) {
 }
 
 /**
- * Make `https.request` return a fake response with the given body/statusCode.
+ * Make `https.request` and `global.fetch` return a fake response with the given body/statusCode.
  */
 function mockHttpResponse(body: unknown, statusCode = 200) {
+  const isOk = statusCode >= 200 && statusCode < 300;
+  const rawText = typeof body === 'string' ? body : JSON.stringify(body);
+
+  global.fetch = jest.fn().mockImplementation(async () => ({
+    ok: isOk,
+    status: statusCode,
+    statusText: isOk ? 'OK' : 'Error',
+    text: async () => rawText,
+    json: async () => {
+      if (typeof body === 'string') {
+        return JSON.parse(body);
+      }
+      return body;
+    },
+  }));
+
   const { EventEmitter } = require('events');
 
   const fakeRes = new EventEmitter();
@@ -79,7 +95,7 @@ function mockHttpResponse(body: unknown, statusCode = 200) {
   fakeReq.end = jest.fn(() => {
     // Emit data + end on the response in the next tick
     process.nextTick(() => {
-      fakeRes.emit('data', typeof body === 'string' ? body : JSON.stringify(body));
+      fakeRes.emit('data', rawText);
       fakeRes.emit('end');
     });
   });
@@ -89,6 +105,12 @@ function mockHttpResponse(body: unknown, statusCode = 200) {
     return fakeReq;
   });
 }
+
+afterEach(() => {
+  jest.clearAllMocks();
+  jest.resetAllMocks();
+  delete (global as any).fetch;
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // chunkArray
@@ -353,6 +375,7 @@ describe('syncChunk', () => {
   });
 
   it('propagates a thrown error when the HTTP call itself fails', async () => {
+    global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED'));
     const { EventEmitter } = require('events');
     const fakeReq = new EventEmitter();
     fakeReq.setTimeout = jest.fn();

@@ -3,6 +3,7 @@
 import { logger } from '../middleware/logger'
 import { UpstreamError, UpstreamTimeoutError } from '../utils/errors'
 import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
+import { VALID_TX_HASH } from './stellar.client'
 import type { TwIndexerEscrow } from '../lib/source-adapters/tw-indexer.types'
 import type { StellarNetwork } from '../services/confirmation.service'
 
@@ -154,7 +155,7 @@ export async function trustlessWorkRequest<T>(
       durationMs,
       error: error.message,
     })
-    throw new UpstreamError(`Trustless Work API returned invalid JSON: ${error.message}`)
+    throw new UpstreamError(`Failed to parse Trustless Work API response: ${error.message}`)
   }
 }
 
@@ -179,7 +180,10 @@ export async function fetchIndexerEscrows(contractIds: string[]): Promise<TwInde
   if (data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).escrows)) {
     return (data as Record<string, unknown>).escrows as TwIndexerEscrow[]
   }
-  return []
+
+  throw new UpstreamError(
+    `Unexpected TrustlessWork API response shape: ${JSON.stringify(data).slice(0, 200)}`
+  )
 }
 
 /**
@@ -188,7 +192,7 @@ export async function fetchIndexerEscrows(contractIds: string[]): Promise<TwInde
 export async function sendTransactionViaHelper(
   signedXdr: string,
   network: StellarNetwork
-): Promise<{ success: boolean; txHash?: string; error?: string }> {
+): Promise<{ success: boolean; txHash?: string; isTimeout?: boolean; error?: string }> {
   try {
     const data = await trustlessWorkRequest<Record<string, unknown>>('/helper/send-transaction', {
       method: 'POST',
@@ -196,7 +200,11 @@ export async function sendTransactionViaHelper(
       timeoutMs: getSendTxTimeoutMs(),
       expectJson: true,
     })
-    const txHash = (data?.txHash ?? data?.hash ?? data?.transactionHash) as string | undefined
+    const candidates = [data?.txHash, data?.hash, data?.transactionHash]
+    const txHash = candidates.find(
+      (h): h is string => typeof h === 'string' && VALID_TX_HASH.test(h.trim())
+    )?.trim()
+
     if (!txHash) {
       return {
         success: false,
@@ -209,8 +217,15 @@ export async function sendTransactionViaHelper(
     }
   } catch (err: unknown) {
     const error = err as Error
+    const isTimeout =
+      error instanceof UpstreamTimeoutError ||
+      error.name === 'TimeoutError' ||
+      error.name === 'AbortError' ||
+      (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout'))
+
     return {
       success: false,
+      isTimeout,
       error: error.message.replace('Trustless Work API responded with status', 'TW helper returned status'),
     }
   }
