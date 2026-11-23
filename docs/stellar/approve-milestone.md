@@ -1,72 +1,52 @@
 # Approve Milestone
 
-> `POST /api/escrows/approve-milestone` — TrustlessWork callback recording a host-approved milestone.
+> **Status: Planned — post-Issue-03 behavior.** This is the intended
+> polling-based flow; the route implementation in this checkout has not yet
+> been migrated to it.
 
-## Overview
+The frontend requests an unsigned milestone-approval transaction from SafeTrust.
+The authorized user signs it in their wallet, Trustless Work submits it to
+Stellar, and SafeTrust reads the resulting milestone flags through indexer
+reconciliation.
 
-After a guest checks in or checks out of a hotel, the host approves the corresponding
-milestone on the Stellar escrow contract. TrustlessWork then sends a signed webhook callback
-to this endpoint. The backend verifies the signature, marks the milestone as `approved` in
-the database, advances the escrow to `milestone_approved`, and mirrors the status to the
-reservation.
+## Sequence
 
 ```mermaid
 sequenceDiagram
-    participant TW as TrustlessWork
-    participant MW as HMAC Middleware
-    participant H as approveMilestoneHandler
-    participant WS as Webhook Events
-    participant HAS as Hasura GraphQL
-    participant DB as PostgreSQL
-    participant R as Reservations
+    participant FE as Frontend
+    participant BE as SafeTrust backend
+    participant TW as Trustless Work API
+    participant FW as Approver wallet
+    participant ST as Stellar
+    participant CR as Hasura cron
 
-    TW->>MW: POST /api/escrows/approve-milestone (signed body)
-    MW->>MW: Verify HMAC-SHA256 signature
-    MW->>H: Valid request
-
-    H->>H: Validate required fields + flag === true
-    alt Invalid request
-        H-->>TW: 400 { error }
-    end
-
-    H->>WS: logAndCheckWebhookEvent(contractId, "milestone.approved:{milestoneId}")
-    alt Duplicate event
-        WS-->>H: isDuplicate = true
-        H->>WS: markWebhookEventProcessed
-        H-->>TW: 200 { received: true }
-    end
-
-    H->>HAS: query trustless_work_escrows (lookup escrow UUID)
-    HAS->>DB: SELECT id
-    DB-->>HAS: escrow UUID
-    alt Escrow not found
-        HAS-->>H: Empty result
-        H-->>TW: 404 { error: "Escrow not found" }
-    end
-
-    H->>HAS: update_escrow_milestones<br/>SET status = "approved", approvedBy, approvedAt
-    HAS->>DB: Execute mutation
-    alt Milestone not found
-        DB-->>HAS: 0 affected rows
-        H-->>TW: 404 { error: "Milestone not found" }
-    end
-
-    H->>HAS: update_trustless_work_escrows<br/>WHERE status IN (funded, active)<br/>SET status = "milestone_approved"
-    HAS->>DB: Execute mutation
-    HAS-->>H: Escrow updated
-
-    H->>HAS: update_reservations<br/>SET status = "checked_in" | "checked_out"
-    HAS->>DB: Execute mutation
-
-    H->>WS: markWebhookEventProcessed
-    H-->>TW: 200 { received: true }
+    FE->>BE: POST /api/escrows/approve-milestone
+    BE->>TW: POST /escrow/{type}/approve-milestone
+    TW-->>BE: unsigned XDR
+    BE-->>FE: unsigned XDR
+    FE->>FW: sign unsigned XDR
+    FW-->>FE: signed XDR
+    FE->>TW: POST /helper/send-transaction
+    TW->>ST: submit signed transaction
+    ST-->>TW: transaction result
+    CR->>BE: POST /reconciliation/sync-escrows
+    BE->>TW: GET /helper/get-escrow-by-contract-ids
+    TW-->>BE: milestone flags and balance
+    BE->>BE: reconcile indexed state
 ```
 
-## Prerequisites
+## Routes and state
 
-- The escrow must exist with status `funded` or `active`.
-- An `escrow_milestones` record must exist for the given `milestoneId` (seeded during
-  escrow creation or by the reconciliation process).
+1. The frontend calls SafeTrust `POST /api/escrows/approve-milestone` with the
+   contract and milestone details.
+2. SafeTrust requests an unsigned XDR from Trustless Work:
+   - Single-release: `POST /escrow/single-release/approve-milestone`
+   - Multi-release: `POST /escrow/multi-release/approve-milestone`
+3. The frontend signs the XDR in the authorized user's wallet and submits it
+   through `POST /helper/send-transaction`.
+4. SafeTrust's scheduled `POST /reconciliation/sync-escrows` reads the
+   contract using `GET /helper/get-escrow-by-contract-ids`. The indexer's
+   milestone flags and balance determine the observed state.
 
 ## Request
 
@@ -218,3 +198,10 @@ enforces this on-chain.
   - Escrow not found returns 404
   - Hasura errors return 500
   - Missing/invalid signature returns 401
+For single-release escrows, an approved milestone flag derives
+`milestone_approved`. For multi-release escrows, any approved or released
+milestone derives `milestone_approved`. The V1 indexer snapshot has no ledger
+sequence; under the current freshness policy it cannot safely advance an
+already funded escrow to this state by polling alone. A versioned snapshot or
+transaction confirmation is required. See
+[Trustless Work Indexer](./trustless-work-indexer.md).

@@ -1,65 +1,60 @@
 # Fund Escrow
 
-> `POST /api/escrows/fund` — TrustlessWork callback confirming a guest's USDC deposit on Stellar.
+> **Status: Planned — post-Issue-03 behavior.** This is the intended
+> polling-based flow; the route implementation in this checkout has not yet
+> been migrated to it.
 
-## Overview
+The frontend requests an unsigned funding transaction from SafeTrust. SafeTrust
+asks Trustless Work to build it and returns the XDR to the frontend. The user
+signs in their wallet, and the frontend submits the signed transaction through
+Trustless Work. SafeTrust learns the indexed result during reconciliation.
 
-When a guest funds an escrow contract on the Stellar network, TrustlessWork sends a signed
-webhook callback to this endpoint. The backend verifies the HMAC signature, updates the escrow
-status from `created` / `pending_funding` to `funded`, records the deposited balance, and
-notifies the hotel conversation channel.
+## Sequence
 
 ```mermaid
 sequenceDiagram
-    participant TW as TrustlessWork
-    participant MW as HMAC Middleware
-    participant H as fundEscrowHandler
-    participant WS as Webhook Events
-    participant HAS as Hasura GraphQL
-    participant DB as PostgreSQL
-    participant R as Reservations
-    participant HC as Hotel Conversation
+    participant FE as Frontend
+    participant BE as SafeTrust backend
+    participant TW as Trustless Work API
+    participant FW as User wallet
+    participant ST as Stellar
+    participant CR as Hasura cron
 
-    TW->>MW: POST /api/escrows/fund (signed body)
-    MW->>MW: Verify HMAC-SHA256 signature
-    MW->>H: Valid request
-
-    H->>H: Validate required fields
-    alt Missing fields
-        H-->>TW: 400 { error }
-    end
-
-    H->>WS: logAndCheckWebhookEvent(contractId, "escrow.funded")
-    WS->>DB: Advisory lock + check idempotency
-    alt Duplicate event
-        WS-->>H: isDuplicate = true
-        H->>WS: markWebhookEventProcessed
-        H-->>TW: 200 { received: true }
-    end
-
-    H->>HAS: update_trustless_work_escrows<br/>WHERE status IN (created, pending_funding)<br/>SET status = "funded", balance = amount
-    HAS->>DB: Execute mutation
-    alt Escrow not found (wrong status)
-        DB-->>HAS: 0 affected rows
-        HAS-->>H: Empty returning array
-        H-->>TW: 404 { error }
-    end
-    HAS-->>H: Escrow updated
-
-    H->>HAS: update_reservations (status → "funded")
-    H->>HC: Best-effort hotel notification
-
-    H->>WS: markWebhookEventProcessed
-    H-->>TW: 200 { received: true }
+    FE->>BE: POST /api/escrows/fund
+    BE->>TW: POST /escrow/{type}/fund-escrow
+    TW-->>BE: unsigned XDR
+    BE-->>FE: unsigned XDR
+    FE->>FW: sign unsigned XDR
+    FW-->>FE: signed XDR
+    FE->>TW: POST /helper/send-transaction
+    TW->>ST: submit signed transaction
+    ST-->>TW: transaction result
+    CR->>BE: POST /reconciliation/sync-escrows
+    BE->>TW: GET /helper/get-escrow-by-contract-ids
+    TW-->>BE: flags and balance
+    BE->>BE: reconcile escrow state
 ```
 
-## Prerequisites
+## Routes and state
 
 - The escrow must exist with status `created` or `pending_funding` (set by the
   [escrow lifecycle](./escrow-lifecycle.md) operation).
 - TrustlessWork must have completed the on-chain deposit and sent the signed callback.
+1. The frontend calls SafeTrust `POST /api/escrows/fund` with the contract
+   identifier and funding details.
+2. SafeTrust requests an unsigned XDR from Trustless Work:
+   - Single-release: `POST /escrow/single-release/fund-escrow`
+   - Multi-release: `POST /escrow/multi-release/fund-escrow`
+3. The frontend signs the returned XDR in the user's wallet and submits the
+   signed XDR to `POST /helper/send-transaction`.
+4. The Hasura cron trigger invokes SafeTrust's
+   `POST /reconciliation/sync-escrows`. SafeTrust reads the tracked contract
+   through `GET /helper/get-escrow-by-contract-ids` and applies the indexed
+   flags and balance according to its reconciliation rules.
 
-## Request
+Funding is reflected when the indexer reports a positive balance or `fundedBy`.
+An unsigned XDR or wallet signature by itself does not prove that the deposit
+was submitted.
 
 | Field       | Type     | Description                                    |
 |-------------|----------|------------------------------------------------|
@@ -189,3 +184,8 @@ Values are in USDC stroops — the smallest unit with 7 decimal places. For exam
   - Amount zero returns 400
   - Unknown contractId returns 404
   - Missing/invalid signature returns 401
+The V1 indexer returns an unversioned snapshot. Under the current freshness
+policy, polling may advance `created` or `pending_funding` to `funded`, but
+cannot safely advance later states without a version token or transaction
+confirmation. See [Trustless Work Indexer](./trustless-work-indexer.md) for
+status derivation, field mapping, and freshness rules.
