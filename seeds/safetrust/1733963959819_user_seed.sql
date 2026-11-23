@@ -1,6 +1,7 @@
 -- SafeTrust demo seed users
 -- id must be TEXT (Firebase UID format), not UUID
--- On conflict: skip — safe for repeated seed apply runs
+-- Both safetrust.users.role and safetrust.user_roles must be set until issue #26 removes users.role
+-- On conflict: update role so repeated seed runs keep users.role aligned with user_roles
 
 INSERT INTO safetrust.users (
     id,
@@ -11,6 +12,7 @@ INSERT INTO safetrust.users (
     phone_number,
     country_code,
     location,
+    role,
     last_seen
 )
 VALUES
@@ -23,6 +25,7 @@ VALUES
         '88001122',
         '+506',
         'San José, Costa Rica',
+        'guest',
         NOW()
     ),
     (
@@ -34,6 +37,7 @@ VALUES
         '88003344',
         '+506',
         'Escazú, Costa Rica',
+        'host',
         NOW()
     ),
     (
@@ -45,6 +49,7 @@ VALUES
         '88005566',
         '+506',
         'San José, Costa Rica',
+        'guest',
         NOW()
     ),
     (
@@ -56,6 +61,7 @@ VALUES
         '88007788',
         '+506',
         'San José, Costa Rica',
+        'guest',
         NOW()
     ),
     (
@@ -67,6 +73,7 @@ VALUES
         '88009900',
         '+506',
         'San José, Costa Rica',
+        'guest',
         NOW()
     ),
     (
@@ -78,6 +85,7 @@ VALUES
         '88001133',
         '+506',
         'San José, Costa Rica',
+        'guest',
         NOW()
     ),
     (
@@ -89,6 +97,7 @@ VALUES
         '88002244',
         '+506',
         'San José, Costa Rica',
+        'guest',
         NOW()
     ),
     (
@@ -100,6 +109,8 @@ VALUES
         '88003355',
         '+506',
         'San José, Costa Rica',
+        'guest',
         NOW()
     )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+    role = EXCLUDED.role;

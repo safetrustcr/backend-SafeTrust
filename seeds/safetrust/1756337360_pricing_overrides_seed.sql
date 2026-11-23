@@ -27,8 +27,8 @@ INSERT INTO pricing_overrides (override_name, base_rule_id, override_base_amount
 
 -- Targeted User Promotions
 INSERT INTO pricing_overrides (override_name, base_rule_id, override_percentage, user_id_list, priority, is_active) VALUES
-('Beta Tester Reward', (SELECT id FROM pricing_rules WHERE rule_name = 'USDC Standard Fee' LIMIT 1), 0.0125, ARRAY['user_001', 'user_002', 'user_003'], 15, true),
-('Early Adopter XLM', (SELECT id FROM pricing_rules WHERE rule_name = 'XLM Service Fee' LIMIT 1), 0.0100, ARRAY['user_004', 'user_005'], 15, true);
+('Beta Tester Reward', (SELECT id FROM pricing_rules WHERE rule_name = 'USDC Standard Fee' LIMIT 1), 0.0125, ARRAY['demo-tenant-uid-001', 'demo-owner-uid-002', 'demo-user-uid-003'], 15, true),
+('Early Adopter XLM', (SELECT id FROM pricing_rules WHERE rule_name = 'XLM Service Fee' LIMIT 1), 0.0100, ARRAY['demo-user-uid-004', 'demo-user-uid-005'], 15, true);
 
 -- Seasonal Campaigns
 INSERT INTO pricing_overrides (override_name, base_rule_id, override_percentage, effective_from, effective_until, priority, is_active) VALUES
