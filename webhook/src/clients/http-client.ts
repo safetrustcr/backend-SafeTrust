@@ -111,10 +111,9 @@ export async function upstreamRequest<T = unknown>(
   }
 
   if (!response.ok) {
-    const errText = typeof response.text === 'function'
-      ? await response.text().catch(() => '')
-      : ''
-    fail(response.status, new Error(`${upstream} responded with status ${response.status}: ${errText}`))
+    // Never copy the upstream body into the error: it is logged verbatim and
+    // may echo credentials or signed XDR.
+    fail(response.status, new Error(`${upstream} responded with status ${response.status}`))
   }
 
   if (options.parseJson === false) {
@@ -125,6 +124,12 @@ export async function upstreamRequest<T = unknown>(
     const data = (await response.json()) as T
     return { status: response.status, path, data, durationMs: elapsed() }
   } catch (error) {
+    // A stalled body aborted by the timeout must stay a timeout (504), not
+    // an invalid-JSON 502.
+    if (isTimeoutError(error)) {
+      fail(response.status, error)
+      throw error // unreachable
+    }
     fail(response.status, new Error(`${upstream} returned invalid JSON: ${(error as Error).message}`))
     throw error // unreachable
   }

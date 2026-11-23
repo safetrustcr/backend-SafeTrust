@@ -15,6 +15,20 @@ import {
 } from '../confirmation.service'
 import { assertSignedXdrCannotAdvanceStatus, EscrowValidationError } from '../escrow.service'
 import db from '../db'
+import { Account, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk'
+
+function buildSignedXdr(): { xdr: string; hash: string } {
+  const kp = Keypair.random()
+  const tx = new TransactionBuilder(new Account(kp.publicKey(), '1'), {
+    fee: '100',
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(Operation.bumpSequence({ bumpTo: '5' }))
+    .setTimeout(0)
+    .build()
+  tx.sign(kp)
+  return { xdr: tx.toXDR(), hash: tx.hash().toString('hex') }
+}
 
 jest.mock('../db', () => ({
   query: jest.fn(),
@@ -77,6 +91,11 @@ describe('Confirmation Service - Issue #660', () => {
         })
 
       global.fetch = mockFetch
+      const signed = buildSignedXdr()
+      mockFetch.mockReset()
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ txHash: signed.hash }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ successful: true, ledger: 1234567 }) })
 
       // Mock DB: 1st upsertRetryRecord, 2nd promote trustless_work_escrows, 3rd promote escrow_transactions, 4th updateRetryRecordStatus
       mockedDbQuery
@@ -84,7 +103,7 @@ describe('Confirmation Service - Issue #660', () => {
           rows: [
             {
               id: 'retry-uuid-1',
-              txHash: VALID_TX_HASH,
+              txHash: signed.hash,
               escrowId: ESCROW_ID,
               action: 'deploy',
               network: 'testnet',
@@ -98,7 +117,7 @@ describe('Confirmation Service - Issue #660', () => {
         .mockResolvedValueOnce({ rows: [] } as any) // updateRetryRecordStatus completed
 
       const result = await processHelperSubmission({
-        signedXdr: 'VALID_SIGNED_XDR',
+        signedXdr: signed.xdr,
         escrowId: ESCROW_ID,
         action: 'deploy',
         network: 'testnet',
@@ -106,7 +125,7 @@ describe('Confirmation Service - Issue #660', () => {
 
       expect(result.success).toBe(true)
       expect(result.stage).toBe('confirmed')
-      expect(result.txHash).toBe(VALID_TX_HASH)
+      expect(result.txHash).toBe(signed.hash)
       expect(result.ledger).toBe(1234567)
       expect(result.twIndexed).toBe(true)
 
@@ -116,16 +135,72 @@ describe('Confirmation Service - Issue #660', () => {
         expect.stringContaining('/helper/send-transaction'),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ signedXdr: 'VALID_SIGNED_XDR', network: 'testnet' }),
+          body: JSON.stringify({ signedXdr: signed.xdr, network: 'testnet' }),
         })
       )
 
       // Ensure Stellar Horizon testnet was queried for verification
       expect(mockFetch).toHaveBeenNthCalledWith(
         2,
-        `https://horizon-testnet.stellar.org/transactions/${VALID_TX_HASH}`,
+        `https://horizon-testnet.stellar.org/transactions/${signed.hash}`,
         expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
       )
+    })
+
+    it('records a retry record (pending_confirmation) when the helper send times out, without resending', async () => {
+      const signed = buildSignedXdr()
+      const mockFetch = jest.fn().mockRejectedValue(Object.assign(new Error('timed out'), { name: 'TimeoutError' }))
+      global.fetch = mockFetch as any
+      mockedDbQuery.mockResolvedValueOnce({ rows: [{ id: 'retry-uuid-2' }] } as any)
+
+      const result = await processHelperSubmission({
+        signedXdr: signed.xdr,
+        escrowId: ESCROW_ID,
+        action: 'deploy',
+        network: 'testnet',
+      })
+
+      expect(result.success).toBe(false)
+      expect(result.stage).toBe('pending_confirmation')
+      expect(result.txHash).toBe(signed.hash)
+      expect(result.retryRecordId).toBe('retry-uuid-2')
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      const params = (mockedDbQuery.mock.calls[0] as any)[1]
+      expect(params[0]).toBe(signed.hash)
+      expect(params).toEqual(expect.arrayContaining(['helper', 'retrying']))
+    })
+
+    it('keeps xdr_issued and writes no retry record when the helper rejects with a 4xx', async () => {
+      const signed = buildSignedXdr()
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () => 'bad',
+      }) as any
+
+      const result = await processHelperSubmission({
+        signedXdr: signed.xdr,
+        escrowId: ESCROW_ID,
+        action: 'deploy',
+        network: 'testnet',
+      })
+
+      expect(result.stage).toBe('xdr_issued')
+      expect(mockedDbQuery).not.toHaveBeenCalled()
+    })
+
+    it('keeps xdr_issued and never calls the helper for malformed XDR', async () => {
+      const mockFetch = jest.fn()
+      global.fetch = mockFetch as any
+      const result = await processHelperSubmission({
+        signedXdr: 'not-a-real-xdr',
+        escrowId: ESCROW_ID,
+        action: 'deploy',
+        network: 'testnet',
+      })
+      expect(result.stage).toBe('xdr_issued')
+      expect(mockFetch).not.toHaveBeenCalled()
+      expect(mockedDbQuery).not.toHaveBeenCalled()
     })
   })
 

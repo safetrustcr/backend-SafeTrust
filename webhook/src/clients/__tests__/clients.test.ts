@@ -127,6 +127,29 @@ describe('trustless-work.client', () => {
       expect(logged).toContain('trustless-work')
       expect(logged).toContain('/helper/get-escrow-by-contract-ids')
     })
+
+    it('never logs the upstream response body on a non-2xx', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue({ ok: false, status: 500, text: async () => 'SECRET_BODY_XDR_123' }) as unknown as typeof fetch
+      const error = (await fetchEscrowsByContractIds(['C1']).catch((e) => e)) as UpstreamError
+      const logged = (console.error as jest.Mock).mock.calls.map((c) => JSON.stringify(c)).join(' ')
+      expect(logged).not.toContain('SECRET_BODY_XDR_123')
+      expect(error.message).not.toContain('SECRET_BODY_XDR_123')
+    })
+
+    it('maps a body read aborted by the timeout to UpstreamTimeoutError', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => {
+          const e = new Error('aborted')
+          e.name = 'TimeoutError'
+          throw e
+        },
+      }) as unknown as typeof fetch
+      await expect(fetchEscrowsByContractIds(['C1'])).rejects.toBeInstanceOf(UpstreamTimeoutError)
+    })
   })
 
   describe('updateIndexerFromTxHash', () => {

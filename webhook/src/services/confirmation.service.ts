@@ -6,6 +6,7 @@
  *              and durable PostgreSQL retry mechanism for escrow transactions.
  */
 
+import { Networks, Transaction, FeeBumpTransaction, TransactionBuilder } from '@stellar/stellar-sdk'
 import db from './db'
 import { hasuraRequest } from './hasura'
 import { getTransactionByHash } from '../clients/stellar.client'
@@ -179,22 +180,47 @@ export async function updateTWIndexerFromTxHash(
 export async function sendTransactionViaTWHelper(
   signedXdr: string,
   network: StellarNetwork
-): Promise<{ success: boolean; txHash?: string; error?: string }> {
+): Promise<{ success: boolean; txHash?: string; error?: string; ambiguous?: boolean }> {
   try {
     const { txHash } = await sendTransaction(signedXdr, network)
     if (!txHash) {
+      // The helper answered 2xx, so it may have accepted the transaction.
       return {
         success: false,
+        ambiguous: true,
         error: 'TW helper response did not include transaction hash',
       }
     }
 
     return { success: true, txHash }
   } catch (err) {
+    // A 4xx proves the helper rejected the request. Timeouts, transport
+    // failures and 5xx may have reached the network, so they are ambiguous.
+    const status = err instanceof UpstreamError ? err.upstreamStatus : undefined
+    const rejected = status !== undefined && status >= 400 && status < 500
     return {
       success: false,
+      ambiguous: !rejected,
       error: upstreamErrorText('TW helper', err),
     }
+  }
+}
+
+/**
+ * Derive the transaction hash locally from the signed XDR and network
+ * passphrase (never from the helper response). Returns null when the XDR
+ * is malformed, which proves nothing was submitted.
+ */
+export function deriveTxHashFromSignedXdr(
+  signedXdr: string,
+  network: StellarNetwork
+): string | null {
+  try {
+    const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
+    const tx = TransactionBuilder.fromXDR(signedXdr, passphrase)
+    return (tx as Transaction | FeeBumpTransaction).hash().toString('hex')
+  } catch {
+    return null
   }
 }
 
@@ -405,8 +431,47 @@ export async function processHelperSubmission(params: {
     }
   }
 
-  // Submit via TW helper
+  // Derive the hash locally before sending; malformed XDR was never submitted.
+  const derivedHash = deriveTxHashFromSignedXdr(signedXdr, network)
+  if (!derivedHash) {
+    return {
+      success: false,
+      stage: 'xdr_issued',
+      txHash: '',
+      escrowId,
+      action,
+      network,
+      submissionPath: 'helper',
+      error: 'Signed XDR is malformed and cannot be submitted',
+    }
+  }
+
+  // Submit via TW helper (never re-sent; ambiguous failures reconcile by hash)
   const sendRes = await sendTransactionViaTWHelper(signedXdr, network)
+  if (!sendRes.success && sendRes.ambiguous) {
+    const errorMsg = sendRes.error ?? 'TW helper submission outcome unknown'
+    const retryRecord = await upsertRetryRecord({
+      txHash: derivedHash,
+      escrowId,
+      action,
+      network,
+      submissionPath: 'helper',
+      status: 'retrying',
+      attemptCount: 1,
+      lastError: errorMsg,
+    })
+    return {
+      success: false,
+      stage: 'pending_confirmation',
+      txHash: derivedHash,
+      escrowId,
+      action,
+      network,
+      submissionPath: 'helper',
+      retryRecordId: retryRecord.id,
+      error: errorMsg,
+    }
+  }
   if (!sendRes.success || !sendRes.txHash) {
     return {
       success: false,
@@ -420,7 +485,7 @@ export async function processHelperSubmission(params: {
     }
   }
 
-  const txHash = sendRes.txHash
+  const txHash = derivedHash
 
   // Persist pending confirmation and retry record immediately
   const retryRecord = await upsertRetryRecord({
