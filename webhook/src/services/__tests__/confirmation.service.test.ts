@@ -16,9 +16,17 @@ import {
 import { assertSignedXdrCannotAdvanceStatus, EscrowValidationError } from '../escrow.service'
 import db from '../db'
 
-jest.mock('../db', () => ({
-  query: jest.fn(),
-}))
+jest.mock('../db', () => {
+  const query = jest.fn()
+  return {
+    query,
+    withTransaction: jest.fn(async (fn: any) => fn({ query })),
+    default: {
+      query,
+      withTransaction: jest.fn(async (fn: any) => fn({ query })),
+    },
+  }
+})
 
 const mockedDbQuery = db.query as jest.MockedFunction<typeof db.query>
 
