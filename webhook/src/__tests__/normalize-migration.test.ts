@@ -7,7 +7,11 @@ const down = readFileSync(join(dir, 'down.sql'), 'utf8')
 
 describe('issue #790 normalization migration', () => {
   it('backfills user_roles before dropping users.role', () => {
-    expect(up.indexOf('INSERT INTO safetrust.user_roles')).toBeLessThan(up.indexOf('DROP COLUMN role'))
+    const backfill = up.indexOf('INSERT INTO safetrust.user_roles')
+    const drop = up.indexOf('DROP COLUMN role')
+    expect(backfill).toBeGreaterThanOrEqual(0)
+    expect(drop).toBeGreaterThanOrEqual(0)
+    expect(backfill).toBeLessThan(drop)
   })
   it('merges capacity into max_guests without lowering it, then drops capacity', () => {
     expect(up).toContain('GREATEST(')

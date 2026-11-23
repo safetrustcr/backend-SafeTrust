@@ -1,3 +1,7 @@
+-- NOTE: revert the Hasura metadata together with this migration. After this rollback
+-- metadata/tenants/safetrust/databases/tables/public_bid_requests.yaml (permissions and
+-- relationships) and public_bid_status_histories.yaml must reference tenant_id, not bidder_id,
+-- or Hasura metadata will be inconsistent with the restored schema.
 ALTER TABLE safetrust.bid_requests RENAME COLUMN bidder_id TO tenant_id;
 ALTER TABLE safetrust.bid_requests RENAME CONSTRAINT bid_requests_bidder_id_fkey TO bid_requests_tenant_id_fkey;
 ALTER INDEX safetrust.idx_bid_requests_bidder RENAME TO idx_bid_requests_tenant;
