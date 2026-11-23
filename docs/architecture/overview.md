@@ -1,9 +1,12 @@
 # SafeTrust Architecture Overview
 
-SafeTrust connects four layers: a Next.js frontend, an Express
-webhook backend, a Hasura GraphQL engine, and the Stellar
-blockchain via TrustlessWork. Rust crates handle security-critical
-and performance-critical work via Neon bindings.
+> **Status: Planned — post-Issue-03 behavior.** This page documents the
+> polling-based escrow flow planned by Issue 03. The route implementation in
+> this checkout has not yet been migrated to this contract.
+
+SafeTrust connects a Next.js frontend, an Express backend, Hasura, PostgreSQL,
+and the Stellar blockchain through Trustless Work. Rust crates handle
+security-critical and performance-critical operations via Neon bindings.
 
 ## System diagram
 
@@ -21,7 +24,7 @@ flowchart TD
     end
 
     subgraph SafeTrust Backend
-        WH[Express Webhook\nNode.js TypeScript]
+        BE[Express API\nNode.js TypeScript]
         RC[Rust Crates\nNeon Bindings]
         HG[Hasura GraphQL\nv2.47.0]
     end
@@ -33,95 +36,104 @@ flowchart TD
     end
 
     subgraph Stellar Network
-        TW[TrustlessWork API]
+        TW[Trustless Work API]
         SC[Soroban Smart Contract]
         USDC[USDC SEP-41]
     end
 
     GU --> FE
     HO --> FE
-    AI -->|X-Payment header| WH
-    FE -->|unsigned XDR| FW
+    AI -->|X-Payment header| BE
+    FE -->|request unsigned XDR| BE
+    BE -->|build transaction| TW
+    TW -->|unsigned XDR| BE
+    BE -->|unsigned XDR| FE
+    FE -->|sign in wallet| FW
     FW -->|signed XDR| FE
-    FE -->|create and submit XDR| TW
-    TW -->|HMAC-signed webhook callbacks| WH
-    WH --> RC
-    WH --> HG
+    FE -->|/helper/send-transaction| TW
     TW -->|submit transaction| SC
-    SC --> USDC
+    BE --> RC
+    BE --> HG
     HG --> PG
     PG --> ST
     PG --> HI
+    SC --> USDC
 ```
 
-## Frontend-managed XDR submission
+## Frontend-managed signing and submission
 
-Every escrow operation on Stellar requires two steps:
+For each escrow operation, the frontend requests an unsigned XDR from the
+SafeTrust operation route. SafeTrust asks Trustless Work to build the
+operation-specific transaction and returns the unsigned XDR. The connected
+wallet signs it locally, and the frontend submits the signed XDR through
+Trustless Work's `POST /helper/send-transaction`.
 
-1. **Frontend receives an unsigned XDR** — the frontend calls TrustlessWork,
-   which builds the Soroban transaction but does not sign it
-2. **Frontend signs with Freighter** — the guest or host wallet
-   signs the XDR locally, then the frontend submits it directly to
-   TrustlessWork via `/helper/send-transaction`
-
-SafeTrust's backend does not create, sign, or submit XDR, and it does not
-expose `/api/escrows/send-transaction`. It receives the resulting escrow state
-through separate HMAC-signed TrustlessWork webhook callbacks. This means
-SafeTrust never holds private keys; the platform is non-custodial by design.
+SafeTrust does not hold user private keys. A build response or wallet signature
+alone does not mean that an escrow state transition has completed.
 
 ```mermaid
 sequenceDiagram
     participant FE as Frontend
-    participant TW as TrustlessWork API
-    participant FW as Freighter Wallet
-    participant SC as Soroban Contract
+    participant BE as SafeTrust backend
+    participant TW as Trustless Work API
+    participant FW as Freighter wallet
+    participant ST as Stellar
 
-    FE->>TW: POST /escrow/single-release/initialize-escrow
-    TW-->>FE: { unsignedXDR: "AAAA..." }
-
-    FE->>FW: signTransaction(unsignedXDR)
-    FW-->>FE: { signedXDR: "BBBB..." }
-
-    FE->>TW: POST /helper/send-transaction (signedXDR)
-    TW->>SC: submit to Stellar network
-    SC-->>TW: { contractId: "CAZT..." }
-    TW-->>FE: { contractId: "CAZT..." }
+    FE->>BE: POST /api/escrows/{operation}
+    BE->>TW: POST operation endpoint (build unsigned XDR)
+    TW-->>BE: unsigned XDR
+    BE-->>FE: unsigned XDR
+    FE->>FW: signTransaction(unsigned XDR)
+    FW-->>FE: signed XDR
+    FE->>TW: POST /helper/send-transaction
+    TW->>ST: submit transaction
+    ST-->>TW: transaction result
 ```
+
+## Reconciliation and transaction confirmation
+
+Trustless Work has no webhooks. SafeTrust learns the state of client-submitted
+escrow operations through scheduled reconciliation. The Hasura cron trigger
+calls `POST /reconciliation/sync-escrows`; SafeTrust polls the V1 indexer and
+reconciles escrow state from the returned flags and balance.
 
 ```mermaid
 sequenceDiagram
-    participant TW as TrustlessWork API
-    participant WH as Webhook Backend
-    participant HG as Hasura GraphQL
-    participant PG as PostgreSQL
+    participant CR as Hasura cron
+    participant BE as SafeTrust backend
+    participant TW as Trustless Work API
+    participant DB as PostgreSQL
 
-    TW->>WH: POST /api/escrows/* (HMAC-signed callback)
-    WH->>WH: Verify signature and timestamp
-    WH->>HG: Persist escrow state / booking updates
-    HG->>PG: Execute mutation
-    PG-->>HG: Updated records
-    HG-->>WH: Success
-    WH-->>TW: 200 { received: true }
+    CR->>BE: POST /reconciliation/sync-escrows
+    BE->>TW: GET /helper/get-escrow-by-contract-ids
+    TW-->>BE: escrow flags, roles, and balance
+    BE->>DB: reconcile escrow state
 ```
 
-## Request flow for a booking
+For transactions SafeTrust itself submits, the backend confirms the transaction
+result before applying the corresponding local state change. The five wallet
+flows documented here submit through Trustless Work from the frontend, so
+SafeTrust learns their results through reconciliation polling. The indexer's
+status and field mapping, including its snapshot-freshness limitation, is
+documented in [Trustless Work Indexer](../stellar/trustless-work-indexer.md).
 
-```mermaid
-flowchart TD
-    A([Guest clicks Book]) --> B[Frontend starts escrow]
-    B --> C[Frontend calls TrustlessWork\nPOST /escrow/single-release/initialize-escrow]
-    C --> D[TrustlessWork returns\nunsigned XDR]
-    D --> F[Frontend passes XDR\nto Freighter wallet]
-    F --> G[Freighter signs\nguest approves in browser]
-    G --> H[Frontend calls TrustlessWork\nPOST /helper/send-transaction]
-    H --> J([Soroban contract deployed\nUSDC locked])
+## Escrow route map
 
-    style J color:#00aa00
-```
+These are the frontend-facing SafeTrust operation routes for the planned
+Issue-03 flow. Trustless Work endpoint paths are relative to its configured API
+base URL; select the path that matches the escrow type.
 
-After TrustlessWork processes the transaction, it sends an HMAC-signed callback
-to the webhook backend. The backend verifies the callback and mirrors the
-escrow and booking state through Hasura; it never receives or submits XDR.
+| Operation | SafeTrust route | Trustless Work build endpoint |
+|---|---|---|
+| Fund | `POST /api/escrows/fund` | `POST /escrow/{single-release\|multi-release}/fund-escrow` |
+| Approve milestone | `POST /api/escrows/approve-milestone` | `POST /escrow/{single-release\|multi-release}/approve-milestone` |
+| Release | `POST /api/escrows/release-funds` | `POST /escrow/single-release/release-funds` or `POST /escrow/multi-release/release-milestone-funds` |
+| Dispute | `POST /api/escrows/dispute` | `POST /escrow/single-release/dispute-escrow` or `POST /escrow/multi-release/dispute-milestone` |
+| Resolve | `POST /api/escrows/resolve-dispute` | `POST /escrow/single-release/resolve-dispute` or `POST /escrow/multi-release/resolve-milestone-dispute` |
+
+All five operations submit signed XDR with `POST /helper/send-transaction`.
+SafeTrust then uses `GET /helper/get-escrow-by-contract-ids` during
+reconciliation to learn the indexed escrow state.
 
 ## Repository structure
 

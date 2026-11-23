@@ -8,9 +8,17 @@ jest.mock('firebase-admin/auth', () => ({
   getAuth: jest.fn(),
 }))
 
-jest.mock('../../src/services/db', () => ({
-  query: jest.fn(),
-}))
+jest.mock('../../src/services/db', () => {
+  const query = jest.fn()
+  return {
+    __esModule: true,
+    default: { query },
+    query,
+    withTransaction: jest.fn(async (callback: (client: { query: typeof query }) => unknown) =>
+      callback({ query })
+    ),
+  }
+})
 
 const mockedDbQuery = db.query as jest.MockedFunction<typeof db.query>
 

@@ -76,10 +76,7 @@ function validPayload(overrides: Partial<EscrowInitPayload> = {}): EscrowInitPay
     escrow_type: 'single_release',
     asset_code: 'USDC',
     asset_issuer: null,
-    booking_id: null,
-    room_id: null,
-    hotel_id: null,
-    guest_id: null,
+    reservation_id: null,
     booking_metadata: null,
     raw: body as any,
     ...overrides,
@@ -461,9 +458,10 @@ describe('persistEscrow', () => {
     await persistEscrow(validPayload(), 'safetrust');
 
     const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
+    expect(callArgs.object.contractId).toBe('contract-1');
     expect(callArgs.object.assetCode).toBe('USDC');
     expect(callArgs.object.resolver).toBeNull();
-    expect(callArgs.object.bookingId).toBeNull();
+    expect(callArgs.object.bookingId).toBeUndefined();
   });
 });
 
