@@ -100,9 +100,9 @@ export interface CreateEscrowInput {
   receiver?: string | null
   flags?: Record<string, boolean> | null
   /** @deprecated Pre-V1 alias retained while initialization callers migrate. */
-  marker?: string
+  marker: string
   /** @deprecated Pre-V1 alias retained while initialization callers migrate. */
-  releaser?: string
+  releaser: string
   /** @deprecated Pre-V1 alias retained while initialization callers migrate. */
   resolver?: string | null
   escrowType: string

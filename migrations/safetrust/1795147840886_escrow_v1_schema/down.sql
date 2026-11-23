@@ -10,18 +10,22 @@ SET escrow_metadata = jsonb_set(
   '{twV1}',
   CASE
     WHEN jsonb_typeof(escrow_metadata->'twV1') = 'object' THEN escrow_metadata->'twV1'
+    WHEN escrow_metadata->'twV1' IS NOT NULL THEN
+      jsonb_build_object('legacyValue', escrow_metadata->'twV1')
     ELSE '{}'::jsonb
-  END || jsonb_strip_nulls(
-    jsonb_build_object(
-      'engagementId', engagement_id,
-      'approver', approver,
-      'serviceProvider', service_provider,
-      'platformAddress', platform_address,
-      'releaseSigner', release_signer,
-      'disputeResolver', dispute_resolver,
-      'receiver', receiver,
-      'flags', flags
-    )
+  END || (
+    SELECT COALESCE(jsonb_object_agg(key, value), '{}'::jsonb)
+    FROM (VALUES
+      ('engagementId', to_jsonb(engagement_id)),
+      ('approver', to_jsonb(approver)),
+      ('serviceProvider', to_jsonb(service_provider)),
+      ('platformAddress', to_jsonb(platform_address)),
+      ('releaseSigner', to_jsonb(release_signer)),
+      ('disputeResolver', to_jsonb(dispute_resolver)),
+      ('receiver', to_jsonb(receiver)),
+      ('flags', flags)
+    ) AS preserved(key, value)
+    WHERE value IS NOT NULL
   ),
   true
 )
@@ -42,9 +46,16 @@ SET metadata = jsonb_set(
   '{twV1}',
   CASE
     WHEN jsonb_typeof(metadata->'twV1') = 'object' THEN metadata->'twV1'
+    WHEN metadata->'twV1' IS NOT NULL THEN
+      jsonb_build_object('legacyValue', metadata->'twV1')
     ELSE '{}'::jsonb
-  END || jsonb_strip_nulls(
-    jsonb_build_object('index', "index", 'evidence', evidence)
+  END || (
+    SELECT COALESCE(jsonb_object_agg(key, value), '{}'::jsonb)
+    FROM (VALUES
+      ('index', to_jsonb("index")),
+      ('evidence', to_jsonb(evidence))
+    ) AS preserved(key, value)
+    WHERE value IS NOT NULL
   ),
   true
 )
