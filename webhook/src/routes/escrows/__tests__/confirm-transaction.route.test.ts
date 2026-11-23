@@ -11,6 +11,17 @@ jest.mock('../../../services/confirmation.service', () => ({
   processExternalSubmission: jest.fn(),
 }))
 
+jest.mock('../../../middleware/auth.middleware', () => ({
+  authMiddleware: (
+    req: import('express').Request,
+    _res: import('express').Response,
+    next: import('express').NextFunction
+  ) => {
+    req.context = { uid: 'user-1', tenantId: 'tenant-test', roles: [] }
+    next()
+  },
+}))
+
 const mockedHelper = confirmationService.processHelperSubmission as jest.MockedFunction<
   typeof confirmationService.processHelperSubmission
 >
@@ -124,6 +135,7 @@ describe('POST /api/escrows/confirm-transaction', () => {
     expect(res.body.stage).toBe('confirmed')
     expect(res.body.txHash).toBe(VALID_TX_HASH)
     expect(res.body.ledger).toBe(45678)
+    expect(mockedHelper).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 'tenant-test' }))
   })
 
   it('handles External submission successfully (Path B)', async () => {
@@ -155,6 +167,7 @@ describe('POST /api/escrows/confirm-transaction', () => {
     expect(res.body.stage).toBe('confirmed')
     expect(res.body.txHash).toBe(VALID_TX_HASH)
     expect(res.body.twIndexed).toBe(true)
+    expect(mockedExternal).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 'tenant-test' }))
   })
 
   it('returns 400 when external submission fails validation or guardrails', async () => {

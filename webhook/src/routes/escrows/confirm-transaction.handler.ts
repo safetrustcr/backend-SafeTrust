@@ -13,7 +13,6 @@ import {
   type StellarNetwork,
 } from '../../services/confirmation.service'
 import type { ConfirmTransactionBody } from '../../validation'
-import { getPlatformTenantId } from '../../config/tenant'
 
 export type ConfirmTransactionPayload = ConfirmTransactionBody
 
@@ -34,7 +33,10 @@ export async function confirmTransactionHandler(
     return res.status(500).json({ error: 'Invalid STELLAR_NETWORK configuration' })
   }
   const network: StellarNetwork = configuredNetwork
-  const tenantId = getPlatformTenantId()
+  const tenantId = req.context?.tenantId
+  if (!tenantId) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
 
   // Dispatch according to the validated submission path.
   if (submissionPath === 'helper') {
