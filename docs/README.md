@@ -48,7 +48,6 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | Document | Description |
 |---|---|
 | [bin/start Guide](infra/bin-start.md) | Container startup orchestration, database health checks, and tenant initialization |
-| [bin/deploy_init Guide](infra/deploy-init.md) | Sequential vs. parallel tenant deployment benchmarking protocol |
 
 ---
 
