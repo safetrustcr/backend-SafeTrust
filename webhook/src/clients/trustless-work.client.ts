@@ -220,8 +220,7 @@ export async function sendTransactionViaHelper(
     const isTimeout =
       error instanceof UpstreamTimeoutError ||
       error.name === 'TimeoutError' ||
-      error.name === 'AbortError' ||
-      (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout'))
+      error.name === 'AbortError'
 
     return {
       success: false,
