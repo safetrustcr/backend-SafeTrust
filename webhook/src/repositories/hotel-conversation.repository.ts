@@ -7,6 +7,7 @@ import { PoolClient } from 'pg'
 export interface UpsertHotelConversationInput {
   reservationId:        string
   hostId:               string
+  guestId:              string
   escrowTransactionId?: string | null
 }
 
@@ -30,8 +31,8 @@ export interface HotelMessage {
 // ── Queries ────────────────────────────────────────────────────────────────────
 
 /**
- * Return the conversation id for (reservation, host), creating the row when it
- * does not exist.
+ * Return the conversation id for (reservation, host, guest), creating the row
+ * when it does not exist.
  *
  * Idempotency is enforced by the `unique_hotel_conversation` constraint, not by
  * a find-then-create in application code, so parallel deliveries for the same
@@ -39,9 +40,6 @@ export interface HotelMessage {
  * deliberate: `RETURNING` yields the id on both the insert and the conflict
  * path, including when a concurrent transaction created the row first. The
  * update only fills a missing escrow link and never changes existing values.
- *
- * The guest is not stored on the conversation: it is derived from the
- * reservation (`reservations.guest_id`), so the two cannot disagree.
  */
 export async function upsertHotelConversation(
   client: PoolClient,
@@ -49,15 +47,15 @@ export async function upsertHotelConversation(
 ): Promise<string> {
   const result = await client.query<{ id: string }>(
     `INSERT INTO hotel_industry.conversations
-       (reservation_id, host_id, escrow_transaction_id, status)
-     VALUES ($1, $2, $3, 'active')
+       (reservation_id, host_id, guest_id, escrow_transaction_id, status)
+     VALUES ($1, $2, $3, $4, 'active')
      ON CONFLICT ON CONSTRAINT unique_hotel_conversation
      DO UPDATE SET escrow_transaction_id = COALESCE(
        hotel_industry.conversations.escrow_transaction_id,
        EXCLUDED.escrow_transaction_id
      )
      RETURNING id`,
-    [input.reservationId, input.hostId, input.escrowTransactionId ?? null]
+    [input.reservationId, input.hostId, input.guestId, input.escrowTransactionId ?? null]
   )
 
   return result.rows[0].id
