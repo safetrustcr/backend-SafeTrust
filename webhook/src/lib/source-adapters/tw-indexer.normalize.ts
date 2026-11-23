@@ -150,6 +150,9 @@ export function normalizeIndexerEscrow(raw: unknown): EscrowRecord {
       marker: stringOr(roles.serviceProvider),
       approver: stringOr(roles.approver),
       releaser: stringOr(roles.releaseSigner),
+      platformAddress: stringOr(roles.platformAddress),
+      disputeResolver: stringOr(roles.disputeResolver),
+      receiver: stringOr(roles.receiver),
     },
     // The V1 indexer carries no ledger sequence (see escrow-freshness.ts).
     ledgerSeq: null,

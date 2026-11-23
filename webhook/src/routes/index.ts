@@ -28,6 +28,7 @@ router.use(healthRoutes)
 
 // ── 2. Escrows / x402 booking entrypoint & TrustlessWork callbacks ──────────────
 router.use(initializeRoute)
+router.use(confirmTransactionRoute)
 router.use('/api/escrows', verifyTrustlessWorkSignature as RequestHandler)
 router.use(fundRoute)
 router.use(approveMilestoneRoute)
@@ -37,7 +38,6 @@ router.use(resolveDisputeRoute)
 
 // ── 3. Authenticated routes (Firebase auth required) ──────────────────────────
 router.use('/api', authMiddleware as unknown as RequestHandler)
-router.use(confirmTransactionRoute)
 router.use('/api/auth',         authRoutes)
 router.use('/api/apartments',   apartmentRoutes)
 router.use('/api/bid-requests', bidRequestsRoute)

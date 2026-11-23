@@ -103,17 +103,7 @@ export async function isEscrowParty(
           escrow.escrow_metadata #>> '{roles,platformAddress}',
           escrow.escrow_metadata #>> '{roles,releaseSigner}',
           escrow.escrow_metadata #>> '{roles,disputeResolver}',
-          escrow.escrow_metadata #>> '{roles,receiver}',
-          escrow.escrow_metadata->>'approver',
-          escrow.escrow_metadata->>'serviceProvider',
-          escrow.escrow_metadata->>'platformAddress',
-          escrow.escrow_metadata->>'releaseSigner',
-          escrow.escrow_metadata->>'disputeResolver',
-          escrow.escrow_metadata->>'receiver',
-          escrow.marker,
-          escrow.approver,
-          escrow.releaser,
-          escrow.resolver
+          escrow.escrow_metadata #>> '{roles,receiver}'
         ])
     ) AS is_party
     `,
@@ -247,7 +237,7 @@ export async function persistEscrow(
       hotelId: payload.hotel_id,
       guestId: payload.guest_id,
       tenantId,
-      escrowMetadata: payload.raw,
+      escrowMetadata: buildInitialEscrowMetadata(payload),
       bookingMetadata: payload.booking_metadata,
     },
   });
@@ -258,6 +248,28 @@ export async function persistEscrow(
   }
 
   return escrow;
+}
+
+function buildInitialEscrowMetadata(payload: EscrowInitPayload): Record<string, unknown> {
+  const raw = payload.raw as unknown as Record<string, unknown>;
+  const rawRoles = raw.roles;
+  const roles =
+    rawRoles !== null && typeof rawRoles === 'object' && !Array.isArray(rawRoles)
+      ? (rawRoles as Record<string, unknown>)
+      : {};
+
+  return {
+    ...raw,
+    roles: {
+      ...roles,
+      approver: roles.approver ?? payload.approver,
+      serviceProvider: roles.serviceProvider ?? payload.marker,
+      platformAddress: roles.platformAddress ?? null,
+      releaseSigner: roles.releaseSigner ?? payload.releaser,
+      disputeResolver: roles.disputeResolver ?? payload.resolver,
+      receiver: roles.receiver ?? null,
+    },
+  };
 }
 
 /** Thrown when the reservation named in booking_metadata does not exist. */
