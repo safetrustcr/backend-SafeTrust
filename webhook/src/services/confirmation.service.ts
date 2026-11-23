@@ -6,7 +6,7 @@
  *              and durable PostgreSQL retry mechanism for escrow transactions.
  */
 
-import db from './db'
+import db, { withTransaction } from './db'
 import { hasuraRequest } from './hasura'
 import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
 
@@ -360,6 +360,10 @@ export async function updateRetryRecordStatus(
  * Strictly separates deployment from funding:
  *  - deploy: sets status = 'created' (NOT 'funded'), sets tx_hash, network.
  *  - fund: sets status = 'funded', updates balance = amount, sets tx_hash, network.
+ *
+ * Escrow state is written once, to trustless_work_escrows. The same transaction
+ * records the signed transaction against that escrow (escrow_transactions); it
+ * never repeats status, balance or ledger freshness on the transaction row.
  */
 export async function promoteEscrowStatus(
   escrowId: string,
@@ -367,61 +371,48 @@ export async function promoteEscrowStatus(
   txHash: string,
   network: StellarNetwork
 ): Promise<void> {
-  if (action === 'deploy') {
-    // Check if contract exists in trustless_work_escrows
-    await db.query(
+  const nextStatus = action === 'deploy' ? 'created' : 'funded'
+  const kind = action === 'deploy' ? 'deploy' : 'fund'
+  const transactionStatus = action === 'deploy' ? 'deploying' : 'funded'
+
+  await withTransaction(async (client) => {
+    const { rows } = await client.query<{
+      id: string
+      marker: string
+      approver: string
+    }>(
       `
       UPDATE safetrust.trustless_work_escrows
       SET
-        status = 'created',
-        tx_hash = $1,
-        network = $2,
+        status = $1,
+        balance = CASE WHEN $2::boolean THEN amount ELSE balance END,
+        tx_hash = $3,
+        network = $4,
         updated_at = NOW()
-      WHERE contract_id = $3
+      WHERE contract_id = $5
+      RETURNING id, marker, approver
       `,
-      [txHash, network, escrowId]
+      [nextStatus, action === 'fund', txHash, network, escrowId]
     )
 
-    await db.query(
-      `
-      UPDATE safetrust.escrow_transactions
-      SET
-        status = 'deploying',
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3 OR engagement_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
-  } else if (action === 'fund') {
-    await db.query(
-      `
-      UPDATE safetrust.trustless_work_escrows
-      SET
-        status = 'funded',
-        balance = amount,
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
+    const escrow = rows[0]
+    if (!escrow) {
+      return
+    }
 
-    await db.query(
+    await client.query(
       `
-      UPDATE safetrust.escrow_transactions
-      SET
-        status = 'funded',
-        tx_hash = $1,
-        network = $2,
+      INSERT INTO safetrust.escrow_transactions
+        (escrow_id, kind, status, tx_hash, sender_address, receiver_address, tenant_id, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, 'safetrust', NOW())
+      ON CONFLICT (escrow_id, kind, tx_hash)
+      DO UPDATE SET
+        status = EXCLUDED.status,
         updated_at = NOW()
-      WHERE contract_id = $3 OR engagement_id = $3
       `,
-      [txHash, network, escrowId]
+      [escrow.id, kind, transactionStatus, txHash, escrow.marker ?? '', escrow.approver ?? '']
     )
-  }
+  })
 }
 
 // ── Main Confirmation Workflows ───────────────────────────────────────────────
