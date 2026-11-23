@@ -378,7 +378,12 @@ export async function processExternalSubmission(params: {
   })
 
   // 4. Verify directly against the Stellar network
-  const ledgerRes = await verifyStellarTransaction(txHash, network)
+  let ledgerRes: StellarVerificationResult
+  try {
+    ledgerRes = await verifyStellarTransaction(txHash, network)
+  } catch (err: unknown) {
+    ledgerRes = { verified: false, error: (err as Error).message }
+  }
   if (!ledgerRes.verified) {
     const errorMsg = ledgerRes.error ?? 'Ledger verification failed'
     // If the failure is terminal (e.g. failed on-ledger or format error), mark dead letter
