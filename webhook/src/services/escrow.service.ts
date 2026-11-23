@@ -224,8 +224,7 @@ export async function persistEscrow(
       amount: payload.amount,
       balance: 0,
       tenantId,
-      escrowMetadata: buildInitialEscrowMetadata(payload),
-      bookingMetadata: payload.booking_metadata
+      escrowMetadata: buildInitialEscrowMetadata(payload)
     },
   });
 

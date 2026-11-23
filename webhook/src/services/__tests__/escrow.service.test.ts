@@ -418,6 +418,7 @@ describe('persistEscrow', () => {
       serviceProvider: 'GMARKER',
       releaseSigner: 'GRELEASER',
     });
+    expect(callArgs.object).not.toHaveProperty('bookingMetadata');
   });
 
   it('does not trust payer-supplied receiver role metadata', async () => {
