@@ -129,15 +129,49 @@ declare module '@safetrust/types' {
     escrow_type: 'single_release' | 'multi_release' | string
     asset_code?: string
     asset_issuer?: string | null
-    booking_id?: string | null
-    room_id?: string | null
-    hotel_id?: string | null
-    guest_id?: string | null
+    reservation_id?: string | null
     booking_metadata?: {
       reservation_id?: string
       [key: string]: unknown
     } | null
     [key: string]: unknown
+  }
+
+  export interface TrustlessWorkEscrow {
+    id: string
+    contractId: string
+    marker: string
+    approver: string
+    releaser: string
+    resolver?: string | null
+    escrowType: 'single_release' | 'multi_release' | string
+    status: string
+    assetCode: string
+    assetIssuer?: string | null
+    amount: number
+    balance: number
+    ledgerSeq?: bigint | number | string | null
+    network?: string | null
+    txHash?: string | null
+    escrowMetadata?: unknown
+    createdAt: string
+    updatedAt: string
+    tenantId: string
+  }
+
+  export type EscrowTransactionKind = 'deploy' | 'fund' | 'approve' | 'release'
+  export type EscrowTransactionStatus = 'pending_signature' | 'submitted' | 'confirmed' | 'failed'
+
+  export interface EscrowTransaction {
+    id: string
+    escrowId: string
+    kind: EscrowTransactionKind
+    unsignedXdr?: string | null
+    txHash?: string | null
+    status: EscrowTransactionStatus
+    createdAt: string
+    updatedAt: string
+    tenantId: string
   }
 
   export interface FundEscrowPayload {

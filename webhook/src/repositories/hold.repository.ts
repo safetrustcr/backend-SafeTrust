@@ -93,6 +93,12 @@ export async function createHold(input: CreateHoldInput): Promise<HoldRow & { pr
       [input.apartmentId]
     )
 
+    // Serialize the per-user limit: concurrent holds on different apartments
+    // would otherwise both count the same live holds and both insert.
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+      `booking_holds:${input.tenantId}:${input.userId}`,
+    ])
+
     const live = await client.query<{ n: string }>(
       `SELECT COUNT(*) AS n FROM safetrust.booking_holds
         WHERE user_id = $1 AND tenant_id = $2

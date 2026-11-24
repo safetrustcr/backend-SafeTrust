@@ -8,3 +8,18 @@ object_relationships:
   - name: room_type
     using:
       foreign_key_constraint_on: room_type_id
+array_relationships:
+  - name: room_images
+    using:
+      foreign_key_constraint_on:
+        table:
+          schema: hotel_industry
+          name: room_images
+        column: room_id
+  - name: reservations
+    using:
+      foreign_key_constraint_on:
+        table:
+          schema: hotel_industry
+          name: reservations
+        column: room_id
