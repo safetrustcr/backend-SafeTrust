@@ -33,10 +33,12 @@ export async function submitBookingHandler(
     })
 
     if (!result.success) {
-      res.status(400).json({
+      const httpStatus = result.stage === 'pending_confirmation' ? 202 : 400
+      res.status(httpStatus).json({
         success: false,
         reservation_id: result.reservation_id,
         contract_id: result.contract_id,
+        tx_hash: result.tx_hash,
         stage: result.stage,
         error: result.error,
         retryRecordId: result.retryRecordId,

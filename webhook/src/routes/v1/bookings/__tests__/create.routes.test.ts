@@ -45,7 +45,7 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
       validateX402Payment: () =>
         JSON.stringify({
           is_valid: true,
-          payer_address: 'GAGENTWALLET000000000000000000000000000000000000000000000',
+          payer_address: 'GB7TAYRUZTW6PC7L2L5Q2K4M6N8P2Q4R6S8T2U4V6W8X2Y4Z6A2B4C6D',
           amount_usdc: 0.10,
           network: 'stellar:testnet',
         }),
@@ -203,10 +203,25 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
     // 3. withTransaction executing atomic hold conversion and reservation creation in escrow_created status
     mockWithTransaction.mockImplementationOnce(async (cb) => {
       const mockClient = {
-        query: jest.fn()
-          .mockResolvedValueOnce({ rows: [{ id: HOLD_ID, status: 'active' }] }) // FOR UPDATE
-          .mockResolvedValueOnce({ rowCount: 1 }) // UPDATE hold status = 'converted'
-          .mockResolvedValueOnce({ rows: [{ id: 'res-new-778' }] }), // INSERT reservation status = 'escrow_created'
+        query: jest.fn(async (sql: string) => {
+          const lower = String(sql).toLowerCase()
+          if (lower.includes('pg_advisory_xact_lock')) return { rows: [] }
+          if (lower.includes('select id, status') && lower.includes('for update')) {
+            return {
+              rows: [
+                {
+                  id: HOLD_ID,
+                  status: 'active',
+                  expires_at: new Date(Date.now() + 600000),
+                  is_expired: false,
+                },
+              ],
+            }
+          }
+          if (lower.includes('update safetrust.booking_holds')) return { rowCount: 1, rows: [] }
+          if (lower.includes('insert into safetrust.reservations')) return { rows: [{ id: 'res-new-778' }] }
+          return { rows: [], rowCount: 1 }
+        }),
       }
       return cb(mockClient)
     })
@@ -215,7 +230,7 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
     mockQuery.mockResolvedValueOnce({
       rows: [
         {
-          wallet_address: 'GAGENTWALLET000000000000000000000000000000000000000000000',
+          wallet_address: 'GB7TAYRUZTW6PC7L2L5Q2K4M6N8P2Q4R6S8T2U4V6W8X2Y4Z6A2B4C6D',
           is_primary: true,
         },
       ],
@@ -225,7 +240,7 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
     mockQuery.mockResolvedValueOnce({
       rows: [
         {
-          wallet_address: 'GHOSTWALLET000000000000000000000000000000000000000000000',
+          wallet_address: 'GD5JPEHGGTDTK2N7OMDDCOW3DPO5KSFWACYWNYZNNOXD2UC7LQ4DHXMM',
           is_primary: true,
         },
       ],
@@ -236,7 +251,7 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
       rows: [
         {
           id: 'escrow-db-1',
-          contract_id: 'CAATN5DNEWCONTRACT00000000000000000000000000000000000001',
+          contract_id: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
         },
       ],
     })

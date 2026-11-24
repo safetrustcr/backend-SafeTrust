@@ -94,6 +94,10 @@ export async function createHold(input: CreateHoldInput): Promise<HoldRow & { pr
       [input.apartmentId]
     )
 
+    await client.query(
+      `SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`,
+      [input.tenantId, input.userId]
+    )
     const live = await client.query<{ n: string }>(
       `SELECT COUNT(*) AS n FROM safetrust.booking_holds
         WHERE user_id = $1 AND tenant_id = $2
@@ -185,12 +189,15 @@ export async function releaseHold(holdId: string, userId: string, tenantId: stri
   if (hold.status !== 'active' && hold.status !== 'pending_payment') {
     throw new ConflictError(`Hold is already ${hold.status}`, { code: 'hold_not_live' })
   }
-  await query(
+  const released = await query(
     `UPDATE safetrust.booking_holds
         SET status = 'released', updated_at = NOW()
       WHERE id = $1 AND status IN ('pending_payment', 'active')`,
     [holdId]
   )
+  if ((released.rowCount ?? 0) === 0) {
+    throw new ConflictError('Hold is no longer live', { code: 'hold_not_live' })
+  }
 }
 
 /**
@@ -258,7 +265,7 @@ export async function convertHoldToReservation(
               h.expires_at,
               r.id AS reservation_id,
               r.status AS reservation_status,
-              h.expires_at <= NOW() AS is_expired
+              (h.expires_at <= clock_timestamp()) AS is_expired
          FROM safetrust.booking_holds h
          LEFT JOIN safetrust.reservations r
            ON r.booking_hold_id = h.id

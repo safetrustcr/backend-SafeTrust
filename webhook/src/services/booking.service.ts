@@ -86,7 +86,7 @@ export async function resolveUserStellarWallet(
  */
 export async function resolveOwnerStellarWallet(ownerId: string | undefined): Promise<string> {
   if (!ownerId) {
-    return process.env.DEFAULT_HOST_WALLET || DEFAULT_HOST_WALLET
+    throw new ValidationError('Property owner is required for escrow deployment')
   }
 
   const result = await db.query<{ wallet_address: string }>(
@@ -104,7 +104,7 @@ export async function resolveOwnerStellarWallet(ownerId: string | undefined): Pr
     return result.rows[0].wallet_address
   }
 
-  return process.env.DEFAULT_HOST_WALLET || DEFAULT_HOST_WALLET
+  throw new ValidationError('Property owner does not have a valid Stellar wallet')
 }
 
 /**
@@ -216,12 +216,28 @@ export async function createAgentBooking(
 
     // Execute atomic DB transaction: hold -> converted, reservation -> escrow_created
     reservationId = await withTransaction(async (client: PoolClient) => {
+      if (Number(quote.deposit) <= 0) {
+        throw new ValidationError('Deposit amount must be positive')
+      }
+
       // Re-lock hold with FOR UPDATE to prevent concurrency races
-      const locked = await client.query<{ id: string; status: string }>(
-        `SELECT id, status FROM safetrust.booking_holds WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+      const locked = await client.query<{ id: string; status: string; expires_at: Date; is_expired: boolean }>(
+        `SELECT id, status, expires_at, (expires_at <= clock_timestamp()) AS is_expired
+           FROM safetrust.booking_holds
+          WHERE id = $1 AND tenant_id = $2
+          FOR UPDATE`,
         [holdId, tenantId]
       )
-      if (!locked.rows[0] || locked.rows[0].status !== 'active') {
+      if (!locked.rows[0]) {
+        throw new ConflictError('Hold not found', { code: 'hold_not_found' })
+      }
+      const lockExpired =
+        Boolean(locked.rows[0].is_expired) ||
+        (locked.rows[0].expires_at != null && new Date(locked.rows[0].expires_at).getTime() <= Date.now())
+      if (lockExpired) {
+        throw new ConflictError('Hold has expired', { code: 'hold_expired' })
+      }
+      if (locked.rows[0].status !== 'active') {
         throw new ConflictError('Hold state changed concurrently', { code: 'hold_conflict' })
       }
 
@@ -301,13 +317,25 @@ export async function createAgentBooking(
         })
       }
 
-      // Check for overlapping confirmed reservations
+      if (Number(quote.deposit) <= 0) {
+        throw new ValidationError('Deposit amount must be positive')
+      }
+
+      const aptAvailability = await client.query<{ is_available: boolean | null }>(
+        `SELECT is_available FROM safetrust.apartments WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [propertyId]
+      )
+      if (aptAvailability.rows[0]?.is_available === false) {
+        throw new ConflictError('Property is not available', { code: 'not_available' })
+      }
+
+      // Check for overlapping pending or active reservations
       const overlappingRes = await client.query(
         `
         SELECT 1 FROM safetrust.reservations
         WHERE apartment_id = $1
           AND tenant_id = $2
-          AND status IN ('escrow_created', 'funded', 'checked_in', 'checked_out')
+          AND status IN ('pending', 'escrow_created', 'funded', 'checked_in', 'checked_out')
           AND check_in_date < $4 AND check_out_date > $3
         LIMIT 1
         `,
@@ -320,30 +348,40 @@ export async function createAgentBooking(
         })
       }
 
-      const resInsert = await client.query<{ id: string }>(
-        `
-        INSERT INTO safetrust.reservations (
-          apartment_id,
-          guest_id,
-          check_in_date,
-          check_out_date,
-          total_amount,
-          asset_code,
-          status,
-          tenant_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, 'escrow_created', $7)
-        RETURNING id
-        `,
-        [
-          propertyId,
-          userId,
-          checkIn,
-          checkOut,
-          Number(quote.total),
-          quote.asset,
-          tenantId,
-        ]
-      )
+      let resInsert
+      try {
+        resInsert = await client.query<{ id: string }>(
+          `
+          INSERT INTO safetrust.reservations (
+            apartment_id,
+            guest_id,
+            check_in_date,
+            check_out_date,
+            total_amount,
+            asset_code,
+            status,
+            tenant_id
+          ) VALUES ($1, $2, $3, $4, $5, $6, 'escrow_created', $7)
+          RETURNING id
+          `,
+          [
+            propertyId,
+            userId,
+            checkIn,
+            checkOut,
+            Number(quote.total),
+            quote.asset,
+            tenantId,
+          ]
+        )
+      } catch (error) {
+        if ((error as { code?: string }).code === '23P01') {
+          throw new ConflictError('Requested dates are already booked', {
+            code: 'dates_unavailable',
+          })
+        }
+        throw error
+      }
 
       return resInsert.rows[0].id
     })

@@ -30,6 +30,12 @@ describe('Quote Service - Issue 19 & Issue #778', () => {
         calculateStayNights('not-a-date', '2026-12-15')
       }).toThrow(ValidationError)
     })
+
+    it('throws ValidationError on impossible calendar dates like 2027-02-30', () => {
+      expect(() => {
+        calculateStayNights('2027-02-30', '2027-03-04')
+      }).toThrow(ValidationError)
+    })
   })
 
   describe('calculateQuote', () => {

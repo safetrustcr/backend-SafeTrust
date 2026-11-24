@@ -31,11 +31,20 @@ export function parseDateString(value: unknown, fieldName: string): Date {
   if (typeof value !== 'string' || !DATE_RE.test(value)) {
     throw new ValidationError(`${fieldName} must be a valid date in YYYY-MM-DD format`)
   }
-  const timestamp = Date.parse(value)
-  if (Number.isNaN(timestamp)) {
+  const [yStr, mStr, dStr] = value.split('-')
+  const year = Number(yStr)
+  const month = Number(mStr)
+  const day = Number(dStr)
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
     throw new ValidationError(`${fieldName} is an invalid calendar date`)
   }
-  return new Date(value)
+  return date
 }
 
 /**
@@ -43,8 +52,10 @@ export function parseDateString(value: unknown, fieldName: string): Date {
  * Ensures check_out is strictly after check_in.
  */
 export function calculateStayNights(checkIn: string | Date, checkOut: string | Date): number {
-  const start = checkIn instanceof Date ? checkIn.getTime() : Date.parse(checkIn)
-  const end = checkOut instanceof Date ? checkOut.getTime() : Date.parse(checkOut)
+  const resolvedIn = typeof checkIn === 'string' ? parseDateString(checkIn, 'check_in') : checkIn
+  const resolvedOut = typeof checkOut === 'string' ? parseDateString(checkOut, 'check_out') : checkOut
+  const start = resolvedIn instanceof Date ? resolvedIn.getTime() : Date.parse(String(resolvedIn))
+  const end = resolvedOut instanceof Date ? resolvedOut.getTime() : Date.parse(String(resolvedOut))
 
   if (Number.isNaN(start)) {
     throw new ValidationError('check_in is an invalid date')

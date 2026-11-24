@@ -169,11 +169,12 @@ describe('v1 submit booking route (POST /api/v1/bookings/:id/submit) - Issue #77
       .post(`/api/v1/bookings/${RES_ID}/submit`)
       .send({ signed_xdr: SIGNED_XDR })
 
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(202)
     expect(res.body).toEqual({
       success: false,
       reservation_id: RES_ID,
       contract_id: CONTRACT_ID,
+      tx_hash: undefined,
       stage: 'pending_confirmation',
       error: 'Transaction failed on-ledger',
       retryRecordId: 'retry-rec-1',

@@ -62,7 +62,7 @@ Trustless Work smart contracts enforce multi-party governance on the Stellar net
 - When the reservation and escrow are generated, the reservation enters **`escrow_created`** status with an on-chain balance of `0`.
 - The originating booking hold transitions to `converted`.
 - If the agent crashes, abandons the flow, or never submits the signed XDR, the escrow remains unfunded (`balance: 0`).
-- The background hold expiry sweep (`expireHolds` / `POST /api/reservations/:id/cancel`) identifies uncompleted bookings whose hold lifespan has expired, transitions the reservation to `cancelled`, and frees the apartment calendar dates for other guests. No funds are lost or locked.
+- The background hold expiry sweep (`expireHolds`) expires only `pending_payment` and `active` holds whose `expires_at` has passed and does not modify reservations. A `converted` hold and its `escrow_created` reservation remain blocked until cancelled through `POST /api/reservations/:id/cancel`.
 
 ### 5. Escrow Locks Only the Quoted Deposit (Not the Full Stay)
 - The Trustless Work contract amount locks **strictly the security deposit** (`warranty_deposit`), as calculated by the server-side quote service.
