@@ -1,4 +1,4 @@
-import type { ReportCategory } from '@safetrust/types'
+import type { ReportCategory } from '../domain'
 import {
   countListingReports,
   findListingReportApartment,

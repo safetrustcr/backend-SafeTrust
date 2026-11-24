@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { badRequest, duplicate, notFound, ok, serverError } from '../../utils/response'
-import { ResolveDisputePayload } from '@safetrust/types';
+import { ResolveDisputePayload, EscrowEventType, EscrowStatus } from '../../domain';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
@@ -13,7 +13,7 @@ import {
   mirrorReservationStatus,
 } from '../../repositories/reservation.repository';
 import { getPlatformTenantId } from '../../config/tenant';
-import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
+
 import { getValidPriorStates } from '../../lib/escrow-transitions';
 import { logger } from '../../middleware/logger';
 

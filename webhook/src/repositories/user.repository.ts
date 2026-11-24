@@ -1,4 +1,4 @@
-import type { UserRole } from '@safetrust/types'
+import type { UserRole } from '../domain'
 import type { PoolClient, QueryResultRow } from 'pg'
 import { query } from '../services/db'
 

@@ -1,7 +1,7 @@
 
 import { Request, Response } from 'express';
 import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response';
-import { ReleaseFundsPayload } from '@safetrust/types';
+import { ReleaseFundsPayload } from '../../domain';
 import {
   releaseFundsTransactional,
   EscrowNotFoundError,

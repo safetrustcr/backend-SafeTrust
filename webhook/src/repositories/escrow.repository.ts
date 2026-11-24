@@ -47,30 +47,15 @@ import {
   StateConflictError,
   StaleStateError,
 } from '../lib/escrow-transitions'
-import { EscrowStatus as CanonicalStatus, EscrowEventType } from '../types/escrow.types'
+import { EscrowStatus, isEscrowStatus, EscrowEventType } from '../domain'
 
 export { StateConflictError, StaleStateError }
+export type { EscrowStatus }
 
-/**
- * True only for PostgreSQL errors where retrying against the unqualified table
- * name is a legitimate recovery: `42P01` (undefined_table) or `3F000`
- * (invalid_schema_name). Any other error (lock/statement timeout, deadlock,
- * constraint violation) must propagate so the original cause is not masked by a
- * misleading "relation does not exist" from the fallback query.
- */
 function isUndefinedTableError(err: unknown): boolean {
   const code = (err as { code?: string } | null | undefined)?.code
   return code === '42P01' || code === '3F000'
 }
-
-export type EscrowStatus =
-  | 'created'
-  | 'funded'
-  | 'milestone_approved'
-  | 'completed'
-  | 'disputed'
-  | 'resolved'
-  | string
 
 export interface TrustlessWorkEscrow {
   id: string
@@ -132,6 +117,13 @@ export async function getEscrowByContractId(
 
   const escrow = data?.trustless_work_escrows?.[0]
   if (!escrow) {
+    return null
+  }
+
+  if (!isEscrowStatus(escrow.status)) {
+    console.warn(
+      `[escrow.repository] Unknown escrow status '${escrow.status}' from database for contractId '${contractId}'`
+    )
     return null
   }
 
@@ -228,7 +220,7 @@ export async function createEscrow(
   return {
     id: inserted.id,
     contractId: inserted.contractId,
-    status: inserted.status,
+    status: inserted.status as EscrowStatus,
     createdAt: inserted.createdAt,
   }
 }
@@ -365,7 +357,7 @@ export async function fundEscrow(
   return {
     id: updated.id,
     contractId: updated.contractId,
-    status: updated.status,
+    status: updated.status as EscrowStatus,
     balance: updated.balance,
   }
 }
@@ -405,7 +397,7 @@ export async function fundEscrowInTransaction(
     ? {
         id: updated.id,
         contractId: updated.contract_id,
-        status: updated.status,
+        status: updated.status as EscrowStatus,
         balance: updated.balance,
       }
     : null
@@ -425,7 +417,7 @@ export async function releaseFunds(
   validStates?: string[]
 ): Promise<TrustlessWorkEscrow> {
   const canonicalPriorStates = getValidPriorStates(
-    CanonicalStatus.Completed,
+    EscrowStatus.Completed,
     EscrowEventType.FundsReleased
   )
   const allowedPriorStates =
@@ -466,7 +458,7 @@ export async function releaseFunds(
   return {
     id: updated.id,
     contractId: updated.contractId,
-    status: updated.status,
+    status: updated.status as EscrowStatus,
     balance: updated.balance,
   }
 }
@@ -504,7 +496,7 @@ export async function releaseFundsInTransaction(
     ? {
         id: updated.id,
         contractId: updated.contract_id,
-        status: updated.status,
+        status: updated.status as EscrowStatus,
         balance: updated.balance,
       }
     : null
@@ -551,7 +543,7 @@ export async function disputeEscrow(
   return {
     id: updated.id,
     contractId: updated.contractId,
-    status: updated.status,
+    status: updated.status as EscrowStatus,
   }
 }
 
@@ -597,7 +589,7 @@ export async function resolveDispute(
   return {
     id: updated.id,
     contractId: updated.contractId,
-    status: updated.status,
+    status: updated.status as EscrowStatus,
     balance: updated.balance,
   }
 }

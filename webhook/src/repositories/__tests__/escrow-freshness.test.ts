@@ -664,7 +664,7 @@ describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
           } else if (isTerminalStatus(from)) {
             expect(result).toBe(false)
           } else {
-            const expected = CANONICAL_TRANSITIONS[from]?.includes(to) ?? false
+            const expected = (CANONICAL_TRANSITIONS as Record<string, readonly string[]>)[from]?.includes(to) ?? false
             expect(result).toBe(expected)
           }
         }

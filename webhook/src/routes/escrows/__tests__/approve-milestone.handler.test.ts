@@ -9,7 +9,7 @@ import {
   MilestoneNotFoundError,
 } from '../../../services/milestone.service'
 import { getHasuraEndpoint } from '../../../services/hasura'
-import type { ApproveMilestonePayload } from '@safetrust/types'
+import type { ApproveMilestonePayload } from '../../../domain'
 
 jest.mock('../../../services/milestone.service', () => ({
   approveMilestone: jest.fn(),

@@ -3,7 +3,7 @@
 import { Response } from 'express'
 import { syncWalletHandler } from '../sync-wallet.handler'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
-import type { SyncWalletPayload } from '@safetrust/types'
+import type { SyncWalletPayload } from '../../../domain'
 import { syncWallet as query } from '../../../repositories/wallet.repository'
 
 jest.mock('../../../repositories/wallet.repository', () => ({ syncWallet: jest.fn() }))

@@ -1,7 +1,7 @@
 import { hasuraTenantRequest } from '../services/tenant-scoped-hasura'
 import { query } from '../services/db'
 import { PoolClient } from 'pg'
-import type { Reservation } from '@safetrust/types'
+import { isReservationStatus, type Reservation } from '../domain'
 
 /**
  * `reservation.total_amount` disposition: NON-BINDING QUOTE.
@@ -97,6 +97,10 @@ export async function createReservation(
 
   const reservation = data?.insert_safetrust_reservations_one
   if (!reservation) return null
+
+  if (!isReservationStatus(reservation.status)) {
+    throw new Error(`Invalid reservation status returned from database: ${reservation.status}`)
+  }
 
   return {
     id: reservation.id,

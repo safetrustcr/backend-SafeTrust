@@ -12,7 +12,7 @@ import {
 import { notifyHotelEscrowConversation } from '../../src/services/hotel-conversation-notify';
 import { mirrorReservationStatus } from '../../src/repositories/reservation.repository';
 import { connect } from '../../src/services/db';
-import { FundEscrowPayload, ReleaseFundsPayload } from '@safetrust/types';
+import { FundEscrowPayload, ReleaseFundsPayload } from '../../src/domain';
 
 jest.mock('../../src/services/hotel-conversation-notify', () => ({
   notifyHotelEscrowConversation: jest.fn().mockResolvedValue(undefined),

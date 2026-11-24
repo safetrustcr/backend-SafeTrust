@@ -1,7 +1,7 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { createReservation, TenantMismatchError } from '../../services/reservation.service'
-import type { Reservation } from '@safetrust/types'
+import type { Reservation } from '../../domain'
 import { logger } from '../../middleware/logger'
 
 type CreateReservationResponse =

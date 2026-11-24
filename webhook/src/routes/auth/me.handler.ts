@@ -1,6 +1,6 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
-import type { MeResponse, UserRole } from '@safetrust/types'
+import type { MeResponse, UserRole } from '../../domain'
 import { logger } from '../../middleware/logger'
 import { listUserRoles } from '../../repositories/user.repository'
 

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { badRequest, conflict, duplicate, notFound, ok, serverError } from '../../utils/response';
-import { ApproveMilestonePayload } from '@safetrust/types';
+import { ApproveMilestonePayload } from '../../domain';
 import { logger } from '../../middleware/logger';
 import {
   approveMilestone,

@@ -7,7 +7,7 @@ import {
   getTransitionTable,
   StateConflictError,
 } from '../../src/lib/escrow-transitions'
-import { EscrowStatus, EscrowEventType } from '../../src/types/escrow.types'
+import { EscrowStatus, EscrowEventType } from '../../src/domain'
 import { releaseFunds, updateEscrowStatus } from '../../src/repositories/escrow.repository'
 import { releaseFundsHandler } from '../../src/routes/escrows/release-funds.handler'
 import { hasuraRequest } from '../../src/services/hasura'

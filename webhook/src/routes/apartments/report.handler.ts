@@ -1,5 +1,5 @@
 import { Response } from 'express'
-import type { CreateListingReportPayload, ListingReportResponse, ReportCategory } from '@safetrust/types'
+import type { CreateListingReportPayload, ListingReportResponse, ReportCategory } from '../../domain'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { logger } from '../../middleware/logger'
 import { createListingReport } from '../../services/listing-report.service'
