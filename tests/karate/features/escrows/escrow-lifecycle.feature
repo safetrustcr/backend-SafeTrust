@@ -98,12 +98,10 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     And match rows[0].status == 'funded'
     And match rows[0].balance == '1200.0000000'
 
-  # ── Guard: fund is status-gated — cannot fund a funded escrow ─────────────
-  Scenario: Step 2b — funding an already-funded escrow returns 404 (status guard)
-    # IMPORTANT: webhook idempotency short-circuits on (contract_id, event_type)
-    # before the Hasura status filter runs. A second identical fund callback would
-    # return 200 { success: true } without testing the status guard. Clear the
-    # processed escrow.funded event so this request exercises the mutation path.
+  # ── Idempotency: funding an already-funded escrow is a no-op ──────────────
+  Scenario: Step 2b — repeated funding of a funded escrow returns 200
+    # Delete the webhook event so this verifies state-based idempotency rather
+    # than a duplicate event identity.
     * db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id = '" + lifecycleContractId + "' AND event_type = 'escrow.funded'")
     * def body = { "contractId": "#(lifecycleContractId)", "signer": "#(approver)", "amount": 1200.00 }
     * def bodyStr = JSON.stringify(body)
@@ -112,9 +110,9 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     And header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
     And request bodyStr
     When method POST
-    # status is 'funded' — not in ['created', 'pending_funding'] — returns 404
-    Then status 404
-    And match response.error contains 'Escrow not found'
+    # Current state already matches the target state, so the transition is idempotent.
+    Then status 200
+    And match response.success == true
     # Guard must not mutate funded state / balance
     * def rows = db.query("SELECT status, balance FROM safetrust.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match rows[0].status == 'funded'
@@ -163,8 +161,7 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     * def rows = db.query("SELECT status, (CASE WHEN balance = 0::numeric THEN '1' ELSE '0' END) AS balance_is_zero FROM safetrust.trustless_work_escrows WHERE contract_id = '" + lifecycleContractId + "'")
     And match rows[0].status == 'completed'
     And match rows[0].balance_is_zero == '1'
-    # Post-completion: re-fund must still be rejected (status guard holds).
-    # Clear idempotency row so we hit the Hasura status filter, not the 200 duplicate path.
+    # Post-completion: re-fund is rejected by the transactional prior-state guard.
     * db.execute("DELETE FROM safetrust.trustless_work_webhook_events WHERE contract_id = '" + lifecycleContractId + "' AND event_type = 'escrow.funded'")
     * def fundAgain = { "contractId": "#(lifecycleContractId)", "signer": "#(approver)", "amount": 1200.00 }
     * def fundAgainStr = JSON.stringify(fundAgain)
@@ -173,7 +170,8 @@ Feature: Full escrow lifecycle state machine — O(steps) sequential validation
     And header x-trustlesswork-signature = trustlessWorkSignature(fundAgainStr)
     And request fundAgainStr
     When method POST
-    Then status 404
+    Then status 409
+    And match response.error contains 'valid state'
 
   # ── Performance: full 4-step lifecycle completes in O(steps) wall-clock ───
   Scenario: Full lifecycle timing — 4 transitions complete within 10 seconds total

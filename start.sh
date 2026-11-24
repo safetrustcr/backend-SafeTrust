@@ -9,6 +9,9 @@ cd "$HASURA_FOLDER" || {
     exit 1
 }
 
+# Required at runtime — never hardcode a secret in this script.
+: "${HASURA_ADMIN_SECRET:?HASURA_ADMIN_SECRET is required}"
+
 # Note on socat workaround:
 # The original issue (github.com/hasura/graphql-engine/issues/2824) was filed for Hasura v1.x
 # where internal ports only bound to 127.0.0.1. On Hasura v2.x / v2.47.0 with --address 0.0.0.0,
@@ -23,6 +26,6 @@ exec hasura console \
     --address "0.0.0.0" \
     --no-browser \
     --endpoint "${HASURA_GRAPHQL_ENDPOINT:-http://graphql-engine:8080}" \
-    --admin-secret "${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}" \
+    --admin-secret "${HASURA_ADMIN_SECRET}" \
     --console-port "${CONSOLE_PORT:-9696}" \
     --api-port "${API_PORT:-9693}"

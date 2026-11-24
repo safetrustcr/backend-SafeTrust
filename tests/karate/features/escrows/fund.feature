@@ -47,9 +47,8 @@ Feature: POST /api/escrows/fund — TrustlessWork fund confirmation callback
     And match afterSecond[0].balance == '2500.0000000'
     And match afterSecond[0].updated_at == afterFirst[0].updated_at
     * def events = db.query("SELECT processed FROM safetrust.trustless_work_webhook_events WHERE contract_id = 'escrow-created-001' AND event_type = 'escrow.funded' ORDER BY created_at")
-    And match events == '#[2]'
+    And match events == '#[1]'
     And match events[0].processed == '#? _ == "true" || _ == "t" || _ == true'
-    And match events[1].processed == '#? _ == "true" || _ == "t" || _ == true'
 
   Scenario: Missing contractId returns 400
     * def body = { "signer": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "amount": 2500.00 }

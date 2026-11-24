@@ -1,4 +1,4 @@
-import { authMiddleware } from '../auth.middleware'
+import { authMiddleware, resolveSessionTenantId } from '../auth.middleware'
 import { getAuth } from 'firebase-admin/auth'
 import db from '../../services/db'
 
@@ -70,7 +70,29 @@ describe('authMiddleware', () => {
       roles: ['host'],
       role: 'host',
     })
+    expect(req.context).toEqual({
+      uid: mockUser.uid,
+      tenantId: 'safetrust',
+      roles: ['host'],
+      email: mockUser.email,
+    })
     expect(next).toHaveBeenCalled()
+    expect(res.status).not.toHaveBeenCalled()
+  })
+
+  it('should immediately call next() and not re-authenticate when req.context is already present', async () => {
+    req.context = {
+      uid: 'already-authenticated-user',
+      tenantId: 'safetrust',
+      roles: ['admin'],
+      email: 'admin@example.com',
+    }
+
+    await authMiddleware(req, res, next)
+
+    expect(next).toHaveBeenCalled()
+    expect(getAuth).not.toHaveBeenCalled()
+    expect(db.query).not.toHaveBeenCalled()
     expect(res.status).not.toHaveBeenCalled()
   })
 
@@ -99,6 +121,67 @@ describe('authMiddleware', () => {
     await authMiddleware(req, res, next)
     expect(req.user).toMatchObject({ roles: ['guest'], role: 'guest' })
     expect(next).toHaveBeenCalled()
+  })
+
+  describe('session tenant', () => {
+    function verifyAs(token: Record<string, unknown>) {
+      req.headers['authorization'] = 'Bearer valid-token'
+      ;(getAuth as jest.Mock).mockReturnValue({
+        verifyIdToken: jest.fn().mockResolvedValue(token),
+      })
+    }
+
+    it('takes the tenant from the verified Hasura claims', async () => {
+      verifyAs({
+        uid: '123',
+        'https://hasura.io/jwt/claims': { 'x-hasura-tenant-id': 'hotel_industry' },
+      })
+
+      await authMiddleware(req, res, next)
+      expect(req.context.tenantId).toBe('hotel_industry')
+      expect(next).toHaveBeenCalled()
+    })
+
+    it('uses the platform tenant when the token has no tenant claim', async () => {
+      verifyAs({ uid: '123' })
+
+      await authMiddleware(req, res, next)
+      expect(req.context.tenantId).toBe('safetrust')
+      expect(next).toHaveBeenCalled()
+    })
+
+    it('rejects an x-tenant-id header that names another tenant', async () => {
+      verifyAs({ uid: '123' })
+      req.headers['x-tenant-id'] = 'hotel_industry'
+
+      await authMiddleware(req, res, next)
+      expect(res.status).toHaveBeenCalledWith(403)
+      expect(req.context).toBeUndefined()
+      expect(next).not.toHaveBeenCalled()
+    })
+
+    it('accepts an x-tenant-id header that matches the session tenant', async () => {
+      verifyAs({ uid: '123', tenant_id: 'hotel_industry' })
+      req.headers['x-tenant-id'] = 'hotel_industry'
+
+      await authMiddleware(req, res, next)
+      expect(req.context.tenantId).toBe('hotel_industry')
+      expect(next).toHaveBeenCalled()
+    })
+
+    it('resolves claims in order: Hasura namespace, tenant_id, Firebase tenant', () => {
+      expect(resolveSessionTenantId({ firebase: { tenant: 'fb-tenant' } })).toBe('fb-tenant')
+      expect(
+        resolveSessionTenantId({ tenant_id: 'claim-tenant', firebase: { tenant: 'fb-tenant' } })
+      ).toBe('claim-tenant')
+      expect(
+        resolveSessionTenantId({
+          'https://hasura.io/jwt/claims': { 'x-hasura-tenant-id': 'hasura-tenant' },
+          tenant_id: 'claim-tenant',
+        })
+      ).toBe('hasura-tenant')
+      expect(resolveSessionTenantId({ tenant_id: '   ' })).toBe('safetrust')
+    })
   })
 
   describe('mock-token bypass', () => {

@@ -11,16 +11,22 @@ import {
 import {
   mirrorReservationStatus,
 } from '../../repositories/reservation.repository';
+import { getPlatformTenantId } from '../../config/tenant';
 import { EscrowEventType, EscrowStatus } from '../../types/escrow.types';
-
-// Compile-time SafeTrust escrow state machine (Neon native addon).
-// Replaces hardcoded status strings with the authoritative transition table.
-const { getValidPriorStates } = require('../../../../crates/escrow-state-machine') as {
-  getValidPriorStates: (to: string, event: string) => string
-}
+import { getValidPriorStates } from '../../lib/escrow-transitions';
+import { logger } from '../../middleware/logger';
 
 const EVENT_TYPE = EscrowEventType.DisputeOpened;
 
+/**
+ * Handles the escrow dispute opened webhook event.
+ * Validates payload, checks idempotency, transitions the escrow to 'disputed',
+ * and mirrors the reservation status to disputed.
+ *
+ * @param req - Express request containing DisputeEscrowPayload
+ * @param res - Express response object
+ * @returns Express response indicating success, duplicate, or error
+ */
 export const disputeEscrowHandler = async (
   req: Request<{}, {}, DisputeEscrowPayload>,
   res: Response
@@ -53,8 +59,9 @@ export const disputeEscrowHandler = async (
     }
 
     // 2 — Update trustless_work_escrows
-    const validStates: string[] = JSON.parse(
-      getValidPriorStates(EscrowStatus.Disputed, EscrowEventType.DisputeOpened) as string
+    const validStates: string[] = getValidPriorStates(
+      EscrowStatus.Disputed,
+      EscrowEventType.DisputeOpened
     );
 
     const updated = await disputeEscrow(contractId, validStates);
@@ -68,19 +75,15 @@ export const disputeEscrowHandler = async (
     const escrowId = updated.id;
 
     // 3 — Mirror status to safetrust.reservations
-    await mirrorReservationStatus(escrowId, 'disputed');
+    await mirrorReservationStatus(escrowId, 'disputed', getPlatformTenantId());
 
     await markWebhookEventProcessed(eventId);
 
-    console.log(`[escrow/dispute] ✅ Dispute opened — contractId: ${contractId}, disputer: ${disputer}`);
+    logger.info('escrow.dispute.succeeded', { contractId, disputer });
     return ok(res);
 
   } catch (error) {
-    const err = error as Error & { details?: unknown };
-    console.error('[escrow/dispute] ❌ error:', err.details || err.message);
-    if (err.details) {
-      return serverError(res, { error: 'Failed to update escrow status', details: err.details });
-    }
-    return serverError(res, { error: 'Internal server error', details: err.message });
+    logger.error('escrow.dispute.failed', { contractId: req.body?.contractId, error });
+    return serverError(res, 'Failed to update escrow status');
   }
 };

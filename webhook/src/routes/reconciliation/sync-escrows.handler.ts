@@ -19,6 +19,7 @@ import {
   ReconciliationResponse,
   runSorobanValidation,
 } from '../../services/reconciliation.service'
+import { logger } from '../../middleware/logger'
 
 export interface SyncEscrowsPayload {
   [key: string]: unknown
@@ -49,7 +50,7 @@ export const syncEscrowsHandler = async (
   res: Response
 ): Promise<Response> => {
   const startTime = Date.now()
-  console.log('[reconciliation] 🔄 Starting escrow sync...')
+  logger.info('reconciliation.sync.started')
 
   try {
     const contractIds = await fetchEscrowContractIds('safetrust')
@@ -58,27 +59,23 @@ export const syncEscrowsHandler = async (
     const stale = await detectStaleEscrows(STALE_ESCROW_DAYS)
     const summary = formatReconciliationSummary(sync, drift, stale, Date.now() - startTime)
 
-    console.log(`[reconciliation] ✅ Sync complete in ${summary.durationMs}ms`)
-    console.log(`   Total escrows     : ${summary.totalEscrows}`)
-    console.log(`   Chunks            : ${summary.chunks}`)
-    console.log(`   Updated rows      : ${summary.updated}`)
-    console.log(`   Unchanged rows    : ${summary.unchanged}`)
-    console.log(`   Skipped rows      : ${summary.skipped}`)
-    console.log(`   Stale rows        : ${summary.staleCount}`)
-    console.log(`   Soroban drift     : ${summary.sorobanDrift}`)
-    console.log(`   Soroban corrected : ${summary.sorobanCorrected}`)
-    if (summary.errors > 0) {
-      console.log(`   Errors            : ${summary.errors}`)
-    }
+    const level = summary.errors > 0 ? 'warn' : 'info'
+    logger[level]('reconciliation.sync.completed', {
+      durationMs: summary.durationMs,
+      totalEscrows: summary.totalEscrows,
+      chunks: summary.chunks,
+      updated: summary.updated,
+      unchanged: summary.unchanged,
+      skipped: summary.skipped,
+      stale: summary.staleCount,
+      sorobanDrift: summary.sorobanDrift,
+      sorobanCorrected: summary.sorobanCorrected,
+      errors: summary.errors,
+    })
 
     return ok(res, summary)
   } catch (fatalError) {
-    const fErr = fatalError as Error
-    console.error('[reconciliation] ❌ Fatal error:', fErr.message)
-    return serverError(res, {
-      success: false,
-      error: 'Reconciliation failed',
-      details: fErr.message,
-    })
+    logger.error('reconciliation.sync.failed', { error: fatalError })
+    return serverError(res, 'Reconciliation failed')
   }
 }

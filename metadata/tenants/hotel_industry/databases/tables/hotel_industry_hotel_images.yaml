@@ -1,0 +1,52 @@
+table:
+  name: hotel_images
+  schema: hotel_industry
+
+object_relationships:
+  - name: hotel
+    using:
+      foreign_key_constraint_on: hotel_id
+
+select_permissions:
+  - role: anonymous
+    permission:
+      columns:
+        - id
+        - hotel_id
+        - image_url
+        - position
+        - uploaded_at
+      filter: {}
+  - role: user
+    permission:
+      columns:
+        - id
+        - hotel_id
+        - image_url
+        - position
+        - uploaded_at
+      filter: {}
+
+insert_permissions:
+  - role: admin
+    permission:
+      columns:
+        - hotel_id
+        - image_url
+        - position
+      check: {}
+
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - hotel_id
+        - image_url
+        - position
+      filter: {}
+      check: {}
+
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}

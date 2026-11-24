@@ -1,28 +1,28 @@
 import { Response } from 'express'
-import { query } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import type { MeResponse, UserRole } from '@safetrust/types'
-
-interface RoleRow {
-  name: UserRole
-}
+import { logger } from '../../middleware/logger'
+import { listUserRoles } from '../../repositories/user.repository'
 
 export const meHandler = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<Response> => {
-  const { uid, email } = req.user!
+  const uid = req.context?.uid || req.user?.uid
+  const email = req.context?.email || req.user?.email
+
+  if (!uid) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
 
   try {
-    const result = await query<RoleRow>(
-      `SELECT r.name
-       FROM safetrust.user_roles ur
-       JOIN safetrust.roles r ON r.id = ur.role_id
-       WHERE ur.user_id = $1`,
-      [uid]
-    )
+    // Read roles from centralized request context; fall back to DB lookup if missing
+    let roles: UserRole[] = (req.context?.roles || req.user?.roles) as UserRole[]
 
-    const roles = result.rows.map((row) => row.name)
+    if (!roles || roles.length === 0) {
+      roles = await listUserRoles(uid)
+    }
+
     const isHost = roles.some((role) => ['host', 'admin'].includes(role))
     const response: MeResponse = {
       user: { id: uid, email: email ?? '', roles },
@@ -32,7 +32,7 @@ export const meHandler = async (
     return res.status(200).json(response)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error('[auth/me] error:', message)
+    logger.error('auth.me.failed', { error: message })
     return res.status(500).json({ error: 'Failed to resolve user roles' })
   }
 }

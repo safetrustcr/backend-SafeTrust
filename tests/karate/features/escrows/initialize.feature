@@ -73,7 +73,7 @@ Feature: POST /api/escrows/initialize — TrustlessWork initialize callback
     Then status 400
     And match response.error == 'escrow_type must be one of: single_release, multi_release'
 
-  Scenario: Duplicate contract_id returns 500 — UNIQUE constraint enforced
+  Scenario: Existing contract_id returns the existing escrow without duplication
     * def body =
     """
     {
@@ -91,18 +91,20 @@ Feature: POST /api/escrows/initialize — TrustlessWork initialize callback
     And header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
     And request bodyStr
     When method POST
-    Then status 500
-    And match response.error == 'Failed to persist escrow record'
-    And match response.details[0].message contains 'duplicate key value violates unique constraint'
+    Then status 200
+    And match response.success == true
+    * def rows = db.query("SELECT status FROM safetrust.trustless_work_escrows WHERE contract_id = 'escrow-created-001'")
+    And match rows == '#[1]'
+    And match rows[0].status == 'created'
 
-  Scenario: Missing signature header returns 401
+  Scenario: Missing signature header returns 402 (x402 payment required)
     * def body = { "contract_id": "STELLAR_CONTRACT_TEST_001", "marker": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "approver": "GAPPROVER111WALLETADDRESS111111111111111111111111111111111", "releaser": "GRELEASER111WALLETADDRESS111111111111111111111111111111111", "amount": 2500.00, "escrow_type": "single_release" }
     Given path '/api/escrows/initialize'
     And header Content-Type = 'application/json'
     And request body
     When method POST
-    Then status 401
-    And match response.error == 'Missing x-trustlesswork-signature header'
+    Then status 402
+    And match response.error == 'Payment Required'
 
   Scenario: Incorrect signature returns 401
     * def body = { "contract_id": "STELLAR_CONTRACT_TEST_001", "marker": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z", "approver": "GAPPROVER111WALLETADDRESS111111111111111111111111111111111", "releaser": "GRELEASER111WALLETADDRESS111111111111111111111111111111111", "amount": 2500.00, "escrow_type": "single_release" }

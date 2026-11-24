@@ -34,8 +34,7 @@ pub fn verify_hmac_sha256(payload: &[u8], signature: &str, secret: &[u8]) -> boo
     // Lengths must match before the constant-time compare so we never
     // panic, and so a length mismatch cannot become a timing oracle on
     // the digest bytes themselves.
-    expected.len() == signature.len()
-        && constant_time_eq(expected.as_bytes(), signature.as_bytes())
+    expected.len() == signature.len() && constant_time_eq(expected.as_bytes(), signature.as_bytes())
 }
 
 fn crc16_xmodem(data: &[u8]) -> u16 {
@@ -136,11 +135,7 @@ fn verify_hmac_signature(mut cx: FunctionContext) -> JsResult<JsBoolean> {
         Err(_) => return Ok(cx.boolean(false)),
     };
 
-    Ok(cx.boolean(verify_hmac_sha256(
-        &payload,
-        &signature,
-        secret.as_bytes(),
-    )))
+    Ok(cx.boolean(verify_hmac_sha256(&payload, &signature, secret.as_bytes())))
 }
 
 /// Validate a Stellar address using strkey encoding rules.

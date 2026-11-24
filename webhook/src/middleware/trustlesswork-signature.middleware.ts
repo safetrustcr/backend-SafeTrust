@@ -1,6 +1,7 @@
 'use strict'
 
 import { Request, Response, NextFunction } from 'express'
+import { logger } from './logger'
 
 /**
  * Request populated with the exact request bytes by
@@ -12,16 +13,6 @@ interface TrustlessWorkRequest extends Request {
 
 const REPLAY_WINDOW_MS = 5 * 60 * 1_000
 const TIMESTAMP_PATTERN = /^[0-9]+$/
-
-// Native Rust HMAC verifier (Neon). Compiled by `npm run build:rust`.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { verifyHmacSignature } = require('../../../crates/webhook-verifier') as {
-  verifyHmacSignature: (
-    payload: Buffer | Uint8Array,
-    signature: string,
-    secret: string
-  ) => boolean
-}
 
 function headerValue(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) {
@@ -66,7 +57,7 @@ export const verifyTrustlessWorkSignature = (
 ): void => {
   const secret = process.env.TRUSTLESSWORK_WEBHOOK_SECRET
   if (!secret) {
-    console.error('[trustlesswork-signature] TRUSTLESSWORK_WEBHOOK_SECRET not set')
+    logger.error('trustlesswork_signature.secret_not_configured')
     res.status(500).json({ error: 'Webhook secret not configured' })
     return
   }
@@ -100,9 +91,18 @@ export const verifyTrustlessWorkSignature = (
 
   let isValid: boolean
   try {
+    // Load the optional native verifier only when a signed callback arrives.
+    // Its absence must not prevent the service's liveness endpoint from starting.
+    const { verifyHmacSignature } = require('../../../crates/webhook-verifier') as {
+      verifyHmacSignature: (
+        payload: Buffer | Uint8Array,
+        signature: string,
+        secret: string
+      ) => boolean
+    }
     isValid = verifyHmacSignature(payload, signature, secret)
   } catch (err) {
-    console.error('[trustlesswork-signature] Rust verifier error:', err)
+    logger.error('trustlesswork_signature.verifier_failed', { error: err })
     res.status(500).json({ error: 'Signature verification failed' })
     return
   }

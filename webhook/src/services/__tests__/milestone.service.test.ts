@@ -12,6 +12,19 @@ const mockedClient = {
 
 jest.mock('../../services/db', () => ({
   connect: jest.fn(async () => mockedClient),
+  withTransaction: jest.fn(async (fn: (client: any) => Promise<any>) => {
+    await mockedClient.query('BEGIN');
+    try {
+      const result = await fn(mockedClient);
+      await mockedClient.query('COMMIT');
+      return result;
+    } catch (error) {
+      await mockedClient.query('ROLLBACK');
+      throw error;
+    } finally {
+      mockedClient.release();
+    }
+  }),
 }));
 
 // Mock the native escrow-state-machine Neon addon — it requires a compiled
@@ -349,6 +362,23 @@ describe('approveMilestoneAndUpdateReservation', () => {
     await expect(
       approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC')
     ).rejects.toThrow('database request failed');
+
+    expect(mockedClient.query).toHaveBeenLastCalledWith('ROLLBACK');
+    expect(mockedClient.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws EscrowStateConflictError when escrow update matches 0 rows due to state conflict', async () => {
+    mockedClient.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'milestone-1' }] }) // milestone
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'escrow-1', status: 'funded' }] }) // escrow select
+      .mockResolvedValueOnce({ rowCount: 1 }) // milestone update
+      .mockResolvedValueOnce({ rowCount: 0 }) // escrow update matches 0 rows
+      .mockResolvedValueOnce({}); // ROLLBACK
+
+    await expect(
+      approveMilestoneAndUpdateReservation('escrow-1', 'check_in', 'GABC')
+    ).rejects.toBeInstanceOf(EscrowStateConflictError);
 
     expect(mockedClient.query).toHaveBeenLastCalledWith('ROLLBACK');
     expect(mockedClient.release).toHaveBeenCalledTimes(1);

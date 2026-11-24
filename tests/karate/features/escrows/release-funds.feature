@@ -5,6 +5,7 @@ Feature: POST /api/escrows/release-funds
     * def contractId = 'escrow-funded-001'
     * def releaseSigner = 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z'
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-escrows.sql'))
+    * db.execute("UPDATE safetrust.trustless_work_escrows SET status = 'milestone_approved' WHERE contract_id = '" + contractId + "'")
 
   Scenario: Successfully release funds -> update status and balance to 0 -> 200 OK
     * def body = { contractId: '#(contractId)', releaseSigner: '#(releaseSigner)' }

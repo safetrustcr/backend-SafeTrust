@@ -17,12 +17,7 @@ array_relationships:
           name: bid_status_histories
           schema: safetrust
 select_permissions:
-  - role: anonymous
-    permission:
-      columns: []
-      filter: {}
-    comment: "Anonymous users cannot access bid requests"
-  - role: user
+  - role: guest
     permission:
       columns:
         - id
@@ -34,30 +29,33 @@ select_permissions:
         - created_at
         - updated_at
       filter:
-        # Row-level security: users can see bids they made or bids on their apartments
-        _or:
-          # User is the tenant (bid maker)
-          - tenant_id:
-              _eq: X-Hasura-User-Id
-          # User is the apartment owner
-          - apartment:
-              owner_id:
-                _eq: X-Hasura-User-Id
-      comment: "Users can see bids they made or bids on their apartments"
+        tenant_id:
+          _eq: X-Hasura-User-Id
+      comment: "Guests can view their own offers"
+  - role: host
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - tenant_id
+        - current_status
+        - proposed_price
+        - desired_move_in
+        - created_at
+        - updated_at
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+      comment: "Hosts can view offers for their own apartments"
   - role: admin
     permission:
       columns: "*"
-      filter:
-        # Admins can view all bid requests in their tenant
-        apartment:
-          owner_id:
-            _neq: ""
-      comment: "Admins can view all bid requests in their tenant"
+      filter: {}
 insert_permissions:
-  - role: user
+  - role: guest
     permission:
       check:
-        # Row-level security: users can only create bids for their own tenant_id
         tenant_id:
           _eq: X-Hasura-User-Id
       columns:
@@ -65,69 +63,62 @@ insert_permissions:
         - proposed_price
         - desired_move_in
       set:
-        # Automatically set tenant_id to current user
         tenant_id: X-Hasura-User-Id
-      comment: "Users can create bids for apartments in their tenant"
+      comment: "Guests can create offers as themselves"
   - role: admin
     permission:
-      check:
-        apartment:
-          owner_id:
-            _neq: ""
+      check: {}
       columns:
         - apartment_id
         - tenant_id
         - proposed_price
         - desired_move_in
         - current_status
-      comment: "Admins can create bid requests in their tenant"
 update_permissions:
-  - role: user
+  - role: guest
     permission:
       columns:
         - proposed_price
         - desired_move_in
       filter:
         _and:
-          # Row-level security: users can only update their own bids
           - tenant_id:
               _eq: X-Hasura-User-Id
-          # Users can only update pending or viewed bids
           - current_status:
               _in: ["PENDING", "VIEWED"]
       check:
         tenant_id:
           _eq: X-Hasura-User-Id
-      comment: "Users can update their pending bids"
-  - role: admin
+      comment: "Guests can update their own pending offers"
+  - role: host
     permission:
       columns:
         - current_status
       filter:
         apartment:
           owner_id:
-            _neq: ""
+            _eq: X-Hasura-User-Id
       check:
         apartment:
           owner_id:
-            _neq: ""
-      comment: "Admins can update bid status for bids in their tenant"
+            _eq: X-Hasura-User-Id
+      comment: "Hosts can update the status of offers for their apartments"
+  - role: admin
+    permission:
+      columns:
+        - current_status
+      filter: {}
+      check: {}
 delete_permissions:
-  - role: user
+  - role: guest
     permission:
       filter:
         _and:
-          # Row-level security: users can only delete their own bids
           - tenant_id:
               _eq: X-Hasura-User-Id
-          # Users can only delete cancelled bids
           - current_status:
               _eq: "CANCELLED"
-      comment: "Users can delete their own cancelled bids"
+      comment: "Guests can delete their own cancelled offers"
   - role: admin
     permission:
-      filter:
-        apartment:
-          owner_id:
-            _neq: ""
-      comment: "Admins can delete bids in their tenant"
+      filter: {}

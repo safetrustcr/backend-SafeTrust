@@ -1,0 +1,32 @@
+table:
+  name: listing_reports
+  schema: safetrust
+object_relationships:
+  - name: apartment
+    using:
+      foreign_key_constraint_on: apartment_id
+  - name: reporter
+    using:
+      foreign_key_constraint_on: reporter_id
+select_permissions:
+  - role: admin
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - reporter_id
+        - category
+        - details
+        - status
+        - client_op_id
+        - created_at
+      filter: {}
+    comment: "Only admins can read listing reports"
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - status
+      filter: {}
+      check: {}
+    comment: "Only admins can update report status"

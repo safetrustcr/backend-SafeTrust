@@ -1,9 +1,14 @@
 import { hasuraRequest } from './hasura';
+import { AppError, NotFoundError } from '../utils/errors';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
-import { connect } from './db';
+import { withTransaction } from './db';
+import {
+  getValidPriorStates,
+  StateConflictError,
+} from '../lib/escrow-transitions';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -14,35 +19,32 @@ export interface EscrowLookupResult {
 
 // ── Errors ─────────────────────────────────────────────────────────────────────
 
-export class MilestoneValidationError extends Error {
-  readonly statusCode: number;
+export class MilestoneValidationError extends AppError {
   constructor(message: string, statusCode = 400) {
-    super(message);
+    super(message, statusCode, { code: 'milestone_validation_error' });
     this.name = 'MilestoneValidationError';
-    this.statusCode = statusCode;
   }
 }
 
-export class EscrowNotFoundError extends Error {
-  readonly statusCode = 404;
+export class EscrowNotFoundError extends NotFoundError {
   constructor(message: string) {
-    super(message);
+    super(message, { code: 'escrow_not_found' });
     this.name = 'EscrowNotFoundError';
   }
 }
 
-export class EscrowStateConflictError extends Error {
-  readonly statusCode = 409;
+export { StateConflictError };
+
+export class EscrowStateConflictError extends StateConflictError {
   constructor(message: string) {
     super(message);
     this.name = 'EscrowStateConflictError';
   }
 }
 
-export class MilestoneNotFoundError extends Error {
-  readonly statusCode = 404;
+export class MilestoneNotFoundError extends NotFoundError {
   constructor(message: string) {
-    super(message);
+    super(message, { code: 'milestone_not_found' });
     this.name = 'MilestoneNotFoundError';
   }
 }
@@ -113,23 +115,16 @@ export async function approveMilestoneAndUpdateReservation(
 ): Promise<void> {
   const approvedAt = new Date().toISOString();
 
-  // Resolve valid prior states before any DB write.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
-    getValidPriorStates: (to: string, event: string) => string;
-  };
-  const validStates: string[] = JSON.parse(
-    getValidPriorStates('milestone_approved', 'milestone.approved') as string
+  // Resolve valid prior states before any DB write via canonical shared module.
+  const validStates: string[] = getValidPriorStates(
+    'milestone_approved',
+    'milestone.approved'
   );
 
   const reservationStatus =
     milestoneId === 'check_in' ? 'checked_in' : 'checked_out';
 
-  const client = await connect();
-
-  try {
-    await client.query('BEGIN');
-
+  return withTransaction(async (client) => {
     const milestoneResult = await client.query(
       `
         SELECT id, status
@@ -165,7 +160,6 @@ export async function approveMilestoneAndUpdateReservation(
       escrowStatus === 'milestone_approved' &&
       milestoneResult.rows[0].status === 'approved'
     ) {
-      await client.query('COMMIT');
       return;
     }
 
@@ -189,16 +183,23 @@ export async function approveMilestoneAndUpdateReservation(
       [approver, approvedAt, escrowId, milestoneId]
     );
 
-    await client.query(
+    const updateEscrowResult = await client.query(
       `
         UPDATE safetrust.trustless_work_escrows
         SET
           status = 'milestone_approved',
           updated_at = $1
         WHERE id = $2
+          AND status = ANY($3)
       `,
-      [approvedAt, escrowId]
+      [approvedAt, escrowId, validStates]
     );
+
+    if (updateEscrowResult && updateEscrowResult.rowCount === 0) {
+      throw new EscrowStateConflictError(
+        'Escrow cannot transition to milestone_approved: current status not in valid states'
+      );
+    }
 
     await client.query(
       `
@@ -210,22 +211,7 @@ export async function approveMilestoneAndUpdateReservation(
       `,
       [reservationStatus, approvedAt, escrowId]
     );
-
-    await client.query('COMMIT');
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK');
-    } catch (rollbackError) {
-      console.error(
-        '[milestone.service] Failed to rollback milestone approval transaction:',
-        rollbackError
-      );
-    }
-
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**

@@ -1,3 +1,20 @@
 table:
   name: escrow_analytics_by_day
   schema: safetrust
+select_permissions:
+  # Required so the role can read rows returned by getEscrowAnalyticsByDay.
+  # The table itself is never written to, so its own root fields stay hidden.
+  - role: host
+    permission:
+      columns:
+        - day
+        - webhook_records
+        - lifecycle_events
+        - processed_events
+        - last_active_users
+        - escrows_created
+        - cohort_active_escrows
+        - cohort_active_value_usdc
+      filter: {}
+      query_root_fields: []
+      subscription_root_fields: []

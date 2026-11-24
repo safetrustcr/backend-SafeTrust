@@ -229,6 +229,23 @@ The admin secret grants **unrestricted access to every GraphQL operation and
 Hasura metadata API**, bypassing all row-level security and permission rules.
 Anyone who holds it can read, write, or delete any row in any tenant.
 
+### Runtime injection and rotation
+
+The secret is provided at runtime as `HASURA_ADMIN_SECRET`:
+
+- `docker-compose.yml` maps it to Hasura's server-side
+  `HASURA_GRAPHQL_ADMIN_SECRET` and passes `HASURA_ADMIN_SECRET` to the webhook.
+- `bin/start`, `metadata/setup-tenant.sh`, and `metadata/deploy-tenant.sh`
+  read it from the environment and fail closed when it is absent.
+- CI reads it from the GitHub Actions secret store.
+- Production must read it from the cloud secret manager.
+
+No file in this repository contains a default or fallback admin secret. To
+rotate the secret, generate a new value in the Hasura Cloud dashboard, update
+the GitHub Actions secret and cloud secret manager, redeploy Hasura and the
+webhook, then confirm the old value is rejected by both. Run a repository-wide
+grep for the old value and for hardcoded admin secrets before merging.
+
 ### Why `NEXT_PUBLIC_HASURA_ADMIN_SECRET` must never exist
 
 Next.js (and any browser-executed JavaScript framework) exposes any environment
@@ -249,7 +266,7 @@ If `NEXT_PUBLIC_HASURA_ADMIN_SECRET` were set:
 
 | What | Where it lives | Why |
 |---|---|---|
-| Admin secret | `.env` (server-only), Docker Compose env, CI/CD secrets | Never sent to browsers |
+| Admin secret | `HASURA_ADMIN_SECRET` environment variable (local `.env`, CI secret store, or cloud secret manager) | Never committed and never sent to browsers |
 | JWT secret | Hasura config (`HASURA_GRAPHQL_JWT_SECRET`) | Used to verify tokens; also server-only |
 | User JWT | Issued by Firebase, stored in the browser | Scoped by role; cannot escalate privileges |
 

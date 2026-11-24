@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
+import { logger } from './logger'
 
 type X402Addon = {
   validateX402Payment: (header: string, requiredAmount: number) => string
@@ -20,19 +21,25 @@ function getX402Addon(): X402Addon | null {
     // Load the experimental native addon only when x402 is enabled and used.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     x402Addon = require('../../../crates/x402-processor')
-  } catch {
+  } catch (error) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       x402Addon = require('../../crates/x402-processor')
-    } catch {
+    } catch (fallbackError) {
       x402Addon = null
+      logger.warn('x402.native_addon_unavailable', {
+        effect: 'payment validation fails closed',
+        primaryPathError: error instanceof Error ? error.message : error,
+        fallbackPathError:
+          fallbackError instanceof Error ? fallbackError.message : fallbackError,
+      })
     }
   }
 
   return x402Addon ?? null
 }
 
-/** Test seam: allow tests to override or inject the native addon. */
+/** Test seam: allow tests to override or inject the native addon */
 export function setX402Addon(addon: X402Addon | null): void {
   x402Addon = addon
 }
@@ -130,7 +137,7 @@ export const requireX402Payment =
       next()
     } catch (error) {
       const err = error as Error
-      console.error('[x402] Validation error:', err.message)
+      logger.error('x402.validation_failed', { error: err })
       res.status(500).json({ error: 'Payment validation failed' })
     }
   }

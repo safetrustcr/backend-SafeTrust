@@ -1,9 +1,11 @@
 import { Response } from 'express'
-import { connect } from '../../../services/db'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { createWalletChallengeHandler, verifyWalletChallengeHandler } from '../wallet-challenge.handler'
+import { createWalletChallenge } from '../../../repositories/wallet.repository'
+import { verifyWalletChallenge } from '../../../services/wallet.service'
 
-jest.mock('../../../services/db', () => ({ connect: jest.fn() }))
+jest.mock('../../../repositories/wallet.repository', () => ({ createWalletChallenge: jest.fn() }))
+jest.mock('../../../services/wallet.service', () => ({ verifyWalletChallenge: jest.fn() }))
 jest.mock('../../../../../crates/stellar-utils', () => ({
   validateStellarAddress: jest.fn(() => true),
   verifyStellarEd25519: jest.fn(() => true),
@@ -20,10 +22,6 @@ function makeResponse(): Response {
 
 function makeRequest(body: Record<string, unknown>, uid = 'user-1'): AuthenticatedRequest {
   return { user: { uid }, body } as AuthenticatedRequest
-}
-
-function makeClient(query: jest.Mock) {
-  return { query, release: jest.fn() }
 }
 
 describe('wallet ownership challenge handlers', () => {
@@ -52,8 +50,6 @@ describe('wallet ownership challenge handlers', () => {
   })
 
   it('creates a challenge bound to the authenticated user, tenant, domain, network and address', async () => {
-    const query = jest.fn().mockResolvedValue({ rows: [] })
-    ;(connect as jest.Mock).mockResolvedValue(makeClient(query))
     const res = makeResponse()
 
     await createWalletChallengeHandler(makeRequest({ wallet_address: ADDRESS }) as never, res)
@@ -65,54 +61,38 @@ describe('wallet ownership challenge handlers', () => {
     expect(payload.challenge).toContain('"domain":"safetrust.example"')
     expect(payload.challenge).toContain('"network":"testnet"')
     expect(payload.challenge).toContain(`"walletAddress":"${ADDRESS}"`)
-    expect(query).toHaveBeenCalledWith('DELETE FROM safetrust.wallet_challenges WHERE expires_at <= NOW()')
-    expect(query.mock.calls[1][0]).toContain('INSERT INTO safetrust.wallet_challenges')
+    expect(createWalletChallenge).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 'user-1',
+      address: ADDRESS,
+      tenantId: 'safetrust',
+      domain: 'safetrust.example',
+      network: 'testnet',
+    }))
   })
 
   it('atomically consumes a valid challenge and creates the wallet association', async () => {
-    const challenge = {
-      user_id: 'user-1', wallet_address: ADDRESS, tenant_id: 'safetrust',
-      domain: 'safetrust.example', network: 'testnet', nonce: 'n'.repeat(64),
-      expires_at: new Date(Date.now() + 60_000),
-    }
-    const query = jest.fn(async (sql: string) => {
-      if (sql.includes('FROM safetrust.wallet_challenges')) return { rows: [challenge] }
-      if (sql.includes('FROM safetrust.user_wallets')) return { rows: [] }
-      return { rows: [] }
-    })
-    ;(connect as jest.Mock).mockResolvedValue(makeClient(query))
+    ;(verifyWalletChallenge as jest.Mock).mockResolvedValue({ kind: 'verified', address: ADDRESS })
     const res = makeResponse()
 
     await verifyWalletChallengeHandler(makeRequest({ challengeId: 'challenge-1', signature: 'a'.repeat(128) }) as never, res)
 
     expect(res.status).toHaveBeenCalledWith(200)
-    expect(query.mock.calls.map(([sql]) => sql)).toEqual(expect.arrayContaining([
-      'BEGIN',
-      expect.stringContaining('INSERT INTO safetrust.user_wallets'),
-      expect.stringContaining('DELETE FROM safetrust.wallet_challenges'),
-      'COMMIT',
-    ]))
+    expect(res.json).toHaveBeenCalledWith({ success: true, wallet_address: ADDRESS })
+    expect(verifyWalletChallenge).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 'user-1',
+      challengeId: 'challenge-1',
+      signature: 'a'.repeat(128),
+      context: { tenant: 'safetrust', domain: 'safetrust.example', network: 'testnet' },
+    }))
   })
 
   it('rejects reassignment without changing the existing owner', async () => {
-    const challenge = {
-      user_id: 'user-2', wallet_address: ADDRESS, tenant_id: 'safetrust',
-      domain: 'safetrust.example', network: 'testnet', nonce: 'n'.repeat(64),
-      expires_at: new Date(Date.now() + 60_000),
-    }
-    const query = jest.fn(async (sql: string) => {
-      if (sql.includes('FROM safetrust.wallet_challenges')) return { rows: [challenge] }
-      if (sql.includes('FROM safetrust.user_wallets')) return { rows: [{ user_id: 'user-1' }] }
-      return { rows: [] }
-    })
-    ;(connect as jest.Mock).mockResolvedValue(makeClient(query))
+    ;(verifyWalletChallenge as jest.Mock).mockResolvedValue({ kind: 'already-registered' })
     const res = makeResponse()
 
     await verifyWalletChallengeHandler(makeRequest({ challengeId: 'challenge-1', signature: 'a'.repeat(128) }, 'user-2') as never, res)
 
     expect(res.status).toHaveBeenCalledWith(409)
     expect(res.json).toHaveBeenCalledWith({ error: 'WALLET_ALREADY_REGISTERED' })
-    expect(query.mock.calls.some(([sql]) => sql.includes('INSERT INTO safetrust.user_wallets'))).toBe(false)
-    expect(query).toHaveBeenCalledWith('COMMIT')
   })
 })

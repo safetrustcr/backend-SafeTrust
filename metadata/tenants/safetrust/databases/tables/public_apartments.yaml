@@ -9,13 +9,27 @@ select_permissions:
         - name
         - description
         - price
-        - location
-        - created_at
-        - updated_at
-        - host_id
+        - warranty_deposit
+        - address
+        - coordinates
+        - bedrooms
+        - bathrooms
+        - capacity
+        - max_guests
+        - floor_area
+        - furnished
+        - pet_friendly
+        - category
+        - is_available
+        - available_from
+        - available_until
+        - owner_id
       filter:
-        host_id:
-          _eq: x-hasura-user-id
+        _and:
+          - deleted_at:
+              _is_null: true
+          - is_available:
+              _eq: true
   - role: host
     permission:
       columns:
@@ -23,51 +37,91 @@ select_permissions:
         - name
         - description
         - price
-        - location
+        - warranty_deposit
+        - address
+        - coordinates
+        - bedrooms
+        - bathrooms
+        - capacity
+        - max_guests
+        - floor_area
+        - furnished
+        - pet_friendly
+        - category
+        - is_available
+        - available_from
+        - available_until
+        - owner_id
         - created_at
         - updated_at
-        - host_id
+        - deleted_at
       filter:
-        host_id:
-          _eq: x-hasura-user-id
+        _or:
+          - owner_id:
+              _eq: x-hasura-user-id
+          - _and:
+              - deleted_at:
+                  _is_null: true
+              - is_available:
+                  _eq: true
   - role: admin
     permission:
-      columns:
-        - id
-        - name
-        - description
-        - price
-        - location
-        - created_at
-        - updated_at
-        - host_id
+      columns: "*"
       filter: {}
 insert_permissions:
   - role: host
     permission:
       check:
-        host_id:
+        owner_id:
           _eq: x-hasura-user-id
       columns:
         - name
         - description
         - price
-        - location
-        - host_id
+        - warranty_deposit
+        - address
+        - coordinates
+        - bedrooms
+        - bathrooms
+        - capacity
+        - max_guests
+        - floor_area
+        - furnished
+        - pet_friendly
+        - category
+        - is_available
+        - available_from
+        - available_until
+      set:
+        owner_id: x-hasura-user-id
 update_permissions:
   - role: host
     permission:
       filter:
-        host_id:
-          _eq: x-hasura-user-id
+        _and:
+          - owner_id:
+              _eq: x-hasura-user-id
+          - deleted_at:
+              _is_null: true
       columns:
         - name
         - description
         - price
-        - location
-delete_permissions:
-  - role: host
-    permission:
-      filter:
-        host_id:
+        - warranty_deposit
+        - address
+        - coordinates
+        - bedrooms
+        - bathrooms
+        - capacity
+        - max_guests
+        - floor_area
+        - furnished
+        - pet_friendly
+        - category
+        - is_available
+        - available_from
+        - available_until
+        - deleted_at
+      check:
+        owner_id:
           _eq: x-hasura-user-id

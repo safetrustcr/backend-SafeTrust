@@ -2,26 +2,42 @@ table:
   schema: safetrust
   name: pricing_rules
 select_permissions:
-  - role: anonymous
-    permission:
-      columns: []
-      filter: {}
-    comment: "Anonymous users cannot access pricing rules"
-  - role: user
+  - role: guest
     permission:
       columns:
         - id
         - rule_name
-        - description
-        - transaction_type
-        - fee_percentage
+        - rule_type
+        - token
         - base_amount
+        - percentage
+        - min_amount
+        - max_amount
+        - priority
         - is_active
         - created_at
       filter:
         is_active:
           _eq: true
       comment: "Users can view active pricing rules"
+  - role: host
+    permission:
+      columns:
+        - id
+        - rule_name
+        - rule_type
+        - token
+        - base_amount
+        - percentage
+        - min_amount
+        - max_amount
+        - priority
+        - is_active
+        - created_at
+      filter:
+        is_active:
+          _eq: true
+      comment: "Hosts can view active pricing rules"
   - role: admin
     permission:
       columns: "*"
@@ -33,10 +49,13 @@ insert_permissions:
       check: {}
       columns:
         - rule_name
-        - description
-        - transaction_type
-        - fee_percentage
+        - rule_type
+        - token
         - base_amount
+        - percentage
+        - min_amount
+        - max_amount
+        - priority
         - is_active
       comment: "Admins can create pricing rules"
 update_permissions:
@@ -44,9 +63,13 @@ update_permissions:
     permission:
       columns:
         - rule_name
-        - description
-        - fee_percentage
+        - rule_type
+        - token
         - base_amount
+        - percentage
+        - min_amount
+        - max_amount
+        - priority
         - is_active
       filter: {}
       check: {}

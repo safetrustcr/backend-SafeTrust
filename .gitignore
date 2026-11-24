@@ -26,7 +26,6 @@ venv/
 # Karate test artifacts
 tests/results/**
 !tests/results/.gitkeep
-tests/results/deploy_init_timings.json
 tests/karate.jar
 tests/postgresql-jdbc.jar
 
@@ -53,8 +52,6 @@ target/
 
 # Neon native addon (platform-specific; rebuilt by npm run build:rust)
 *.node
-/crates/zk-verifier/bb
-/crates/zk-verifier/crs/
 
 # Python specific
 .mypy_cache/

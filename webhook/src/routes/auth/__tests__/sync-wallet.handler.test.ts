@@ -2,18 +2,17 @@
 
 import { Response } from 'express'
 import { syncWalletHandler } from '../sync-wallet.handler'
-import { query } from '../../../services/db'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import type { SyncWalletPayload } from '@safetrust/types'
+import { syncWallet as query } from '../../../repositories/wallet.repository'
 
-jest.mock('../../../services/db', () => ({
-  query: jest.fn(),
-}))
+jest.mock('../../../repositories/wallet.repository', () => ({ syncWallet: jest.fn() }))
 
 // Real, checksum-valid Stellar address (matches the Karate sync-wallet fixture).
 const VALID_STELLAR = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
 // Fabricated address with the right shape but a bad SEP-23 checksum.
 const BAD_CHECKSUM_STELLAR = 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z'
+const VALID_ETH = '0x71C845137c37D73F4085411A3194134134944111'
 
 // Whether the Rust stellar-utils addon is built in this environment. When it
 // is, validation is stricter (checksum + Ed25519-public-key-only) than the JS
@@ -125,8 +124,10 @@ describe('syncWalletHandler', () => {
   it('returns 500 when the database upsert fails', async () => {
     ;(query as jest.Mock).mockRejectedValue(new Error('connection refused'))
 
+    // Must be a non-Stellar address: any G…/C… strkey is rejected with 400
+    // WALLET_CHALLENGE_REQUIRED before the upsert runs.
     const req = makeRequest({
-      wallet_address: VALID_STELLAR,
+      wallet_address: '0x1234567890abcdef1234567890abcdef12345678',
       chain_type: 'ETH',
       is_primary: false,
     })

@@ -220,11 +220,11 @@ table:
 | YAML filenames (`public_users.yaml`) | ❌ Unchanged | The `public_` prefix is a file naming convention, not a schema reference |
 | `tables.yaml` include list | ❌ Unchanged | Lists canonical file paths, which do not change |
 | Table names inside YAML | ❌ Unchanged | `name: users` remains `users` |
-| PostGIS view entries | ❌ Unchanged | `geography_columns`, `geometry_columns`, and `spatial_ref_sys` remain in `public` |
-| GraphQL field names | ❌ Unchanged | Field names remain identical after Hasura re-tracks under `safetrust.*` |
+| PostGIS view entries | ❌ Untracked | `geography_columns`, `geometry_columns`, and `spatial_ref_sys` remain in PostgreSQL `public`, but are no longer tracked in Hasura safetrust metadata (untracked in #760) |
+| GraphQL field names | ⚠️ **Changed unless a `custom_name` is set** | Hasura exposes a table outside `public` as `<schema>_<table>` (e.g. `safetrust_users`). A table keeps its original field names only if its YAML has `configuration.custom_name` — `users` (issue #666), `roles`, `escrow_milestones` and `trustless_work_escrows` do; see `docs/investigations/hasura-users-schema-666.md` for the tables that still do not. |
 
 > [!IMPORTANT]
-> The spatial tables `public_geography_columns`, `public_geometry_columns`, and `public_spatial_ref_sys` were NOT moved by migration `1779300000001` and remain on `schema: public`.
+> The spatial tables `public_geography_columns`, `public_geometry_columns`, and `public_spatial_ref_sys` were NOT moved by migration `1779300000001` and remain on `schema: public` in PostgreSQL. They are no longer tracked in Hasura `safetrust` metadata to prevent cluttering admin GraphQL introspection.
 
 ---
 
@@ -330,13 +330,15 @@ flowchart TD
 <a id="deployment-commands--binstart-mapping"></a>
 ## 💻 Deployment Commands & bin/start Mapping
 
-Execute the following sequential commands during migration deployment:
+Execute the following sequential commands during migration deployment.
+Export `HASURA_ADMIN_SECRET` in your shell first; never paste a literal secret
+into a command or commit it.
 
 ```bash
 # Step 1 — Apply database migration
 hasura migrate apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
+  --admin-secret "$HASURA_ADMIN_SECRET" \
   --database-name safetrust \
   --version 1779300000001 \
   --type up
@@ -344,11 +346,11 @@ hasura migrate apply \
 # Step 2 — Reload Hasura metadata
 hasura metadata apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 # Step 3 — GraphQL smoke test
 curl -X POST http://localhost:8080/v1/graphql \
-  -H "x-hasura-admin-secret: myadminsecretkey" \
+  -H "x-hasura-admin-secret: $HASURA_ADMIN_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"query": "query { safetrust_reservations(limit: 1) { id } }"}'
 ```
@@ -390,7 +392,7 @@ Prior to executing the migration, capture a pre-migration metadata snapshot:
 # Step 0 — Export pre-migration metadata snapshot
 hasura metadata export \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 # Create snapshot backup (fail if metadata_backup already exists to avoid overwrite)
 if [ -e metadata_backup ]; then
@@ -406,7 +408,7 @@ cp -a metadata metadata_backup
 # Step 1 — Revert migration
 hasura migrate apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
+  --admin-secret "$HASURA_ADMIN_SECRET" \
   --database-name safetrust \
   --version 1779300000001 \
   --type down
@@ -418,7 +420,7 @@ cp -a metadata_backup metadata
 # Step 3 — Apply restored metadata
 hasura metadata apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 ```
 
 `down.sql` mirrors `up.sql` statement for statement: every table and function moves back with `SET SCHEMA public`, `search_path` is reset to `public`, and the now-empty `safetrust` schema is dropped. Because the down path operates purely on system catalog metadata, the rollback preserves all data intact.

@@ -34,3 +34,57 @@ object_relationships:
   - name: escrow
     using:
       foreign_key_constraint_on: escrow_id
+select_permissions:
+  - role: guest
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - guest_id
+        - escrow_id
+        - check_in_date
+        - check_out_date
+        - total_amount
+        - asset_code
+        - status
+        - created_at
+        - updated_at
+      filter:
+        guest_id:
+          _eq: X-Hasura-User-Id
+    comment: "Guests can view their own reservations"
+  - role: host
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - guest_id
+        - escrow_id
+        - check_in_date
+        - check_out_date
+        - total_amount
+        - asset_code
+        - status
+        - created_at
+        - updated_at
+      filter:
+        apartment:
+          owner_id:
+            _eq: X-Hasura-User-Id
+    comment: "Hosts can view reservations for their owned apartments"
+  - role: admin
+    permission:
+      columns:
+        - id
+        - apartment_id
+        - guest_id
+        - escrow_id
+        - check_in_date
+        - check_out_date
+        - total_amount
+        - asset_code
+        - status
+        - created_at
+        - updated_at
+      filter: {}
+    comment: "Admins can view all reservations"

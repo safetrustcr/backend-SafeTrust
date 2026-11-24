@@ -108,6 +108,8 @@ describe('upsertEscrowsBulk', () => {
         approver: '',
         releaser: '',
         escrow_type: 'single_release',
+        ledger_seq: null,
+        network: null,
       },
     ]);
     expect(connString).toContain('@db:');

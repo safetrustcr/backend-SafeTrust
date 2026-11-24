@@ -26,9 +26,10 @@
 //!   network/parse failure (it only throws for a caller bug, e.g. malformed
 //!   `chunksJson`, matching the previous JS behaviour of surfacing bad input).
 //! * **Lossless pass-through** — escrow objects are returned to JS *verbatim* as
-//!   parsed JSON (`serde_json::Value`), so the existing UPSERT keeps writing
-//!   every field it did before (`amount`, `roles.{marker,approver,releaser}`,
-//!   `escrowType`, …). The DB layer is intentionally left in JavaScript.
+//!   parsed JSON (`serde_json::Value`) in the Trustless Work V1 indexer shape
+//!   (`flags`, `milestones`, `roles.{serviceProvider,releaseSigner,…}`, `type`).
+//!   JavaScript normalizes them (`normalizeIndexerEscrow`) before the UPSERT, so
+//!   both sync paths share one mapping. The DB layer stays in JavaScript.
 //! * **Response-shape tolerance** — the indexer may return `{ "escrows": [...] }`
 //!   or a bare `[...]`; both are accepted, exactly like `fetchEscrowsByContractIds`.
 
@@ -41,9 +42,19 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
-/// Path segment appended to the TrustlessWork base URL. Kept in sync with
-/// `fetchEscrowsByContractIds` in `webhook/src/lib/reconciliation.js`.
-const INDEXER_PATH: &str = "/helper/get-escrows-by-contract-ids";
+/// Trustless Work V1 indexer read. Kept in sync with `fetchEscrowsByContractIds`
+/// in `webhook/src/lib/source-adapters/tw.adapter.ts`.
+const INDEXER_PATH: &str = "/helper/get-escrow-by-contract-ids";
+
+/// Query for one chunk: one `contractIds` pair per id (the parameter is a
+/// `string[]`), plus `validateOnChain=true` so the indexer checks its copy
+/// against the contract before answering.
+fn indexer_query(chunk: &[String]) -> Vec<(&'static str, String)> {
+    let mut query: Vec<(&'static str, String)> =
+        chunk.iter().map(|id| ("contractIds", id.clone())).collect();
+    query.push(("validateOnChain", "true".to_string()));
+    query
+}
 
 /// Result of processing a single chunk. Serialised into the JSON array returned
 /// to JavaScript. `escrows` carries the raw indexer objects so the JS UPSERT is
@@ -83,8 +94,7 @@ fn http_client() -> &'static Client {
 
 /// Parse the `chunksJson` argument into `Vec<Vec<String>>`.
 fn parse_chunks(chunks_json: &str) -> Result<Vec<Vec<String>>, String> {
-    serde_json::from_str(chunks_json)
-        .map_err(|e| format!("invalid chunks JSON: {e}"))
+    serde_json::from_str(chunks_json).map_err(|e| format!("invalid chunks JSON: {e}"))
 }
 
 /// Normalise the indexer response body into a flat list of escrow objects.
@@ -143,7 +153,7 @@ async fn fetch_chunk(
     let mut request = client
         .get(&url)
         .timeout(timeout) // reqwest per-request timeout (whole request incl. body)
-        .query(&[("contractIds", chunk.join(","))]);
+        .query(&indexer_query(chunk));
 
     // Match the JS helper: only send x-api-key when a key is configured.
     if !api_key.is_empty() {
@@ -203,12 +213,12 @@ async fn process_chunks(
                 // Hard per-chunk deadline: even if the reqwest timeout is evaded
                 // (e.g. a slow TLS handshake), tokio::time::timeout guarantees the
                 // chunk resolves within timeout_ms.
-                let outcome =
-                    tokio::time::timeout(timeout, fetch_chunk(client, &api_url, &api_key, &chunk, timeout))
-                        .await
-                        .unwrap_or_else(|_| {
-                            Err(format!("chunk timed out after {timeout_ms}ms"))
-                        });
+                let outcome = tokio::time::timeout(
+                    timeout,
+                    fetch_chunk(client, &api_url, &api_key, &chunk, timeout),
+                )
+                .await
+                .unwrap_or_else(|_| Err(format!("chunk timed out after {timeout_ms}ms")));
 
                 let duration_ms = started.elapsed().as_millis() as u64;
                 match outcome {
@@ -387,11 +397,24 @@ mod tests {
     fn builds_indexer_url_tolerating_trailing_slash() {
         assert_eq!(
             build_url("https://api.example.com"),
-            "https://api.example.com/helper/get-escrows-by-contract-ids"
+            "https://api.example.com/helper/get-escrow-by-contract-ids"
         );
         assert_eq!(
             build_url("https://api.example.com/"),
-            "https://api.example.com/helper/get-escrows-by-contract-ids"
+            "https://api.example.com/helper/get-escrow-by-contract-ids"
+        );
+    }
+
+    #[test]
+    fn sends_each_contract_id_and_validates_on_chain() {
+        let chunk = vec!["CA1".to_string(), "CB2".to_string()];
+        assert_eq!(
+            indexer_query(&chunk),
+            vec![
+                ("contractIds", "CA1".to_string()),
+                ("contractIds", "CB2".to_string()),
+                ("validateOnChain", "true".to_string()),
+            ]
         );
     }
 
@@ -399,7 +422,11 @@ mod tests {
     async fn failed_chunks_are_isolated_and_indexed() {
         // Unroutable address → every chunk fails fast, but the call still returns
         // one result per chunk, each carrying its own error and correct index.
-        let chunks = vec![vec!["a".to_string()], vec!["b".to_string()], vec!["c".to_string()]];
+        let chunks = vec![
+            vec!["a".to_string()],
+            vec!["b".to_string()],
+            vec!["c".to_string()],
+        ];
         let results = process_chunks(
             chunks,
             "http://127.0.0.1:0".to_string(), // port 0 is not connectable
@@ -412,7 +439,10 @@ mod tests {
         assert_eq!(results.len(), 3);
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.chunk_index, i, "results must be ordered by chunk_index");
-            assert!(r.error.is_some(), "unreachable host must yield a per-chunk error");
+            assert!(
+                r.error.is_some(),
+                "unreachable host must yield a per-chunk error"
+            );
             assert_eq!(r.fetched, 0);
             assert!(r.escrows.is_empty());
         }
@@ -422,8 +452,14 @@ mod tests {
     async fn zero_concurrency_is_clamped_not_unbounded() {
         // max_concurrency = 0 must be treated as 1, never as "unbounded".
         let chunks = vec![vec!["a".to_string()]];
-        let results =
-            process_chunks(chunks, "http://127.0.0.1:0".to_string(), String::new(), 0, 100).await;
+        let results = process_chunks(
+            chunks,
+            "http://127.0.0.1:0".to_string(),
+            String::new(),
+            0,
+            100,
+        )
+        .await;
         assert_eq!(results.len(), 1);
     }
 }

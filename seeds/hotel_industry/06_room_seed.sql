@@ -1,7 +1,7 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS postgis;
 
-INSERT INTO hotel_industry.rooms (hotel_id, room_number, room_type_id, price_night, status, capacity)
+INSERT INTO hotel_industry.rooms (hotel_id, room_number, room_type_id, price_night, is_active, capacity)
 SELECT
     h.id,
     '101',
