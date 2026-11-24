@@ -72,7 +72,7 @@ mark the existing migrations as applied so they are not replayed:
 `hasura migrate apply --skip-execution --database-name <tenant> --version <version>`
 for each version, or `hasura migrate status --database-name <tenant>` to check.
 
-Then set the new env vars and restart. `bin/start` and `bin/deploy_init` register each source with
+Then set the new env vars and restart. `bin/start` registers each source with
 `replace_configuration: true`, so sources in existing Hasura metadata are repointed from
 `PG_DATABASE_URL` to the tenant URLs. Drop the old schemas from `postgres`
 once verified.
