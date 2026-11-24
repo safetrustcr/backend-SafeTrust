@@ -161,8 +161,8 @@ import { errorHandler } from '../../src/middleware/error-handler'
 const SEEDED_APT_ID = '99999999-9999-4999-8999-999999999999'
 const SEEDED_HOST_ID = 'host-seeded-stellar-1'
 const SEEDED_AGENT_ID = 'agent-seeded-stellar-2'
-const SEEDED_AGENT_WALLET = 'GAATN5DTESTAGENTWALLET0000000000000000000000000000000000001'
-const SEEDED_HOST_WALLET = 'GBATN5DTESTHOSTWALLET0000000000000000000000000000000000001'
+const SEEDED_AGENT_WALLET = 'GAATN5DTESTAGENTWALLETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2'
+const SEEDED_HOST_WALLET = 'GBATN5DTESTHOSTWALLETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2'
 
 function app() {
   const a = express()
@@ -238,7 +238,6 @@ describe('E2E Agent Bookings Flow on Testnet (Issue #778)', () => {
         check_out: '2026-12-20',
         guests: 2,
       })
-
     expect(bookingRes.status).toBe(201)
     expect(bookingRes.body).toMatchObject({
       reservation_id: 'res-seeded-e2e-1',
