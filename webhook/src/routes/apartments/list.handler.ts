@@ -102,7 +102,22 @@ export const listApartments = async (
       }
     }
 
-    if (category) {
+    let validCheckIn: string | undefined
+    let validCheckOut: string | undefined
+    // Dates held by someone else (pending_payment or active) are unavailable.
+    if (checkIn || checkOut) {
+      if (
+        typeof checkIn !== 'string' ||
+        typeof checkOut !== 'string' ||
+        !isValidIsoCalendarDate(checkIn) ||
+        !isValidIsoCalendarDate(checkOut) ||
+        checkOut <= checkIn
+      ) {
+        return res.status(400).json({ error: 'checkIn and checkOut must both be YYYY-MM-DD dates with checkOut after checkIn.' })
+      }
+      validCheckIn = checkIn
+      validCheckOut = checkOut
+    }
 
     const allowedSorts = ['price_asc', 'price_desc', 'created_at']
     if (sort && !allowedSorts.includes(sort)) {
@@ -116,6 +131,8 @@ export const listApartments = async (
       bedrooms: beds,
       petFriendly: normalizedPet,
       category,
+      checkIn: validCheckIn,
+      checkOut: validCheckOut,
       limit: validatedLimit,
       offset,
       sort: (sort || 'created_at') as ApartmentListFilters['sort'],
