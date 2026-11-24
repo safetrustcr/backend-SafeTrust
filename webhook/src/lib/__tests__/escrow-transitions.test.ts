@@ -6,36 +6,36 @@ import {
   assertValidTransition,
   getTransitionTable,
   StateConflictError,
-} from '../../src/lib/escrow-transitions'
-import { EscrowStatus, EscrowEventType } from '../../src/types/escrow.types'
-import { releaseFunds, updateEscrowStatus } from '../../src/repositories/escrow.repository'
-import { releaseFundsHandler } from '../../src/routes/escrows/release-funds.handler'
-import { hasuraRequest } from '../../src/services/hasura'
+} from '../escrow-transitions'
+import { EscrowStatus, EscrowEventType } from '../../types/escrow.types'
+import { releaseFunds, updateEscrowStatus } from '../../repositories/escrow.repository'
+import { releaseFundsHandler } from '../../routes/escrows/release-funds.handler'
+import { hasuraRequest } from '../../services/hasura'
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
-} from '../../src/repositories/webhook-event.repository'
+} from '../../repositories/webhook-event.repository'
 import {
   mirrorReservationStatus,
   mirrorReservationStatusInTransaction,
-} from '../../src/repositories/reservation.repository'
-import { notifyHotelEscrowConversation } from '../../src/services/hotel-conversation-notify'
+} from '../../repositories/reservation.repository'
+import { notifyHotelEscrowConversation } from '../../services/hotel-conversation-notify'
 import {
   EscrowStateConflictError,
   releaseFundsTransactional,
-} from '../../src/services/escrow.service'
+} from '../../services/escrow.service'
 import { Request, Response } from 'express'
 
-jest.mock('../../src/services/hasura')
-jest.mock('../../src/repositories/webhook-event.repository')
-jest.mock('../../src/repositories/reservation.repository')
-jest.mock('../../src/services/hotel-conversation-notify')
+jest.mock('../../services/hasura')
+jest.mock('../../repositories/webhook-event.repository')
+jest.mock('../../repositories/reservation.repository')
+jest.mock('../../services/hotel-conversation-notify')
 
 const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>
 const mockedLogAndCheck = logAndCheckWebhookEvent as jest.MockedFunction<typeof logAndCheckWebhookEvent>
 const mockedMarkProcessed = markWebhookEventProcessed as jest.MockedFunction<typeof markWebhookEventProcessed>
 const mockedReleaseFundsTransactional =
-  jest.spyOn(require('../../src/services/escrow.service'), 'releaseFundsTransactional') as jest.MockedFunction<
+  jest.spyOn(require('../../services/escrow.service'), 'releaseFundsTransactional') as jest.MockedFunction<
     typeof releaseFundsTransactional
   >
 const mockedMirrorReservation = mirrorReservationStatus as jest.MockedFunction<typeof mirrorReservationStatus>

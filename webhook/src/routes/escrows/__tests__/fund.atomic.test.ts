@@ -1,24 +1,24 @@
 'use strict';
 
 import { Request, Response } from 'express';
-import { fundEscrowHandler } from '../../src/routes/escrows/fund.handler';
-import { releaseFundsHandler } from '../../src/routes/escrows/release-funds.handler';
+import { fundEscrowHandler } from '../../../routes/escrows/fund.handler';
+import { releaseFundsHandler } from '../../../routes/escrows/release-funds.handler';
 import {
   fundEscrowTransactional,
   executeEscrowLifecycleTransition,
   EscrowNotFoundError,
   EscrowStateConflictError,
-} from '../../src/services/escrow.service';
-import { notifyHotelEscrowConversation } from '../../src/services/hotel-conversation-notify';
-import { mirrorReservationStatus } from '../../src/repositories/reservation.repository';
-import { connect } from '../../src/services/db';
+} from '../../../services/escrow.service';
+import { notifyHotelEscrowConversation } from '../../../services/hotel-conversation-notify';
+import { mirrorReservationStatus } from '../../../repositories/reservation.repository';
+import { connect } from '../../../services/db';
 import { FundEscrowPayload, ReleaseFundsPayload } from '@safetrust/types';
 
-jest.mock('../../src/services/hotel-conversation-notify', () => ({
+jest.mock('../../../services/hotel-conversation-notify', () => ({
   notifyHotelEscrowConversation: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock('../../src/services/db', () => {
+jest.mock('../../../services/db', () => {
   const mockConnect = jest.fn();
   return {
     connect: mockConnect,

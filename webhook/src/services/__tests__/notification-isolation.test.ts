@@ -10,20 +10,20 @@
  */
 
 import { Request, Response } from 'express'
-import { fundEscrowHandler } from '../../src/routes/escrows/fund.handler'
-import { releaseFundsHandler } from '../../src/routes/escrows/release-funds.handler'
+import { fundEscrowHandler } from '../../routes/escrows/fund.handler'
+import { releaseFundsHandler } from '../../routes/escrows/release-funds.handler'
 import {
   fundEscrowTransactional,
   releaseFundsTransactional,
-} from '../../src/services/escrow.service'
+} from '../escrow.service'
 import {
   NOTIFICATION_TIMEOUT_MS,
   notifyHotelEscrowConversation,
-} from '../../src/services/hotel-conversation-notify'
-import { sendHotelConversationMessage } from '../../src/services/hotel-conversation.service'
-import { query } from '../../src/services/db'
+} from '../hotel-conversation-notify'
+import { sendHotelConversationMessage } from '../hotel-conversation.service'
+import { query } from '../db'
 
-jest.mock('../../src/services/escrow.service', () => {
+jest.mock('../escrow.service', () => {
   class EscrowNotFoundError extends Error {}
   class EscrowStateConflictError extends Error {}
   return {
@@ -34,12 +34,12 @@ jest.mock('../../src/services/escrow.service', () => {
   }
 })
 
-jest.mock('../../src/services/db', () => ({
+jest.mock('../db', () => ({
   query: jest.fn(),
   withTransaction: jest.fn(),
 }))
 
-jest.mock('../../src/services/hotel-conversation.service', () => ({
+jest.mock('../hotel-conversation.service', () => ({
   sendHotelConversationMessage: jest.fn(),
 }))
 

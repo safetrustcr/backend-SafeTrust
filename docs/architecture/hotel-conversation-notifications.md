@@ -26,7 +26,8 @@ graph LR
 The handlers call the notifier only after the escrow transaction has
 committed. A failure or timeout is logged and the handler still returns
 `200`, so the lifecycle response never depends on messaging. The tests in
-`webhook/tests/notifications/` cover this for both handlers.
+`webhook/src/services/__tests__/notification-isolation.test.ts` cover this for
+both handlers.
 
 ## Time budget
 
