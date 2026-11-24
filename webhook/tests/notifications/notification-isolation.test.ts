@@ -21,7 +21,7 @@ import {
   notifyHotelEscrowConversation,
 } from '../../src/services/hotel-conversation-notify'
 import { sendHotelConversationMessage } from '../../src/services/hotel-conversation.service'
-import { query } from '../../src/services/db'
+import { hotelQuery } from '../../src/services/db'
 
 jest.mock('../../src/services/escrow.service', () => {
   class EscrowNotFoundError extends Error {}
@@ -35,7 +35,7 @@ jest.mock('../../src/services/escrow.service', () => {
 })
 
 jest.mock('../../src/services/db', () => ({
-  query: jest.fn(),
+  hotelQuery: jest.fn(),
   withTransaction: jest.fn(),
 }))
 
@@ -46,7 +46,7 @@ jest.mock('../../src/services/hotel-conversation.service', () => ({
 const mockedFund = fundEscrowTransactional as jest.MockedFunction<typeof fundEscrowTransactional>
 const mockedRelease = releaseFundsTransactional as jest.MockedFunction<typeof releaseFundsTransactional>
 const mockedSend = sendHotelConversationMessage as jest.MockedFunction<typeof sendHotelConversationMessage>
-const mockedQuery = query as jest.MockedFunction<typeof query>
+const mockedQuery = hotelQuery as jest.MockedFunction<typeof hotelQuery>
 
 const PARTIES_ROW = {
   reservation_id: 'res-1',
