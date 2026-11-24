@@ -34,7 +34,7 @@
 
 import { hasuraRequest } from '../services/hasura'
 import { PoolClient } from 'pg'
-import { query, connect, type Queryable } from '../services/db'
+import { query, connect, withTransaction, type Queryable } from '../services/db'
 import {
   evaluateFreshness,
   formatExactBalance,
@@ -698,131 +698,107 @@ export async function updateEscrowWithFreshness(
     observation = observationOrClient as EscrowObservationInput
   }
 
-  const executeQuery = async <T extends import('pg').QueryResultRow = Record<string, unknown>>(
-    sql: string,
-    params: unknown[] = []
-  ): Promise<import('pg').QueryResult<T>> => {
-    if (db) {
-      return db.query<T>(sql, params)
-    }
-    return query<T>(sql, params)
+  if (!db) {
+    return withTransaction((txClient) =>
+      updateEscrowWithFreshness(txClient, idOrContractId, observation)
+    )
   }
 
-  let txOpen = false
+  // Caller owns transaction lifecycle when providing Queryable; updateEscrowWithFreshness preserves savepoint behavior
+  const selectSql = `
+    SELECT id, contract_id, status, balance::text, ledger_seq, network
+    FROM safetrust.trustless_work_escrows
+    WHERE id::text = $1 OR contract_id = $1
+    FOR UPDATE
+  `
+  let storedRow: EscrowTransactionRow | null = null
+  await db.query('SAVEPOINT sp_select')
   try {
-    await executeQuery('BEGIN')
-    txOpen = true
-
-    // Select with FOR UPDATE (row-level lock)
-    // Supports either UUID id or contract_id string
-    const selectSql = `
+    const res = await db.query<EscrowTransactionRow>(selectSql, [idOrContractId])
+    storedRow = res.rows[0] ?? null
+    await db.query('RELEASE SAVEPOINT sp_select')
+  } catch (err) {
+    await db.query('ROLLBACK TO SAVEPOINT sp_select')
+    if (!isUndefinedTableError(err)) throw err
+    // Fall back to unqualified trustless_work_escrows table if safetrust schema is not configured
+    const fallbackSql = `
       SELECT id, contract_id, status, balance::text, ledger_seq, network
-      FROM safetrust.trustless_work_escrows
+      FROM trustless_work_escrows
       WHERE id::text = $1 OR contract_id = $1
       FOR UPDATE
     `
-    let storedRow: EscrowTransactionRow | null = null
-    await executeQuery('SAVEPOINT sp_select')
+    const res = await db.query<EscrowTransactionRow>(fallbackSql, [idOrContractId])
+    storedRow = res.rows[0] ?? null
+  }
+
+  const storedState: StoredEscrowState | null = storedRow
+    ? {
+        id: storedRow.id,
+        contractId: storedRow.contract_id,
+        status: storedRow.status,
+        balance: storedRow.balance ?? '0.0000000',
+        ledgerSeq: storedRow.ledger_seq,
+        network: storedRow.network,
+      }
+    : null
+
+  const incoming: IncomingEscrowObservation = {
+    contractId: storedState?.contractId ?? idOrContractId,
+    status: observation.status,
+    balance: observation.balance ?? (storedState?.balance ?? '0.0000000'),
+    amount: observation.amount,
+    ledgerSeq: observation.ledgerSeq,
+    network: observation.network,
+  }
+
+  // CodeRabbit review comment: Reject missing-row observations instead of inserting placeholders
+  const outcome: FreshnessOutcome = storedRow
+    ? evaluateFreshness(storedState, incoming)
+    : {
+        type: 'REJECT_INVALID_TRANSITION',
+        reason: 'Cannot create an escrow row without an existing escrow identity',
+      }
+
+  if (outcome.type === 'WRITE' && storedRow) {
+    // Update existing row
+    const updateSql = `
+      UPDATE safetrust.trustless_work_escrows
+      SET status = $2, balance = $3::numeric, ledger_seq = $4,
+          network = COALESCE(safetrust.trustless_work_escrows.network, $5),
+          updated_at = NOW()
+      WHERE id::text = $1 OR contract_id = $1
+    `
+    await db.query('SAVEPOINT sp_update')
     try {
-      const res = await executeQuery<EscrowTransactionRow>(selectSql, [idOrContractId])
-      storedRow = res.rows[0] ?? null
-      await executeQuery('RELEASE SAVEPOINT sp_select')
+      await db.query(updateSql, [
+        idOrContractId,
+        outcome.status,
+        outcome.balance,
+        outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+        incoming.network ?? null,
+      ])
+      await db.query('RELEASE SAVEPOINT sp_update')
     } catch (err) {
-      await executeQuery('ROLLBACK TO SAVEPOINT sp_select')
+      await db.query('ROLLBACK TO SAVEPOINT sp_update')
       if (!isUndefinedTableError(err)) throw err
-      // Fall back to unqualified trustless_work_escrows table if safetrust schema is not configured
-      const fallbackSql = `
-        SELECT id, contract_id, status, balance::text, ledger_seq, network
-        FROM trustless_work_escrows
-        WHERE id::text = $1 OR contract_id = $1
-        FOR UPDATE
-      `
-      const res = await executeQuery<EscrowTransactionRow>(fallbackSql, [idOrContractId])
-      storedRow = res.rows[0] ?? null
-    }
-
-    const storedState: StoredEscrowState | null = storedRow
-      ? {
-          id: storedRow.id,
-          contractId: storedRow.contract_id,
-          status: storedRow.status,
-          balance: storedRow.balance ?? '0.0000000',
-          ledgerSeq: storedRow.ledger_seq,
-          network: storedRow.network,
-        }
-      : null
-
-    const incoming: IncomingEscrowObservation = {
-      contractId: storedState?.contractId ?? idOrContractId,
-      status: observation.status,
-      balance: observation.balance ?? (storedState?.balance ?? '0.0000000'),
-      amount: observation.amount,
-      ledgerSeq: observation.ledgerSeq,
-      network: observation.network,
-    }
-
-    // CodeRabbit review comment: Reject missing-row observations instead of inserting placeholders
-    const outcome: FreshnessOutcome = storedRow
-      ? evaluateFreshness(storedState, incoming)
-      : {
-          type: 'REJECT_INVALID_TRANSITION',
-          reason: 'Cannot create an escrow row without an existing escrow identity',
-        }
-
-    if (outcome.type === 'WRITE' && storedRow) {
-      // Update existing row
-      const updateSql = `
-        UPDATE safetrust.trustless_work_escrows
+      const fallbackUpdate = `
+        UPDATE trustless_work_escrows
         SET status = $2, balance = $3::numeric, ledger_seq = $4,
-            network = COALESCE(safetrust.trustless_work_escrows.network, $5),
+            network = COALESCE(trustless_work_escrows.network, $5),
             updated_at = NOW()
         WHERE id::text = $1 OR contract_id = $1
       `
-      await executeQuery('SAVEPOINT sp_update')
-      try {
-        await executeQuery(updateSql, [
-          idOrContractId,
-          outcome.status,
-          outcome.balance,
-          outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
-          incoming.network ?? null,
-        ])
-        await executeQuery('RELEASE SAVEPOINT sp_update')
-      } catch (err) {
-        await executeQuery('ROLLBACK TO SAVEPOINT sp_update')
-        if (!isUndefinedTableError(err)) throw err
-        const fallbackUpdate = `
-          UPDATE trustless_work_escrows
-          SET status = $2, balance = $3::numeric, ledger_seq = $4,
-              network = COALESCE(trustless_work_escrows.network, $5),
-              updated_at = NOW()
-          WHERE id::text = $1 OR contract_id = $1
-        `
-        await executeQuery(fallbackUpdate, [
-          idOrContractId,
-          outcome.status,
-          outcome.balance,
-          outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
-          incoming.network ?? null,
-        ])
-      }
+      await db.query(fallbackUpdate, [
+        idOrContractId,
+        outcome.status,
+        outcome.balance,
+        outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+        incoming.network ?? null,
+      ])
     }
-
-    await executeQuery('COMMIT')
-    txOpen = false
-    return outcome
-  } catch (err) {
-    if (txOpen) {
-      try {
-        await executeQuery('ROLLBACK')
-      } catch {
-        // ignore rollback error
-      }
-    }
-    throw err
-  } finally {
-    // Does not release connections; connection lifecycle is managed by caller / withTransaction
   }
+
+  return outcome
 }
 
 export const applyEscrowFreshnessUpdate = updateEscrowWithFreshness
