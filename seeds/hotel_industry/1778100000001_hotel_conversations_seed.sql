@@ -48,11 +48,26 @@ BEGIN
   IF v_host_id IS NOT NULL AND v_guest1_id IS NOT NULL AND v_res1_id IS NOT NULL THEN
 
     -- Conversation 1: Pre-booking inquiry
-    INSERT INTO hotel_industry.conversations
-      (id, reservation_id, host_id, guest_id, status)
-    VALUES
-      (v_conv1_id, v_res1_id, v_host_id, v_guest1_id, 'active')
-    ON CONFLICT ON CONSTRAINT unique_hotel_conversation DO NOTHING;
+    -- Handle rerun behavior: update existing row with v_conv1_id to the selected tuple,
+    -- or preserve tuple conflict if already assigned without aborting.
+    IF NOT EXISTS (
+      SELECT 1 FROM hotel_industry.conversations
+      WHERE reservation_id = v_res1_id AND host_id = v_host_id AND guest_id = v_guest1_id
+    ) THEN
+      INSERT INTO hotel_industry.conversations
+        (id, reservation_id, host_id, guest_id, status)
+      VALUES
+        (v_conv1_id, v_res1_id, v_host_id, v_guest1_id, 'active')
+      ON CONFLICT (id) DO UPDATE SET
+        reservation_id = EXCLUDED.reservation_id,
+        host_id = EXCLUDED.host_id,
+        guest_id = EXCLUDED.guest_id,
+        status = EXCLUDED.status;
+    ELSE
+      UPDATE hotel_industry.conversations
+      SET status = 'active'
+      WHERE reservation_id = v_res1_id AND host_id = v_host_id AND guest_id = v_guest1_id;
+    END IF;
 
     INSERT INTO hotel_industry.messages
       (id, conversation_id, sender_id, body, is_automated, event_type, created_at)
@@ -73,11 +88,26 @@ BEGIN
 
     -- Conversation 2: Active booking linked to escrow
     IF v_guest2_id IS NOT NULL AND v_res2_id IS NOT NULL AND v_escrow_id IS NOT NULL THEN
-      INSERT INTO hotel_industry.conversations
-        (id, reservation_id, host_id, guest_id, escrow_transaction_id, status)
-      VALUES
-        (v_conv2_id, v_res2_id, v_host_id, v_guest2_id, v_escrow_id, 'active')
-      ON CONFLICT ON CONSTRAINT unique_hotel_conversation DO NOTHING;
+      IF NOT EXISTS (
+        SELECT 1 FROM hotel_industry.conversations
+        WHERE reservation_id = v_res2_id AND host_id = v_host_id AND guest_id = v_guest2_id
+      ) THEN
+        INSERT INTO hotel_industry.conversations
+          (id, reservation_id, host_id, guest_id, escrow_transaction_id, status)
+        VALUES
+          (v_conv2_id, v_res2_id, v_host_id, v_guest2_id, v_escrow_id, 'active')
+        ON CONFLICT (id) DO UPDATE SET
+          reservation_id = EXCLUDED.reservation_id,
+          host_id = EXCLUDED.host_id,
+          guest_id = EXCLUDED.guest_id,
+          escrow_transaction_id = EXCLUDED.escrow_transaction_id,
+          status = EXCLUDED.status;
+      ELSE
+        UPDATE hotel_industry.conversations
+        SET escrow_transaction_id = v_escrow_id,
+            status = 'active'
+        WHERE reservation_id = v_res2_id AND host_id = v_host_id AND guest_id = v_guest2_id;
+      END IF;
 
       INSERT INTO hotel_industry.messages
         (id, conversation_id, sender_id, body, is_automated, event_type, created_at)
