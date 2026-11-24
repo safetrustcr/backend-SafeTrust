@@ -2,8 +2,6 @@ import { Request, Response } from 'express'
 import type { Apartment, ApartmentListQuery, ApartmentListResponse } from '@safetrust/types'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { logger } from '../../middleware/logger'
- feat/agent-bookings
-import { liveHoldOverlapSql } from '../../repositories/hold.repository'
 import {
   ApartmentListFilters,
   createApartmentRecord,
@@ -24,6 +22,21 @@ function formatApartment<T extends object>(apt: T): T {
     formatted.warranty_deposit = Number(formatted.warranty_deposit)
   }
   return formatted as T
+}
+
+function isValidIsoCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const [yStr, mStr, dStr] = value.split('-')
+  const year = Number(yStr)
+  const month = Number(mStr)
+  const day = Number(dStr)
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false
+  const dt = new Date(Date.UTC(year, month - 1, day))
+  return (
+    dt.getUTCFullYear() === year &&
+    dt.getUTCMonth() === month - 1 &&
+    dt.getUTCDate() === day
+  )
 }
 
 type ApartmentResponse = { apartment: Apartment } | { error: string }
@@ -89,30 +102,8 @@ export const listApartments = async (
       }
     }
 
-feat/agent-bookings
     if (category) {
-      whereClause.push(`a.category = $${paramIndex}`)
-      queryParams.push(category)
-      paramIndex++
-    }
 
-    // Dates held by someone else (pending_payment or active) are unavailable.
-    if (checkIn || checkOut) {
-      const dateRe = /^\d{4}-\d{2}-\d{2}$/
-      if (
-        typeof checkIn !== 'string' || typeof checkOut !== 'string' ||
-        !dateRe.test(checkIn) || !dateRe.test(checkOut) || checkOut <= checkIn
-      ) {
-        return res.status(400).json({ error: 'checkIn and checkOut must both be YYYY-MM-DD dates with checkOut after checkIn.' })
-      }
-      whereClause.push(`NOT ${liveHoldOverlapSql('a', `$${paramIndex}`, `$${paramIndex + 1}`)}`)
-      queryParams.push(checkIn, checkOut)
-      paramIndex += 2
-    }
-
-    const whereString = `WHERE ${whereClause.join(' AND ')}`
-
-main
     const allowedSorts = ['price_asc', 'price_desc', 'created_at']
     if (sort && !allowedSorts.includes(sort)) {
       return res.status(400).json({ error: `Invalid sort parameter. Supported values: ${allowedSorts.join(', ')}` })
