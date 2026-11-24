@@ -1,10 +1,27 @@
 import { Keypair } from '@stellar/stellar-sdk';
 import {
   SpendingLedger,
+  SpendingLimitError,
   createPaymentFetch,
   getDefaultUsdcContract,
+  getPaymentRecordForResponse,
   type StellarNetworkName,
 } from './payments';
+
+export class DepositSubmissionError extends Error {
+  public readonly definitive: boolean;
+  public readonly statusCode?: number;
+
+  constructor(
+    message: string,
+    options: { definitive: boolean; statusCode?: number }
+  ) {
+    super(message);
+    this.name = 'DepositSubmissionError';
+    this.definitive = options.definitive;
+    this.statusCode = options.statusCode;
+  }
+}
 
 export interface PropertyListing {
   id: string;
@@ -92,6 +109,7 @@ export interface CreateBookingParams {
   propertyId: string;
   checkIn: string;
   checkOut: string;
+  guests?: number;
   holdId?: string;
   totalUsdc?: number;
   depositUsdc?: number;
@@ -182,7 +200,16 @@ export class SafeTrustApiClient {
 
   private readonly bookingsById = new Map<string, BookingRecord>();
   private readonly holdsById = new Map<string, HoldRecord>();
-  private readonly availabilityByProperty = new Map<string, AvailabilityQuote>();
+  private readonly availabilityByStay = new Map<string, AvailabilityQuote>();
+
+  private makeStayQuoteKey(
+    propertyId: string,
+    checkIn: string,
+    checkOut: string,
+    guests?: number
+  ): string {
+    return JSON.stringify([propertyId, checkIn, checkOut, guests ?? null]);
+  }
 
   constructor(options: SafeTrustApiClientOptions) {
     this.baseUrl = (
@@ -459,7 +486,13 @@ export class SafeTrustApiClient {
       feePaidUsdc: 0,
     };
 
-    this.availabilityByProperty.set(params.propertyId, quote);
+    const stayKey = this.makeStayQuoteKey(
+      params.propertyId,
+      params.checkIn,
+      params.checkOut,
+      params.guests
+    );
+    this.availabilityByStay.set(stayKey, quote);
     return quote;
   }
 
@@ -468,7 +501,6 @@ export class SafeTrustApiClient {
    */
   public async holdDates(params: HoldDatesParams): Promise<HoldRecord> {
     const headers = await this.getSessionHeaders();
-    const feesBefore = this.ledger.getFeesSpentUsdc();
 
     const response = await this.payFetch(`${this.baseUrl}/api/v1/holds`, {
       method: 'POST',
@@ -488,8 +520,7 @@ export class SafeTrustApiClient {
     }
 
     const data = (await response.json()) as Record<string, unknown>;
-    const feesAfter = this.ledger.getFeesSpentUsdc();
-    const feePaidUsdc = Number((feesAfter - feesBefore).toFixed(7));
+    const feePaidUsdc = getPaymentRecordForResponse(response)?.amountUsdc ?? 0;
 
     const expiresAt = String(
       data.expires_at ??
@@ -501,7 +532,14 @@ export class SafeTrustApiClient {
         ? data.held_until
         : formatTimeHHMM(expiresAt);
 
-    const cachedQuote = this.availabilityByProperty.get(params.propertyId);
+    // Only reuse a cached quote when property, dates, and pricing inputs all match
+    const stayKey = this.makeStayQuoteKey(
+      params.propertyId,
+      params.checkIn,
+      params.checkOut,
+      params.guests
+    );
+    const cachedQuote = this.availabilityByStay.get(stayKey);
     const hold: HoldRecord = {
       holdId: String(data.hold_id ?? data.holdId ?? data.id),
       propertyId: params.propertyId,
@@ -558,28 +596,62 @@ export class SafeTrustApiClient {
 
   /**
    * Paid x402 call: create booking and deploy escrow contract (`/api/v1/bookings`).
-   * Enforces AGENT_MAX_DEPOSIT in code before making the paid x402 call.
+   * Enforces AGENT_MAX_DEPOSIT in code before making the paid x402 call when a quote
+   * can be established, and retains/exposes the booking ID if the backend returns a
+   * higher deposit than AGENT_MAX_DEPOSIT after payment.
    */
   public async createBooking(
     params: CreateBookingParams
   ): Promise<BookingRecord> {
-    const cachedQuote = this.availabilityByProperty.get(params.propertyId);
-    const cachedHold = params.holdId
+    const stayKey = this.makeStayQuoteKey(
+      params.propertyId,
+      params.checkIn,
+      params.checkOut,
+      params.guests
+    );
+    let cachedQuote = this.availabilityByStay.get(stayKey);
+    const rawCachedHold = params.holdId
       ? this.holdsById.get(params.holdId)
       : undefined;
+    const cachedHold =
+      rawCachedHold &&
+      rawCachedHold.propertyId === params.propertyId &&
+      rawCachedHold.checkIn === params.checkIn &&
+      rawCachedHold.checkOut === params.checkOut
+        ? rawCachedHold
+        : undefined;
 
-    const depositUsdc =
+    let depositUsdc =
       params.depositUsdc ??
       cachedHold?.depositUsdc ??
       cachedQuote?.depositUsdc;
 
-    // Check AGENT_MAX_DEPOSIT before paying the x402 booking fee if we already know the deposit quote
+    // If no deposit quote is known yet, attempt to establish it via free checkAvailability
+    // before paying the x402 booking fee.
+    if (depositUsdc === undefined) {
+      try {
+        cachedQuote = await this.checkAvailability({
+          propertyId: params.propertyId,
+          checkIn: params.checkIn,
+          checkOut: params.checkOut,
+          guests: params.guests,
+        });
+        if (cachedQuote.depositUsdc > 0) {
+          depositUsdc = cachedQuote.depositUsdc;
+        }
+      } catch {
+        // Proceed when the backend does not expose availability for this flow;
+        // the post-response cap check below will still enforce AGENT_MAX_DEPOSIT
+        // without discarding the booking ID.
+      }
+    }
+
+    // Check AGENT_MAX_DEPOSIT before paying the x402 booking fee when the deposit quote is known
     if (depositUsdc !== undefined) {
       this.ledger.verifyDepositLimit(depositUsdc);
     }
 
     const headers = await this.getSessionHeaders();
-    const feesBefore = this.ledger.getFeesSpentUsdc();
 
     const response = await this.payFetch(`${this.baseUrl}/api/v1/bookings`, {
       method: 'POST',
@@ -588,6 +660,7 @@ export class SafeTrustApiClient {
         property_id: params.propertyId,
         check_in: params.checkIn,
         check_out: params.checkOut,
+        guests: params.guests,
         hold_id: params.holdId,
         wallet_address: this.keypair.publicKey(),
       }),
@@ -599,8 +672,7 @@ export class SafeTrustApiClient {
     }
 
     const data = (await response.json()) as Record<string, unknown>;
-    const feesAfter = this.ledger.getFeesSpentUsdc();
-    const feePaidUsdc = Number((feesAfter - feesBefore).toFixed(7));
+    const feePaidUsdc = getPaymentRecordForResponse(response)?.amountUsdc ?? 0;
 
     const resolvedDepositUsdc = Number(
       data.deposit_usdc ??
@@ -609,9 +681,6 @@ export class SafeTrustApiClient {
         depositUsdc ??
         0
     );
-
-    // Enforce AGENT_MAX_DEPOSIT on the returned booking deposit amount as well
-    this.ledger.verifyDepositLimit(resolvedDepositUsdc);
 
     const resolvedTotalUsdc = Number(
       data.total_usdc ??
@@ -653,8 +722,77 @@ export class SafeTrustApiClient {
       feePaidUsdc,
     };
 
-    this.bookingsById.set(booking.bookingId, booking);
+    // Always retain the created booking before running the post-response cap check
+    // so a paid booking ID is never discarded if the returned deposit exceeds AGENT_MAX_DEPOSIT.
+    if (booking.bookingId) {
+      this.bookingsById.set(booking.bookingId, booking);
+    }
+
+    try {
+      this.ledger.verifyDepositLimit(resolvedDepositUsdc);
+    } catch (err) {
+      if (err instanceof SpendingLimitError && booking.bookingId) {
+        throw new SpendingLimitError(
+          err.code,
+          `${err.message} (booking_id: ${booking.bookingId})`
+        );
+      }
+      throw err;
+    }
+
     return booking;
+  }
+
+  /**
+   * Query the SafeTrust backend to reconcile whether a previously submitted deposit
+   * transaction hash actually settled before allowing a retry.
+   */
+  public async reconcileBookingFunding(
+    bookingId: string,
+    txHash: string
+  ): Promise<'funded' | 'not_funded' | 'unknown'> {
+    try {
+      const headers = await this.getSessionHeaders();
+      const response = await this.baseFetch(
+        `${this.baseUrl}/api/v1/bookings/${encodeURIComponent(bookingId)}?tx_hash=${encodeURIComponent(txHash)}`,
+        {
+          method: 'GET',
+          headers,
+        }
+      );
+
+      if (!response.ok) {
+        return 'unknown';
+      }
+
+      const data = (await response.json()) as Record<string, unknown>;
+      const rawStatus = String(
+        data.status ?? data.funding_status ?? ''
+      )
+        .trim()
+        .toLowerCase();
+
+      if (rawStatus === 'funded' || rawStatus === 'confirmed') {
+        const existing = this.bookingsById.get(bookingId);
+        if (existing) {
+          existing.status = 'funded';
+        }
+        return 'funded';
+      }
+
+      if (
+        rawStatus === 'escrow_created' ||
+        rawStatus === 'unfunded' ||
+        rawStatus === 'failed' ||
+        rawStatus === 'rejected'
+      ) {
+        return 'not_funded';
+      }
+
+      return 'unknown';
+    } catch {
+      return 'unknown';
+    }
   }
 
   /**
@@ -682,7 +820,11 @@ export class SafeTrustApiClient {
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`fund_deposit submission failed (${response.status}): ${errText}`);
+      const definitive = response.status >= 400 && response.status < 500;
+      throw new DepositSubmissionError(
+        `fund_deposit submission failed (${response.status}): ${errText}`,
+        { definitive, statusCode: response.status }
+      );
     }
 
     const existing = this.bookingsById.get(params.bookingId);

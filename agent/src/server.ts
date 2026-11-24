@@ -1,9 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { SafeTrustApiClient, type BookingRecord } from './api';
+import {
+  DepositSubmissionError,
+  SafeTrustApiClient,
+  type BookingRecord,
+} from './api';
 import {
   DepositVerificationError,
+  formatExactUsdc,
   verifyAndSignDeposit,
 } from './deposit';
 import {
@@ -17,6 +22,7 @@ export interface PendingDepositConfirmation {
   confirmationId: string;
   bookingId: string;
   contractId: string;
+  assetContract: string;
   amountUsdc: number;
   propertyName?: string;
   createdAt: string;
@@ -40,6 +46,20 @@ export interface CreateBookingAgentServerOptions {
   sessionToken?: string;
   /** Confirmation TTL in milliseconds for two-step prepare_deposit/confirm_deposit (default: 5 min) */
   confirmationTtlMs?: number;
+  /**
+   * Optional server-verifiable human approval hook for non-elicitation fallback confirmations.
+   * When provided, both `confirm_deposit` and `fund_deposit(confirmation_id)` invoke this
+   * callback to independently verify human consent before signing.
+   */
+  verifyHumanApproval?: (
+    pending: PendingDepositConfirmation
+  ) => Promise<boolean> | boolean;
+  /**
+   * Explicit opt-in acknowledging that the MCP host enforces human approval before
+   * calling `confirm_deposit` or `fund_deposit` with a `confirmation_id`.
+   * Defaults to `process.env.AGENT_ALLOW_HOST_FALLBACK_CONFIRMATION === 'true'` (false by default).
+   */
+  allowFallbackConfirmation?: boolean;
 }
 
 export interface BookingAgentContext {
@@ -54,13 +74,17 @@ function redactSecret(message: string, secretKey: string): string {
   return message.split(secretKey).join('[REDACTED_SECRET_KEY]');
 }
 
-function formatToolResult(data: unknown, isError = false) {
+function formatToolResult(
+  data: unknown,
+  secretKey: string,
+  isError = false
+) {
   return {
     isError,
     content: [
       {
         type: 'text' as const,
-        text: JSON.stringify(data, null, 2),
+        text: redactSecret(JSON.stringify(data, null, 2), secretKey),
       },
     ],
   };
@@ -79,6 +103,7 @@ function formatToolError(err: unknown, secretKey: string) {
       error: safeMessage,
       code,
     },
+    secretKey,
     true
   );
 }
@@ -114,6 +139,24 @@ export function createBookingAgentServer(
 
   const confirmationTtlMs = options.confirmationTtlMs ?? 5 * 60 * 1000;
   const pendingConfirmations = new Map<string, PendingDepositConfirmation>();
+  const verifyHumanApproval = options.verifyHumanApproval;
+  const allowFallbackConfirmation =
+    options.allowFallbackConfirmation ??
+    process.env.AGENT_ALLOW_HOST_FALLBACK_CONFIRMATION === 'true';
+
+  type BookingFundingState =
+    | { status: 'in_flight' }
+    | { status: 'funded'; txHash: string }
+    | {
+        status: 'uncertain';
+        txHash: string;
+        contractId: string;
+        amountUsdc: number;
+        assetContract: string;
+      };
+  const bookingFundingState = new Map<string, BookingFundingState>();
+
+  const toolOk = (data: unknown) => formatToolResult(data, secretKey, false);
 
   const server = new McpServer({
     name: 'safetrust-booking-agent',
@@ -172,7 +215,7 @@ export function createBookingAgentServer(
           petFriendly: args.pet_friendly,
           limit: args.limit,
         });
-        return formatToolResult({
+        return toolOk({
           fee_usdc: 0,
           billing: 'FREE (session)',
           total: result.total,
@@ -206,7 +249,7 @@ export function createBookingAgentServer(
           checkOut: args.check_out,
           guests: args.guests,
         });
-        return formatToolResult({
+        return toolOk({
           fee_usdc: 0,
           billing: 'FREE (session)',
           ...quote,
@@ -239,7 +282,7 @@ export function createBookingAgentServer(
           checkOut: args.check_out,
           guests: args.guests,
         });
-        return formatToolResult({
+        return toolOk({
           billing: `${hold.feePaidUsdc.toFixed(2)} USDC x402`,
           ...hold,
         });
@@ -262,7 +305,7 @@ export function createBookingAgentServer(
     async (args) => {
       try {
         const result = await api.releaseHold({ holdId: args.hold_id });
-        return formatToolResult({
+        return toolOk({
           fee_usdc: 0,
           ...result,
         });
@@ -283,6 +326,7 @@ export function createBookingAgentServer(
         property_id: z.string().min(1).describe('Property ID'),
         check_in: z.string().min(1).describe('Check-in date (YYYY-MM-DD)'),
         check_out: z.string().min(1).describe('Check-out date (YYYY-MM-DD)'),
+        guests: z.number().int().positive().optional().describe('Number of guests'),
         hold_id: z.string().optional().describe('Optional hold_id from hold_dates'),
         deposit_usdc: z
           .number()
@@ -297,10 +341,11 @@ export function createBookingAgentServer(
           propertyId: args.property_id,
           checkIn: args.check_in,
           checkOut: args.check_out,
+          guests: args.guests,
           holdId: args.hold_id,
           depositUsdc: args.deposit_usdc,
         });
-        return formatToolResult({
+        return toolOk({
           billing: `${booking.feePaidUsdc.toFixed(2)} USDC x402`,
           booking_id: booking.bookingId,
           property_id: booking.propertyId,
@@ -319,11 +364,23 @@ export function createBookingAgentServer(
     }
   );
 
+  const assertBookingAssetMatchesConfig = (booking: BookingRecord): string => {
+    const expectedAssetContract = ledger.getConfig().expectedAssetContract;
+    if (booking.assetContract !== expectedAssetContract) {
+      throw new DepositVerificationError(
+        'ASSET_MISMATCH',
+        `Refusing deposit for booking "${booking.bookingId}": booking asset contract "${booking.assetContract}" does not match configured USDC contract "${expectedAssetContract}".`
+      );
+    }
+    return expectedAssetContract;
+  };
+
   // Helper to resolve a booking and issue a two-step confirmation ID
   const createConfirmationRequest = (
     booking: BookingRecord,
     amountUsdc: number
   ): PendingDepositConfirmation => {
+    assertBookingAssetMatchesConfig(booking);
     ledger.verifyDepositLimit(amountUsdc);
     const confirmationId = `conf_${randomBytes(6).toString('hex')}`;
     const now = Date.now();
@@ -331,6 +388,7 @@ export function createBookingAgentServer(
       confirmationId,
       bookingId: booking.bookingId,
       contractId: booking.contractId,
+      assetContract: booking.assetContract,
       amountUsdc,
       propertyName: booking.propertyName,
       createdAt: new Date(now).toISOString(),
@@ -340,39 +398,170 @@ export function createBookingAgentServer(
     return record;
   };
 
-  // Helper to execute XDR verification, signing, and submission once humanConfirmed === true
+  // Enforce server-verifiable approval or explicit host-approval deployment opt-in
+  // for both two-step fallback entrypoints (confirm_deposit and fund_deposit with confirmation_id).
+  const verifyFallbackApproval = async (
+    pending: PendingDepositConfirmation,
+    humanConfirmed: boolean | undefined
+  ): Promise<void> => {
+    if (!humanConfirmed) {
+      throw new DepositVerificationError(
+        'HUMAN_CONFIRMATION_REQUIRED',
+        'Nothing signed: human_confirmed must be true after the human says "yes".'
+      );
+    }
+
+    if (verifyHumanApproval) {
+      const approved = await verifyHumanApproval(pending);
+      if (!approved) {
+        throw new DepositVerificationError(
+          'HUMAN_CONFIRMATION_REQUIRED',
+          `Nothing signed: server-side human approval check rejected confirmation "${pending.confirmationId}".`
+        );
+      }
+      return;
+    }
+
+    if (!allowFallbackConfirmation) {
+      throw new DepositVerificationError(
+        'HUMAN_CONFIRMATION_REQUIRED',
+        'Nothing signed: fallback confirmation is disabled by default because a caller-supplied human_confirmed boolean cannot be independently verified by the server. Use an MCP client supporting form elicitation, configure verifyHumanApproval, or set AGENT_ALLOW_HOST_FALLBACK_CONFIRMATION=true only after enabling host-enforced human tool approval.'
+      );
+    }
+  };
+
+  // Helper to execute XDR verification, signing, and submission once humanConfirmed === true.
+  // Enforces single-flight per booking, rejects already-funded bookings, reconciles uncertain
+  // submissions by transaction hash before retrying, and records locked funds in SpendingLedger
+  // only after confirmed funding.
   const executeSignedDeposit = async (params: {
     booking: BookingRecord;
     unsignedXdr: string;
     amountUsdc: number;
     humanConfirmed: boolean;
   }) => {
-    const signed = verifyAndSignDeposit({
-      bookingId: params.booking.bookingId,
-      unsignedXdr: params.unsignedXdr,
-      expectedContractId: params.booking.contractId,
-      expectedAmountUsdc: params.amountUsdc,
-      network: ledger.getConfig().network,
-      expectedAssetContract: params.booking.assetContract,
-      expectedSigner: api.getWalletPublicKey(),
-      secretKey,
-      ledger,
-      humanConfirmed: params.humanConfirmed,
-    });
+    const { booking } = params;
+    const bookingId = booking.bookingId;
+    const expectedAssetContract = assertBookingAssetMatchesConfig(booking);
 
-    const submitted = await api.submitSignedDeposit({
-      bookingId: signed.bookingId,
-      contractId: signed.contractId,
-      signedXdr: signed.signedXdr,
-      txHash: signed.txHash,
-      amountUsdc: signed.amountUsdc,
-    });
+    const currentState = bookingFundingState.get(bookingId);
+    if (booking.status === 'funded' || currentState?.status === 'funded') {
+      throw new DepositVerificationError(
+        'ALREADY_FUNDED',
+        `Booking "${bookingId}" is already funded. Refusing duplicate deposit signing.`
+      );
+    }
 
-    return {
-      ...submitted,
-      signer_public_key: signed.signerPublicKey,
-      summary: ledger.getSummary().formatted,
-    };
+    if (currentState?.status === 'in_flight') {
+      throw new DepositVerificationError(
+        'FUNDING_IN_PROGRESS',
+        `Funding submission for booking "${bookingId}" is already in progress. Wait for it to complete.`
+      );
+    }
+
+    // Reconcile any prior uncertain submission by transaction hash before allowing another attempt
+    if (currentState?.status === 'uncertain') {
+      // Claim in-flight during reconciliation to prevent concurrent reconciliations/retries
+      bookingFundingState.set(bookingId, { status: 'in_flight' });
+      const reconciled = await api.reconcileBookingFunding(
+        bookingId,
+        currentState.txHash
+      );
+      if (reconciled === 'funded') {
+        ledger.recordDeposit({
+          bookingId,
+          contractId: currentState.contractId,
+          amountUsdc: currentState.amountUsdc,
+          assetContract: currentState.assetContract,
+          txHash: currentState.txHash,
+        });
+        booking.status = 'funded';
+        bookingFundingState.set(bookingId, {
+          status: 'funded',
+          txHash: currentState.txHash,
+        });
+        throw new DepositVerificationError(
+          'ALREADY_FUNDED',
+          `Booking "${bookingId}" was already funded by prior transaction ${currentState.txHash}. Refusing duplicate signing.`
+        );
+      }
+      if (reconciled === 'unknown') {
+        bookingFundingState.set(bookingId, currentState);
+        throw new DepositVerificationError(
+          'FUNDING_OUTCOME_UNCERTAIN',
+          `Cannot retry deposit for booking "${bookingId}": prior transaction ${currentState.txHash} outcome is still uncertain and could not be reconciled.`
+        );
+      }
+      // reconciled === 'not_funded' -> safe to proceed with a new attempt
+    }
+
+    // Claim booking synchronously before signing or awaiting network calls
+    bookingFundingState.set(bookingId, { status: 'in_flight' });
+
+    let signed: ReturnType<typeof verifyAndSignDeposit>;
+    try {
+      signed = verifyAndSignDeposit({
+        bookingId,
+        unsignedXdr: params.unsignedXdr,
+        expectedContractId: booking.contractId,
+        expectedAmountUsdc: params.amountUsdc,
+        network: ledger.getConfig().network,
+        expectedAssetContract,
+        expectedSigner: api.getWalletPublicKey(),
+        secretKey,
+        ledger,
+        humanConfirmed: params.humanConfirmed,
+      });
+    } catch (err) {
+      // Signing/verification failed before submission; release claim so recovery is possible
+      bookingFundingState.delete(bookingId);
+      throw err;
+    }
+
+    try {
+      const submitted = await api.submitSignedDeposit({
+        bookingId: signed.bookingId,
+        contractId: signed.contractId,
+        signedXdr: signed.signedXdr,
+        txHash: signed.txHash,
+        amountUsdc: signed.amountUsdc,
+      });
+
+      // Record deposit in the spending ledger ONLY after confirmed funding
+      ledger.recordDeposit({
+        bookingId: signed.bookingId,
+        contractId: signed.contractId,
+        amountUsdc: signed.amountUsdc,
+        assetContract: expectedAssetContract,
+        txHash: signed.txHash,
+      });
+
+      bookingFundingState.set(bookingId, {
+        status: 'funded',
+        txHash: signed.txHash,
+      });
+
+      return {
+        ...submitted,
+        signer_public_key: signed.signerPublicKey,
+        summary: ledger.getSummary().formatted,
+      };
+    } catch (err) {
+      if (err instanceof DepositSubmissionError && err.definitive) {
+        // Definitive rejection (e.g. 4xx): release claim so recovery remains possible
+        bookingFundingState.delete(bookingId);
+      } else {
+        // Uncertain outcome (5xx, timeout, network error): record txHash for reconciliation
+        bookingFundingState.set(bookingId, {
+          status: 'uncertain',
+          txHash: signed.txHash,
+          contractId: signed.contractId,
+          amountUsdc: signed.amountUsdc,
+          assetContract: expectedAssetContract,
+        });
+      }
+      throw err;
+    }
   };
 
   // ── 6a. prepare_deposit (Two-step fallback step 1) ──────────────────────────
@@ -395,7 +584,8 @@ export function createBookingAgentServer(
           );
         }
         const pending = createConfirmationRequest(booking, booking.depositUsdc);
-        return formatToolResult({
+        const exactAmount = formatExactUsdc(pending.amountUsdc);
+        return toolOk({
           status: 'confirmation_required',
           confirmation_id: pending.confirmationId,
           booking_id: pending.bookingId,
@@ -403,7 +593,7 @@ export function createBookingAgentServer(
           property_name: pending.propertyName,
           deposit_usdc: pending.amountUsdc,
           expires_at: pending.expiresAt,
-          prompt_for_human: `Book ${pending.propertyName ?? pending.bookingId} and lock ${pending.amountUsdc.toFixed(2)} USDC in escrow (${pending.contractId})? Reply "yes" with confirmation_id ${pending.confirmationId}.`,
+          prompt_for_human: `Book ${pending.propertyName ?? pending.bookingId} and lock ${exactAmount} USDC in escrow (${pending.contractId})? Reply "yes" with confirmation_id ${pending.confirmationId}.`,
         });
       } catch (err) {
         return formatToolError(err, secretKey);
@@ -448,12 +638,6 @@ export function createBookingAgentServer(
             `Confirmation "${args.confirmation_id}" expired. Call prepare_deposit again.`
           );
         }
-        if (!args.human_confirmed) {
-          throw new DepositVerificationError(
-            'HUMAN_CONFIRMATION_REQUIRED',
-            'Nothing signed: human_confirmed must be true after the human says "yes".'
-          );
-        }
 
         const booking = api.getBooking(pending.bookingId);
         if (!booking) {
@@ -461,6 +645,7 @@ export function createBookingAgentServer(
         }
         if (
           booking.contractId !== pending.contractId ||
+          booking.assetContract !== pending.assetContract ||
           Math.abs(booking.depositUsdc - pending.amountUsdc) > 1e-7
         ) {
           pendingConfirmations.delete(args.confirmation_id);
@@ -468,6 +653,20 @@ export function createBookingAgentServer(
             'HUMAN_CONFIRMATION_REQUIRED',
             `Booking "${pending.bookingId}" terms changed since confirmation "${args.confirmation_id}" was issued. Call prepare_deposit again.`
           );
+        }
+
+        // Consume confirmation_id synchronously before awaiting approval/submission
+        // so concurrent confirm_deposit calls with the same ID cannot both proceed.
+        pendingConfirmations.delete(args.confirmation_id);
+
+        try {
+          await verifyFallbackApproval(pending, args.human_confirmed);
+        } catch (err) {
+          // Restore confirmation_id if caller passed human_confirmed: false before any signing
+          if (!args.human_confirmed) {
+            pendingConfirmations.set(args.confirmation_id, pending);
+          }
+          throw err;
         }
 
         const unsignedXdr = args.unsigned_xdr ?? booking.unsignedXdr;
@@ -478,8 +677,7 @@ export function createBookingAgentServer(
           humanConfirmed: true,
         });
 
-        pendingConfirmations.delete(args.confirmation_id);
-        return formatToolResult(result);
+        return toolOk(result);
       } catch (err) {
         return formatToolError(err, secretKey);
       }
@@ -518,7 +716,8 @@ export function createBookingAgentServer(
           );
         }
 
-        // Enforce AGENT_MAX_DEPOSIT before asking human or decoding XDR
+        // Enforce configured USDC contract & AGENT_MAX_DEPOSIT before asking human or decoding XDR
+        assertBookingAssetMatchesConfig(booking);
         ledger.verifyDepositLimit(booking.depositUsdc);
 
         let humanConfirmed = false;
@@ -538,6 +737,7 @@ export function createBookingAgentServer(
           }
           if (
             booking.contractId !== pending.contractId ||
+            booking.assetContract !== pending.assetContract ||
             Math.abs(booking.depositUsdc - pending.amountUsdc) > 1e-7
           ) {
             pendingConfirmations.delete(args.confirmation_id);
@@ -546,13 +746,16 @@ export function createBookingAgentServer(
               `Booking "${booking.bookingId}" terms changed since confirmation "${args.confirmation_id}" was issued. Call prepare_deposit again.`
             );
           }
-          if (!args.human_confirmed) {
-            throw new DepositVerificationError(
-              'HUMAN_CONFIRMATION_REQUIRED',
-              'Nothing signed: human_confirmed must be true after the human says "yes".'
-            );
-          }
+
           pendingConfirmations.delete(args.confirmation_id);
+          try {
+            await verifyFallbackApproval(pending, args.human_confirmed);
+          } catch (err) {
+            if (!args.human_confirmed) {
+              pendingConfirmations.set(args.confirmation_id, pending);
+            }
+            throw err;
+          }
           humanConfirmed = true;
         } else {
           // Path B: Use MCP form elicitation if the connected client supports it
@@ -565,16 +768,17 @@ export function createBookingAgentServer(
                 0);
 
           if (supportsFormElicitation) {
+            const exactAmount = formatExactUsdc(booking.depositUsdc);
             const elicitResult = await server.server.elicitInput({
               mode: 'form',
-              message: `Book ${booking.propertyName ?? booking.propertyId} and lock ${booking.depositUsdc.toFixed(2)} USDC in escrow (${booking.contractId})?`,
+              message: `Book ${booking.propertyName ?? booking.propertyId} and lock ${exactAmount} USDC in escrow (${booking.contractId})?`,
               requestedSchema: {
                 type: 'object',
                 properties: {
                   confirm: {
                     type: 'boolean',
                     title: 'Confirm escrow deposit',
-                    description: `Sign and lock ${booking.depositUsdc.toFixed(2)} USDC into ${booking.contractId}`,
+                    description: `Sign and lock ${exactAmount} USDC into ${booking.contractId}`,
                     default: false,
                   },
                 },
@@ -586,14 +790,11 @@ export function createBookingAgentServer(
               elicitResult.action !== 'accept' ||
               elicitResult.content?.confirm !== true
             ) {
-              return formatToolResult(
-                {
-                  status: 'declined',
-                  message:
-                    'Deposit cancelled by human confirmation prompt. Nothing was signed.',
-                },
-                false
-              );
+              return toolOk({
+                status: 'declined',
+                message:
+                  'Deposit cancelled by human confirmation prompt. Nothing was signed.',
+              });
             }
             humanConfirmed = true;
           } else {
@@ -602,7 +803,8 @@ export function createBookingAgentServer(
               booking,
               booking.depositUsdc
             );
-            return formatToolResult({
+            const exactAmount = formatExactUsdc(pending.amountUsdc);
+            return toolOk({
               status: 'confirmation_required',
               confirmation_id: pending.confirmationId,
               booking_id: pending.bookingId,
@@ -610,7 +812,7 @@ export function createBookingAgentServer(
               property_name: pending.propertyName,
               deposit_usdc: pending.amountUsdc,
               expires_at: pending.expiresAt,
-              message: `MCP client does not support elicitation. Ask the human: "Book ${pending.propertyName ?? pending.bookingId} and lock ${pending.amountUsdc.toFixed(2)} USDC in escrow?" and once they reply "yes", call confirm_deposit (or fund_deposit) with confirmation_id "${pending.confirmationId}" and human_confirmed: true.`,
+              message: `MCP client does not support elicitation. Ask the human: "Book ${pending.propertyName ?? pending.bookingId} and lock ${exactAmount} USDC in escrow?" and once they reply "yes", call confirm_deposit (or fund_deposit) with confirmation_id "${pending.confirmationId}" and human_confirmed: true.`,
             });
           }
         }
@@ -623,7 +825,7 @@ export function createBookingAgentServer(
           humanConfirmed,
         });
 
-        return formatToolResult(result);
+        return toolOk(result);
       } catch (err) {
         return formatToolError(err, secretKey);
       }
@@ -641,7 +843,7 @@ export function createBookingAgentServer(
     },
     async () => {
       try {
-        return formatToolResult(ledger.getSummary());
+        return toolOk(ledger.getSummary());
       } catch (err) {
         return formatToolError(err, secretKey);
       }

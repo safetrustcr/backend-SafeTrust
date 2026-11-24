@@ -4,6 +4,7 @@ import {
   SpendingLimitError,
   createPaymentFetch,
   getDefaultUsdcContract,
+  getPaymentRecordForResponse,
   loadSpendingConfigFromEnv,
   type AgentSpendingConfig,
 } from '../payments';
@@ -51,6 +52,19 @@ describe('SpendingLedger & configuration', () => {
     expect(cfg.feeBudgetUsdc).toBe(1.5);
     expect(cfg.maxDepositUsdc).toBe(100);
     expect(cfg.expectedAssetContract).toBe(getDefaultUsdcContract('mainnet'));
+  });
+
+  it('gives uppercase AGENT_MAX_DEPOSIT precedence over mixed-case AGENT_MAX_deposit', () => {
+    const cfg = loadSpendingConfigFromEnv({
+      AGENT_MAX_deposit: '',
+      AGENT_MAX_DEPOSIT: '10',
+    });
+    expect(cfg.maxDepositUsdc).toBe(10);
+
+    const fallbackCfg = loadSpendingConfigFromEnv({
+      AGENT_MAX_deposit: '25',
+    });
+    expect(fallbackCfg.maxDepositUsdc).toBe(25);
   });
 
   it('refuses a 402 requirement when fee exceeds AGENT_MAX_FEE_PER_CALL', () => {
@@ -213,7 +227,7 @@ describe('createPaymentFetch (@x402/fetch integration)', () => {
 
     const baseFetch: typeof globalThis.fetch = jest.fn(async (input) => {
       const req = input as Request;
-      if (req.headers.has('PAYMENT-SIGNATURE') || req.headers.has('X-Payment')) {
+      if (req.headers.has('PAYMENT-SIGNATURE')) {
         return new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -254,6 +268,270 @@ describe('createPaymentFetch (@x402/fetch integration)', () => {
     expect(res.status).toBe(200);
     expect(createPaymentPayload).toHaveBeenCalledTimes(1);
     expect(ledger.getFeesSpentUsdc()).toBe(0.01);
+    expect(getPaymentRecordForResponse(res)?.amountUsdc).toBe(0.01);
+  });
+
+  it('populates and validates the legacy SafeTrust X-Payment header separately', async () => {
+    const ledger = new SpendingLedger(makeConfig());
+    const kp = Keypair.random();
+    const expectedFacilitator = 'https://channels.openzeppelin.com/x402/testnet';
+    const expectedTx = 'signed_legacy_x402_tx';
+
+    const baseFetch: typeof globalThis.fetch = jest.fn(async (input) => {
+      const req = input as Request;
+      const xPayment = req.headers.get('X-Payment');
+      if (xPayment) {
+        expect(xPayment.startsWith('x402 ')).toBe(true);
+        const decoded = JSON.parse(
+          Buffer.from(xPayment.slice('x402 '.length), 'base64').toString('utf8')
+        ) as {
+          scheme: string;
+          network: string;
+          payload: string;
+          amount: number;
+          facilitatorUrl: string;
+        };
+        expect(decoded.scheme).toBe('exact');
+        expect(decoded.network).toBe('stellar:testnet');
+        expect(decoded.payload).toBe(expectedTx);
+        expect(decoded.amount).toBe(0.01);
+        expect(decoded.facilitatorUrl).toBe(expectedFacilitator);
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          error: 'Payment Required',
+          x402Version: 2,
+          accepts: [
+            {
+              scheme: 'exact',
+              network: 'stellar:testnet',
+              max_amount_usdc: 0.01,
+              asset: { code: 'USDC', contract: TESTNET_USDC },
+              pay_to: PLATFORM_WALLET,
+              facilitator_url: expectedFacilitator,
+            },
+          ],
+        }),
+        { status: 402, headers: { 'Content-Type': 'application/json' } }
+      );
+    });
+
+    const payFetch = createPaymentFetch({
+      baseFetch,
+      ledger,
+      signerOrSecret: kp.secret(),
+      schemeClient: {
+        scheme: 'exact',
+        createPaymentPayload: async (x402Version: number) => ({
+          x402Version,
+          payload: { transaction: expectedTx },
+        }),
+      },
+    });
+
+    const res = await payFetch('https://api.safetrust.local/api/v1/holds', {
+      method: 'POST',
+    });
+    expect(res.status).toBe(200);
+    expect(ledger.getFeesSpentUsdc()).toBe(0.01);
+  });
+
+  it('reads PAYMENT-REQUIRED header even when 402 body is plain text', async () => {
+    const ledger = new SpendingLedger(makeConfig());
+    const kp = Keypair.random();
+    const encodedHeader = Buffer.from(
+      JSON.stringify({
+        x402Version: 2,
+        accepts: [
+          {
+            scheme: 'exact',
+            network: 'stellar:testnet',
+            amount: '100000',
+            asset: TESTNET_USDC,
+            payTo: PLATFORM_WALLET,
+          },
+        ],
+      }),
+      'utf8'
+    ).toString('base64');
+
+    const baseFetch: typeof globalThis.fetch = jest.fn(async (input) => {
+      const req = input as Request;
+      if (req.headers.has('PAYMENT-SIGNATURE')) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response('Payment Required', {
+        status: 402,
+        headers: {
+          'Content-Type': 'text/plain',
+          'PAYMENT-REQUIRED': encodedHeader,
+        },
+      });
+    });
+
+    const payFetch = createPaymentFetch({
+      baseFetch,
+      ledger,
+      signerOrSecret: kp.secret(),
+      schemeClient: {
+        scheme: 'exact',
+        createPaymentPayload: async (x402Version: number) => ({
+          x402Version,
+          payload: { transaction: 'signed_header_only_tx' },
+        }),
+      },
+    });
+
+    const res = await payFetch('https://api.safetrust.local/api/v1/holds', {
+      method: 'POST',
+    });
+    expect(res.status).toBe(200);
+    expect(ledger.getFeesSpentUsdc()).toBe(0.01);
+  });
+
+  it('enforces budget and isolates state across concurrent paid calls', async () => {
+    const ledger = new SpendingLedger(
+      makeConfig({ maxFeePerCallUsdc: 0.1, feeBudgetUsdc: 0.12 })
+    );
+    const kp = Keypair.random();
+
+    const baseFetch: typeof globalThis.fetch = jest.fn(async (input) => {
+      const req = input as Request;
+      const isCallA = req.url.includes('/call-a');
+      if (req.headers.has('PAYMENT-SIGNATURE')) {
+        // Delay call A so call B overlaps
+        await new Promise((r) => setTimeout(r, isCallA ? 30 : 5));
+        const xPay = req.headers.get('X-Payment')!;
+        const decoded = JSON.parse(
+          Buffer.from(xPay.slice('x402 '.length), 'base64').toString('utf8')
+        ) as { facilitatorUrl: string };
+        expect(decoded.facilitatorUrl).toBe(
+          isCallA ? 'https://fac.a.local' : 'https://fac.b.local'
+        );
+        return new Response(JSON.stringify({ call: isCallA ? 'a' : 'b' }), {
+          status: 200,
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            {
+              scheme: 'exact',
+              network: 'stellar:testnet',
+              max_amount_usdc: 0.08,
+              asset: { code: 'USDC', contract: TESTNET_USDC },
+              pay_to: PLATFORM_WALLET,
+              facilitator_url: isCallA
+                ? 'https://fac.a.local'
+                : 'https://fac.b.local',
+            },
+          ],
+        }),
+        { status: 402 }
+      );
+    });
+
+    const payFetch = createPaymentFetch({
+      baseFetch,
+      ledger,
+      signerOrSecret: kp.secret(),
+      schemeClient: {
+        scheme: 'exact',
+        createPaymentPayload: async (x402Version: number) => ({
+          x402Version,
+          payload: { transaction: 'signed_tx' },
+        }),
+      },
+    });
+
+    const results = await Promise.allSettled([
+      payFetch('https://api.safetrust.local/call-a', { method: 'POST' }),
+      payFetch('https://api.safetrust.local/call-b', { method: 'POST' }),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(ledger.getFeesSpentUsdc()).toBe(0.08);
+    expect(ledger.getFeesReservedUsdc()).toBe(0);
+  });
+
+  it('releases fee reservation on definitive 402 rejection and preserves it on transport failure', async () => {
+    const ledger = new SpendingLedger(
+      makeConfig({ maxFeePerCallUsdc: 0.1, feeBudgetUsdc: 0.1 })
+    );
+    const kp = Keypair.random();
+    let mode: 'reject402' | 'networkFail' | 'succeed' = 'reject402';
+
+    const baseFetch: typeof globalThis.fetch = jest.fn(async (input) => {
+      const req = input as Request;
+      if (req.headers.has('PAYMENT-SIGNATURE')) {
+        if (mode === 'reject402') {
+          return new Response(JSON.stringify({ error: 'Rejected' }), {
+            status: 402,
+          });
+        }
+        if (mode === 'networkFail') {
+          throw new Error('socket hang up');
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            {
+              scheme: 'exact',
+              network: 'stellar:testnet',
+              max_amount_usdc: 0.1,
+              asset: { code: 'USDC', contract: TESTNET_USDC },
+              pay_to: PLATFORM_WALLET,
+            },
+          ],
+        }),
+        { status: 402 }
+      );
+    });
+
+    const payFetch = createPaymentFetch({
+      baseFetch,
+      ledger,
+      signerOrSecret: kp.secret(),
+      schemeClient: {
+        scheme: 'exact',
+        createPaymentPayload: async (x402Version: number) => ({
+          x402Version,
+          payload: { transaction: 'signed_tx' },
+        }),
+      },
+    });
+
+    // 1. Definitive 402 rejection -> reservation released, full budget still available
+    const rejectedRes = await payFetch('https://api.safetrust.local/api/v1/holds', {
+      method: 'POST',
+    });
+    expect(rejectedRes.status).toBe(402);
+    expect(ledger.getFeesSpentUsdc()).toBe(0);
+    expect(ledger.getFeesReservedUsdc()).toBe(0);
+    expect(ledger.getRemainingFeeBudgetUsdc()).toBe(0.1);
+
+    // 2. Network/timeout failure after retry sent -> reservation remains pending
+    mode = 'networkFail';
+    await expect(
+      payFetch('https://api.safetrust.local/api/v1/holds', { method: 'POST' })
+    ).rejects.toThrow(/socket hang up/i);
+    expect(ledger.getFeesSpentUsdc()).toBe(0);
+    expect(ledger.getFeesReservedUsdc()).toBe(0.1);
+    expect(ledger.getRemainingFeeBudgetUsdc()).toBe(0);
+
+    // 3. Subsequent call cannot overspend budget while uncertain reservation is pending
+    mode = 'succeed';
+    await expect(
+      payFetch('https://api.safetrust.local/api/v1/holds', { method: 'POST' })
+    ).rejects.toThrow(/AGENT_FEE_BUDGET/i);
   });
 
   it('refuses BEFORE signing when server returns untrusted payTo', async () => {

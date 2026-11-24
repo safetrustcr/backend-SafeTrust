@@ -10,6 +10,7 @@ import {
 import {
   DepositVerificationError,
   buildUnsignedFundEscrowXdr,
+  formatExactUsdc,
   verifyAndSignDeposit,
   verifyFundEscrowXdr,
 } from '../deposit';
@@ -227,7 +228,94 @@ describe('XDR verification & deposit signing', () => {
     expect(ledger.getDepositsLockedUsdc()).toBe(0);
   });
 
-  it('signs valid XDR with humanConfirmed === true and updates ledger', () => {
+  it('aborts when scvMap amount conflicts with a prior scalar amount', () => {
+    const account = new Account(kp.publicKey(), '100');
+    const tx = new TransactionBuilder(account, {
+      fee: '10000',
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(
+        Operation.invokeContractFunction({
+          contract: contractId,
+          function: 'fund_escrow',
+          args: [
+            nativeToScVal(990000000n, { type: 'i128' }),
+            nativeToScVal({ amount: 450000000n }),
+          ],
+        })
+      )
+      .setTimeout(300)
+      .build();
+
+    try {
+      verifyFundEscrowXdr({
+        unsignedXdr: tx.toXDR(),
+        expectedContractId: contractId,
+        expectedAmountUsdc: 45.0,
+        network: 'testnet',
+      });
+      fail('Expected AMOUNT_MISMATCH');
+    } catch (err) {
+      expect(err).toBeInstanceOf(DepositVerificationError);
+      expect((err as DepositVerificationError).code).toBe('AMOUNT_MISMATCH');
+    }
+  });
+
+  it('aborts when Stellar transaction fee exceeds maxTxFeeXlm or fee payer mismatches', () => {
+    const highFeeXdr = buildUnsignedFundEscrowXdr({
+      contractId,
+      signerPublicKey: kp.publicKey(),
+      amountUsdc: 45.0,
+      network: 'testnet',
+      feeStroops: '25000000', // 2.5 XLM > 1.0 XLM default
+    });
+
+    try {
+      verifyFundEscrowXdr({
+        unsignedXdr: highFeeXdr,
+        expectedContractId: contractId,
+        expectedAmountUsdc: 45.0,
+        network: 'testnet',
+        expectedSigner: kp.publicKey(),
+      });
+      fail('Expected TX_FEE_EXCEEDED');
+    } catch (err) {
+      expect(err).toBeInstanceOf(DepositVerificationError);
+      expect((err as DepositVerificationError).code).toBe('TX_FEE_EXCEEDED');
+    }
+
+    const otherPayer = Keypair.random();
+    const wrongPayerXdr = buildUnsignedFundEscrowXdr({
+      contractId,
+      signerPublicKey: kp.publicKey(),
+      sourceAccount: otherPayer.publicKey(),
+      amountUsdc: 45.0,
+      network: 'testnet',
+    });
+
+    try {
+      verifyFundEscrowXdr({
+        unsignedXdr: wrongPayerXdr,
+        expectedContractId: contractId,
+        expectedAmountUsdc: 45.0,
+        network: 'testnet',
+        expectedSigner: kp.publicKey(),
+      });
+      fail('Expected FEE_PAYER_MISMATCH');
+    } catch (err) {
+      expect(err).toBeInstanceOf(DepositVerificationError);
+      expect((err as DepositVerificationError).code).toBe('FEE_PAYER_MISMATCH');
+    }
+  });
+
+  it('formats exact USDC amounts without dropping nonzero fractional digits', () => {
+    expect(formatExactUsdc(45)).toBe('45.00');
+    expect(formatExactUsdc(45.5)).toBe('45.50');
+    expect(formatExactUsdc(45.004)).toBe('45.004');
+    expect(formatExactUsdc(45.1234567)).toBe('45.1234567');
+  });
+
+  it('signs valid XDR with humanConfirmed === true without prematurely locking ledger funds', () => {
     const ledger = makeLedger();
     const xdr = buildUnsignedFundEscrowXdr({
       contractId,
@@ -252,6 +340,7 @@ describe('XDR verification & deposit signing', () => {
     expect(signed.signerPublicKey).toBe(kp.publicKey());
     expect(signed.txHash).toMatch(/^[a-f0-9]{64}$/);
     expect(signed.signedXdr).not.toContain(kp.secret());
-    expect(ledger.getDepositsLockedUsdc()).toBe(45.0);
+    // Signing alone must NOT count the deposit as locked before backend confirmation
+    expect(ledger.getDepositsLockedUsdc()).toBe(0);
   });
 });

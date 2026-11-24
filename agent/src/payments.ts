@@ -27,6 +27,8 @@ export interface AgentSpendingConfig {
   feeBudgetUsdc: number;
   /** Maximum escrow deposit in USDC (default: 50.00) */
   maxDepositUsdc: number;
+  /** Maximum Stellar transaction fee in XLM for signed deposits (default: 1.0) */
+  maxTxFeeXlm?: number;
   /** Stellar network name: 'testnet' (default) or 'mainnet' */
   network: StellarNetworkName;
   /** Expected SafeTrust platform wallet (payTo) address */
@@ -80,6 +82,14 @@ export interface PaidCallRecord {
   timestamp: string;
 }
 
+export interface FeeReservation {
+  id: string;
+  endpoint: string;
+  requirement: NormalizedPaymentRequirement;
+  status: 'reserved' | 'settled' | 'released';
+  createdAt: string;
+}
+
 export interface DepositRecord {
   bookingId: string;
   contractId: string;
@@ -87,6 +97,7 @@ export interface DepositRecord {
   amountAtomic: string;
   assetContract: string;
   network: string;
+  txHash?: string;
   timestamp: string;
 }
 
@@ -243,10 +254,19 @@ export function loadSpendingConfigFromEnv(
     0.5,
     'AGENT_FEE_BUDGET'
   );
+  const rawMaxDeposit =
+    env.AGENT_MAX_DEPOSIT !== undefined && env.AGENT_MAX_DEPOSIT.trim() !== ''
+      ? env.AGENT_MAX_DEPOSIT
+      : env.AGENT_MAX_deposit;
   const maxDepositUsdc = parsePositiveNumber(
-    env.AGENT_MAX_deposit ?? env.AGENT_MAX_DEPOSIT,
+    rawMaxDeposit,
     50.0,
     'AGENT_MAX_DEPOSIT'
+  );
+  const maxTxFeeXlm = parsePositiveNumber(
+    env.AGENT_MAX_TX_FEE_XLM,
+    1.0,
+    'AGENT_MAX_TX_FEE_XLM'
   );
 
   const expectedPayTo = (
@@ -263,6 +283,7 @@ export function loadSpendingConfigFromEnv(
     maxFeePerCallUsdc,
     feeBudgetUsdc,
     maxDepositUsdc,
+    maxTxFeeXlm,
     network,
     expectedPayTo,
     expectedAssetContract,
@@ -412,15 +433,24 @@ export class SpendingLedger {
   private readonly config: Required<AgentSpendingConfig>;
   private readonly paidCalls: PaidCallRecord[] = [];
   private readonly deposits: DepositRecord[] = [];
+  private readonly feeReservations = new Map<string, FeeReservation>();
+  private readonly paidCallsByReservationId = new Map<string, PaidCallRecord>();
+  private readonly recordedDepositBookings = new Map<string, DepositRecord>();
   private feesSpentUsdc = 0;
+  private feesReservedUsdc = 0;
   private depositsLockedUsdc = 0;
 
   constructor(config: AgentSpendingConfig) {
     if (!config.expectedPayTo || !config.expectedPayTo.trim()) {
       throw new Error('SpendingLedger requires a non-empty expectedPayTo address');
     }
+    const maxTxFeeXlm = config.maxTxFeeXlm ?? 1.0;
+    if (!Number.isFinite(maxTxFeeXlm) || maxTxFeeXlm <= 0) {
+      throw new Error('SpendingLedger requires a positive finite maxTxFeeXlm');
+    }
     this.config = {
       ...config,
+      maxTxFeeXlm,
       expectedPayTo: config.expectedPayTo.trim(),
       expectedAssetContract: (
         config.expectedAssetContract ?? getDefaultUsdcContract(config.network)
@@ -436,8 +466,17 @@ export class SpendingLedger {
     return roundUsdc(this.feesSpentUsdc);
   }
 
+  public getFeesReservedUsdc(): number {
+    return roundUsdc(this.feesReservedUsdc);
+  }
+
   public getRemainingFeeBudgetUsdc(): number {
-    return roundUsdc(Math.max(0, this.config.feeBudgetUsdc - this.feesSpentUsdc));
+    return roundUsdc(
+      Math.max(
+        0,
+        this.config.feeBudgetUsdc - this.feesSpentUsdc - this.feesReservedUsdc
+      )
+    );
   }
 
   public getDepositsLockedUsdc(): number {
@@ -451,7 +490,7 @@ export class SpendingLedger {
    *  2. payTo matches configured SafeTrust platform wallet
    *  3. asset is USDC matching configured SEP-41 contract for the network
    *  4. amount <= maxFeePerCallUsdc
-   *  5. feesSpentUsdc + amount <= feeBudgetUsdc
+   *  5. feesSpentUsdc + feesReservedUsdc + amount <= feeBudgetUsdc
    *
    * Throws SpendingLimitError if any rule is violated.
    */
@@ -491,7 +530,9 @@ export class SpendingLedger {
       );
     }
 
-    const projectedTotal = roundUsdc(this.feesSpentUsdc + req.amountUsdc);
+    const projectedTotal = roundUsdc(
+      this.feesSpentUsdc + this.feesReservedUsdc + req.amountUsdc
+    );
     if (projectedTotal > this.config.feeBudgetUsdc + 1e-9) {
       throw new SpendingLimitError(
         'FEE_BUDGET_EXCEEDED',
@@ -503,37 +544,115 @@ export class SpendingLedger {
   }
 
   /**
+   * Atomically verify and reserve budget for an in-flight x402 fee payment.
+   * Reserved amounts count against `AGENT_FEE_BUDGET` until either committed
+   * (settled) or explicitly released on a definitive settlement rejection.
+   */
+  public reserveFeePayment(
+    rawRequirement: Raw402Requirement,
+    endpoint = ''
+  ): FeeReservation {
+    const verified = this.verifyBeforePay(rawRequirement);
+    const id = randomBytes(8).toString('hex');
+    const reservation: FeeReservation = {
+      id,
+      endpoint,
+      requirement: verified,
+      status: 'reserved',
+      createdAt: new Date().toISOString(),
+    };
+    this.feesReservedUsdc = roundUsdc(
+      this.feesReservedUsdc + verified.amountUsdc
+    );
+    this.feeReservations.set(id, reservation);
+    return reservation;
+  }
+
+  /**
+   * Commit a previously reserved fee payment once settlement is confirmed.
+   * Idempotent for an already-settled reservation.
+   */
+  public commitFeeReservation(reservationId: string): PaidCallRecord {
+    const existingRecord = this.paidCallsByReservationId.get(reservationId);
+    if (existingRecord) {
+      return existingRecord;
+    }
+
+    const reservation = this.feeReservations.get(reservationId);
+    if (!reservation) {
+      throw new SpendingLimitError(
+        'INVALID_REQUIREMENT',
+        `Unknown fee reservation "${reservationId}"`
+      );
+    }
+    if (reservation.status === 'released') {
+      throw new SpendingLimitError(
+        'INVALID_REQUIREMENT',
+        `Cannot commit released fee reservation "${reservationId}"`
+      );
+    }
+
+    const { requirement, endpoint } = reservation;
+    this.feesReservedUsdc = roundUsdc(
+      Math.max(0, this.feesReservedUsdc - requirement.amountUsdc)
+    );
+    this.feesSpentUsdc = roundUsdc(this.feesSpentUsdc + requirement.amountUsdc);
+    reservation.status = 'settled';
+
+    const record: PaidCallRecord = {
+      id: reservation.id,
+      endpoint,
+      amountUsdc: requirement.amountUsdc,
+      amountAtomic: requirement.amountAtomic,
+      assetContract: requirement.assetContract,
+      network: `stellar:${this.config.network}`,
+      payTo: requirement.payTo,
+      timestamp: new Date().toISOString(),
+    };
+    this.paidCalls.push(record);
+    this.paidCallsByReservationId.set(reservationId, record);
+    return record;
+  }
+
+  /**
+   * Release a pending fee reservation when a paid retry is definitively rejected
+   * without settlement (or when signing fails before sending the retry).
+   */
+  public releaseFeeReservation(reservationId: string): boolean {
+    const reservation = this.feeReservations.get(reservationId);
+    if (!reservation || reservation.status !== 'reserved') {
+      return false;
+    }
+    this.feesReservedUsdc = roundUsdc(
+      Math.max(0, this.feesReservedUsdc - reservation.requirement.amountUsdc)
+    );
+    reservation.status = 'released';
+    return true;
+  }
+
+  /**
    * Record a verified x402 fee payment in the session ledger.
    */
   public recordFeePayment(
     requirement: NormalizedPaymentRequirement,
     endpoint = ''
   ): PaidCallRecord {
-    const verified = this.verifyBeforePay({
-      scheme: requirement.scheme,
-      network: requirement.network,
-      amount: requirement.amountAtomic,
-      asset: {
-        code: requirement.assetCode,
-        contract: requirement.assetContract,
+    const reservation = this.reserveFeePayment(
+      {
+        scheme: requirement.scheme,
+        network: requirement.network,
+        amount: requirement.amountAtomic,
+        asset: {
+          code: requirement.assetCode,
+          contract: requirement.assetContract,
+        },
+        payTo: requirement.payTo,
+        facilitatorUrl: requirement.facilitatorUrl,
+        description: requirement.description,
       },
-      payTo: requirement.payTo,
-      facilitatorUrl: requirement.facilitatorUrl,
-      description: requirement.description,
-    });
-    this.feesSpentUsdc = roundUsdc(this.feesSpentUsdc + verified.amountUsdc);
-    const record: PaidCallRecord = {
-      id: randomBytes(8).toString('hex'),
-      endpoint,
-      amountUsdc: verified.amountUsdc,
-      amountAtomic: verified.amountAtomic,
-      assetContract: verified.assetContract,
-      network: `stellar:${this.config.network}`,
-      payTo: verified.payTo,
-      timestamp: new Date().toISOString(),
-    };
-    this.paidCalls.push(record);
-    return record;
+      endpoint
+    );
+    return this.commitFeeReservation(reservation.id);
   }
 
   /**
@@ -556,14 +675,21 @@ export class SpendingLedger {
   }
 
   /**
-   * Record a signed escrow deposit in the session ledger.
+   * Record a confirmed escrow deposit in the session ledger.
+   * Idempotent per bookingId so retries cannot double-count a funded booking.
    */
   public recordDeposit(params: {
     bookingId: string;
     contractId: string;
     amountUsdc: number;
     assetContract?: string;
+    txHash?: string;
   }): DepositRecord {
+    const existing = this.recordedDepositBookings.get(params.bookingId);
+    if (existing) {
+      return existing;
+    }
+
     this.verifyDepositLimit(params.amountUsdc);
     const amountUsdc = roundUsdc(params.amountUsdc);
     const amountAtomic = usdcToAtomic(amountUsdc);
@@ -575,9 +701,11 @@ export class SpendingLedger {
       amountAtomic,
       assetContract: params.assetContract ?? this.config.expectedAssetContract,
       network: `stellar:${this.config.network}`,
+      txHash: params.txHash,
       timestamp: new Date().toISOString(),
     };
     this.deposits.push(record);
+    this.recordedDepositBookings.set(params.bookingId, record);
     return record;
   }
 
@@ -623,12 +751,37 @@ export interface CreateX402FetchOptions {
   rpcConfig?: RpcConfig;
 }
 
+const responsePaymentRecords = new WeakMap<Response, PaidCallRecord>();
+
 /**
- * Normalize a SafeTrust 402 response body (which uses snake_case `max_amount_usdc`,
- * `pay_to`, `asset: { code, contract, issuer }`, and `stellar:mainnet`) into a
- * Response carrying the standard `PAYMENT-REQUIRED` header expected by `@x402/fetch`,
- * and adapt the retry `PAYMENT-SIGNATURE` header to also include SafeTrust's
- * `X-Payment: x402 <base64>` header format.
+ * Retrieve the exact PaidCallRecord settled for a specific fetch Response,
+ * avoiding race conditions from diffing shared session totals under concurrency.
+ */
+export function getPaymentRecordForResponse(
+  response: Response
+): PaidCallRecord | undefined {
+  return responsePaymentRecords.get(response);
+}
+
+/**
+ * Determine whether a non-2xx response to a paid retry represents a definitive
+ * settlement rejection (safe to release the fee reservation) vs. an uncertain
+ * server/transport failure (must keep the reservation pending).
+ */
+function isDefinitivePaymentRejection(response: Response): boolean {
+  if (
+    response.headers.has('PAYMENT-RESPONSE') ||
+    response.headers.has('X-PAYMENT-RESPONSE')
+  ) {
+    return false;
+  }
+  return response.status >= 400 && response.status < 500;
+}
+
+/**
+ * Normalize either a standard x402 v2 `PAYMENT-REQUIRED` header (which may carry
+ * a plain-text or empty body) or a legacy SafeTrust 402 JSON response body into
+ * a Response carrying the standard `PAYMENT-REQUIRED` header expected by `@x402/fetch`.
  */
 function adaptSafeTrust402Response(
   response: Response,
@@ -640,35 +793,46 @@ function adaptSafeTrust402Response(
   facilitatorUrl?: string;
 }> {
   return (async () => {
-    const text = await response.text();
-    let body: Record<string, unknown> = {};
-    if (text) {
-      try {
-        body = JSON.parse(text) as Record<string, unknown>;
-      } catch {
-        throw new SpendingLimitError(
-          'INVALID_REQUIREMENT',
-          '402 response body is not valid JSON'
-        );
-      }
-    }
+    let accepts: Raw402Requirement[] | undefined;
+    let errorMessage = 'Payment Required';
 
-    // If the response also has a PAYMENT-REQUIRED header, decode it if body lacks accepts
-    let accepts = Array.isArray(body.accepts)
-      ? (body.accepts as Raw402Requirement[])
-      : undefined;
-
+    // 1. Prefer the standard x402 v2 PAYMENT-REQUIRED header before requiring a JSON body
     const headerPaymentRequired = response.headers.get('PAYMENT-REQUIRED');
-    if ((!accepts || accepts.length === 0) && headerPaymentRequired) {
+    if (headerPaymentRequired) {
       try {
         const decoded = JSON.parse(
           Buffer.from(headerPaymentRequired, 'base64').toString('utf8')
-        ) as { accepts?: Raw402Requirement[] };
-        if (Array.isArray(decoded.accepts)) {
+        ) as { accepts?: Raw402Requirement[]; error?: unknown };
+        if (Array.isArray(decoded.accepts) && decoded.accepts.length > 0) {
           accepts = decoded.accepts;
+          if (typeof decoded.error === 'string' && decoded.error.trim()) {
+            errorMessage = decoded.error;
+          }
         }
       } catch {
-        // Fall through to validation error
+        // Fall through to legacy JSON body parsing if header is not valid base64 JSON
+      }
+    }
+
+    // 2. Fall back to legacy SafeTrust JSON body when PAYMENT-REQUIRED header lacks accepts
+    if (!accepts || accepts.length === 0) {
+      const text = await response.text();
+      let body: Record<string, unknown> = {};
+      if (text) {
+        try {
+          body = JSON.parse(text) as Record<string, unknown>;
+        } catch {
+          throw new SpendingLimitError(
+            'INVALID_REQUIREMENT',
+            '402 response body is not valid JSON'
+          );
+        }
+      }
+      if (Array.isArray(body.accepts)) {
+        accepts = body.accepts as Raw402Requirement[];
+      }
+      if (typeof body.error === 'string' && body.error.trim()) {
+        errorMessage = body.error;
       }
     }
 
@@ -702,7 +866,7 @@ function adaptSafeTrust402Response(
 
     const paymentRequiredPayload = {
       x402Version: 2,
-      error: typeof body.error === 'string' ? body.error : 'Payment Required',
+      error: errorMessage,
       resource: {
         url: requestUrl || 'https://safetrust.local/api',
         description: verifiedReq.description ?? 'SafeTrust booking fee',
@@ -737,9 +901,9 @@ function adaptSafeTrust402Response(
  * Create an `@x402/fetch` payment-enabled fetch function bound to the session
  * `SpendingLedger` and the user's Stellar signer.
  *
- * Every 402 response is inspected by `ledger.verifyBeforePay` and an
- * `x402Client.onBeforePaymentCreation` hook before signing, and recorded in
- * the ledger only when payment creation succeeds.
+ * All per-call 402 state (requirement, facilitator URL, endpoint, and fee reservation)
+ * is strictly scoped to each individual request invocation so concurrent calls never
+ * cross-contaminate state or bypass `AGENT_FEE_BUDGET`.
  */
 export type FetchInput = Parameters<typeof globalThis.fetch>[0];
 
@@ -759,105 +923,139 @@ export function createPaymentFetch(
   const schemeClient: SchemeNetworkClient =
     options.schemeClient ?? new ExactStellarScheme(signer, options.rpcConfig);
 
-  const client = new x402Client();
-  // Disable built-in $1 default cap so our SpendingLedger enforces the exact
-  // AGENT_MAX_FEE_PER_CALL and AGENT_FEE_BUDGET with clear domain errors.
-  client.setSpendControls(false);
-  client.register(caip2Network, schemeClient);
-  // Also register `stellar:mainnet` alias when on mainnet
-  if (config.network === 'mainnet') {
-    client.register('stellar:mainnet', schemeClient);
-  }
-
-  let pendingVerifiedRequirement: NormalizedPaymentRequirement | null = null;
-  let pendingFacilitatorUrl: string | undefined;
-  let pendingEndpoint = '';
-
-  client.onBeforePaymentCreation(
-    async ({
-      selectedRequirements,
-    }: {
-      selectedRequirements: PaymentRequirements;
-    }) => {
-    // Double-check inside x402Client right before creating the signed payload
-    ledger.verifyBeforePay({
-      scheme: selectedRequirements.scheme,
-      network: selectedRequirements.network,
-      amount: selectedRequirements.amount,
-      asset: selectedRequirements.asset,
-      payTo: selectedRequirements.payTo,
-    });
-  });
-
-  client.onAfterPaymentCreation(async () => {
-    if (pendingVerifiedRequirement) {
-      ledger.recordFeePayment(pendingVerifiedRequirement, pendingEndpoint);
-      pendingVerifiedRequirement = null;
+  return async (input: FetchInput, init?: RequestInit): Promise<Response> => {
+    const client = new x402Client();
+    // Disable built-in $1 default cap so our SpendingLedger enforces the exact
+    // AGENT_MAX_FEE_PER_CALL and AGENT_FEE_BUDGET with clear domain errors.
+    client.setSpendControls(false);
+    client.register(caip2Network, schemeClient);
+    // Also register `stellar:mainnet` alias when on mainnet
+    if (config.network === 'mainnet') {
+      client.register('stellar:mainnet', schemeClient);
     }
-  });
 
-  const httpClient = new x402HTTPClient(client);
+    // Per-call isolated payment state
+    let callFacilitatorUrl: string | undefined;
+    let callEndpoint = '';
+    let callReservation: FeeReservation | null = null;
+    let callPaidRecord: PaidCallRecord | null = null;
+    let paidRetrySent = false;
 
-  const transportFetch: typeof globalThis.fetch = async (
-    input: FetchInput,
-    init?: RequestInit
-  ): Promise<Response> => {
-    const req = new Request(input, init);
-    const paymentSig = req.headers.get('PAYMENT-SIGNATURE');
-
-    // When @x402/fetch retries with PAYMENT-SIGNATURE, also populate SafeTrust's
-    // X-Payment header ("x402 <base64-json>") so both x402 v2 servers and
-    // SafeTrust's x402-processor Rust addon accept the header seamlessly.
-    if (paymentSig && !req.headers.has('x-payment')) {
-      try {
-        const decoded = JSON.parse(
-          Buffer.from(paymentSig, 'base64').toString('utf8')
-        ) as {
-          payload?: { transaction?: string } | string;
-          accepted?: { amount?: string; network?: string };
-        };
-        const txPayload =
-          typeof decoded.payload === 'object' && decoded.payload !== null
-            ? (decoded.payload.transaction ?? JSON.stringify(decoded.payload))
-            : String(decoded.payload ?? '');
-        const atomicStr = decoded.accepted?.amount ?? '0';
-        const amountUsdc = /^\d+$/.test(atomicStr)
-          ? atomicToUsdc(atomicStr)
-          : Number(atomicStr);
-
-        const safeTrustPaymentObj = {
-          scheme: 'exact',
-          network: `stellar:${config.network}`,
-          payload: txPayload,
-          amount: amountUsdc,
-          facilitatorUrl: pendingFacilitatorUrl ?? '',
-        };
-        const safeTrustEncoded = Buffer.from(
-          JSON.stringify(safeTrustPaymentObj),
-          'utf8'
-        ).toString('base64');
-        req.headers.set('X-Payment', `x402 ${safeTrustEncoded}`);
-      } catch {
-        // Leave original header untouched if custom decoding fails
+    client.onBeforePaymentCreation(
+      async ({
+        selectedRequirements,
+      }: {
+        selectedRequirements: PaymentRequirements;
+      }) => {
+        // Atomically verify limits and reserve budget before creating the signed payload
+        // so overlapping concurrent calls cannot both pass against the same remaining balance.
+        callReservation = ledger.reserveFeePayment(
+          {
+            scheme: selectedRequirements.scheme,
+            network: selectedRequirements.network,
+            amount: selectedRequirements.amount,
+            asset: selectedRequirements.asset,
+            payTo: selectedRequirements.payTo,
+            facilitatorUrl: callFacilitatorUrl,
+          },
+          callEndpoint
+        );
       }
-    }
+    );
 
-    const response = await baseFetch(req);
-    if (response.status !== 402) {
-      return response;
-    }
+    const httpClient = new x402HTTPClient(client);
 
-    // If a payment was already attached and server still returned 402, do not re-adapt
-    if (paymentSig || req.headers.has('x-payment')) {
-      return response;
-    }
+    const transportFetch: typeof globalThis.fetch = async (
+      reqInput: FetchInput,
+      reqInit?: RequestInit
+    ): Promise<Response> => {
+      const req = new Request(reqInput, reqInit);
+      const paymentSig = req.headers.get('PAYMENT-SIGNATURE');
+      const isPaidRetry = Boolean(paymentSig || req.headers.has('x-payment'));
 
-    pendingEndpoint = req.url;
-    const adapted = await adaptSafeTrust402Response(response, req.url, ledger);
-    pendingVerifiedRequirement = adapted.verifiedRequirement;
-    pendingFacilitatorUrl = adapted.facilitatorUrl;
-    return adapted.adaptedResponse;
+      // When @x402/fetch retries with PAYMENT-SIGNATURE, also populate SafeTrust's
+      // X-Payment header ("x402 <base64-json>") so both x402 v2 servers and
+      // SafeTrust's x402-processor Rust addon accept the header seamlessly.
+      if (paymentSig && !req.headers.has('x-payment')) {
+        try {
+          const decoded = JSON.parse(
+            Buffer.from(paymentSig, 'base64').toString('utf8')
+          ) as {
+            payload?: { transaction?: string } | string;
+            accepted?: { amount?: string; network?: string };
+          };
+          const txPayload =
+            typeof decoded.payload === 'object' && decoded.payload !== null
+              ? (decoded.payload.transaction ?? JSON.stringify(decoded.payload))
+              : String(decoded.payload ?? '');
+          const atomicStr = decoded.accepted?.amount ?? '0';
+          const amountUsdc = /^\d+$/.test(atomicStr)
+            ? atomicToUsdc(atomicStr)
+            : Number(atomicStr);
+
+          const safeTrustPaymentObj = {
+            scheme: 'exact',
+            network: `stellar:${config.network}`,
+            payload: txPayload,
+            amount: amountUsdc,
+            facilitatorUrl: callFacilitatorUrl ?? '',
+          };
+          const safeTrustEncoded = Buffer.from(
+            JSON.stringify(safeTrustPaymentObj),
+            'utf8'
+          ).toString('base64');
+          req.headers.set('X-Payment', `x402 ${safeTrustEncoded}`);
+        } catch {
+          // Leave original header untouched if custom decoding fails
+        }
+      }
+
+      if (isPaidRetry) {
+        paidRetrySent = true;
+      }
+
+      const response = await baseFetch(req);
+
+      if (isPaidRetry && callReservation) {
+        if (response.ok) {
+          callPaidRecord = ledger.commitFeeReservation(callReservation.id);
+        } else if (isDefinitivePaymentRejection(response)) {
+          ledger.releaseFeeReservation(callReservation.id);
+        }
+        // On 5xx or ambiguous status, leave the reservation pending because settlement is unknown.
+        return response;
+      }
+
+      if (response.status !== 402) {
+        return response;
+      }
+
+      // If a payment was already attached and server still returned 402, do not re-adapt
+      if (isPaidRetry) {
+        return response;
+      }
+
+      callEndpoint = req.url;
+      const adapted = await adaptSafeTrust402Response(response, req.url, ledger);
+      callFacilitatorUrl = adapted.facilitatorUrl;
+      return adapted.adaptedResponse;
+    };
+
+    const wrappedFetch = wrapFetchWithPayment(transportFetch, httpClient);
+    try {
+      const finalResponse = await wrappedFetch(input, init);
+      if (callPaidRecord) {
+        responsePaymentRecords.set(finalResponse, callPaidRecord);
+      }
+      return finalResponse;
+    } catch (err) {
+      // Release reservation only if signing/setup failed before the paid retry was sent.
+      // If the paid retry was sent and failed due to network/timeout, keep the reservation
+      // pending because settlement status is unknown.
+      if (callReservation && !paidRetrySent) {
+        ledger.releaseFeeReservation((callReservation as FeeReservation).id);
+      }
+      throw err;
+    }
   };
-
-  return wrapFetchWithPayment(transportFetch, httpClient);
 }

@@ -3,25 +3,38 @@ import { buildUnsignedFundEscrowXdr, verifyAndSignDeposit } from './deposit';
 import {
   SpendingLedger,
   loadSpendingConfigFromEnv,
-  normalize402Requirement,
+  type AgentSpendingConfig,
 } from './payments';
 import { SafeTrustApiClient } from './api';
 
+export interface RunTestnetTranscriptOptions {
+  /** Optional fixed Stellar secret key (defaults to STELLAR_SECRET_KEY env var or random testnet key) */
+  secretKey?: string;
+  /** Optional fixed spending config (defaults to loadSpendingConfigFromEnv with testnet) */
+  spendingConfig?: AgentSpendingConfig;
+}
+
 /**
- * Runs a complete booking flow transcript on Stellar testnet (or against a live
- * SAFETRUST_API_URL when provided, falling back to a local in-memory mock
- * SafeTrust /api/v1 server when SAFETRUST_API_URL is not set).
+ * Runs an offline simulated booking-flow transcript using Stellar testnet XDR
+ * verification/signing with an in-memory mock SafeTrust `/api/v1` transport and
+ * mock x402 scheme client. Does not contact a live SafeTrust backend.
  */
-export async function runTestnetTranscript(): Promise<string[]> {
+export async function runTestnetTranscript(
+  options: RunTestnetTranscriptOptions = {}
+): Promise<string[]> {
   const lines: string[] = [];
-  const kp = process.env.STELLAR_SECRET_KEY
-    ? Keypair.fromSecret(process.env.STELLAR_SECRET_KEY.trim())
-    : Keypair.random();
+  const kp = options.secretKey
+    ? Keypair.fromSecret(options.secretKey.trim())
+    : process.env.STELLAR_SECRET_KEY
+      ? Keypair.fromSecret(process.env.STELLAR_SECRET_KEY.trim())
+      : Keypair.random();
   const secretKey = kp.secret();
-  const config = loadSpendingConfigFromEnv({
-    ...process.env,
-    STELLAR_NETWORK: 'testnet',
-  });
+  const config =
+    options.spendingConfig ??
+    loadSpendingConfigFromEnv({
+      ...process.env,
+      STELLAR_NETWORK: 'testnet',
+    });
   const ledger = new SpendingLedger(config);
 
   const contractId = StrKey.encodeContract(Buffer.alloc(32, 7));
@@ -284,6 +297,13 @@ export async function runTestnetTranscript(): Promise<string[]> {
     txHash: signed.txHash,
     amountUsdc: signed.amountUsdc,
   });
+  ledger.recordDeposit({
+    bookingId: signed.bookingId,
+    contractId: signed.contractId,
+    amountUsdc: signed.amountUsdc,
+    assetContract: signed.assetContract ?? undefined,
+    txHash: signed.txHash,
+  });
   lines.push(
     `fund_deposit        ${signed.amountUsdc.toFixed(2)} USDC     signed by your wallet -> escrow contract`
   );
@@ -301,6 +321,9 @@ export async function runTestnetTranscript(): Promise<string[]> {
 if (require.main === module) {
   runTestnetTranscript()
     .then((lines) => {
+      console.log(
+        '[Simulated offline testnet transcript — mock SafeTrust API & mock x402 transport]'
+      );
       for (const line of lines) {
         console.log(line);
       }

@@ -26,15 +26,16 @@ Every 402 response is also checked against the configured `SAFETRUST_PLATFORM_WA
 
 ### 3. Human Confirmation & XDR Verification (`fund_deposit`)
 `fund_deposit` **never** signs without human confirmation for that booking:
-- **MCP Elicitation (preferred):** If the connected MCP client supports elicitation, `fund_deposit` sends an `elicitation/create` prompt asking the human to confirm locking the exact USDC deposit into the escrow `contract_id`.
-- **Two-Step Fallback (`prepare_deposit` / `confirm_deposit`):** If the MCP client does not support elicitation, `fund_deposit` (or `prepare_deposit`) returns a `confirmation_id` and prompt text to show to the human. Once the human replies `"yes"`, the assistant calls `confirm_deposit` (or `fund_deposit`) with `confirmation_id` and `human_confirmed: true`.
+- **MCP Elicitation (preferred):** If the connected MCP client supports form elicitation, `fund_deposit` sends an `elicitation/create` prompt asking the human to confirm locking the exact USDC deposit into the escrow `contract_id`.
+- **Two-Step Fallback (`prepare_deposit` / `confirm_deposit`):** If the MCP client does not support form elicitation, `fund_deposit` (or `prepare_deposit`) returns a `confirmation_id` and prompt text to show to the human. Because a caller-supplied `human_confirmed` boolean alone cannot be independently verified by the server, **two-step fallback signing is disabled by default**. To enable it safely, either supply a server-verifiable `verifyHumanApproval` hook or configure your MCP host to require explicit human approval before calling `confirm_deposit` / `fund_deposit` and then set `AGENT_ALLOW_HOST_FALLBACK_CONFIRMATION=true`.
 
 Before signing, `verifyFundEscrowXdr` decodes the unsigned transaction XDR and verifies:
 - Single `invokeHostFunction` (`hostFunctionTypeInvokeContract`) operation (no fee-bump or multi-op transactions)
+- Transaction source/fee payer matches the user's wallet and Stellar network fee does not exceed `AGENT_MAX_TX_FEE_XLM`
 - Target contract equals the `contract_id` returned by `create_booking`
 - Invoked function name is `fund_escrow`
-- Deposit amount equals the exact quoted USDC deposit (in 7-decimal stroops)
-- Asset contract matches the configured network's USDC contract
+- Deposit amount equals the exact quoted USDC deposit (in 7-decimal stroops) with no conflicting arguments
+- Asset contract matches the configured network's USDC contract (`SAFETRUST_USDC_CONTRACT` or network default)
 
 ### 4. Secret Key Handling
 - Provide the wallet's secret key via the `STELLAR_SECRET_KEY` environment variable (`testnet` is the default when `STELLAR_NETWORK` is unset).
@@ -53,6 +54,8 @@ Before signing, `verifyFundEscrowXdr` decodes the unsigned transaction XDR and v
 | `AGENT_MAX_FEE_PER_CALL` | Max x402 fee per API call (USDC) | `0.10` |
 | `AGENT_FEE_BUDGET` | Max cumulative x402 fees per session (USDC) | `0.50` |
 | `AGENT_MAX_DEPOSIT` | Max escrow deposit amount (USDC) | `50.00` |
+| `AGENT_MAX_TX_FEE_XLM` | Max Stellar transaction fee (XLM) allowed when signing a deposit XDR | `1.0` |
+| `AGENT_ALLOW_HOST_FALLBACK_CONFIRMATION` | Set to `true` only after configuring host-enforced human approval for `confirm_deposit` / `fund_deposit` in clients without form elicitation | `false` |
 
 ---
 

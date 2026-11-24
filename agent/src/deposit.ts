@@ -33,6 +33,10 @@ export interface VerifyDepositXdrParams {
   expectedAssetContract?: string;
   /** Optional expected signer public key (G...) */
   expectedSigner?: string;
+  /** Optional expected Stellar transaction fee payer (source account, defaults to expectedSigner when set) */
+  expectedFeePayer?: string;
+  /** Maximum permitted Stellar network transaction fee in XLM (defaults to 1.0 XLM) */
+  maxTxFeeXlm?: number;
 }
 
 export interface VerifiedDepositXdr {
@@ -42,6 +46,8 @@ export interface VerifiedDepositXdr {
   amountAtomic: string;
   assetContract: string | null;
   signerAddress: string | null;
+  sourceAccount: string;
+  feeStroops: string;
   networkPassphrase: string;
   transaction: Transaction;
 }
@@ -62,7 +68,9 @@ export interface SignedDepositResult {
   contractId: string;
   amountUsdc: number;
   amountAtomic: string;
+  assetContract: string | null;
   signerPublicKey: string;
+  feeStroops: string;
   signedXdr: string;
   txHash: string;
 }
@@ -78,6 +86,11 @@ export class DepositVerificationError extends Error {
     | 'AMOUNT_MISMATCH'
     | 'ASSET_MISMATCH'
     | 'SIGNER_MISMATCH'
+    | 'FEE_PAYER_MISMATCH'
+    | 'TX_FEE_EXCEEDED'
+    | 'ALREADY_FUNDED'
+    | 'FUNDING_IN_PROGRESS'
+    | 'FUNDING_OUTCOME_UNCERTAIN'
     | 'HUMAN_CONFIRMATION_REQUIRED';
 
   constructor(code: DepositVerificationError['code'], message: string) {
@@ -85,6 +98,22 @@ export class DepositVerificationError extends Error {
     this.name = 'DepositVerificationError';
     this.code = code;
   }
+}
+
+export const DEFAULT_MAX_TX_FEE_XLM = 1.0;
+
+/**
+ * Format an exact USDC atomic amount (7 decimals) as a string with at least 2 decimal
+ * places, preserving all nonzero trailing fractional digits (e.g. 45.00, 45.004).
+ */
+export function formatExactUsdc(amountUsdc: number): string {
+  const atomicStr = usdcToAtomic(amountUsdc);
+  const padded = atomicStr.padStart(8, '0');
+  const whole = padded.slice(0, -7);
+  const fracRaw = padded.slice(-7);
+  const fracTrimmed = fracRaw.replace(/0+$/, '');
+  const frac = fracTrimmed.length < 2 ? fracRaw.slice(0, 2) : fracTrimmed;
+  return `${whole}.${frac}`;
 }
 
 export function getStellarNetworkPassphrase(network: StellarNetworkName): string {
@@ -166,6 +195,40 @@ export function verifyFundEscrowXdr(
   }
 
   const tx = parsedTx as Transaction;
+
+  // Verify transaction fee payer (source account) and Stellar XLM fee limit
+  const expectedFeePayer = (
+    params.expectedFeePayer ?? expectedSigner
+  )?.trim();
+  if (expectedFeePayer && tx.source !== expectedFeePayer) {
+    throw new DepositVerificationError(
+      'FEE_PAYER_MISMATCH',
+      `Aborting deposit: transaction source/fee payer "${tx.source}" does not match expected fee payer "${expectedFeePayer}"`
+    );
+  }
+
+  const maxTxFeeXlm = params.maxTxFeeXlm ?? DEFAULT_MAX_TX_FEE_XLM;
+  if (!Number.isFinite(maxTxFeeXlm) || maxTxFeeXlm <= 0) {
+    throw new DepositVerificationError(
+      'TX_FEE_EXCEEDED',
+      `Invalid maxTxFeeXlm configuration: ${maxTxFeeXlm}`
+    );
+  }
+  const maxTxFeeStroops = BigInt(usdcToAtomic(maxTxFeeXlm));
+  if (!/^\d+$/.test(String(tx.fee))) {
+    throw new DepositVerificationError(
+      'INVALID_XDR',
+      `Aborting deposit: invalid transaction fee "${String(tx.fee)}"`
+    );
+  }
+  const txFeeStroops = BigInt(tx.fee);
+  if (txFeeStroops <= 0n || txFeeStroops > maxTxFeeStroops) {
+    throw new DepositVerificationError(
+      'TX_FEE_EXCEEDED',
+      `Aborting deposit: transaction fee ${txFeeStroops.toString()} stroops exceeds maximum allowed ${maxTxFeeStroops.toString()} stroops (${maxTxFeeXlm} XLM)`
+    );
+  }
+
   if (!tx.operations || tx.operations.length !== 1) {
     throw new DepositVerificationError(
       'MULTIPLE_OPERATIONS',
@@ -296,7 +359,14 @@ export function verifyFundEscrowXdr(
       const nativeMap = scValToNative(scVal) as Record<string, unknown>;
       if (nativeMap && typeof nativeMap === 'object') {
         if ('amount' in nativeMap && nativeMap.amount !== undefined) {
-          foundAmountBigInt = BigInt(String(nativeMap.amount));
+          const mapAmount = BigInt(String(nativeMap.amount));
+          if (foundAmountBigInt !== null && foundAmountBigInt !== mapAmount) {
+            throw new DepositVerificationError(
+              'AMOUNT_MISMATCH',
+              `Aborting deposit: ambiguous numeric arguments in fund_escrow (${foundAmountBigInt.toString()} vs ${mapAmount.toString()})`
+            );
+          }
+          foundAmountBigInt = mapAmount;
         }
         if ('token' in nativeMap && typeof nativeMap.token === 'string') {
           foundAssetContract = nativeMap.token;
@@ -349,14 +419,19 @@ export function verifyFundEscrowXdr(
     amountAtomic: expectedAtomicStr,
     assetContract: foundAssetContract ?? expectedAsset,
     signerAddress: foundSignerAddress,
+    sourceAccount: tx.source,
+    feeStroops: txFeeStroops.toString(),
     networkPassphrase,
     transaction: tx,
   };
 }
 
 /**
- * Verify the unsigned XDR, check human confirmation and spending ledger deposit limits,
- * and sign the transaction with the user's Stellar secret key.
+ * Verify the unsigned XDR, check human confirmation, deposit limit, fee payer,
+ * and Stellar XLM fee limit, then sign the transaction with the user's Stellar secret key.
+ *
+ * Signing is intentionally decoupled from ledger recording: callers MUST record
+ * the deposit in `SpendingLedger` only after funding is confirmed on the backend.
  *
  * The secret key is used strictly in-memory to sign and is never logged or returned.
  */
@@ -376,31 +451,30 @@ export function verifyAndSignDeposit(
   const keypair = Keypair.fromSecret(params.secretKey.trim());
   const signerPublicKey = keypair.publicKey();
 
-  // 2. Decode and verify the unsigned XDR calls fund_escrow on expectedContractId for expectedAmountUsdc
+  // 2. Decode and verify the unsigned XDR calls fund_escrow on expectedContractId
+  //    for expectedAmountUsdc, with an approved fee payer and Stellar XLM fee cap.
   const verified = verifyFundEscrowXdr({
     ...params,
+    expectedAssetContract:
+      params.expectedAssetContract ?? params.ledger.getConfig().expectedAssetContract,
     expectedSigner: params.expectedSigner ?? signerPublicKey,
+    expectedFeePayer: params.expectedFeePayer ?? signerPublicKey,
+    maxTxFeeXlm: params.maxTxFeeXlm ?? params.ledger.getConfig().maxTxFeeXlm,
   });
 
-  // 3. Sign the verified transaction
+  // 3. Sign the verified transaction (do NOT record as locked until funding is confirmed)
   verified.transaction.sign(keypair);
   const signedXdr = verified.transaction.toXDR();
   const txHash = Buffer.from(verified.transaction.hash()).toString('hex');
-
-  // 4. Record the deposit in the spending ledger
-  params.ledger.recordDeposit({
-    bookingId: params.bookingId,
-    contractId: verified.contractId,
-    amountUsdc: verified.amountUsdc,
-    assetContract: verified.assetContract ?? undefined,
-  });
 
   return {
     bookingId: params.bookingId,
     contractId: verified.contractId,
     amountUsdc: verified.amountUsdc,
     amountAtomic: verified.amountAtomic,
+    assetContract: verified.assetContract,
     signerPublicKey,
+    feeStroops: verified.feeStroops,
     signedXdr,
     txHash,
   };
@@ -418,6 +492,8 @@ export function buildUnsignedFundEscrowXdr(params: {
   assetContract?: string;
   sequenceNumber?: string;
   functionName?: string;
+  feeStroops?: string;
+  sourceAccount?: string;
 }): string {
   const networkPassphrase = getStellarNetworkPassphrase(params.network);
   const assetContract = (
@@ -433,12 +509,12 @@ export function buildUnsignedFundEscrowXdr(params: {
       );
 
   const account = new Account(
-    params.signerPublicKey,
+    params.sourceAccount ?? params.signerPublicKey,
     params.sequenceNumber ?? '100'
   );
 
   const tx = new TransactionBuilder(account, {
-    fee: '10000',
+    fee: params.feeStroops ?? '10000',
     networkPassphrase,
   })
     .addOperation(
