@@ -1,7 +1,13 @@
 import { NextFunction, Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { createAgentBooking } from '../../../services/booking.service'
-import { AuthError, ConflictError, ValidationError } from '../../../utils/errors'
+import { settleBookingFee } from '../../../services/x402-settlement.service'
+import {
+  AuthError,
+  ConflictError,
+  PaymentRequiredError,
+  ValidationError,
+} from '../../../utils/errors'
 
 export async function createBookingHandler(
   req: AuthenticatedRequest,
@@ -27,6 +33,8 @@ export async function createBookingHandler(
       )
     }
 
+    const x402 = req.x402
+
     const result = await createAgentBooking({
       userId: ctx.uid,
       tenantId: ctx.tenantId,
@@ -35,7 +43,19 @@ export async function createBookingHandler(
       checkIn,
       checkOut,
       guests,
-      payerWallet: req.x402?.payer ?? null,
+      payerWallet: x402?.payer ?? null,
+      // Settlement is durably recorded, so retries reuse the confirmed receipt.
+      chargeBookingFee: async () => {
+        if (!x402) {
+          throw new PaymentRequiredError('x402 payment is required to create a booking')
+        }
+        await settleBookingFee({
+          paymentHeader: x402.paymentHeader,
+          amountUsdc: x402.amountUsdc,
+          payer: x402.payer,
+          network: x402.network,
+        })
+      },
     })
 
     const status = result.is_existing ? 200 : 201

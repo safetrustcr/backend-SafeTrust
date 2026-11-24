@@ -59,6 +59,13 @@ export class ConflictError extends AppError {
   }
 }
 
+/** The request cannot proceed until the client pays or settlement confirms. */
+export class PaymentRequiredError extends AppError {
+  constructor(message: string, options: AppErrorOptions = {}) {
+    super(message, 402, { code: 'payment_required', ...options })
+  }
+}
+
 /** A dependency is unavailable. The client sees only the generic message. */
 export class ServiceUnavailableError extends AppError {
   constructor(message = 'Service unavailable', options: AppErrorOptions = {}) {
@@ -69,6 +76,7 @@ export class ServiceUnavailableError extends AppError {
 function defaultCode(statusCode: number): string {
   if (statusCode === 400) return 'validation_error'
   if (statusCode === 401) return 'unauthorized'
+  if (statusCode === 402) return 'payment_required'
   if (statusCode === 403) return 'forbidden'
   if (statusCode === 404) return 'not_found'
   if (statusCode === 409) return 'conflict'

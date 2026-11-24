@@ -3,6 +3,11 @@ import request from 'supertest'
 
 const mockQuery = jest.fn()
 const mockWithTransaction = jest.fn()
+const mockSettleBookingFee = jest.fn()
+
+jest.mock('../../../../services/x402-settlement.service', () => ({
+  settleBookingFee: (...args: unknown[]) => mockSettleBookingFee(...args),
+}))
 
 jest.mock('../../../../services/db', () => ({
   __esModule: true,
@@ -15,6 +20,7 @@ jest.mock('../../../../services/db', () => ({
 
 import bookingsRouter from '../index'
 import { errorHandler } from '../../../../middleware/error-handler'
+import { PaymentRequiredError } from '../../../../utils/errors'
 import { setX402Addon } from '../../../../middleware/x402-payment.middleware'
 
 const APT_ID = '11111111-1111-4111-8111-111111111111'
@@ -39,6 +45,11 @@ function app(uid: string | null) {
 describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockSettleBookingFee.mockResolvedValue({
+      idempotencyKey: 'payment-key',
+      transactionHash: 'settlement-tx-hash',
+      reused: false,
+    })
     process.env.X402_ENABLED = 'true'
     process.env.SAFETRUST_PLATFORM_WALLET = 'GD5JPEHGGTDTK2N7OMDDCOW3DPO5KSFWACYWNYZNNOXD2UC7LQ4DHXMM'
     setX402Addon({
@@ -164,6 +175,8 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
     })
     // Crucial check: withTransaction was not invoked to re-convert or re-deploy
     expect(mockWithTransaction).not.toHaveBeenCalled()
+    // A retry of an already-converted hold must not settle the fee again
+    expect(mockSettleBookingFee).not.toHaveBeenCalled()
   })
 
   it('converts active hold, deploys escrow, generates unsigned XDR and returns 201', async () => {
@@ -276,6 +289,60 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
       unsigned_xdr: expect.any(String),
     })
     expect(mockWithTransaction).toHaveBeenCalledTimes(1)
+    expect(mockSettleBookingFee).toHaveBeenCalledTimes(1)
+    expect(mockSettleBookingFee).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentHeader: 'valid-x402-proof',
+        amountUsdc: 0.10,
+        network: 'stellar:testnet',
+      })
+    )
+  })
+
+  it('fails the booking when fee settlement is not confirmed', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: HOLD_ID,
+          tenant_id: 'safetrust',
+          apartment_id: APT_ID,
+          user_id: 'agent-1',
+          check_in: '2026-12-15',
+          check_out: '2026-12-20',
+          guests: 2,
+          status: 'active',
+          expires_at: new Date(Date.now() + 600000),
+          is_expired: false,
+        },
+      ],
+    })
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: APT_ID,
+          name: 'Modern Apartment',
+          price: '100.00',
+          warranty_deposit: '50.00',
+          owner_id: 'host-1',
+          is_available: true,
+          bedrooms: 1,
+        },
+      ],
+    })
+    mockSettleBookingFee.mockRejectedValueOnce(
+      new PaymentRequiredError('Facilitator declined settlement', {
+        code: 'settlement_failed',
+      })
+    )
+
+    const res = await request(app('agent-1'))
+      .post('/api/v1/bookings')
+      .set('x-payment', 'valid-x402-proof')
+      .send({ hold_id: HOLD_ID })
+
+    expect(res.status).toBe(402)
+    expect(res.body.code).toBe('settlement_failed')
+    expect(mockWithTransaction).not.toHaveBeenCalled()
   })
 
   it('rejects request with 400 when neither hold_id nor property details are sent', async () => {

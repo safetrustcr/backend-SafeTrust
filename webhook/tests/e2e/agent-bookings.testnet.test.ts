@@ -8,6 +8,7 @@ const mockDbState = {
   escrows: new Map<string, any>(),
   escrowTransactions: new Map<string, any>(),
   userWallets: new Map<string, any>(),
+  x402Settlements: new Map<string, any>(),
 }
 
 jest.mock('../../src/services/db', () => ({
@@ -15,6 +16,29 @@ jest.mock('../../src/services/db', () => ({
   default: {
     query: jest.fn(async (sql: string, params?: any[]) => {
       const lower = sql.toLowerCase()
+
+      // 0. x402 settlement receipts (idempotent fee settlement)
+      if (lower.includes('safetrust.x402_settlements')) {
+        const key = params?.[0]
+        if (lower.startsWith('insert') && key) {
+          mockDbState.x402Settlements.set(key, {
+            status: 'pending',
+            tx_hash: null,
+            updated_at: new Date(),
+          })
+          return { rowCount: 1, rows: [{ id: 'settlement-seeded-1' }] }
+        }
+        if (lower.startsWith('update')) {
+          const record = key ? mockDbState.x402Settlements.get(key) : undefined
+          if (record && lower.includes("status = 'settled'")) {
+            record.status = 'settled'
+            record.tx_hash = params?.[1] ?? null
+          }
+          return { rowCount: 1, rows: [] }
+        }
+        const record = key ? mockDbState.x402Settlements.get(key) : undefined
+        return { rows: record ? [record] : [] }
+      }
 
       // 1. Apartment lookup
       if (lower.includes('from safetrust.apartments') && params) {
@@ -188,6 +212,7 @@ describe('E2E Agent Bookings Flow on Testnet (Issue #778)', () => {
     mockDbState.escrows.clear()
     mockDbState.escrowTransactions.clear()
     mockDbState.userWallets.clear()
+    mockDbState.x402Settlements.clear()
 
     // 1. Seed apartment in safetrust.apartments
     mockDbState.apartments.set(SEEDED_APT_ID, {
@@ -221,6 +246,13 @@ describe('E2E Agent Bookings Flow on Testnet (Issue #778)', () => {
           payer_address: SEEDED_AGENT_WALLET,
           amount_usdc: 0.10,
           network: 'stellar:testnet',
+        }),
+      settleX402Payment: () =>
+        JSON.stringify({
+          settled: true,
+          transaction_hash: 'settlement-e2e-tx-hash',
+          network: 'stellar:testnet',
+          error: null,
         }),
       buildPaymentRequirement: (amount: number) =>
         JSON.stringify({ maxAmountRequired: amount, network: 'stellar:testnet' }),

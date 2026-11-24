@@ -1,4 +1,6 @@
-use crate::types::{FacilitatorVerifyResponse, X402PaymentHeader, X402ValidationResult};
+use crate::types::{
+    FacilitatorSettleResponse, FacilitatorVerifyResponse, X402PaymentHeader, X402ValidationResult,
+};
 use reqwest::Client;
 use std::time::Duration;
 
@@ -19,6 +21,28 @@ pub fn is_allowed_facilitator(url: &str) -> bool {
         .any(|allowed| allowed.trim_end_matches('/') == normalized)
 }
 
+/// Resolve the facilitator URL for a payment, refusing untrusted hosts.
+/// Falls back to the OpenZeppelin facilitator matching the network when the
+/// payment header does not name one.
+pub fn resolve_facilitator_url(payment: &X402PaymentHeader) -> Result<String, String> {
+    if payment.facilitator_url.is_empty() {
+        return Ok(if payment.network.contains("mainnet") {
+            OPENZEPPELIN_FACILITATOR_MAINNET.to_string()
+        } else {
+            OPENZEPPELIN_FACILITATOR_TESTNET.to_string()
+        });
+    }
+
+    if !is_allowed_facilitator(&payment.facilitator_url) {
+        return Err(format!(
+            "Untrusted facilitator URL: '{}' is not in allowlist",
+            payment.facilitator_url
+        ));
+    }
+
+    Ok(payment.facilitator_url.clone())
+}
+
 /// Verify an x402 payment with the facilitator.
 /// Calls POST /verify on the facilitator URL from the payment header.
 pub async fn verify_with_facilitator(
@@ -26,26 +50,17 @@ pub async fn verify_with_facilitator(
     required_amount: f64,
 ) -> Result<X402ValidationResult, String> {
     // Use the facilitator URL from the payment header if in allowlist, otherwise default
-    let facilitator_url = if payment.facilitator_url.is_empty() {
-        if payment.network.contains("mainnet") {
-            OPENZEPPELIN_FACILITATOR_MAINNET
-        } else {
-            OPENZEPPELIN_FACILITATOR_TESTNET
-        }
-    } else {
-        if !is_allowed_facilitator(&payment.facilitator_url) {
+    let facilitator_url = match resolve_facilitator_url(payment) {
+        Ok(url) => url,
+        Err(reason) => {
             return Ok(X402ValidationResult {
                 is_valid: false,
                 payer_address: None,
                 amount_usdc: payment.amount,
                 network: payment.network.clone(),
-                invalid_reason: Some(format!(
-                    "Untrusted facilitator URL: '{}' is not in allowlist",
-                    payment.facilitator_url
-                )),
+                invalid_reason: Some(reason),
             });
         }
-        &payment.facilitator_url
     };
 
     // Validate amount meets minimum before calling facilitator
@@ -101,19 +116,23 @@ pub async fn verify_with_facilitator(
     })
 }
 
-/// Settle the payment asynchronously after serving the response.
-/// Called in a background task — never blocks the API response.
-pub async fn settle_with_facilitator(payment: &X402PaymentHeader, facilitator_url: &str) {
-    let client = match Client::builder().timeout(Duration::from_secs(15)).build() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("[x402] Failed to build HTTP client for settle: {}", e);
-            return;
-        }
-    };
+/// Settle the payment synchronously and return the on-chain transaction hash.
+///
+/// Callers must treat a returned error as "not settled" and must not report
+/// success. Settlement is only ever started once the caller has a durable
+/// idempotency record, so a retry can reuse the persisted result instead of
+/// charging the guest twice.
+pub async fn settle_with_facilitator(
+    payment: &X402PaymentHeader,
+    facilitator_url: &str,
+) -> Result<Option<String>, String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {}", e))?;
 
     let settle_url = format!("{}/settle", facilitator_url.trim_end_matches('/'));
-    match client
+    let response = client
         .post(&settle_url)
         .json(&serde_json::json!({
             "x402Version": 2,
@@ -123,11 +142,25 @@ pub async fn settle_with_facilitator(payment: &X402PaymentHeader, facilitator_ur
         }))
         .send()
         .await
-    {
-        Ok(r) if r.status().is_success() => {
-            println!("[x402] ✅ Payment settled — network: {}", payment.network)
-        }
-        Ok(r) => eprintln!("[x402] ⚠️ Settle returned {}", r.status()),
-        Err(e) => eprintln!("[x402] ⚠️ Settle failed: {}", e),
+        .map_err(|e| format!("Facilitator /settle request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Facilitator /settle returned {}: {}", status, body));
     }
+
+    let settled: FacilitatorSettleResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Facilitator /settle response parse failed: {}", e))?;
+
+    if !settled.success {
+        return Err(settled
+            .error_reason
+            .or(settled.error)
+            .unwrap_or_else(|| "Facilitator declined settlement".to_string()));
+    }
+
+    Ok(settled.transaction.or(settled.transaction_hash))
 }

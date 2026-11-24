@@ -13,13 +13,15 @@ static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
         .expect("Failed to initialize x402 tokio runtime")
 });
 
-/// Settlement is disabled unless the operator opts in. `X402_ENABLED` gates
-/// whether the eligibility path may call this crate at all; this second flag
-/// gates the unsafe, fire-and-forget `/settle` call.
-fn settlement_enabled() -> bool {
-    std::env::var("X402_SETTLE_ENABLED")
-        .map(|value| value == "true")
-        .unwrap_or(false)
+fn insufficient_amount(payment: &types::X402PaymentHeader, required_amount: f64) -> Option<String> {
+    if payment.amount < required_amount {
+        Some(format!(
+            "Insufficient payment: {} USDC < required {} USDC",
+            payment.amount, required_amount
+        ))
+    } else {
+        None
+    }
 }
 
 /// Validate an X-Payment header against the required amount.
@@ -42,26 +44,10 @@ fn validate_x402_payment(mut cx: FunctionContext) -> JsResult<JsString> {
             Ok(payment) => {
                 match facilitator::verify_with_facilitator(&payment, required_amount).await {
                     Ok(result) => {
-                        // Settlement is a separate, default-off step. `/verify`
-                        // confirms the payment authorization; it does not move
-                        // funds. The current settle task has no durable retry or
-                        // idempotency record (findings F2/F3/F8), so it must not
-                        // run unless an operator explicitly opts in.
-                        if result.is_valid && settlement_enabled() {
-                            let p = payment.clone();
-                            let f = if payment.facilitator_url.is_empty() {
-                                if payment.network.contains("mainnet") {
-                                    facilitator::OPENZEPPELIN_FACILITATOR_MAINNET.to_string()
-                                } else {
-                                    facilitator::OPENZEPPELIN_FACILITATOR_TESTNET.to_string()
-                                }
-                            } else {
-                                payment.facilitator_url.clone()
-                            };
-                            tokio::spawn(async move {
-                                facilitator::settle_with_facilitator(&p, &f).await;
-                            });
-                        }
+                        // `/verify` only confirms the payment authorization; it
+                        // does not move funds. Settlement is an explicit step:
+                        // callers must invoke `settleX402Payment` and honour its
+                        // result before reporting success.
                         result
                     }
                     Err(e) => types::X402ValidationResult {
@@ -71,6 +57,69 @@ fn validate_x402_payment(mut cx: FunctionContext) -> JsResult<JsString> {
                         network: payment.network,
                         invalid_reason: Some(e),
                     },
+                }
+            }
+        }
+    });
+
+    let json = match serde_json::to_string(&result) {
+        Ok(j) => j,
+        Err(e) => return cx.throw_error(e.to_string()),
+    };
+
+    Ok(cx.string(json))
+}
+
+/// Verify and settle an X-Payment header synchronously.
+/// Returns JSON X402SettlementResult. A settle failure is returned as
+/// `settled: false` with a reason; it never reports success optimistically.
+fn settle_x402_payment(mut cx: FunctionContext) -> JsResult<JsString> {
+    let header = cx.argument::<JsString>(0)?.value(&mut cx);
+    let required_amount = cx.argument::<JsNumber>(1)?.value(&mut cx);
+
+    let result = RUNTIME.block_on(async {
+        match parser::parse_x_payment_header(&header) {
+            Err(e) => types::X402SettlementResult {
+                settled: false,
+                transaction_hash: None,
+                network: String::new(),
+                error: Some(e),
+            },
+            Ok(payment) => {
+                if let Some(reason) = insufficient_amount(&payment, required_amount) {
+                    return types::X402SettlementResult {
+                        settled: false,
+                        transaction_hash: None,
+                        network: payment.network,
+                        error: Some(reason),
+                    };
+                }
+
+                match facilitator::resolve_facilitator_url(&payment) {
+                    Err(e) => types::X402SettlementResult {
+                        settled: false,
+                        transaction_hash: None,
+                        network: payment.network,
+                        error: Some(e),
+                    },
+                    Ok(facilitator_url) => {
+                        match facilitator::settle_with_facilitator(&payment, &facilitator_url)
+                            .await
+                        {
+                            Ok(transaction_hash) => types::X402SettlementResult {
+                                settled: true,
+                                transaction_hash,
+                                network: payment.network,
+                                error: None,
+                            },
+                            Err(e) => types::X402SettlementResult {
+                                settled: false,
+                                transaction_hash: None,
+                                network: payment.network,
+                                error: Some(e),
+                            },
+                        }
+                    }
                 }
             }
         }
@@ -106,6 +155,7 @@ fn build_payment_requirement(mut cx: FunctionContext) -> JsResult<JsString> {
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("validateX402Payment", validate_x402_payment)?;
+    cx.export_function("settleX402Payment", settle_x402_payment)?;
     cx.export_function("buildPaymentRequirement", build_payment_requirement)?;
     Ok(())
 }

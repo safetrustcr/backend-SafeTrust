@@ -290,6 +290,7 @@ describe('x402-payment.middleware', () => {
         payer: 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ',
         amountUsdc: 0.10,
         network: 'stellar:testnet',
+        paymentHeader: 'x402 valid-b64-payload',
       })
     })
   })

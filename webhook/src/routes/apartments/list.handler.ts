@@ -105,7 +105,7 @@ export const listApartments = async (
     let validCheckIn: string | undefined
     let validCheckOut: string | undefined
     // Dates held by someone else (pending_payment or active) are unavailable.
-    if (checkIn || checkOut) {
+    if (checkIn !== undefined || checkOut !== undefined) {
       if (
         typeof checkIn !== 'string' ||
         typeof checkOut !== 'string' ||

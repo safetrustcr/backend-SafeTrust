@@ -22,7 +22,19 @@ export interface X402ValidationResult {
   invalid_reason?: string | null
 }
 
+export interface X402SettlementResult {
+  settled: boolean
+  transaction_hash?: string | null
+  network: string
+  error?: string | null
+}
+
 export function validateX402Payment(
+  header: string,
+  requiredAmount: number
+): string
+
+export function settleX402Payment(
   header: string,
   requiredAmount: number
 ): string

@@ -40,6 +40,34 @@ pub struct FacilitatorVerifyResponse {
     pub payer: Option<String>,
 }
 
+/// Result from facilitator /settle endpoint
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FacilitatorSettleResponse {
+    #[serde(default)]
+    pub success: bool,
+    /// Transaction hash returned by the facilitator. Accepts the common
+    /// `transaction` / `transactionHash` field names used by facilitators.
+    #[serde(default)]
+    pub transaction: Option<String>,
+    #[serde(rename = "transactionHash", alias = "transaction_hash", default)]
+    pub transaction_hash: Option<String>,
+    #[serde(rename = "errorReason", alias = "error_reason", default)]
+    pub error_reason: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub network: Option<String>,
+}
+
+/// Result of a synchronous settlement attempt returned to Node.js.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct X402SettlementResult {
+    pub settled: bool,
+    pub transaction_hash: Option<String>,
+    pub network: String,
+    pub error: Option<String>,
+}
+
 /// Result returned to Node.js middleware
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct X402ValidationResult {

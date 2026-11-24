@@ -21,6 +21,8 @@ sequenceDiagram
 
     Note over Agent,ST: Step 1: Booking Initialization & Hold Conversion
     Agent->>ST: POST /api/v1/bookings (Authorization + x402 $0.10)
+    ST->>TW: Verify x402 payment, then settle $0.10 fee (must confirm)
+    ST->>DB: Persist settlement receipt (idempotency key = hash of X-Payment)
     ST->>DB: Atomic DB Tx: Hold -> 'converted', Reservation -> 'escrow_created'
     ST->>TW: Backend deploys Trustless Work Escrow (deposit amount)
     ST->>TW: Generate unsigned fund_escrow XDR (Agent as signer)
@@ -62,7 +64,14 @@ Trustless Work smart contracts enforce multi-party governance on the Stellar net
 - When the reservation and escrow are generated, the reservation enters **`escrow_created`** status with an on-chain balance of `0`.
 - The originating booking hold transitions to `converted`.
 - If the agent crashes, abandons the flow, or never submits the signed XDR, the escrow remains unfunded (`balance: 0`).
-- The background hold expiry sweep (`expireHolds`) expires only `pending_payment` and `active` holds whose `expires_at` has passed and does not modify reservations. A `converted` hold and its `escrow_created` reservation remain blocked until cancelled through `POST /api/reservations/:id/cancel`.
+
+#### Known Limitation: Unfunded Reservation Cleanup (Deferred)
+
+There is currently **no automatic scheduled cleanup of unfunded reservations**. This is a known limitation, not an oversight of the documented behaviour:
+
+- The background hold expiry sweep (`expireHolds`) expires only `pending_payment` and `active` holds whose `expires_at` has passed. It deliberately does not modify reservations.
+- A `converted` hold and its `escrow_created` reservation therefore stay in place after the hold deadline passes, keeping the dates blocked, until they are explicitly cancelled through `POST /api/reservations/:id/cancel`.
+- Automatic release of these unfunded `escrow_created` reservations after their hold deadline is intentionally deferred to a follow-up issue. Until it ships, agents and operators must cancel abandoned bookings to free the dates.
 
 ### 5. Escrow Locks Only the Quoted Deposit (Not the Full Stay)
 - The Trustless Work contract amount locks **strictly the security deposit** (`warranty_deposit`), as calculated by the server-side quote service.
@@ -115,7 +124,17 @@ Content-Type: application/json
 }
 ```
 
-**`402 Payment Required`** (Missing or invalid x402 payment proof for the $0.10 booking fee)
+**`402 Payment Required`** (Missing or invalid x402 payment proof for the $0.10 booking fee, or settlement was not confirmed)
+
+The booking fee must be **settled**, not merely verified, before the reservation is created. If the facilitator declines settlement the booking fails and no reservation or escrow is created:
+```json
+{
+  "error": "Facilitator declined settlement",
+  "code": "settlement_failed"
+}
+```
+
+> Missing/invalid payment proof returns the challenge below:
 ```json
 {
   "error": "Payment Required",
@@ -203,5 +222,6 @@ Content-Type: application/json
 
 ## 🔄 Idempotency Guarantees
 
-- **Hold-to-Booking Idempotency**: If an agent retries `POST /api/v1/bookings` with the same `hold_id` (e.g., due to an HTTP client timeout), the backend detects that the hold has already been converted. It returns the existing `reservation_id`, `contract_id`, `deposit`, `asset`, and `unsigned_xdr` without deploying a second smart contract or charging a second deposit.
+- **Hold-to-Booking Idempotency**: If an agent retries `POST /api/v1/bookings` with the same `hold_id` (e.g., due to an HTTP client timeout), the backend detects that the hold has already been converted. It returns the existing `reservation_id`, `contract_id`, `deposit`, `asset`, and `unsigned_xdr` without deploying a second smart contract or charging a second deposit. Because the fee is only settled after this check, a converted hold is **not** charged the $0.10 booking fee again.
+- **Booking Fee Settlement Idempotency**: Settlement receipts are persisted in `safetrust.x402_settlements`, keyed by a hash of the `X-Payment` header. Retrying with the same payment proof reuses the confirmed settlement (including its transaction hash) instead of settling a second time. A still-in-flight settlement for the same proof returns `409 Conflict` / `settlement_pending`.
 - **Transaction Submission Deduplication**: Transaction submissions via `POST /api/v1/bookings/:id/submit` are recorded in `safetrust.escrow_confirmation_retries` with a unique constraint on `(tx_hash, escrow_action)`. Re-submitting the same signed XDR produces zero duplicate on-chain executions.

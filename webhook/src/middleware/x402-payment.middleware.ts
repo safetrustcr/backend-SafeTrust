@@ -3,6 +3,8 @@ import { logger } from './logger'
 
 type X402Addon = {
   validateX402Payment: (header: string, requiredAmount: number) => string
+  /** Synchronous settlement; returns JSON X402SettlementResult. */
+  settleX402Payment?: (header: string, requiredAmount: number) => string
   buildPaymentRequirement: (
     amountUsdc: number,
     network: string,
@@ -44,10 +46,20 @@ export function setX402Addon(addon: X402Addon | null): void {
   x402Addon = addon
 }
 
+/**
+ * The loaded addon, or null when unavailable. Settlement uses this directly;
+ * unlike the middleware it is not gated by X402_ENABLED.
+ */
+export function getX402AddonInstance(): X402Addon | null {
+  return getX402Addon()
+}
+
 export interface X402Context {
   payer?: string | null
   amountUsdc: number
   network: string
+  /** Raw X-Payment header, used to settle and derive an idempotency key. */
+  paymentHeader: string
 }
 
 declare global {
@@ -133,6 +145,7 @@ export const requireX402Payment =
         payer: result.payer_address,
         amountUsdc: result.amount_usdc,
         network: result.network,
+        paymentHeader,
       }
       next()
     } catch (error) {

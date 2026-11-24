@@ -19,6 +19,11 @@ export interface CreateBookingParams {
   checkOut?: string
   guests?: number
   payerWallet?: string | null
+  /**
+   * Settles the booking fee. Invoked only when a new reservation is about to
+   * be created, so retries of an already-converted hold are never charged.
+   */
+  chargeBookingFee?: () => Promise<void>
 }
 
 export interface CreateBookingResult {
@@ -123,6 +128,7 @@ export async function createAgentBooking(
     checkOut: directCheckOut,
     guests: directGuests,
     payerWallet,
+    chargeBookingFee,
   } = params
 
   let reservationId: string
@@ -214,6 +220,13 @@ export async function createAgentBooking(
     // Recompute quote strictly on the server (never trusting client amounts)
     quote = await getQuoteForProperty(propertyId, checkIn, checkOut, guests)
 
+    // The hold is active and unexpired: settle the booking fee before the
+    // reservation is created. The converted-hold path above returned already,
+    // so an idempotent retry never reaches this settlement.
+    if (chargeBookingFee) {
+      await chargeBookingFee()
+    }
+
     // Execute atomic DB transaction: hold -> converted, reservation -> escrow_created
     reservationId = await withTransaction(async (client: PoolClient) => {
       if (Number(quote.deposit) <= 0) {
@@ -294,6 +307,11 @@ export async function createAgentBooking(
     guests = directGuests
 
     quote = await getQuoteForProperty(propertyId, checkIn, checkOut, guests)
+
+    // Settle the booking fee before creating the reservation.
+    if (chargeBookingFee) {
+      await chargeBookingFee()
+    }
 
     // Atomic insert with overlap check
     reservationId = await withTransaction(async (client: PoolClient) => {
