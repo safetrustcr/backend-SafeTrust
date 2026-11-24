@@ -1,11 +1,9 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { meHandler } from '../me.handler'
-import { query } from '../../../services/db'
+import { listUserRoles as query } from '../../../repositories/user.repository'
 
-jest.mock('../../../services/db', () => ({
-  query: jest.fn(),
-}))
+jest.mock('../../../repositories/user.repository', () => ({ listUserRoles: jest.fn() }))
 
 function makeResponse(): Response {
   const res: Partial<Response> = {}
@@ -80,9 +78,7 @@ describe('auth/me.handler', () => {
   })
 
   it('falls back to database query if roles are not present on context or user', async () => {
-    ;(query as jest.Mock).mockResolvedValueOnce({
-      rows: [{ name: 'admin' }],
-    })
+    ;(query as jest.Mock).mockResolvedValueOnce(['admin'])
 
     const req = {
       user: {
@@ -96,7 +92,7 @@ describe('auth/me.handler', () => {
 
     await meHandler(req, res)
 
-    expect(query).toHaveBeenCalledWith(expect.any(String), ['user-legacy-1'])
+    expect(query).toHaveBeenCalledWith('user-legacy-1')
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({
       user: {
