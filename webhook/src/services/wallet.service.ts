@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg'
-import { pool } from './db'
+import { pool } from '../db/pool'
 import { logger } from '../middleware/logger'
 import {
   clearPrimaryWallets,

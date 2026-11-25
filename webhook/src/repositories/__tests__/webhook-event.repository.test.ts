@@ -3,9 +3,9 @@ import {
   markWebhookEventProcessed,
   processWebhookEvent,
 } from '../webhook-event.repository'
-import { pool } from '../../services/db'
+import { pool } from '../../db/pool'
 
-jest.mock('../../services/db', () => ({
+jest.mock('../../db/pool', () => ({
   pool: {
     connect: jest.fn(),
     query: jest.fn(),

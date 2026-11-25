@@ -4,15 +4,15 @@ import {
   mirrorReservationStatus,
   mirrorReservationStatusInTransaction,
 } from '../reservation.repository'
-import { hasuraRequest } from '../../services/hasura'
-import { TenantMismatchError } from '../../services/tenant-scoped-hasura'
+import { query } from '../../db/pool'
+import { TenantMismatchError } from '../../utils/errors'
 import { PoolClient } from 'pg'
 
-jest.mock('../../services/hasura', () => ({
-  hasuraRequest: jest.fn(),
+jest.mock('../../db/pool', () => ({
+  query: jest.fn(),
 }))
 
-const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>
+const mockedQuery = query as jest.MockedFunction<typeof query>
 
 describe('reservation.repository', () => {
   beforeEach(() => {
@@ -20,22 +20,25 @@ describe('reservation.repository', () => {
   })
 
   describe('createReservation', () => {
-    it('inserts with the metadata-defined GraphQL contract and maps the result', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        insert_safetrust_reservations_one: {
-          id: 'res-1',
-          apartmentId: 'apt-1',
-          guestId: 'guest-1',
-          status: 'pending',
-          checkInDate: '2026-09-01',
-          checkOutDate: '2026-09-05',
-          totalAmount: 500,
-          assetCode: 'USDC',
-          escrowId: null,
-          createdAt: '2026-08-24T00:00:00Z',
-          tenantId: 'safetrust',
-        },
-      })
+    it('inserts into safetrust.reservations with SQL and maps the result', async () => {
+      mockedQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'res-1',
+            apartment_id: 'apt-1',
+            guest_id: 'guest-1',
+            status: 'pending',
+            check_in_date: '2026-09-01',
+            check_out_date: '2026-09-05',
+            total_amount: 500,
+            asset_code: 'USDC',
+            escrow_id: null,
+            created_at: '2026-08-24T00:00:00Z',
+            tenant_id: 'safetrust',
+          },
+        ],
+        rowCount: 1,
+      } as any)
 
       const result = await createReservation({
         tenantId: 'safetrust',
@@ -47,20 +50,17 @@ describe('reservation.repository', () => {
         assetCode: 'USDC',
       })
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(
-        expect.stringContaining('insert_safetrust_reservations_one'),
-        {
-          object: {
-            apartmentId: 'apt-1',
-            guestId: 'guest-1',
-            checkInDate: '2026-09-01',
-            checkOutDate: '2026-09-05',
-            totalAmount: 500,
-            assetCode: 'USDC',
-            status: 'pending',
-            tenantId: 'safetrust',
-          },
-        }
+      expect(mockedQuery).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO safetrust.reservations'),
+        [
+          'safetrust',
+          'apt-1',
+          'guest-1',
+          '2026-09-01',
+          '2026-09-05',
+          500,
+          'USDC',
+        ]
       )
       expect(result).toEqual({
         id: 'res-1',
@@ -77,10 +77,8 @@ describe('reservation.repository', () => {
       })
     })
 
-    it('returns null when Hasura does not return an inserted reservation', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        insert_safetrust_reservations_one: null,
-      })
+    it('returns null when PostgreSQL does not return an inserted reservation', async () => {
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any)
 
       const result = await createReservation({
         tenantId: 'safetrust',
@@ -97,59 +95,45 @@ describe('reservation.repository', () => {
   })
 
   describe('linkEscrowToReservation', () => {
-    it('links the reservation with a tenant-scoped update', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_reservations: { affected_rows: 1 },
-      })
+    it('links the reservation with a tenant-scoped SQL update', async () => {
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any)
 
       await linkEscrowToReservation('res-1', 'escrow-1', 'safetrust')
 
-      expect(mockedHasuraRequest).toHaveBeenCalledTimes(1)
-      const [mutation, variables] = mockedHasuraRequest.mock.calls[0]
-      expect(mutation).toContain('LinkEscrowToReservation')
-      expect(mutation).toContain('tenantId: { _eq: $tenantId }')
-      expect(variables).toEqual({
-        reservationId: 'res-1',
-        escrowId: 'escrow-1',
-        tenantId: 'safetrust',
-      })
+      expect(mockedQuery).toHaveBeenCalledTimes(1)
+      const [sql, params] = mockedQuery.mock.calls[0]
+      expect(sql).toContain('UPDATE safetrust.reservations')
+      expect(sql).toContain('AND tenant_id = $3')
+      expect(params).toEqual(['escrow-1', 'res-1', 'safetrust'])
     })
 
     it('throws when no reservation in the tenant matches', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_reservations: { affected_rows: 0 },
-      })
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any)
 
       await expect(
         linkEscrowToReservation('res-other-tenant', 'escrow-1', 'safetrust')
       ).rejects.toThrow('Reservation res-other-tenant was not linked')
     })
 
-    it('rejects an empty tenant before calling Hasura', async () => {
+    it('rejects an empty tenant before querying PostgreSQL', async () => {
       await expect(linkEscrowToReservation('res-1', 'escrow-1', '')).rejects.toBeInstanceOf(
         TenantMismatchError
       )
-      expect(mockedHasuraRequest).not.toHaveBeenCalled()
+      expect(mockedQuery).not.toHaveBeenCalled()
     })
   })
 
   describe('mirrorReservationStatus', () => {
-    it('mirrors the status with a tenant-scoped update', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_reservations: { returning: [{ id: 'res-1', status: 'funded' }] },
-      })
+    it('mirrors the status with a tenant-scoped SQL update', async () => {
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any)
 
       await mirrorReservationStatus('escrow-1', 'funded', 'safetrust')
 
-      expect(mockedHasuraRequest).toHaveBeenCalledTimes(1)
-      const [mutation, variables] = mockedHasuraRequest.mock.calls[0]
-      expect(mutation).toContain('MirrorStatusToReservation')
-      expect(mutation).toContain('tenantId: { _eq: $tenantId }')
-      expect(variables).toEqual({
-        escrowId: 'escrow-1',
-        status: 'funded',
-        tenantId: 'safetrust',
-      })
+      expect(mockedQuery).toHaveBeenCalledTimes(1)
+      const [sql, params] = mockedQuery.mock.calls[0]
+      expect(sql).toContain('UPDATE safetrust.reservations')
+      expect(sql).toContain('AND tenant_id = $3')
+      expect(params).toEqual(['funded', 'escrow-1', 'safetrust'])
     })
   })
 
@@ -170,7 +154,7 @@ describe('reservation.repository', () => {
       expect(params).toEqual(['funded', 'escrow-1', 'safetrust'])
     })
 
-    it('uses the provided transaction client instead of Hasura', async () => {
+    it('uses the provided transaction client instead of pool query', async () => {
       const mockClient = {
         query: jest.fn().mockResolvedValueOnce({ rowCount: 1 }),
       }
@@ -182,7 +166,7 @@ describe('reservation.repository', () => {
         expect.stringContaining('UPDATE safetrust.reservations'),
         ['funded', 'escrow-1', 'safetrust']
       )
-      expect(mockedHasuraRequest).not.toHaveBeenCalled()
+      expect(mockedQuery).not.toHaveBeenCalled()
     })
   })
 })

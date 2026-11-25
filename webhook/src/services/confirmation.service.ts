@@ -7,8 +7,7 @@
  */
 
 import { Networks, Transaction, FeeBumpTransaction, TransactionBuilder } from '@stellar/stellar-sdk'
-import db, { withTransaction } from './db'
-import { hasuraRequest } from './hasura'
+import db, { withTransaction } from '../db/pool'
 import { getTransactionByHash } from '../clients/stellar.client'
 import { sendTransaction, updateIndexerFromTxHash } from '../clients/trustless-work.client'
 import { UpstreamError, UpstreamTimeoutError } from '../utils/upstream-errors'

@@ -1,5 +1,5 @@
 import type { PoolClient, QueryResultRow } from 'pg'
-import { query } from '../services/db'
+import { query } from '../db/pool'
 
 export interface BidRequest extends QueryResultRow {
   id: string

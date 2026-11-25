@@ -1,6 +1,6 @@
 import type { UserRole } from '@safetrust/types'
 import type { PoolClient, QueryResultRow } from 'pg'
-import { query } from '../services/db'
+import { query } from '../db/pool'
 
 export interface UserRow extends QueryResultRow {
   id: string

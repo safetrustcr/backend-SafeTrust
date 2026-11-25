@@ -1,6 +1,6 @@
 'use strict'
 
-import dbService, { pool, query as dbQuery, type Queryable } from '../services/db'
+import dbService, { pool, query as dbQuery, type Queryable } from '../db/pool'
 import type {
   ConfirmationRetryRecord,
   EscrowAction,

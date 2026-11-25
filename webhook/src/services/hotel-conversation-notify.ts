@@ -1,6 +1,6 @@
 'use strict'
 
-import { query } from './db'
+import { query } from '../db/pool'
 import { sendHotelConversationMessage } from './hotel-conversation.service'
 
 // ── Types ──────────────────────────────────────────────────────────────────────

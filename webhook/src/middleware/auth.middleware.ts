@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { getAuth } from "firebase-admin/auth";
-import db from "../services/db";
+import db from "../db/pool";
 import { getPlatformTenantId } from "../config/tenant";
 import { logger } from './logger'
 

@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg'
-import { query, withTransaction } from '../services/db'
+import { query, withTransaction } from '../db/pool'
 import { ConflictError, NotFoundError, ForbiddenError, ValidationError } from '../utils/errors'
 
 export const HOLD_DURATION_MS = 10 * 60 * 1000

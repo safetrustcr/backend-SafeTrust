@@ -1,4 +1,4 @@
-import { pool } from '../db'
+import { pool } from '../../db/pool'
 import { findUserByUid } from '../../repositories/user.repository'
 import {
   createBidRequest as insertBidRequest,
@@ -8,7 +8,7 @@ import {
 } from '../../repositories/bid-request.repository'
 import { createBidRequest, updateBidRequest } from '../bid-request.service'
 
-jest.mock('../db', () => ({ pool: { connect: jest.fn() } }))
+jest.mock('../../db/pool', () => ({ pool: { connect: jest.fn() } }))
 jest.mock('../../repositories/user.repository', () => ({ findUserByUid: jest.fn() }))
 jest.mock('../../repositories/bid-request.repository', () => ({
   createBidRequest: jest.fn(),

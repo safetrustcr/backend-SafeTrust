@@ -2,13 +2,13 @@ import express from 'express'
 import request from 'supertest'
 import healthRoutes from '../health.route'
 import { getApps } from 'firebase-admin/app'
-import { pool } from '../../services/db'
+import { pool } from '../../db/pool'
 
 jest.mock('firebase-admin/app', () => ({
   getApps: jest.fn(),
 }))
 
-jest.mock('../../services/db', () => ({
+jest.mock('../../db/pool', () => ({
   pool: {
     query: jest.fn(),
   },

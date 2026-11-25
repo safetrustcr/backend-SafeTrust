@@ -1,4 +1,4 @@
-import { pool } from './db'
+import { pool } from '../db/pool'
 import {
   CLAIM_RATE_LIMIT,
   countRecent,

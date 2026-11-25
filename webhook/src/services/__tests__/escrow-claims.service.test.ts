@@ -1,4 +1,4 @@
-import { pool } from '../db'
+import { pool } from '../../db/pool'
 import {
   countRecent,
   findByOpId,
@@ -8,7 +8,7 @@ import {
 } from '../../repositories/escrow-claims.repository'
 import { createEscrowClaim } from '../escrow-claims.service'
 
-jest.mock('../db', () => ({ pool: { connect: jest.fn() } }))
+jest.mock('../../db/pool', () => ({ pool: { connect: jest.fn() } }))
 jest.mock('../../repositories/escrow-claims.repository', () => ({
   CLAIM_RATE_LIMIT: 5,
   countRecent: jest.fn(),

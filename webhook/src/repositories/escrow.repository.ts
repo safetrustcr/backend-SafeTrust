@@ -32,9 +32,8 @@
  *    number or numeric status ranking.
  */
 
-import { hasuraRequest } from '../services/hasura'
 import { PoolClient } from 'pg'
-import { query, connect, withTransaction, type Queryable } from '../services/db'
+import { query, connect, withTransaction, type Queryable } from '../db/pool'
 import {
   evaluateFreshness,
   formatExactBalance,
@@ -124,66 +123,63 @@ export interface CreateEscrowInput {
 export async function getEscrowByContractId(
   contractId: string
 ): Promise<TrustlessWorkEscrow | null> {
-  const query = `
-    query GetEscrowByContractId($contractId: String!) {
-      trustless_work_escrows(where: { contractId: { _eq: $contractId } }) {
-        id
-        contractId
-        engagementId
-        approver
-        serviceProvider
-        platformAddress
-        releaseSigner
-        disputeResolver
-        receiver
-        flags
-        status
-        balance
-        createdAt
-        tenantId
-      }
-    }
-  `
+  const result = await query<{
+    id: string
+    contract_id: string
+    engagement_id?: string | null
+    approver?: string | null
+    service_provider?: string | null
+    platform_address?: string | null
+    release_signer?: string | null
+    dispute_resolver?: string | null
+    receiver?: string | null
+    flags?: Record<string, boolean> | null
+    status: string
+    balance?: number | string
+    created_at?: string | Date
+    tenant_id?: string
+  }>(
+    `SELECT
+       id,
+       contract_id,
+       engagement_id,
+       approver,
+       service_provider,
+       platform_address,
+       release_signer,
+       dispute_resolver,
+       receiver,
+       flags,
+       status,
+       balance,
+       created_at,
+       tenant_id
+     FROM safetrust.trustless_work_escrows
+     WHERE contract_id = $1
+     LIMIT 1`,
+    [contractId]
+  )
 
-  const data = await hasuraRequest<{
-    trustless_work_escrows?: Array<{
-      id: string
-      contractId: string
-      engagementId?: string | null
-      approver?: string | null
-      serviceProvider?: string | null
-      platformAddress?: string | null
-      releaseSigner?: string | null
-      disputeResolver?: string | null
-      receiver?: string | null
-      flags?: Record<string, boolean> | null
-      status: string
-      balance?: number
-      createdAt?: string
-      tenantId?: string
-    }>
-  }>(query, { contractId })
-
-  const escrow = data?.trustless_work_escrows?.[0]
+  const escrow = result.rows[0]
   if (!escrow) {
     return null
   }
 
   return {
     id: escrow.id,
-    contractId: escrow.contractId,
-    ...(escrow.engagementId !== undefined && { engagementId: escrow.engagementId }),
+    contractId: escrow.contract_id,
+    ...(escrow.engagement_id !== undefined && { engagementId: escrow.engagement_id }),
     ...(escrow.approver !== undefined && { approver: escrow.approver }),
-    ...(escrow.serviceProvider !== undefined && { serviceProvider: escrow.serviceProvider }),
-    ...(escrow.platformAddress !== undefined && { platformAddress: escrow.platformAddress }),
-    ...(escrow.releaseSigner !== undefined && { releaseSigner: escrow.releaseSigner }),
-    ...(escrow.disputeResolver !== undefined && { disputeResolver: escrow.disputeResolver }),
+    ...(escrow.service_provider !== undefined && { serviceProvider: escrow.service_provider }),
+    ...(escrow.platform_address !== undefined && { platformAddress: escrow.platform_address }),
+    ...(escrow.release_signer !== undefined && { releaseSigner: escrow.release_signer }),
+    ...(escrow.dispute_resolver !== undefined && { disputeResolver: escrow.dispute_resolver }),
     ...(escrow.receiver !== undefined && { receiver: escrow.receiver }),
     ...(escrow.flags !== undefined && { flags: escrow.flags }),
     status: escrow.status,
-    balance: escrow.balance,
-    createdAt: escrow.createdAt,
-    tenantId: escrow.tenantId,
+    balance: escrow.balance !== undefined && escrow.balance !== null ? Number(escrow.balance) : undefined,
+    createdAt: escrow.created_at instanceof Date ? escrow.created_at.toISOString() : escrow.created_at,
+    tenantId: escrow.tenant_id,
   }
 }
 
@@ -206,27 +202,15 @@ export async function updateEscrowStatus(
   status: EscrowStatus,
   validPriorStates: string[]
 ): Promise<void> {
-  const mutation = `
-    mutation UpdateEscrowStatusWithGuard($contractId: String!, $status: String!, $validStates: [String!]!) {
-      update_trustless_work_escrows(
-        where: {
-          contractId: { _eq: $contractId }
-          status: { _in: $validStates }
-        }
-        _set: { status: $status }
-      ) {
-        affected_rows
-      }
-    }
-  `
+  const result = await query(
+    `UPDATE safetrust.trustless_work_escrows
+     SET status = $1, updated_at = NOW()
+     WHERE contract_id = $2
+       AND status = ANY($3::varchar[])`,
+    [status, contractId, validPriorStates]
+  )
 
-  const variables = { contractId, status, validStates: validPriorStates }
-
-  const data = await hasuraRequest<{
-    update_trustless_work_escrows?: { affected_rows: number }
-  }>(mutation, variables)
-
-  if (!data?.update_trustless_work_escrows?.affected_rows || data.update_trustless_work_escrows.affected_rows === 0) {
+  if (!result.rowCount || result.rowCount === 0) {
     throw new StateConflictError(
       `Escrow cannot transition to ${status}: contractId '${contractId}' not found or current status not in [${validPriorStates.join(', ')}]`
     )
@@ -242,36 +226,122 @@ export async function updateEscrowStatus(
 export async function createEscrow(
   object: CreateEscrowInput
 ): Promise<TrustlessWorkEscrow | null> {
-  const mutation = `
-    mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
-      insert_trustless_work_escrows_one(object: $object) {
-        id
-        contractId
-        status
-        createdAt
-      }
-    }
-  `
+  const result = await query<{
+    id: string
+    contract_id: string
+    status: string
+    created_at?: string | Date
+    tenant_id?: string
+  }>(
+    `INSERT INTO safetrust.trustless_work_escrows (
+       contract_id,
+       marker,
+       approver,
+       releaser,
+       resolver,
+       escrow_type,
+       status,
+       asset_code,
+       asset_issuer,
+       amount,
+       balance,
+       tenant_id,
+       escrow_metadata
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     RETURNING id, contract_id, status, created_at, tenant_id`,
+    [
+      object.contractId,
+      object.marker,
+      object.approver,
+      object.releaser,
+      object.resolver ?? null,
+      object.escrowType,
+      object.status,
+      object.assetCode,
+      object.assetIssuer ?? null,
+      object.amount,
+      object.balance,
+      object.tenantId,
+      object.escrowMetadata ?? null,
+    ]
+  )
 
-  const data = await hasuraRequest<{
-    insert_trustless_work_escrows_one?: {
-      id: string
-      contractId: string
-      status: string
-      createdAt?: string
-    }
-  }>(mutation, { object })
-
-  const inserted = data?.insert_trustless_work_escrows_one
+  const inserted = result.rows[0]
   if (!inserted) {
     return null
   }
 
   return {
     id: inserted.id,
-    contractId: inserted.contractId,
+    contractId: inserted.contract_id,
     status: inserted.status,
-    createdAt: inserted.createdAt,
+    createdAt: inserted.created_at instanceof Date ? inserted.created_at.toISOString() : inserted.created_at,
+    tenantId: inserted.tenant_id,
+  }
+}
+
+/**
+ * Idempotently inserts an escrow record, updating contract_id on conflict
+ * so repeated initialize webhooks return the existing row.
+ */
+export async function upsertEscrow(
+  object: CreateEscrowInput
+): Promise<TrustlessWorkEscrow | null> {
+  const result = await query<{
+    id: string
+    contract_id: string
+    status: string
+    created_at?: string | Date
+    tenant_id?: string
+  }>(
+    `INSERT INTO safetrust.trustless_work_escrows (
+       contract_id,
+       marker,
+       approver,
+       releaser,
+       resolver,
+       escrow_type,
+       status,
+       asset_code,
+       asset_issuer,
+       amount,
+       balance,
+       tenant_id,
+       escrow_metadata
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     ON CONFLICT (contract_id) DO UPDATE
+       SET contract_id = EXCLUDED.contract_id
+     RETURNING id, contract_id, status, created_at, tenant_id`,
+    [
+      object.contractId,
+      object.marker,
+      object.approver,
+      object.releaser,
+      object.resolver ?? null,
+      object.escrowType,
+      object.status,
+      object.assetCode,
+      object.assetIssuer ?? null,
+      object.amount,
+      object.balance,
+      object.tenantId,
+      object.escrowMetadata ?? null,
+    ]
+  )
+
+  const inserted = result.rows[0]
+  if (!inserted) {
+    return null
+  }
+
+  return {
+    id: inserted.id,
+    contractId: inserted.contract_id,
+    status: inserted.status,
+    createdAt: inserted.created_at instanceof Date ? inserted.created_at.toISOString() : inserted.created_at,
+    tenantId: inserted.tenant_id,
   }
 }
 
@@ -290,35 +360,18 @@ export async function approveMilestone(
   approver: string,
   approvedAt: string
 ): Promise<boolean> {
-  const mutation = `
-    mutation ApproveMilestone(
-      $escrowId: uuid!
-      $milestoneId: String!
-      $approver: String!
-      $approvedAt: timestamptz!
-    ) {
-      update_escrow_milestones(
-        where: {
-          escrowId: { _eq: $escrowId }
-          milestoneId: { _eq: $milestoneId }
-        }
-        _set: {
-          status: "approved"
-          approvedBy: $approver
-          approvedAt: $approvedAt
-          updatedAt: $approvedAt
-        }
-      ) {
-        affected_rows
-      }
-    }
-  `
+  const result = await query(
+    `UPDATE safetrust.escrow_milestones
+     SET status = 'approved',
+         approved_by = $1,
+         approved_at = $2,
+         updated_at = $2
+     WHERE escrow_id = $3
+       AND milestone_id = $4`,
+    [approver, approvedAt, escrowId, milestoneId]
+  )
 
-  const data = await hasuraRequest<{
-    update_escrow_milestones?: { affected_rows: number }
-  }>(mutation, { escrowId, milestoneId, approver, approvedAt })
-
-  return Boolean(data?.update_escrow_milestones?.affected_rows)
+  return Boolean(result.rowCount)
 }
 
 /**
@@ -334,33 +387,21 @@ export async function approveEscrowStatus(
   approvedAt: string,
   validStates: string[]
 ): Promise<boolean> {
-  const mutation = `
-    mutation ApproveEscrow($escrowId: uuid!, $approvedAt: timestamptz!, $validStates: [String!]!) {
-      update_trustless_work_escrows(
-        where: {
-          id: { _eq: $escrowId }
-          status: { _in: $validStates }
-        }
-        _set: {
-          status: "milestone_approved"
-          updatedAt: $approvedAt
-        }
-      ) {
-        affected_rows
-      }
-    }
-  `
+  const result = await query(
+    `UPDATE safetrust.trustless_work_escrows
+     SET status = 'milestone_approved',
+         updated_at = $1
+     WHERE id = $2
+       AND status = ANY($3::varchar[])`,
+    [approvedAt, escrowId, validStates]
+  )
 
-  const data = await hasuraRequest<{
-    update_trustless_work_escrows?: { affected_rows: number }
-  }>(mutation, { escrowId, approvedAt, validStates })
-
-  return Boolean(data?.update_trustless_work_escrows?.affected_rows)
+  return Boolean(result.rowCount)
 }
 
 /**
  * Updates an escrow status to funded with a prior-state guard.
- * Supports db: Queryable as first argument, with backward-compatible GraphQL fallback.
+ * Supports db: Queryable as first argument, or uses the default pg pool.
  */
 export async function fundEscrow(
   contractId: string,
@@ -384,44 +425,32 @@ export async function fundEscrow(
     const amount = contractIdOrAmount as number
     const validStates = amountOrValidStates as string[]
 
-    const mutation = `
-    mutation FundEscrow($contractId: String!, $amount: numeric!, $validStates: [String!]!) {
-      update_trustless_work_escrows(
-        where: {
-          contractId: { _eq: $contractId }
-          status: { _in: $validStates }
-        }
-        _set: {
-          status: "funded"
-          balance: $amount
-        }
-      ) {
-        returning {
-          id
-          contractId
-          status
-          balance
-        }
-      }
-    }
-  `
+    const result = await query<{
+      id: string
+      contract_id: string
+      status: string
+      balance: number | string
+    }>(
+      `UPDATE safetrust.trustless_work_escrows
+       SET status = 'funded',
+           balance = $1,
+           updated_at = NOW()
+       WHERE contract_id = $2
+         AND status = ANY($3::varchar[])
+       RETURNING id, contract_id, status, balance`,
+      [amount, contractId, validStates]
+    )
 
-    const data = await hasuraRequest<{
-      update_trustless_work_escrows?: {
-        returning: Array<{ id: string; contractId: string; status: string; balance: number }>
-      }
-    }>(mutation, { contractId, amount, validStates })
-
-    const updated = data?.update_trustless_work_escrows?.returning?.[0]
+    const updated = result.rows[0]
     if (!updated) {
       return null
     }
 
     return {
       id: updated.id,
-      contractId: updated.contractId,
+      contractId: updated.contract_id,
       status: updated.status,
-      balance: updated.balance,
+      balance: Number(updated.balance),
     }
   }
 
@@ -499,30 +528,23 @@ export async function releaseFunds(
       : validStates.filter((state) => canonicalPriorStates.includes(state))
 
   if (!isQueryable || !db) {
-    const mutation = `
-    mutation ReleaseFunds($contractId: String!, $validStates: [String!]!) {
-      update_trustless_work_escrows(
-        where: {
-          contractId: { _eq: $contractId }
-          status: { _in: $validStates }
-        }
-        _set: {
-          status: "completed"
-          balance: 0
-        }
-      ) {
-        returning { id contractId status balance }
-      }
-    }
-  `
+    const result = await query<{
+      id: string
+      contract_id: string
+      status: string
+      balance: number | string
+    }>(
+      `UPDATE safetrust.trustless_work_escrows
+       SET status = 'completed',
+           balance = 0,
+           updated_at = NOW()
+       WHERE contract_id = $1
+         AND status = ANY($2::varchar[])
+       RETURNING id, contract_id, status, balance`,
+      [contractId, allowedPriorStates]
+    )
 
-    const data = await hasuraRequest<{
-      update_trustless_work_escrows?: {
-        returning: Array<{ id: string; contractId: string; status: string; balance: number }>
-      }
-    }>(mutation, { contractId, validStates: allowedPriorStates })
-
-    const updated = data?.update_trustless_work_escrows?.returning?.[0]
+    const updated = result.rows[0]
     if (!updated) {
       throw new StateConflictError(
         `Escrow cannot transition to completed: contractId '${contractId}' not found or current status not in [${allowedPriorStates.join(', ')}]`
@@ -531,9 +553,9 @@ export async function releaseFunds(
 
     return {
       id: updated.id,
-      contractId: updated.contractId,
+      contractId: updated.contract_id,
       status: updated.status,
-      balance: updated.balance,
+      balance: Number(updated.balance),
     }
   }
 
@@ -578,36 +600,28 @@ export async function disputeEscrow(
   contractId: string,
   validStates: string[]
 ): Promise<TrustlessWorkEscrow | null> {
-  const mutation = `
-    mutation DisputeEscrow($contractId: String!, $validStates: [String!]!) {
-      update_trustless_work_escrows(
-        where: {
-          contractId: { _eq: $contractId }
-          status: { _in: $validStates }
-        }
-        _set: {
-          status: "disputed"
-        }
-      ) {
-        returning { id contractId status }
-      }
-    }
-  `
+  const result = await query<{
+    id: string
+    contract_id: string
+    status: string
+  }>(
+    `UPDATE safetrust.trustless_work_escrows
+     SET status = 'disputed',
+         updated_at = NOW()
+     WHERE contract_id = $1
+       AND status = ANY($2::varchar[])
+     RETURNING id, contract_id, status`,
+    [contractId, validStates]
+  )
 
-  const data = await hasuraRequest<{
-    update_trustless_work_escrows?: {
-      returning: Array<{ id: string; contractId: string; status: string }>
-    }
-  }>(mutation, { contractId, validStates })
-
-  const updated = data?.update_trustless_work_escrows?.returning?.[0]
+  const updated = result.rows[0]
   if (!updated) {
     return null
   }
 
   return {
     id: updated.id,
-    contractId: updated.contractId,
+    contractId: updated.contract_id,
     status: updated.status,
   }
 }
@@ -623,39 +637,32 @@ export async function resolveDispute(
   contractId: string,
   validStates: string[]
 ): Promise<TrustlessWorkEscrow | null> {
-  const mutation = `
-    mutation ResolveDispute($contractId: String!, $validStates: [String!]!) {
-      update_trustless_work_escrows(
-        where: {
-          contractId: { _eq: $contractId }
-          status: { _in: $validStates }
-        }
-        _set: {
-          status: "resolved"
-          balance: 0
-        }
-      ) {
-        returning { id contractId status balance }
-      }
-    }
-  `
+  const result = await query<{
+    id: string
+    contract_id: string
+    status: string
+    balance: number | string
+  }>(
+    `UPDATE safetrust.trustless_work_escrows
+     SET status = 'resolved',
+         balance = 0,
+         updated_at = NOW()
+     WHERE contract_id = $1
+       AND status = ANY($2::varchar[])
+     RETURNING id, contract_id, status, balance`,
+    [contractId, validStates]
+  )
 
-  const data = await hasuraRequest<{
-    update_trustless_work_escrows?: {
-      returning: Array<{ id: string; contractId: string; status: string; balance: number }>
-    }
-  }>(mutation, { contractId, validStates })
-
-  const updated = data?.update_trustless_work_escrows?.returning?.[0]
+  const updated = result.rows[0]
   if (!updated) {
     return null
   }
 
   return {
     id: updated.id,
-    contractId: updated.contractId,
+    contractId: updated.contract_id,
     status: updated.status,
-    balance: updated.balance,
+    balance: Number(updated.balance),
   }
 }
 
@@ -670,22 +677,15 @@ export async function appendResolutionNote(
   contractId: string,
   note: Record<string, unknown>
 ): Promise<boolean> {
-  const mutation = `
-    mutation AppendResolutionNote($contractId: String!, $note: jsonb!) {
-      update_trustless_work_escrows(
-        where: { contractId: { _eq: $contractId } }
-        _append: { escrowMetadata: $note }
-      ) {
-        affected_rows
-      }
-    }
-  `
+  const result = await query(
+    `UPDATE safetrust.trustless_work_escrows
+     SET escrow_metadata = COALESCE(escrow_metadata, '{}'::jsonb) || $1::jsonb,
+         updated_at = NOW()
+     WHERE contract_id = $2`,
+    [JSON.stringify(note), contractId]
+  )
 
-  const data = await hasuraRequest<{
-    update_trustless_work_escrows?: { affected_rows: number }
-  }>(mutation, { contractId, note })
-
-  return Boolean(data?.update_trustless_work_escrows?.affected_rows)
+  return Boolean(result.rowCount)
 }
 
 export interface EscrowObservationInput {

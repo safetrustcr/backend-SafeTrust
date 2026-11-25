@@ -1,8 +1,7 @@
 import app from './app'
-import { getHasuraAdminSecret } from './services/hasura'
 import { initializeFirebaseAdmin } from './config/firebase-admin'
 import { getX402Config } from './config/x402'
-import { pool } from './services/db'
+import { pool } from './db/pool'
 import { startHoldExpiryJob, stopHoldExpiryJob } from './services/hold-expiry.job'
 
 const rawPort = process.env.WEBHOOK_PORT ?? process.env.PORT
@@ -14,7 +13,6 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 try {
-  getHasuraAdminSecret()
   initializeFirebaseAdmin()
   if (process.env.X402_ENABLED === 'true') {
     getX402Config()

@@ -1,5 +1,5 @@
 import { createReservation } from '../reservation.repository'
-import { hasuraRequest } from '../../services/hasura'
+import { query } from '../../db/pool'
 
 const runIntegrationTest = process.env.HASURA_INTEGRATION_TEST === 'true' ? it : it.skip
 
@@ -45,16 +45,7 @@ describe('reservation.repository Hasura integration', () => {
       })
     } finally {
       if (reservationId) {
-        await hasuraRequest(
-          `
-            mutation DeleteTestReservation($id: uuid!) {
-              delete_safetrust_reservations_by_pk(id: $id) {
-                id
-              }
-            }
-          `,
-          { id: reservationId }
-        )
+        await query('DELETE FROM safetrust.reservations WHERE id = $1', [reservationId])
       }
     }
   })

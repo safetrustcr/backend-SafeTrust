@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import { PoolClient } from 'pg'
-import { pool } from '../services/db'
+import { pool } from '../db/pool'
 
 const TENANT_ID = 'safetrust'
 

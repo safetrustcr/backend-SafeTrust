@@ -1,6 +1,6 @@
 import { authMiddleware, resolveSessionTenantId } from '../auth.middleware'
 import { getAuth } from 'firebase-admin/auth'
-import db from '../../services/db'
+import db from '../../db/pool'
 
 // Mock firebase-admin/auth
 jest.mock('firebase-admin/auth', () => ({
@@ -8,7 +8,7 @@ jest.mock('firebase-admin/auth', () => ({
 }))
 
 // Mock the db module so tests never hit a real Postgres connection.
-jest.mock('../../services/db', () => ({
+jest.mock('../../db/pool', () => ({
   query: jest.fn(),
 }))
 

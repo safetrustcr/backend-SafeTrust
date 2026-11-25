@@ -26,7 +26,7 @@ import {
   findStaleEscrows,
   upsertEscrowBatch,
 } from '../repositories/reconciliation.repository'
-import { hasuraRequest } from './hasura'
+import db from '../db/pool'
 import { isRustBulkUpsertEnabled } from '../lib/native-adapters/rust-upsert.adapter'
 import { processPendingConfirmationRetries } from './confirmation.service'
 import type { ProcessRetriesSummary } from './confirmation.service'
@@ -681,35 +681,22 @@ export async function runSorobanValidation(
 
           // Auto-correction runs ONLY if explicitly enabled by the operator and state is validated
           if (autoCorrectEnabled && (!skipStatus || hasNonStatusCorrection)) {
-            const setClause = skipStatus
-              ? `balance:   $balance
-                     updatedAt: "now()"`
-              : `status:    $status
-                     balance:   $balance
-                     updatedAt: "now()"`
-            const variables = skipStatus
-              ? { contractId, balance: onChain.balance / 10_000_000 }
-              : {
-                  contractId,
-                  status: onChain.status,
-                  balance: onChain.balance / 10_000_000,
-                }
-            const statusVariable = skipStatus ? '' : '$status: String!\n                 '
-
-            await hasuraRequest(
-              `mutation CorrectDriftFromSoroban(
-                 $contractId: String!
-                 ${statusVariable}$balance: numeric!
-               ) {
-                 update_trustless_work_escrows(
-                   where: { contractId: { _eq: $contractId } }
-                   _set: {
-                     ${setClause}
-                   }
-                 ) { affected_rows }
-               }`,
-              variables
-            )
+            const normalizedBalance = onChain.balance / 10_000_000
+            if (skipStatus) {
+              await db.query(
+                `UPDATE safetrust.trustless_work_escrows
+                 SET balance = $1, updated_at = NOW()
+                 WHERE contract_id = $2`,
+                [normalizedBalance, contractId]
+              )
+            } else {
+              await db.query(
+                `UPDATE safetrust.trustless_work_escrows
+                 SET status = $1, balance = $2, updated_at = NOW()
+                 WHERE contract_id = $3`,
+                [onChain.status, normalizedBalance, contractId]
+              )
+            }
             corrected++
           }
         }

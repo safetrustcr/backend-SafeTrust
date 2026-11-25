@@ -1,11 +1,6 @@
 'use strict';
 
-// Mock hasura service before imports
-jest.mock('../../services/hasura', () => ({
-  hasuraRequest: jest.fn(),
-}));
-
-jest.mock('../../services/db', () => ({
+jest.mock('../../db/pool', () => ({
   query: jest.fn(),
 }));
 
@@ -35,15 +30,13 @@ import {
   ReservationNotFoundError,
   EscrowInitPayload,
 } from '../../services/escrow.service';
-import { hasuraRequest } from '../../services/hasura';
-import { query } from '../../services/db';
-import { TenantMismatchError } from '../../services/tenant-scoped-hasura';
+import { query } from '../../db/pool';
+import { TenantMismatchError } from '../../utils/errors';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../../repositories/webhook-event.repository';
 
-const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>;
 const mockedLogAndCheckWebhookEvent =
   logAndCheckWebhookEvent as jest.MockedFunction<typeof logAndCheckWebhookEvent>;
 const mockedMarkWebhookEventProcessed =
@@ -189,7 +182,7 @@ describe('initializeEscrow', () => {
       isDuplicate: true,
       eventId: 'event-duplicate',
     });
-    expect(mockedHasuraRequest).not.toHaveBeenCalled();
+    expect(mockedQuery).not.toHaveBeenCalled();
     expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith(
       'event-duplicate'
     );
@@ -201,9 +194,18 @@ describe('initializeEscrow', () => {
       eventId: 'event-retry',
       processed: false,
     });
-    mockedHasuraRequest.mockResolvedValueOnce({
-      insert_trustless_work_escrows_one: escrowResponse,
-    });
+    mockedQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: escrowResponse.id,
+          contract_id: escrowResponse.contractId,
+          status: escrowResponse.status,
+          created_at: escrowResponse.createdAt,
+          tenant_id: escrowResponse.tenantId,
+        },
+      ],
+      rowCount: 1,
+    } as any);
 
     const result = await initializeEscrow(validBody(), 'safetrust');
 
@@ -220,17 +222,23 @@ describe('initializeEscrow', () => {
       isDuplicate: false,
       eventId: 'event-1',
     });
-    mockedHasuraRequest
+    mockedQuery
+      .mockResolvedValueOnce({ rows: [{ tenant_id: 'safetrust' }] } as any)
       .mockResolvedValueOnce({
-        insert_trustless_work_escrows_one: escrowResponse,
-      })
-      .mockResolvedValueOnce({
-        update_reservations: { affected_rows: 1 },
-      });
+        rows: [
+          {
+            id: escrowResponse.id,
+            contract_id: escrowResponse.contractId,
+            status: escrowResponse.status,
+            created_at: escrowResponse.createdAt,
+            tenant_id: escrowResponse.tenantId,
+          },
+        ],
+        rowCount: 1,
+      } as any)
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 } as any);
 
     const body = validBody({ booking_metadata: { reservation_id: 'res-1' } });
-
-    mockedQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'safetrust' }] } as any);
 
     const result = await initializeEscrow(body, 'safetrust');
 
@@ -239,7 +247,7 @@ describe('initializeEscrow', () => {
       eventId: 'event-1',
       escrow: escrowResponse,
     });
-    expect(mockedHasuraRequest).toHaveBeenCalledTimes(2);
+    expect(mockedQuery).toHaveBeenCalledTimes(3);
     expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-1');
   });
 
@@ -248,30 +256,38 @@ describe('initializeEscrow', () => {
       isDuplicate: false,
       eventId: 'event-1',
     });
-    mockedQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-b' }] } as any);
-    mockedHasuraRequest
+    mockedQuery
+      .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-b' }] } as any)
       .mockResolvedValueOnce({
-        insert_trustless_work_escrows_one: { ...escrowResponse, tenantId: 'tenant-b' },
-      })
-      .mockResolvedValueOnce({ update_reservations: { affected_rows: 1 } });
+        rows: [
+          {
+            id: escrowResponse.id,
+            contract_id: escrowResponse.contractId,
+            status: escrowResponse.status,
+            created_at: escrowResponse.createdAt,
+            tenant_id: 'tenant-b',
+          },
+        ],
+        rowCount: 1,
+      } as any)
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 } as any);
 
     await initializeEscrow(
       validBody({ booking_metadata: { reservation_id: 'res-1' } }),
       'tenant-b'
     );
 
-    expect(mockedQuery).toHaveBeenCalledWith(
+    expect(mockedQuery).toHaveBeenNthCalledWith(
+      1,
       expect.stringContaining('tenant_id'),
       ['res-1']
     );
-    const insertVars = mockedHasuraRequest.mock.calls[0][1] as any;
-    expect(insertVars.object.tenantId).toBe('tenant-b');
-    const linkMutation = mockedHasuraRequest.mock.calls[1][0] as string;
-    const linkVars = mockedHasuraRequest.mock.calls[1][1] as any;
-    expect(linkMutation).toContain('tenantId: { _eq: $tenantId }');
-    expect(linkVars).toEqual(
-      expect.objectContaining({ reservationId: 'res-1', tenantId: 'tenant-b' })
-    );
+    const insertParams = mockedQuery.mock.calls[1][1] as any[];
+    expect(insertParams[11]).toBe('tenant-b');
+    const linkSql = mockedQuery.mock.calls[2][0] as string;
+    const linkParams = mockedQuery.mock.calls[2][1] as any[];
+    expect(linkSql).toContain('AND tenant_id = $3');
+    expect(linkParams).toEqual([escrowResponse.id, 'res-1', 'tenant-b']);
   });
 
   it('rejects an unknown reservation before any escrow write', async () => {
@@ -288,7 +304,7 @@ describe('initializeEscrow', () => {
       )
     ).rejects.toBeInstanceOf(ReservationNotFoundError);
 
-    expect(mockedHasuraRequest).not.toHaveBeenCalled();
+    expect(mockedQuery).toHaveBeenCalledTimes(1);
     expect(mockedMarkWebhookEventProcessed).not.toHaveBeenCalled();
   });
 
@@ -306,7 +322,7 @@ describe('initializeEscrow', () => {
       )
     ).rejects.toBeInstanceOf(TenantMismatchError);
 
-    expect(mockedHasuraRequest).not.toHaveBeenCalled();
+    expect(mockedQuery).toHaveBeenCalledTimes(1);
     expect(mockedMarkWebhookEventProcessed).not.toHaveBeenCalled();
   });
 
@@ -316,10 +332,21 @@ describe('initializeEscrow', () => {
       eventId: 'event-retry',
       processed: false,
     });
-    mockedQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'safetrust' }] } as any);
-    mockedHasuraRequest
-      .mockResolvedValueOnce({ insert_trustless_work_escrows_one: escrowResponse })
-      .mockResolvedValueOnce({ update_reservations: { affected_rows: 1 } });
+    mockedQuery
+      .mockResolvedValueOnce({ rows: [{ tenant_id: 'safetrust' }] } as any)
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: escrowResponse.id,
+            contract_id: escrowResponse.contractId,
+            status: escrowResponse.status,
+            created_at: escrowResponse.createdAt,
+            tenant_id: escrowResponse.tenantId,
+          },
+        ],
+        rowCount: 1,
+      } as any)
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 } as any);
 
     const result = await initializeEscrow(
       validBody({ booking_metadata: { reservation_id: 'res-1' } }),
@@ -327,7 +354,7 @@ describe('initializeEscrow', () => {
     );
 
     expect(result.escrow).toEqual(escrowResponse);
-    expect(mockedHasuraRequest).toHaveBeenCalledTimes(2);
+    expect(mockedQuery).toHaveBeenCalledTimes(3);
     expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-retry');
   });
 
@@ -337,10 +364,20 @@ describe('initializeEscrow', () => {
       eventId: 'event-retry',
       processed: false,
     });
-    mockedQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'safetrust' }] } as any);
-    mockedHasuraRequest.mockResolvedValueOnce({
-      insert_trustless_work_escrows_one: { ...escrowResponse, tenantId: 'tenant-other' },
-    });
+    mockedQuery
+      .mockResolvedValueOnce({ rows: [{ tenant_id: 'safetrust' }] } as any)
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: escrowResponse.id,
+            contract_id: escrowResponse.contractId,
+            status: escrowResponse.status,
+            created_at: escrowResponse.createdAt,
+            tenant_id: 'tenant-other',
+          },
+        ],
+        rowCount: 1,
+      } as any);
 
     await expect(
       initializeEscrow(
@@ -349,7 +386,7 @@ describe('initializeEscrow', () => {
       )
     ).rejects.toBeInstanceOf(TenantMismatchError);
 
-    expect(mockedHasuraRequest).toHaveBeenCalledTimes(1);
+    expect(mockedQuery).toHaveBeenCalledTimes(2);
     expect(mockedMarkWebhookEventProcessed).not.toHaveBeenCalled();
   });
 
@@ -358,13 +395,13 @@ describe('initializeEscrow', () => {
       isDuplicate: false,
       eventId: 'event-failure',
     });
-    mockedHasuraRequest.mockRejectedValue(
-      new Error('Hasura request failed')
+    mockedQuery.mockRejectedValue(
+      new Error('Database request failed')
     );
 
     await expect(
       initializeEscrow(validBody(), 'safetrust')
-    ).rejects.toThrow('Hasura request failed');
+    ).rejects.toThrow('Database request failed');
 
     expect(mockedMarkWebhookEventProcessed).not.toHaveBeenCalled();
   });
@@ -378,53 +415,60 @@ describe('persistEscrow', () => {
     contractId: 'contract-1',
     status: 'created',
     createdAt: '2026-01-01T00:00:00Z',
+    tenantId: 'safetrust',
   };
 
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it('calls hasuraRequest and returns the created escrow', async () => {
-    mockedHasuraRequest.mockResolvedValue({
-      insert_trustless_work_escrows_one: escrowResponse,
-    });
+  it('executes SQL upsert and returns the created escrow', async () => {
+    mockedQuery.mockResolvedValue({
+      rows: [
+        {
+          id: escrowResponse.id,
+          contract_id: escrowResponse.contractId,
+          status: escrowResponse.status,
+          created_at: escrowResponse.createdAt,
+          tenant_id: escrowResponse.tenantId,
+        },
+      ],
+      rowCount: 1,
+    } as any);
 
     const result = await persistEscrow(validPayload(), 'safetrust');
 
-    expect(mockedHasuraRequest).toHaveBeenCalledTimes(1);
-    expect(mockedHasuraRequest).toHaveBeenCalledWith(
-      expect.stringContaining('InitializeEscrow'),
-      expect.objectContaining({
-        object: expect.objectContaining({
-          contractId: 'contract-1',
-          status: 'created',
-          tenantId: 'safetrust',
-        }),
-      })
+    expect(mockedQuery).toHaveBeenCalledTimes(1);
+    const [sql, params] = mockedQuery.mock.calls[0];
+    expect(sql).toContain('INSERT INTO safetrust.trustless_work_escrows');
+    expect(sql).toContain('ON CONFLICT (contract_id) DO UPDATE');
+    expect(params).toEqual(
+      expect.arrayContaining(['contract-1', 'created', 'safetrust'])
     );
-
-    const mutation = mockedHasuraRequest.mock.calls[0][0] as string;
-    expect(mutation).toContain('on_conflict');
-    expect(mutation).toContain(
-      'constraint: trustless_work_escrows_contract_id_key'
-    );
-    expect(mutation).toContain('update_columns: [contractId]');
 
     expect(result).toEqual(escrowResponse);
 
-    const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
-    expect(callArgs.object.escrowMetadata.roles).toMatchObject({
+    const escrowMetadata = (params as any[])[12];
+    expect(escrowMetadata.roles).toMatchObject({
       approver: 'GAPPROVER',
       serviceProvider: 'GMARKER',
       releaseSigner: 'GRELEASER',
     });
-    expect(callArgs.object).not.toHaveProperty('bookingMetadata');
   });
 
   it('does not trust payer-supplied receiver role metadata', async () => {
-    mockedHasuraRequest.mockResolvedValue({
-      insert_trustless_work_escrows_one: escrowResponse,
-    });
+    mockedQuery.mockResolvedValue({
+      rows: [
+        {
+          id: escrowResponse.id,
+          contract_id: escrowResponse.contractId,
+          status: escrowResponse.status,
+          created_at: escrowResponse.createdAt,
+          tenant_id: escrowResponse.tenantId,
+        },
+      ],
+      rowCount: 1,
+    } as any);
 
     await persistEscrow(validPayload({
       raw: {
@@ -433,53 +477,71 @@ describe('persistEscrow', () => {
       } as any,
     }), 'safetrust');
 
-    const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
-    expect(callArgs.object.escrowMetadata.roles.receiver).toBeNull();
-    expect(callArgs.object.escrowMetadata.roles.receiver).not.toBe('PAYER_CONTROLLED_WALLET');
+    const params = mockedQuery.mock.calls[0][1] as any[];
+    expect(params[12].roles.receiver).toBeNull();
+    expect(params[12].roles.receiver).not.toBe('PAYER_CONTROLLED_WALLET');
   });
 
   it('writes the tenant passed by the caller instead of a literal', async () => {
-    mockedHasuraRequest.mockResolvedValue({
-      insert_trustless_work_escrows_one: escrowResponse,
-    });
+    mockedQuery.mockResolvedValue({
+      rows: [
+        {
+          id: escrowResponse.id,
+          contract_id: escrowResponse.contractId,
+          status: escrowResponse.status,
+          created_at: escrowResponse.createdAt,
+          tenant_id: 'tenant-b',
+        },
+      ],
+      rowCount: 1,
+    } as any);
 
     await persistEscrow(validPayload(), 'tenant-b');
 
-    const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
-    expect(callArgs.object.tenantId).toBe('tenant-b');
+    const params = mockedQuery.mock.calls[0][1] as any[];
+    expect(params[11]).toBe('tenant-b');
   });
 
-  it('throws when Hasura returns no escrow record', async () => {
-    mockedHasuraRequest.mockResolvedValue({
-      insert_trustless_work_escrows_one: undefined,
-    });
+  it('throws when PostgreSQL returns no escrow record', async () => {
+    mockedQuery.mockResolvedValue({
+      rows: [],
+      rowCount: 0,
+    } as any);
 
     await expect(persistEscrow(validPayload(), 'safetrust')).rejects.toThrow(
       'Failed to insert escrow record'
     );
   });
 
-  it('propagates Hasura errors upward', async () => {
-    const err = Object.assign(new Error('Hasura request failed'), {
-      details: [{ message: 'unique constraint violation' }],
-    });
-    mockedHasuraRequest.mockRejectedValue(err);
+  it('propagates database errors upward', async () => {
+    const err = new Error('unique constraint violation');
+    mockedQuery.mockRejectedValue(err);
 
-    await expect(persistEscrow(validPayload(), 'safetrust')).rejects.toThrow('Hasura request failed');
+    await expect(persistEscrow(validPayload(), 'safetrust')).rejects.toThrow(
+      'unique constraint violation'
+    );
   });
 
   it('uses defaults for optional fields', async () => {
-    mockedHasuraRequest.mockResolvedValue({
-      insert_trustless_work_escrows_one: escrowResponse,
-    });
+    mockedQuery.mockResolvedValue({
+      rows: [
+        {
+          id: escrowResponse.id,
+          contract_id: escrowResponse.contractId,
+          status: escrowResponse.status,
+          created_at: escrowResponse.createdAt,
+          tenant_id: escrowResponse.tenantId,
+        },
+      ],
+      rowCount: 1,
+    } as any);
 
     await persistEscrow(validPayload(), 'safetrust');
 
-    const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
-    expect(callArgs.object.contractId).toBe('contract-1');
-    expect(callArgs.object.assetCode).toBe('USDC');
-    expect(callArgs.object.resolver).toBeNull();
-    expect(callArgs.object.bookingId).toBeUndefined();
+    const params = mockedQuery.mock.calls[0][1] as any[];
+    expect(params[0]).toBe('contract-1');
+    expect(params[7]).toBe('USDC');
+    expect(params[4]).toBeNull();
   });
 });
 
@@ -514,42 +576,38 @@ describe('linkReservationToEscrow', () => {
     jest.clearAllMocks();
   });
 
-  it('calls hasuraRequest with the correct reservationId and escrowId', async () => {
-    mockedHasuraRequest.mockResolvedValue({
-      update_reservations: { affected_rows: 1 },
-    });
+  it('executes SQL update with the correct reservationId and escrowId', async () => {
+    mockedQuery.mockResolvedValue({
+      rows: [],
+      rowCount: 1,
+    } as any);
 
     await linkReservationToEscrow('res-1', 'escrow-1', 'safetrust');
 
-    expect(mockedHasuraRequest).toHaveBeenCalledTimes(1);
-    expect(mockedHasuraRequest).toHaveBeenCalledWith(
-      expect.stringContaining('LinkEscrowToReservation'),
-      expect.objectContaining({
-        reservationId: 'res-1',
-        escrowId: 'escrow-1',
-        tenantId: 'safetrust',
-      })
+    expect(mockedQuery).toHaveBeenCalledTimes(1);
+    expect(mockedQuery).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE safetrust.reservations'),
+      ['escrow-1', 'res-1', 'safetrust']
     );
   });
 
   it('throws when no reservation in the tenant matches', async () => {
-    mockedHasuraRequest.mockResolvedValue({
-      update_reservations: { affected_rows: 0 },
-    });
+    mockedQuery.mockResolvedValue({
+      rows: [],
+      rowCount: 0,
+    } as any);
 
     await expect(linkReservationToEscrow('res-1', 'escrow-1', 'safetrust')).rejects.toThrow(
       'Reservation res-1 was not linked'
     );
   });
 
-  it('propagates Hasura errors upward', async () => {
-    const err = Object.assign(new Error('Hasura request failed'), {
-      details: [{ message: 'not found' }],
-    });
-    mockedHasuraRequest.mockRejectedValue(err);
+  it('propagates database errors upward', async () => {
+    const err = new Error('Database request failed');
+    mockedQuery.mockRejectedValue(err);
 
     await expect(linkReservationToEscrow('res-missing', 'escrow-1', 'safetrust')).rejects.toThrow(
-      'Hasura request failed'
+      'Database request failed'
     );
   });
 });

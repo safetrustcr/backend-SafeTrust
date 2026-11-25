@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express'
 import { getApps } from 'firebase-admin/app'
 import type { QueryConfig } from 'pg'
-import { pool } from '../services/db'
+import { pool } from '../db/pool'
 import { logger } from '../middleware/logger'
 
 const router = express.Router()

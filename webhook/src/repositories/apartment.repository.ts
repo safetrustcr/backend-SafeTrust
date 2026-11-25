@@ -4,7 +4,7 @@ import type {
   ReportCategory,
 } from '@safetrust/types'
 import type { QueryResultRow } from 'pg'
-import { query } from '../services/db'
+import { query } from '../db/pool'
 import { liveHoldOverlapSql } from './hold.repository'
 
 export interface ApartmentListFilters {

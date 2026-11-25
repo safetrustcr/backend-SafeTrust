@@ -17,9 +17,9 @@ type ProcessChunksArgs = Parameters<typeof import('../../../../crates/chunk-proc
  * test seam so these tests run with zero Rust build.
  */
 
-jest.mock('../../services/db', () => ({ query: jest.fn() }));
+jest.mock('../../db/pool', () => ({ query: jest.fn() }));
 
-const db = require('../../services/db');
+const db = require('../../db/pool');
 const {
   upsertEscrows,
   syncAllChunks,

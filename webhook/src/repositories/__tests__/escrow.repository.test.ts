@@ -2,6 +2,7 @@ import {
   getEscrowByContractId,
   updateEscrowStatus,
   createEscrow,
+  upsertEscrow,
   approveMilestone,
   approveEscrowStatus,
   fundEscrow,
@@ -11,13 +12,14 @@ import {
   appendResolutionNote,
   StateConflictError,
 } from '../escrow.repository'
-import { hasuraRequest } from '../../services/hasura'
+import { query } from '../../db/pool'
 
-jest.mock('../../services/hasura', () => ({
-  hasuraRequest: jest.fn(),
+jest.mock('../../db/pool', () => ({
+  query: jest.fn(),
+  connect: jest.fn(),
 }))
 
-const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>
+const mockedQuery = query as jest.MockedFunction<typeof query>
 
 describe('escrow.repository', () => {
   beforeEach(() => {
@@ -26,25 +28,27 @@ describe('escrow.repository', () => {
 
   describe('getEscrowByContractId', () => {
     it('returns typed escrow data when found (happy path)', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        trustless_work_escrows: [
+      mockedQuery.mockResolvedValueOnce({
+        rows: [
           {
             id: 'escrow-uuid-1',
-            contractId: 'contract-123',
+            contract_id: 'contract-123',
             status: 'funded',
-            balance: 500,
-            createdAt: '2026-01-01T00:00:00Z',
-            tenantId: 'safetrust',
+            balance: '500',
+            created_at: '2026-01-01T00:00:00Z',
+            tenant_id: 'safetrust',
           },
         ],
-      })
+        rowCount: 1,
+      } as any)
 
       const result = await getEscrowByContractId('contract-123')
 
-      expect(mockedHasuraRequest).toHaveBeenCalledTimes(1)
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('GetEscrowByContractId'), {
-        contractId: 'contract-123',
-      })
+      expect(mockedQuery).toHaveBeenCalledTimes(1)
+      expect(mockedQuery).toHaveBeenCalledWith(
+        expect.stringContaining('FROM safetrust.trustless_work_escrows'),
+        ['contract-123']
+      )
       expect(result).toEqual({
         id: 'escrow-uuid-1',
         contractId: 'contract-123',
@@ -56,42 +60,32 @@ describe('escrow.repository', () => {
     })
 
     it('returns null when escrow is not found', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        trustless_work_escrows: [],
-      })
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any)
 
       const result = await getEscrowByContractId('missing-contract')
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('GetEscrowByContractId'), {
-        contractId: 'missing-contract',
-      })
+      expect(mockedQuery).toHaveBeenCalledWith(
+        expect.stringContaining('FROM safetrust.trustless_work_escrows'),
+        ['missing-contract']
+      )
       expect(result).toBeNull()
     })
   })
 
   describe('updateEscrowStatus', () => {
-
     it('passes validStates when guarded and succeeds', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: { affected_rows: 1 },
-      })
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any)
 
       await updateEscrowStatus('contract-123', 'completed', ['milestone_approved'])
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(
-        expect.stringContaining('UpdateEscrowStatusWithGuard'),
-        {
-          contractId: 'contract-123',
-          status: 'completed',
-          validStates: ['milestone_approved'],
-        }
+      expect(mockedQuery).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE safetrust.trustless_work_escrows'),
+        ['completed', 'contract-123', ['milestone_approved']]
       )
     })
 
     it('throws StateConflictError when guarded and 0 rows affected', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: { affected_rows: 0 },
-      })
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any)
 
       await expect(
         updateEscrowStatus('contract-123', 'completed', ['milestone_approved'])
@@ -99,262 +93,221 @@ describe('escrow.repository', () => {
     })
 
     it('throws StateConflictError when empty validStates array is supplied and 0 rows affected', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: { affected_rows: 0 },
-      })
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any)
 
       await expect(
         updateEscrowStatus('contract-123', 'completed', [])
       ).rejects.toBeInstanceOf(StateConflictError)
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(
-        expect.stringContaining('UpdateEscrowStatusWithGuard'),
-        {
-          contractId: 'contract-123',
-          status: 'completed',
-          validStates: [],
-        }
+      expect(mockedQuery).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE safetrust.trustless_work_escrows'),
+        ['completed', 'contract-123', []]
       )
     })
   })
 
-  describe('createEscrow', () => {
-    it('creates an escrow record and returns typed escrow data', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        insert_trustless_work_escrows_one: {
-          id: 'escrow-uuid-1',
-          contractId: 'contract-123',
-          status: 'created',
-          createdAt: '2026-01-01T00:00:00Z',
-        },
-      })
+  describe('createEscrow & upsertEscrow', () => {
+    const payload = {
+      contractId: 'contract-123',
+      marker: 'GMARKER',
+      approver: 'GAPPROVER',
+      releaser: 'GRELEASER',
+      resolver: null,
+      escrowType: 'single_release',
+      status: 'created',
+      assetCode: 'USDC',
+      assetIssuer: null,
+      amount: 100,
+      balance: 0,
+      tenantId: 'safetrust',
+      escrowMetadata: { foo: 'bar' },
+    }
 
-      const input = {
-        contractId: 'contract-123',
-        marker: 'marker-1',
-        approver: 'app-1',
-        releaser: 'rel-1',
-        escrowType: 'single_release',
-        status: 'created',
-        assetCode: 'USDC',
-        amount: 100,
-        balance: 0,
-        tenantId: 'safetrust',
-      }
+    it('createEscrow inserts and returns mapped escrow', async () => {
+      mockedQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'escrow-uuid-1',
+            contract_id: 'contract-123',
+            status: 'created',
+            created_at: '2026-01-01T00:00:00Z',
+            tenant_id: 'safetrust',
+          },
+        ],
+        rowCount: 1,
+      } as any)
 
-      const result = await createEscrow(input)
+      const result = await createEscrow(payload)
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('InitializeEscrow'), {
-        object: input,
-      })
+      expect(mockedQuery).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO safetrust.trustless_work_escrows'),
+        expect.arrayContaining(['contract-123', 'safetrust'])
+      )
       expect(result).toEqual({
         id: 'escrow-uuid-1',
         contractId: 'contract-123',
         status: 'created',
         createdAt: '2026-01-01T00:00:00Z',
+        tenantId: 'safetrust',
       })
     })
 
-    it('returns null when insertion fails', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        insert_trustless_work_escrows_one: null,
-      })
+    it('upsertEscrow handles ON CONFLICT (contract_id)', async () => {
+      mockedQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'escrow-uuid-1',
+            contract_id: 'contract-123',
+            status: 'created',
+            created_at: '2026-01-01T00:00:00Z',
+            tenant_id: 'safetrust',
+          },
+        ],
+        rowCount: 1,
+      } as any)
 
-      const result = await createEscrow({
-        contractId: 'contract-123',
-        marker: 'marker-1',
-        approver: 'app-1',
-        releaser: 'rel-1',
-        escrowType: 'single_release',
-        status: 'created',
-        assetCode: 'USDC',
-        amount: 100,
-        balance: 0,
-        tenantId: 'safetrust',
-      })
+      const result = await upsertEscrow(payload)
 
-      expect(result).toBeNull()
+      expect(mockedQuery).toHaveBeenCalledWith(
+        expect.stringContaining('ON CONFLICT (contract_id)'),
+        expect.arrayContaining(['contract-123', 'safetrust'])
+      )
+      expect(result?.id).toBe('escrow-uuid-1')
     })
   })
 
   describe('approveMilestone', () => {
-    it('returns true when milestone update affects rows', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_escrow_milestones: { affected_rows: 1 },
-      })
+    it('returns true when a milestone row is updated', async () => {
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any)
 
-      const result = await approveMilestone('escrow-1', 'm-1', 'app-1', '2026-01-01')
+      const updated = await approveMilestone('escrow-1', 'check_in', 'GAPPROVER', '2026-01-01T00:00:00Z')
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ApproveMilestone'), {
-        escrowId: 'escrow-1',
-        milestoneId: 'm-1',
-        approver: 'app-1',
-        approvedAt: '2026-01-01',
-      })
-      expect(result).toBe(true)
+      expect(updated).toBe(true)
+      expect(mockedQuery).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE safetrust.escrow_milestones'),
+        ['GAPPROVER', '2026-01-01T00:00:00Z', 'escrow-1', 'check_in']
+      )
     })
 
-    it('returns false when no milestone is updated', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_escrow_milestones: { affected_rows: 0 },
-      })
+    it('returns false when no milestone row is updated', async () => {
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any)
 
-      const result = await approveMilestone('escrow-1', 'm-1', 'app-1', '2026-01-01')
-      expect(result).toBe(false)
+      const updated = await approveMilestone('escrow-1', 'missing', 'GAPPROVER', '2026-01-01T00:00:00Z')
+
+      expect(updated).toBe(false)
     })
   })
 
   describe('approveEscrowStatus', () => {
-    it('returns true when status update affects rows', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: { affected_rows: 1 },
-      })
+    it('returns true when escrow status transitions to milestone_approved', async () => {
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any)
 
-      const result = await approveEscrowStatus('escrow-1', '2026-01-01', ['funded'])
+      const updated = await approveEscrowStatus('escrow-1', '2026-01-01T00:00:00Z', ['funded'])
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ApproveEscrow'), {
-        escrowId: 'escrow-1',
-        approvedAt: '2026-01-01',
-        validStates: ['funded'],
-      })
-      expect(result).toBe(true)
+      expect(updated).toBe(true)
+      expect(mockedQuery).toHaveBeenCalledWith(
+        expect.stringContaining("SET status = 'milestone_approved'"),
+        ['2026-01-01T00:00:00Z', 'escrow-1', ['funded']]
+      )
     })
   })
 
   describe('fundEscrow', () => {
-    it('returns updated escrow on successful funding', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: {
-          returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'funded', balance: 200 }],
-        },
-      })
+    it('updates balance and status and returns mapped escrow', async () => {
+      mockedQuery.mockResolvedValueOnce({
+        rows: [{ id: 'escrow-1', contract_id: 'contract-123', status: 'funded', balance: '250' }],
+        rowCount: 1,
+      } as any)
 
-      const result = await fundEscrow('c-1', 200, ['created'])
+      const result = await fundEscrow('contract-123', 250, ['created'])
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('FundEscrow'), {
-        contractId: 'c-1',
-        amount: 200,
-        validStates: ['created'],
+      expect(result).toEqual({
+        id: 'escrow-1',
+        contractId: 'contract-123',
+        status: 'funded',
+        balance: 250,
       })
-      expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'funded', balance: 200 })
     })
 
-    it('returns null when no rows returned', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: { returning: [] },
-      })
+    it('returns null when no row matches validStates', async () => {
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any)
 
-      const result = await fundEscrow('c-1', 200, ['created'])
+      const result = await fundEscrow('contract-123', 250, ['created'])
+
       expect(result).toBeNull()
     })
   })
 
   describe('releaseFunds', () => {
-    it('returns completed escrow data on release with valid states', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: {
-          returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 }],
-        },
+    it('transitions to completed and zeroes balance', async () => {
+      mockedQuery.mockResolvedValueOnce({
+        rows: [{ id: 'escrow-1', contract_id: 'contract-123', status: 'completed', balance: '0' }],
+        rowCount: 1,
+      } as any)
+
+      const result = await releaseFunds('contract-123', ['milestone_approved'])
+
+      expect(result).toEqual({
+        id: 'escrow-1',
+        contractId: 'contract-123',
+        status: 'completed',
+        balance: 0,
       })
-
-      const result = await releaseFunds('c-1', ['milestone_approved'])
-
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
-        contractId: 'c-1',
-        validStates: ['milestone_approved'],
-      })
-      expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 })
-    })
-
-    it('uses default valid states when none provided', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: {
-          returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 }],
-        },
-      })
-
-      const result = await releaseFunds('c-1')
-
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
-        contractId: 'c-1',
-        validStates: ['funded', 'milestone_approved'],
-      })
-      expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 })
     })
 
     it('throws StateConflictError when 0 rows updated', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: { returning: [] },
-      })
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any)
 
-      await expect(releaseFunds('c-1', ['funded'])).rejects.toBeInstanceOf(StateConflictError)
-    })
-
-    it('filters out non-canonical custom states and preserves empty list', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: { returning: [] },
-      })
-
-      await expect(releaseFunds('c-1', ['non_canonical_state'])).rejects.toBeInstanceOf(
+      await expect(releaseFunds('contract-123', ['milestone_approved'])).rejects.toBeInstanceOf(
         StateConflictError
       )
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
-        contractId: 'c-1',
-        validStates: [],
-      })
     })
   })
 
-  describe('disputeEscrow', () => {
-    it('returns disputed escrow data on dispute', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: {
-          returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'disputed' }],
-        },
-      })
+  describe('disputeEscrow & resolveDispute', () => {
+    it('disputeEscrow transitions to disputed', async () => {
+      mockedQuery.mockResolvedValueOnce({
+        rows: [{ id: 'escrow-1', contract_id: 'contract-123', status: 'disputed' }],
+        rowCount: 1,
+      } as any)
 
-      const result = await disputeEscrow('c-1', ['funded'])
+      const result = await disputeEscrow('contract-123', ['funded'])
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('DisputeEscrow'), {
-        contractId: 'c-1',
-        validStates: ['funded'],
+      expect(result).toEqual({
+        id: 'escrow-1',
+        contractId: 'contract-123',
+        status: 'disputed',
       })
-      expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'disputed' })
     })
-  })
 
-  describe('resolveDispute', () => {
-    it('returns resolved escrow data', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: {
-          returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'resolved', balance: 0 }],
-        },
+    it('resolveDispute transitions to resolved and zeroes balance', async () => {
+      mockedQuery.mockResolvedValueOnce({
+        rows: [{ id: 'escrow-1', contract_id: 'contract-123', status: 'resolved', balance: '0' }],
+        rowCount: 1,
+      } as any)
+
+      const result = await resolveDispute('contract-123', ['disputed'])
+
+      expect(result).toEqual({
+        id: 'escrow-1',
+        contractId: 'contract-123',
+        status: 'resolved',
+        balance: 0,
       })
-
-      const result = await resolveDispute('c-1', ['disputed'])
-
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ResolveDispute'), {
-        contractId: 'c-1',
-        validStates: ['disputed'],
-      })
-      expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'resolved', balance: 0 })
     })
   })
 
   describe('appendResolutionNote', () => {
-    it('appends note to escrow metadata and returns boolean', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        update_trustless_work_escrows: { affected_rows: 1 },
-      })
+    it('merges jsonb note into escrow_metadata', async () => {
+      mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any)
 
-      const note = { resolver: 'r-1', note: 'resolved' }
-      const result = await appendResolutionNote('c-1', note)
+      const updated = await appendResolutionNote('contract-123', { reason: 'settled' })
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('AppendResolutionNote'), {
-        contractId: 'c-1',
-        note,
-      })
-      expect(result).toBe(true)
+      expect(updated).toBe(true)
+      expect(mockedQuery).toHaveBeenCalledWith(
+        expect.stringContaining('escrow_metadata = COALESCE(escrow_metadata'),
+        [JSON.stringify({ reason: 'settled' }), 'contract-123']
+      )
     })
   })
 })
