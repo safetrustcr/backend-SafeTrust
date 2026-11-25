@@ -58,7 +58,9 @@ export function errorHandler(err: unknown, req: Request, res: Response, next?: N
   }
 
   const requestId = req.requestId ?? res.req?.requestId ?? getRequestId()
-  const body: ApiError = {
+  const details = err instanceof AppError && err.expose && err.details ? err.details : undefined
+  const body: ApiError & Record<string, unknown> = {
+    ...(details ?? {}),
     success: false,
     error: message,
     ...(code ? { code } : {}),

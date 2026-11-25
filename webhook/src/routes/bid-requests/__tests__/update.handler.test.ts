@@ -32,7 +32,7 @@ describe('updateBidRequestHandler', () => {
     ['profile-missing', 409, expect.objectContaining({ success: false, error: 'User profile not found' })],
     ['not-found', 404, expect.objectContaining({ success: false, error: 'Bid not found' })],
     ['not-owner', 403, expect.objectContaining({ success: false, error: 'Only owner can approve' })],
-    ['invalid-transition', 400, expect.objectContaining({ success: false, error: 'Invalid transition' })],
+    ['invalid-transition', 400, expect.objectContaining({ success: false, error: 'Invalid transition', code: 'invalid_transition', allowedTransitions: ['APPROVED', 'CANCELLED'] })],
   ] as const)('maps service result %s to the existing response', async (kind, status, body) => {
     const result = kind === 'invalid-transition'
       ? { kind, allowedTransitions: ['APPROVED', 'CANCELLED'] }

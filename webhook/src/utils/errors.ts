@@ -14,6 +14,8 @@ export interface AppErrorOptions {
   expose?: boolean
   /** Optional response headers to set when formatted. */
   headers?: Record<string, string>
+  /** Optional client-facing fields merged onto 4xx error bodies. Ignored for 5xx. */
+  details?: Record<string, unknown>
 }
 
 export class AppError extends Error {
@@ -21,14 +23,16 @@ export class AppError extends Error {
   readonly code: string
   readonly expose: boolean
   readonly headers?: Record<string, string>
+  readonly details?: Record<string, unknown>
 
-  constructor(message: string, statusCode = 500, { code, expose, headers }: AppErrorOptions = {}) {
+  constructor(message: string, statusCode = 500, { code, expose, headers, details }: AppErrorOptions = {}) {
     super(message)
     this.name = new.target.name
     this.statusCode = statusCode
     this.code = code ?? defaultCode(statusCode)
     this.expose = statusCode < 500 && (expose ?? true)
     this.headers = headers
+    this.details = this.expose ? details : undefined
   }
 }
 

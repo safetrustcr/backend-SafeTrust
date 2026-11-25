@@ -247,7 +247,7 @@ describe('reservations/cancel.handler', () => {
     await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(409)
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'RESERVATION_NOT_CANCELLABLE' }))
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'RESERVATION_NOT_CANCELLABLE', status: 'funded' }))
     expect(reservationRepo.updateReservationCancellation).not.toHaveBeenCalled()
   })
 
@@ -269,7 +269,7 @@ describe('reservations/cancel.handler', () => {
     await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(409)
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'RESERVATION_NOT_CANCELLABLE' }))
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'RESERVATION_NOT_CANCELLABLE', status: 'completed' }))
     expect(reservationRepo.updateReservationCancellation).not.toHaveBeenCalled()
   })
 
@@ -294,7 +294,7 @@ describe('reservations/cancel.handler', () => {
     await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(409)
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'RESERVATION_NOT_CANCELLABLE' }))
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'RESERVATION_NOT_CANCELLABLE', status: 'funded' }))
   })
 
   it('returns 404 when reservation is deleted concurrently after cancel attempt', async () => {

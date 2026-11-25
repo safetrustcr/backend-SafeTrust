@@ -58,7 +58,10 @@ export const cancelReservationHandler = async (
 
   // Status is funded or later -> 409 { error: 'RESERVATION_NOT_CANCELLABLE', status }
   if (reservation.status !== 'pending' && reservation.status !== 'escrow_created') {
-    throw new ConflictError('RESERVATION_NOT_CANCELLABLE', { code: 'reservation_not_cancellable' })
+    throw new ConflictError('RESERVATION_NOT_CANCELLABLE', {
+      code: 'reservation_not_cancellable',
+      details: { status: reservation.status },
+    })
   }
 
   // Cancellation is allowed for pending or escrow_created
@@ -70,7 +73,10 @@ export const cancelReservationHandler = async (
   }
 
   if (!didCancel && current.status !== 'cancelled') {
-    throw new ConflictError('RESERVATION_NOT_CANCELLABLE', { code: 'reservation_not_cancellable' })
+    throw new ConflictError('RESERVATION_NOT_CANCELLABLE', {
+      code: 'reservation_not_cancellable',
+      details: { status: current.status },
+    })
   }
 
   return res.status(200).json(toReservationDto(current, userId))

@@ -53,6 +53,7 @@ export const updateBidRequestHandler = async (
     case 'invalid-transition':
       throw new ValidationError('Invalid transition', {
         code: 'invalid_transition',
+        details: { allowedTransitions: result.allowedTransitions },
       })
     case 'updated':
       logger.info('bid_requests.update.succeeded', { bidId: id, status: newStatus })
