@@ -291,7 +291,7 @@ export async function upsertRetryRecord(params: {
       NOW() + ($9 * INTERVAL '1 millisecond'),
       $10, $11, $12, NOW()
     )
-    ON CONFLICT (tx_hash, escrow_action)
+    ON CONFLICT (tenant_id, tx_hash, escrow_action)
     DO UPDATE SET
       status = EXCLUDED.status,
       last_error = EXCLUDED.last_error,

@@ -6,7 +6,7 @@ Background:
   * def roomTypeId = UUID.randomUUID().toString()
   * def reservationId = UUID.randomUUID().toString()
   * def longImageUrl = 'https://storage.example/' + 'a'.repeat(200)
-  * db.execute("INSERT INTO hotel_industry.hotels (id, name, address) VALUES ('" + hotelId + "', 'Cascade test', 'Test address')")
+  * db.execute("INSERT INTO hotel_industry.hotels (id, name, address_line) VALUES ('" + hotelId + "', 'Cascade test', 'Test address')")
   * db.execute("INSERT INTO hotel_industry.room_types (id, name) VALUES ('" + roomTypeId + "', 'Cascade test type')")
   * db.execute("INSERT INTO hotel_industry.rooms (hotel_id, room_number, room_type_id, price_night, capacity) VALUES ('" + hotelId + "', '901', '" + roomTypeId + "', 100, 2)")
   * def room = db.query("SELECT id FROM hotel_industry.rooms WHERE hotel_id = '" + hotelId + "'")

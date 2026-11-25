@@ -459,7 +459,7 @@ describe('Confirmation Service - Issue #660', () => {
 
   // ── 7. Idempotency ────────────────────────────────────────────────────────
   describe('Criterion 7: Strict Idempotency', () => {
-    it('uses ON CONFLICT (tx_hash, escrow_action) to guarantee idempotency upon duplicate submissions', async () => {
+    it('uses a tenant-scoped conflict key to guarantee idempotency within a tenant', async () => {
       mockedDbQuery.mockResolvedValue({
         rows: [
           {
@@ -481,6 +481,7 @@ describe('Confirmation Service - Issue #660', () => {
         action: 'deploy',
         network: 'testnet',
         submissionPath: 'external',
+        tenantId: 'tenant-a',
       })
 
       const record2 = await upsertRetryRecord({
@@ -489,13 +490,14 @@ describe('Confirmation Service - Issue #660', () => {
         action: 'deploy',
         network: 'testnet',
         submissionPath: 'external',
+        tenantId: 'tenant-a',
       })
 
       expect(record1.txHash).toBe(record2.txHash)
       expect(mockedDbQuery).toHaveBeenCalledTimes(2)
       expect(mockedDbQuery).toHaveBeenCalledWith(
-        expect.stringContaining('ON CONFLICT (tx_hash, escrow_action)'),
-        expect.anything()
+        expect.stringContaining('ON CONFLICT (tenant_id, tx_hash, escrow_action)'),
+        expect.arrayContaining(['tenant-a'])
       )
     })
   })

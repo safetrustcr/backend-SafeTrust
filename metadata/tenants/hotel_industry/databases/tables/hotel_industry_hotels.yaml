@@ -49,6 +49,8 @@ insert_permissions:
   - role: user
     permission:
       check: {}
+      set:
+        created_by_user_id: X-Hasura-User-Id
       columns:
         - name
         - description

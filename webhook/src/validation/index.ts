@@ -35,7 +35,10 @@ const apartmentListQuerySchema = z.object({
   minPrice: z.string().regex(/^\d+(\.\d+)?$/).optional(),
   maxPrice: z.string().regex(/^\d+(\.\d+)?$/).optional(),
   bedrooms: z.string().regex(/^\d+$/).optional(),
-  petFriendly: z.enum(['true', 'false', '1', '0', 'yes', 'no']).optional(),
+  petFriendly: z.preprocess(
+    (value) => typeof value === 'string' ? value.toLowerCase() : value,
+    z.enum(['true', 'false', '1', '0', 'yes', 'no'])
+  ).optional(),
   category: z.string().optional(),
   page: z.string().regex(/^[1-9]\d*$/).optional(),
   limit: z.string().regex(/^[1-9]\d*$/).optional(),
@@ -68,7 +71,7 @@ export type CreateApartmentBody = z.infer<typeof createApartmentSchema>
 export const createListingReportSchema = z.object({
   category: z.enum(['inaccurate', 'scam_or_fraud', 'offensive', 'safety', 'duplicate', 'other']),
   details: z.string().trim().max(1000).optional().nullable(),
-  clientOpId: uuid,
+  clientOpId: databaseUuid,
 }).passthrough().superRefine((value, context) => {
   if (value.category === 'other' && (value.details ?? '').trim().length < 10) {
     context.addIssue({
@@ -83,7 +86,7 @@ export type CreateListingReportBody = z.infer<typeof createListingReportSchema>
 const calendarDate = z.string().refine((value) => {
   const parsed = new Date(value)
   if (!value.trim() || Number.isNaN(parsed.getTime())) return false
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/)
   if (!match) return true
   const year = Number(match[1])
   const month = Number(match[2])

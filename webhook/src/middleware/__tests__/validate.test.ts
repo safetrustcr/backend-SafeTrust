@@ -176,4 +176,38 @@ describe('request validation middleware', () => {
 
     expect(result.success).toBe(true)
   })
+
+  it.each(['TRUE', 'FALSE', 'YES', 'NO'])(
+    'normalizes case-insensitive petFriendly value %s before validation',
+    (petFriendly) => {
+      const result = apartmentListQuerySchema.safeParse({ petFriendly })
+
+      expect(result.success).toBe(true)
+      if (result.success) expect(result.data.petFriendly).toBe(petFriendly.toLowerCase())
+    }
+  )
+
+  it('rejects unsupported petFriendly values after normalization', () => {
+    expect(apartmentListQuerySchema.safeParse({ petFriendly: 'MAYBE' }).success).toBe(false)
+  })
+
+  it('accepts report operation IDs with any PostgreSQL UUID version and variant bits', () => {
+    const result = createListingReportSchema.safeParse({
+      category: 'other',
+      details: 'This report has enough detail.',
+      clientOpId: '00000000-0000-0000-0000-000000000001',
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects invalid calendar dates in timestamp inputs', () => {
+    const result = createBidRequestSchema.safeParse({
+      apartment_id: '00000000-0000-0000-0000-000000000001',
+      proposed_price: 4500,
+      desired_move_in: '2027-02-30T00:00:00Z',
+    })
+
+    expect(result.success).toBe(false)
+  })
 })

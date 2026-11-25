@@ -22,10 +22,40 @@ ALTER TABLE hotel_industry.hotels
     ALTER COLUMN address SET NOT NULL,
     ALTER COLUMN neighborhood TYPE VARCHAR(20)
         USING LEFT(neighborhood, 20)::VARCHAR(20),
-    RENAME COLUMN neighborhood TO location_area,
     DROP COLUMN address_line,
     DROP COLUMN city,
     DROP COLUMN country_code;
 
+ALTER TABLE hotel_industry.hotels
+    RENAME COLUMN neighborhood TO location_area;
+
 CREATE INDEX idx_hotels_location_area
     ON hotel_industry.hotels(location_area);
+
+CREATE FUNCTION hotel_industry.find_nearby_hotels(
+    search_location POINT,
+    radius_meters FLOAT,
+    location_area VARCHAR DEFAULT NULL
+)
+RETURNS SETOF hotel_industry.find_nearby_hotels_result AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        h.id,
+        ST_Distance(h.coordinates::geometry, search_location::geometry),
+        h.name,
+        h.description,
+        h.address,
+        h.location_area,
+        h.coordinates
+    FROM hotel_industry.hotels AS h
+    WHERE h.coordinates IS NOT NULL
+      AND ST_DWithin(
+          h.coordinates::geometry,
+          search_location::geometry,
+          radius_meters
+      )
+      AND (location_area IS NULL OR h.location_area = location_area)
+    ORDER BY 2;
+END;
+$$ LANGUAGE plpgsql STABLE;

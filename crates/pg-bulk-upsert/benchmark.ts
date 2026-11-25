@@ -19,7 +19,7 @@ import type { Client as PgClient } from 'pg'
  * Connection defaults to 127.0.0.1:5432 postgres/postgrespassword; override with
  * PGHOST / PGPORT / PGUSER / PGPASSWORD. Run:
  *
- *   node crates/pg-bulk-upsert/benchmark.js
+ *   PLATFORM_TENANT_ID=safetrust node crates/pg-bulk-upsert/benchmark.js
  */
 
 import path = require('node:path')
