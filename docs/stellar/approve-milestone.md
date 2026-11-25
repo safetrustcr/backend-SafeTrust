@@ -1,8 +1,12 @@
 # Approve Milestone
 
-> **Status: Planned — post-Issue-03 behavior.** This is the intended
-> polling-based flow; the route implementation in this checkout has not yet
-> been migrated to it.
+> **Status:** the TrustlessWork `approve-milestone` callback was removed.
+> Reconciliation polling at `POST /reconciliation/sync-escrows` can record the
+> escrow-level `milestone_approved` status, but it does not update
+> `escrow_milestones` rows (approved status, approver, approval timestamp) or
+> mirror `checked_in`/`checked_out` to reservations. The client-facing XDR flow
+> below is the intended post-Issue-03 integration; its SafeTrust routes are not
+> present in this checkout.
 
 The frontend requests an unsigned milestone-approval transaction from SafeTrust.
 The authorized user signs it in their wallet, Trustless Work submits it to
@@ -50,8 +54,9 @@ sequenceDiagram
 
 For single-release escrows, an approved milestone flag derives
 `milestone_approved`. For multi-release escrows, any approved or released
-milestone derives `milestone_approved`. The V1 indexer snapshot has no ledger
-sequence; under the current freshness policy it cannot safely advance an
-already funded escrow to this state by polling alone. A versioned snapshot or
-transaction confirmation is required. See
+milestone derives `milestone_approved`. Reconciliation applies only legal
+local-to-observed transitions and checks the observed ledger sequence against
+the stored one when available. The V1 indexer snapshot is unversioned, so
+polling cannot safely advance an already funded escrow to this state without a
+version token or transaction confirmation. See
 [Trustless Work Indexer](./trustless-work-indexer.md).
