@@ -1,0 +1,14 @@
+# Security-sensitive paths requiring maintainer review.
+# Maintainers can swap @sotoJ24 to an org team handle once configured.
+/.github/                  @sotoJ24
+/scripts/                  @sotoJ24
+/bin/                      @sotoJ24
+/metadata/                 @sotoJ24
+/migrations/               @sotoJ24
+/webhook/package.json      @sotoJ24
+/webhook/package-lock.json @sotoJ24
+/Dockerfile*               @sotoJ24
+/webhook/Dockerfile*       @sotoJ24
+/docker-compose*.yml       @sotoJ24
+/start.sh                  @sotoJ24
+/config.yaml               @sotoJ24

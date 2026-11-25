@@ -14,6 +14,7 @@ import apartmentRoutes from './apartments'
 import bidRequestsRoute from './bid-requests'
 import reservationsRoute from './reservations'
 import escrowClaimsRoute from './escrow-claims/claims.route'
+import v1BookingsRoute from './v1/bookings'
 
 const router = express.Router()
 
@@ -31,5 +32,6 @@ router.use('/api/apartments',   apartmentRoutes)
 router.use('/api/bid-requests', bidRequestsRoute)
 router.use('/api/reservations', reservationsRoute)
 router.use('/api/escrow-claims', escrowClaimsRoute)
+router.use('/api/v1/bookings', v1BookingsRoute)
 
 export default router

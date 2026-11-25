@@ -14,8 +14,7 @@ import {
   StellarNetwork,
   SubmissionPath,
 } from '../../services/confirmation.service'
-import { assertSignedXdrCannotAdvanceStatus } from '../../services/escrow.service'
-import { getStellarNetwork } from '../../config/stellar'
+import { assertSignedXdrCannotAdvanceStatus, isEscrowParty } from '../../services/escrow.service'
 
 export interface ConfirmTransactionPayload {
   submissionPath?: SubmissionPath
@@ -71,6 +70,19 @@ export async function confirmTransactionHandler(
     return res.status(400).json({ error: 'network must be either "testnet" or "mainnet"' })
   }
 
+  const uid = req.context?.uid || req.user?.uid
+  const tenantId = req.context?.tenantId
+  if (!uid || !tenantId) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+
+  if (!(await isEscrowParty(uid, escrowId, tenantId))) {
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'Caller is not a recognized party on this escrow',
+    })
+  }
+
   // 3. Dispatch according to submission path
   if (submissionPath === 'helper') {
     if (!signedXdr) {
@@ -109,6 +121,8 @@ export async function confirmTransactionHandler(
       return res.status(400).json({ error: 'txHash is required for external submission' })
     }
 
+    // update-from-txHash only updates Trustless Work's Firebase index; it does
+    // not write SafeTrust PostgreSQL. Local promotion is handled separately.
     const result = await processExternalSubmission({
       txHash,
       escrowId,

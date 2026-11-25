@@ -1,6 +1,6 @@
 import { PoolClient } from 'pg';
 import { AppError, ConflictError, NotFoundError, ServiceUnavailableError } from '../utils/errors';
-import { withTransaction, query } from './db';
+import db, { withTransaction, query } from './db';
 import { getPlatformTenantId } from '../config/tenant';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
 import { EscrowEventType, EscrowStatus } from '../types/escrow.types';
@@ -96,7 +96,42 @@ export class EscrowValidationError extends AppError {
   }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+/**
+ * Check whether one of the caller's registered Stellar wallets matches a
+ * Trustless Work V1 role address for this escrow in the caller's tenant.
+ */
+export async function isEscrowParty(
+  uid: string,
+  contractId: string,
+  tenantId: string
+): Promise<boolean> {
+  const { rows } = await db.query<{ is_party: boolean }>(
+    `
+    SELECT EXISTS (
+      SELECT 1
+      FROM safetrust.trustless_work_escrows escrow
+      JOIN safetrust.user_wallets wallet
+        ON wallet.user_id = $1
+       AND wallet.chain_type = 'STELLAR'
+      WHERE escrow.contract_id = $2
+        AND escrow.tenant_id = $3
+        AND wallet.wallet_address = ANY(ARRAY[
+          escrow.escrow_metadata #>> '{roles,approver}',
+          escrow.escrow_metadata #>> '{roles,serviceProvider}',
+          escrow.escrow_metadata #>> '{roles,platformAddress}',
+          escrow.escrow_metadata #>> '{roles,releaseSigner}',
+          escrow.escrow_metadata #>> '{roles,disputeResolver}',
+          escrow.escrow_metadata #>> '{roles,receiver}'
+        ])
+    ) AS is_party
+    `,
+    [uid, contractId, tenantId]
+  )
+
+  return rows[0]?.is_party === true
+}
+
+// Helpers
 
 function toLedgerSeq(value: unknown): bigint | null {
   if (value === null || value === undefined || value === '') return null;
@@ -256,10 +291,7 @@ export async function persistEscrow(
       amount: payload.amount,
       balance: 0,
       tenantId,
-      escrowMetadata: {
-        ...(payload.raw ?? {}),
-        ...(tokenContractId ? { token_contract_id: tokenContractId } : {}),
-      },
+      escrowMetadata: buildInitialEscrowMetadata(payload)
     },
   });
 
@@ -269,6 +301,22 @@ export async function persistEscrow(
   }
 
   return escrow;
+}
+
+function buildInitialEscrowMetadata(payload: EscrowInitPayload): Record<string, unknown> {
+  const raw = payload.raw as unknown as Record<string, unknown>;
+
+  return {
+    ...raw,
+    roles: {
+      approver: payload.approver,
+      serviceProvider: payload.marker,
+      platformAddress: null,
+      releaseSigner: payload.releaser,
+      disputeResolver: payload.resolver,
+      receiver: null,
+    },
+  };
 }
 
 /** Thrown when the reservation named in booking_metadata does not exist. */

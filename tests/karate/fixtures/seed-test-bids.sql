@@ -2,7 +2,7 @@
 DELETE FROM safetrust.bid_requests WHERE id = '11111111-1111-1111-1111-111111111111';
 
 INSERT INTO safetrust.bid_requests (
-    id, apartment_id, tenant_id, current_status, 
+    id, apartment_id, bidder_id, current_status, 
     proposed_price, desired_move_in
 ) VALUES
 (
