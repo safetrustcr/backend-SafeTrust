@@ -115,7 +115,7 @@ result before applying the corresponding local state change. The five wallet
 flows documented here submit through Trustless Work from the frontend, so
 SafeTrust learns their results through reconciliation polling. The indexer's
 status and field mapping, including its snapshot-freshness limitation, is
-documented in [Trustless Work Indexer](../stellar/trustless-work-indexer.md).
+documented in [Reconciliation and Indexer Sync](../stellar/reconciliation.md).
 
 ## Escrow route map
 
