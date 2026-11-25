@@ -144,7 +144,6 @@ describe('Confirmation Service - Issue #660', () => {
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ signedXdr: signed.xdr, network: 'testnet' }),
-          body: JSON.stringify({ signedXdr: 'VALID_SIGNED_XDR' }),
         })
       )
 
@@ -267,10 +266,10 @@ describe('Confirmation Service - Issue #660', () => {
       // Guardrail check: indexer/update-from-txHash was called
       expect(mockFetch).toHaveBeenNthCalledWith(
         2,
-        expect.stringContaining('/indexer/update-from-txhash'),
+        expect.stringContaining('/indexer/update-from-txHash'),
         expect.objectContaining({
-          method: 'PUT',
-          body: JSON.stringify({ txHash: VALID_TX_HASH }),
+          method: 'POST',
+          body: JSON.stringify({ txHash: VALID_TX_HASH, network: 'testnet' }),
         })
       )
     })

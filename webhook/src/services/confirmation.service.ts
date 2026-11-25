@@ -12,17 +12,6 @@ import { hasuraRequest } from './hasura'
 import { getTransactionByHash } from '../clients/stellar.client'
 import { sendTransaction, updateIndexerFromTxHash } from '../clients/trustless-work.client'
 import { UpstreamError, UpstreamTimeoutError } from '../utils/upstream-errors'
-
-/** Describe an upstream failure for the retry record / result error field. */
-function upstreamErrorText(upstream: string, error: unknown): string {
-  if (error instanceof UpstreamTimeoutError) {
-    return `${upstream} timed out after ${error.timeoutMs} ms at ${error.upstreamPath}`
-  }
-  if (error instanceof UpstreamError) {
-    return `${upstream} upstream error at ${error.upstreamPath}: ${error.message}`
-  }
-  return `${upstream} request failed: ${error instanceof Error ? error.message : String(error)}`
-import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
 import {
   upsertRetryRecord,
   updateRetryRecordStatus,
@@ -35,6 +24,17 @@ export {
   updateRetryRecordStatus,
   fetchPendingRetries,
   type UpsertRetryRecordParams,
+}
+
+/** Describe an upstream failure for the retry record / result error field. */
+function upstreamErrorText(upstream: string, error: unknown): string {
+  if (error instanceof UpstreamTimeoutError) {
+    return `${upstream} timed out after ${error.timeoutMs} ms at ${error.upstreamPath}`
+  }
+  if (error instanceof UpstreamError) {
+    return `${upstream} upstream error at ${error.upstreamPath}: ${error.message}`
+  }
+  return `${upstream} request failed: ${error instanceof Error ? error.message : String(error)}`
 }
 
 // ── Types & Constants ─────────────────────────────────────────────────────────
@@ -165,6 +165,7 @@ export async function verifyStellarTransaction(
  */
 export async function updateTWIndexerFromTxHash(
   txHash: string,
+  network: StellarNetwork,
   isTWGenerated: boolean
 ): Promise<{ success: boolean; error?: string }> {
   if (!isTWGenerated) {
@@ -177,23 +178,6 @@ export async function updateTWIndexerFromTxHash(
 
   try {
     await updateIndexerFromTxHash(txHash, network)
-    const response = await fetch(`${twBaseUrl}/indexer/update-from-txhash`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
-      },
-      body: JSON.stringify({ txHash }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      return {
-        success: false,
-        error: `TW indexer returned status ${response.status}: ${errText}`,
-      }
-    }
-
     return { success: true }
   } catch (err) {
     return {
@@ -212,31 +196,6 @@ export async function sendTransactionViaTWHelper(
 ): Promise<{ success: boolean; txHash?: string; error?: string; ambiguous?: boolean }> {
   try {
     const { txHash } = await sendTransaction(signedXdr, network)
-  signedXdr: string
-): Promise<{ success: boolean; txHash?: string; error?: string }> {
-  const twBaseUrl = getTrustlessWorkApiUrl()
-  const twApiKey = getTrustlessWorkApiKey()
-
-  try {
-    const response = await fetch(`${twBaseUrl}/helper/send-transaction`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
-      },
-      body: JSON.stringify({ signedXdr }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      return {
-        success: false,
-        error: `TW helper returned status ${response.status}: ${errText}`,
-      }
-    }
-
-    const data = (await response.json()) as { txHash?: string; hash?: string }
-    const txHash = data.txHash || data.hash
     if (!txHash) {
       // The helper answered 2xx, so it may have accepted the transaction.
       return {
@@ -502,8 +461,6 @@ export async function processHelperSubmission(params: {
       error: errorMsg,
     }
   }
-  // Submit via TW helper
-  const sendRes = await sendTransactionViaTWHelper(signedXdr)
   if (!sendRes.success || !sendRes.txHash) {
     return {
       success: false,
@@ -643,7 +600,7 @@ export async function processExternalSubmission(params: {
   }
 
   // 5. Invoke Trustless Work indexer/update-from-txHash
-  const twRes = await updateTWIndexerFromTxHash(txHash, isTWGenerated)
+  const twRes = await updateTWIndexerFromTxHash(txHash, network, isTWGenerated)
   if (!twRes.success) {
     const errorMsg = twRes.error ?? 'TW indexer synchronization failed'
     await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
@@ -748,6 +705,7 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
       if (record.submissionPath === 'external') {
         const twRes = await updateTWIndexerFromTxHash(
           record.txHash,
+          record.network,
           true
         )
         if (!twRes.success) {
