@@ -113,6 +113,11 @@ export async function upstreamRequest<T = unknown>(
   if (!response.ok) {
     // Never copy the upstream body into the error: it is logged verbatim and
     // may echo credentials or signed XDR.
+    try {
+      await response.body?.cancel()
+    } catch {
+      // ignore cancellation errors; the original upstream status is what matters
+    }
     fail(response.status, new Error(`${upstream} responded with status ${response.status}`))
   }
 
@@ -130,7 +135,7 @@ export async function upstreamRequest<T = unknown>(
       fail(response.status, error)
       throw error // unreachable
     }
-    fail(response.status, new Error(`${upstream} returned invalid JSON: ${(error as Error).message}`))
+    fail(response.status, new Error(`${upstream} returned invalid JSON`))
     throw error // unreachable
   }
 }
