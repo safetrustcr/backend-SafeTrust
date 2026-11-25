@@ -291,12 +291,12 @@ An unsigned XDR or wallet signature alone never promotes escrow status.
    - Multi-release: `POST /escrow/multi-release/approve-milestone`
 2. **Sign & submit:** The **Approver** wallet signs the XDR and submits it
    through `POST /helper/send-transaction`.
-3. **Reconcile:** Reconciliation derives `milestone_approved` from an approved
-   milestone flag (single-release) or any approved/released milestone
-   (multi-release), subject to legal prior-state transitions and snapshot
-   freshness rules in [reconciliation.md](./reconciliation.md). Note that
-   reconciliation updates escrow-level status rather than individual
-   `escrow_milestones` rows.
+3. **State synchronization & current wiring:**
+   - **Unversioned reconciliation polling cannot advance a `funded` escrow to `milestone_approved`:** The V1 indexer snapshot omits `ledger_seq`, so the freshness policy in `webhook/src/lib/escrow-freshness.ts` rejects unversioned updates to confirmed (`funded`) rows, `LIFECYCLE_TRANSITION_SPECS` in `webhook/src/services/reconciliation.service.ts` does not register `milestone_approved`, and `webhook/src/services/confirmation.service.ts` handles only `deploy` and `fund` actions.
+   - **Implementation paths that write `milestone_approved`:**
+     - **Milestone service (`webhook/src/services/milestone.service.ts`):** `approveMilestone` and `approveMilestoneAndUpdateReservation` (backed by `approveMilestone` in `webhook/src/repositories/escrow.repository.ts`) atomically mark the `safetrust.escrow_milestones` row `approved`, update `safetrust.trustless_work_escrows.status` to `milestone_approved`, and mirror `checked_in`/`checked_out` to `safetrust.reservations`. This service is **not** currently wired to an HTTP route or cron trigger in this checkout (invoked only in tests after legacy callbacks were removed in #769).
+     - **Versioned snapshot UPSERT (`upsertEscrows` / `pg-bulk-upsert`):** When a snapshot carries a newer `ledger_seq` (or stored `ledger_seq` is `NULL`), reconciliation derives `milestone_approved` from an approved milestone flag (single-release) or any approved/released milestone (multi-release) and updates escrow-level status without modifying `escrow_milestones` or `reservations`.
+   - See [reconciliation.md](./reconciliation.md) for status derivation and freshness rules.
 
 ### Release Funds
 
@@ -344,10 +344,9 @@ sequenceDiagram
    - Multi-release milestone: `POST /escrow/multi-release/dispute-milestone`
    - Signed by the authorized party; `flags.disputed` derives `disputed`.
 2. **Resolve a dispute:**
-   - Single-release: `POST /escrow/single-release/resolve-dispute`
-   - Multi-release milestone: `POST /escrow/multi-release/resolve-milestone-dispute`
-   - Signed by the **Dispute Resolver** wallet (distinct from the Release
-     Signer); `flags.resolved` derives `resolved`.
+   - Single-release: `POST /escrow/single-release/resolve-dispute`; `flags.resolved` derives `resolved`.
+   - Multi-release milestone: `POST /escrow/multi-release/resolve-milestone-dispute`; `resolved` is derived as an **aggregate** only when **every** milestone is `released` or `resolved` and at least one milestone has `flags.resolved === true` (resolving a single milestone while another remains unreleased does not mark the escrow `resolved`).
+   - Signed by the **Dispute Resolver** wallet (distinct from the Release Signer).
 3. **Resolution vs. cancellation:** `resolved` records a dispute outcome on
    an escrow; `cancelled` is the other terminal outcome when funds are returned
    to the tenant (legal from `created`, `pending_funding`, `funded`, or
