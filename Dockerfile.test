@@ -7,7 +7,7 @@ RUN cd webhook && npm ci --ignore-scripts
 COPY tests/karate/ ./tests/karate/
 RUN cd webhook && npm run build:karate
 
-FROM eclipse-temurin:17-jdk-jammy
+FROM eclipse-temurin:25-jdk-jammy
 
 WORKDIR /app
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
