@@ -201,7 +201,7 @@ Below is a step-by-step testnet walkthrough demonstrating both stages:
    ```json
    {
      "submissionPath": "helper",
-     "signedXdr": "AAAA_FUNDING_SIGNED_XDR...",
+     "signedXdr": "<BASE64_ENCODED_SIGNED_XDR_ENVELOPE>",
      "escrowId": "CAATN5DTEST00001",
      "action": "fund",
      "network": "testnet"

@@ -7,9 +7,22 @@ import {
 
 describe('Stellar Configuration', () => {
   const originalEnv = process.env
+  const ENV_VARS_TO_CLEAR = [
+    'STELLAR_NETWORK',
+    'HORIZON_URL',
+    'TRUSTLESS_WORK_API_URL',
+    'SAFETRUST_PLATFORM_WALLET',
+    'SAFETRUST_RELEASE_SIGNER',
+    'SAFETRUST_DISPUTE_RESOLVER',
+    'USDC_ISSUER',
+    'USDC_CONTRACT_ID',
+  ]
 
   beforeEach(() => {
     process.env = { ...originalEnv }
+    for (const key of ENV_VARS_TO_CLEAR) {
+      delete process.env[key]
+    }
   })
 
   afterAll(() => {
@@ -104,6 +117,22 @@ describe('Stellar Configuration', () => {
       const result = validateStellarConfig()
       expect(result.valid).toBe(false)
       expect(result.errors.some((e) => e.includes('testnet Horizon URL'))).toBe(true)
+    })
+
+    it('flags mainnet Horizon URL with trailing slash when configured for testnet', () => {
+      process.env.STELLAR_NETWORK = 'testnet'
+      process.env.HORIZON_URL = 'https://horizon.stellar.org/'
+      const result = validateStellarConfig()
+      expect(result.valid).toBe(false)
+      expect(result.errors.some((e) => e.includes('public mainnet Horizon URL'))).toBe(true)
+    })
+
+    it('flags production Trustless Work API with trailing slash when configured for testnet', () => {
+      process.env.STELLAR_NETWORK = 'testnet'
+      process.env.TRUSTLESS_WORK_API_URL = 'https://api.trustlesswork.com/'
+      const result = validateStellarConfig()
+      expect(result.valid).toBe(false)
+      expect(result.errors.some((e) => e.includes('production Trustless Work API'))).toBe(true)
     })
   })
 })

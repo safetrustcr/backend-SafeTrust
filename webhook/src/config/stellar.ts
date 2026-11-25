@@ -59,13 +59,25 @@ export function getStellarConfig(): StellarNetworkConfig {
   return {
     ...base,
     horizonUrl: process.env.HORIZON_URL || base.horizonUrl,
-    trustlessWorkApiUrl: process.env.TRUSTLESSWORK_API_URL || base.trustlessWorkApiUrl,
+    trustlessWorkApiUrl:
+      process.env.TRUSTLESS_WORK_API_URL ||
+      process.env.TRUSTLESSWORK_API_URL ||
+      base.trustlessWorkApiUrl,
     platformWallet:
       process.env.SAFETRUST_PLATFORM_WALLET || process.env.ESCROW_RELEASER_ADDRESS,
     releaseSigner:
       process.env.SAFETRUST_RELEASE_SIGNER || process.env.ESCROW_RELEASER_ADDRESS,
     disputeResolver:
       process.env.SAFETRUST_DISPUTE_RESOLVER || process.env.ESCROW_RESOLVER_ADDRESS,
+  }
+}
+
+function normalizeOrigin(urlStr?: string): string {
+  if (!urlStr) return ''
+  try {
+    return new URL(urlStr).origin.toLowerCase()
+  } catch {
+    return urlStr.replace(/\/+$/, '').toLowerCase()
   }
 }
 
@@ -93,25 +105,28 @@ export function validateStellarConfig(): { valid: boolean; errors: string[] } {
   checkAddress('SAFETRUST_RELEASE_SIGNER', config.releaseSigner)
   checkAddress('SAFETRUST_DISPUTE_RESOLVER', config.disputeResolver)
 
+  const horizonOrigin = normalizeOrigin(config.horizonUrl)
+  const twOrigin = normalizeOrigin(config.trustlessWorkApiUrl)
+
   // Cross-network sanity check
   if (config.network === 'mainnet') {
-    if (config.horizonUrl.includes('testnet')) {
+    if (horizonOrigin.includes('testnet')) {
       errors.push(
         `Configuration mismatch: mainnet configured with testnet Horizon URL: ${config.horizonUrl}`
       )
     }
-    if (config.trustlessWorkApiUrl.includes('dev.api')) {
+    if (twOrigin.includes('dev.api')) {
       errors.push(
         `Configuration mismatch: mainnet configured with dev Trustless Work API: ${config.trustlessWorkApiUrl}`
       )
     }
   } else if (config.network === 'testnet') {
-    if (config.horizonUrl === 'https://horizon.stellar.org') {
+    if (horizonOrigin === 'https://horizon.stellar.org') {
       errors.push(
         `Configuration mismatch: testnet configured with public mainnet Horizon URL: ${config.horizonUrl}`
       )
     }
-    if (config.trustlessWorkApiUrl === 'https://api.trustlesswork.com') {
+    if (twOrigin === 'https://api.trustlesswork.com') {
       errors.push(
         `Configuration mismatch: testnet configured with production Trustless Work API: ${config.trustlessWorkApiUrl}`
       )

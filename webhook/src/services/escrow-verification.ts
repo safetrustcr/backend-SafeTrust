@@ -11,6 +11,7 @@ import { query } from './db'
 import type { PoolClient } from 'pg'
 
 export interface EscrowVerificationTarget {
+  id?: string
   contract_id?: string
   contractId?: string
   marker?: string
@@ -48,6 +49,7 @@ export interface ReservationVerificationTarget {
 export interface VerificationContext {
   callerUserId?: string
   isServerAgent?: boolean
+  phase?: 'initialization' | 'transition' | 'reconciliation' | 'audit'
 }
 
 export interface EscrowVerificationResult {
@@ -82,25 +84,47 @@ export function verifyEscrowForReservation(
 ): EscrowVerificationResult {
   const mismatches: string[] = []
   const config = getStellarConfig()
+  const phase = context?.phase ?? 'initialization'
 
-  // 1. Reservation State: must be pending
-  if (reservation.status !== 'pending') {
-    mismatches.push(
-      `Reservation state invalid: expected "pending", observed "${reservation.status}"`
-    )
+  // 1. Reservation State: phase-specific
+  if (phase === 'initialization') {
+    if (reservation.status !== 'pending') {
+      mismatches.push(
+        `Reservation state invalid: expected "pending", observed "${reservation.status}"`
+      )
+    }
+  } else {
+    const validLifecycleStatuses = [
+      'pending',
+      'escrow_created',
+      'funded',
+      'checked_in',
+      'checked_out',
+      'completed',
+      'disputed',
+      'resolved',
+    ]
+    if (!validLifecycleStatuses.includes(reservation.status)) {
+      mismatches.push(
+        `Reservation state invalid for ${phase}: observed "${reservation.status}"`
+      )
+    }
   }
 
-  // 2. Reservation Escrow Link: must not be already linked to a different escrow
+  // 2. Reservation Escrow Link
   const escrowIdentifier = escrow.contract_id || escrow.contractId
+  const escrowDbId = (escrow as { id?: string }).id
   if (reservation.escrow_id) {
     const isIdempotent =
       reservation.escrow_id === escrowIdentifier ||
-      (escrow as { id?: string }).id === reservation.escrow_id
+      (escrowDbId !== undefined && reservation.escrow_id === escrowDbId)
     if (!isIdempotent) {
       mismatches.push(
         `Reservation already linked to a different escrow: ${reservation.escrow_id}`
       )
     }
+  } else if (phase !== 'initialization') {
+    mismatches.push(`Reservation ${reservation.id} is not linked to any escrow`)
   }
 
   // 3. Caller Authorization (Guest or Authorized Server Agent)
@@ -116,27 +140,37 @@ export function verifyEscrowForReservation(
   const engagementId =
     escrow.engagementId ||
     escrow.reservation_id ||
-    escrow.booking_metadata?.reservation_id
-  if (engagementId && engagementId !== reservation.id) {
+    escrow.booking_metadata?.reservation_id ||
+    (escrow as any).raw?.engagementId
+  if (!engagementId) {
+    mismatches.push('Escrow missing engagement evidence: reservation identifier is required')
+  } else if (engagementId !== reservation.id) {
     mismatches.push(
       `Escrow engagement ID mismatch: expected ${reservation.id}, observed ${engagementId}`
     )
   }
 
   // 5. Asset Code & Network Assets
-  const escrowAsset = (escrow.asset_code || escrow.assetCode || 'USDC').toUpperCase()
+  const escrowAsset = (escrow.asset_code || escrow.assetCode || '').toUpperCase()
   if (escrowAsset !== 'USDC') {
-    mismatches.push(`Escrow asset invalid: expected "USDC", observed "${escrowAsset}"`)
+    mismatches.push(`Escrow asset invalid: expected "USDC", observed "${escrowAsset || 'missing'}"`)
   }
 
   const escrowIssuer = escrow.asset_issuer || escrow.assetIssuer
+  const escrowTokenContract = escrow.token_contract_id || escrow.tokenContractId
+
+  if (!escrowIssuer && !escrowTokenContract) {
+    mismatches.push(
+      'Missing USDC identity evidence: escrow must specify either asset issuer or token contract ID'
+    )
+  }
+
   if (escrowIssuer && normalizeAddress(escrowIssuer) !== normalizeAddress(config.usdcIssuer)) {
     mismatches.push(
       `Escrow asset issuer mismatch: expected ${config.usdcIssuer}, observed ${escrowIssuer}`
     )
   }
 
-  const escrowTokenContract = escrow.token_contract_id || escrow.tokenContractId
   if (
     escrowTokenContract &&
     normalizeAddress(escrowTokenContract) !== normalizeAddress(config.usdcContractId)
@@ -168,27 +202,39 @@ export function verifyEscrowForReservation(
 
   // 7. Role Verification
   // Approver must match Guest's verified Stellar wallet
-  if (reservation.guest_wallet && escrow.approver) {
-    if (normalizeAddress(escrow.approver) !== normalizeAddress(reservation.guest_wallet)) {
-      mismatches.push(
-        `Escrow approver role mismatch: expected guest wallet ${reservation.guest_wallet}, observed ${escrow.approver}`
-      )
-    }
+  if (!reservation.guest_wallet) {
+    mismatches.push('Reservation is missing verified guest Stellar wallet')
+  }
+  if (!escrow.approver) {
+    mismatches.push('Escrow is missing approver role')
+  } else if (
+    reservation.guest_wallet &&
+    normalizeAddress(escrow.approver) !== normalizeAddress(reservation.guest_wallet)
+  ) {
+    mismatches.push(
+      `Escrow approver role mismatch: expected guest wallet ${reservation.guest_wallet}, observed ${escrow.approver}`
+    )
   }
 
   // Receiver / Marker must match Host's verified Stellar wallet
   const hostTarget = escrow.receiver || escrow.marker
-  if (reservation.host_wallet && hostTarget) {
-    if (normalizeAddress(hostTarget) !== normalizeAddress(reservation.host_wallet)) {
-      mismatches.push(
-        `Escrow receiver/marker role mismatch: expected host wallet ${reservation.host_wallet}, observed ${hostTarget}`
-      )
-    }
+  if (!reservation.host_wallet) {
+    mismatches.push('Reservation is missing verified host Stellar wallet')
+  }
+  if (!hostTarget) {
+    mismatches.push('Escrow is missing receiver/marker role')
+  } else if (
+    reservation.host_wallet &&
+    normalizeAddress(hostTarget) !== normalizeAddress(reservation.host_wallet)
+  ) {
+    mismatches.push(
+      `Escrow receiver/marker role mismatch: expected host wallet ${reservation.host_wallet}, observed ${hostTarget}`
+    )
   }
 
   // SafeTrust Platform Roles
   const platformRole = escrow.platformAddress
-  if (config.platformWallet && platformRole) {
+  if (platformRole && config.platformWallet) {
     if (normalizeAddress(platformRole) !== normalizeAddress(config.platformWallet)) {
       mismatches.push(
         `Platform address mismatch: expected ${config.platformWallet}, observed ${platformRole}`
@@ -198,7 +244,7 @@ export function verifyEscrowForReservation(
 
   const releaserRole = escrow.releaseSigner || escrow.releaser
   const expectedReleaser = config.releaseSigner || config.platformWallet
-  if (expectedReleaser && releaserRole) {
+  if (releaserRole && expectedReleaser) {
     if (normalizeAddress(releaserRole) !== normalizeAddress(expectedReleaser)) {
       mismatches.push(
         `Release signer mismatch: expected ${expectedReleaser}, observed ${releaserRole}`
@@ -207,7 +253,7 @@ export function verifyEscrowForReservation(
   }
 
   const resolverRole = escrow.disputeResolver || escrow.resolver
-  if (config.disputeResolver && resolverRole) {
+  if (resolverRole && config.disputeResolver) {
     if (normalizeAddress(resolverRole) !== normalizeAddress(config.disputeResolver)) {
       mismatches.push(
         `Dispute resolver mismatch: expected ${config.disputeResolver}, observed ${resolverRole}`

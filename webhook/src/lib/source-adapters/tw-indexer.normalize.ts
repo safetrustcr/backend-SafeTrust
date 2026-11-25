@@ -81,36 +81,82 @@ function isFunded(escrow: TwIndexerEscrow): boolean {
   return evaluateFundingStatus(escrow) === 'funded'
 }
 
+/**
+ * Computes exact configured amount in stroops without passing decimal strings through Number.
+ * Sums milestone stroops using BigInt for multi-release escrows.
+ */
+export function configuredAmountStroops(escrow: TwIndexerEscrow): bigint | null {
+  if (isMultiRelease(escrow)) {
+    const milestones = milestonesOf(escrow)
+    if (milestones.length > 0) {
+      let sum = 0n
+      let validMilestones = 0
+      for (const m of milestones) {
+        if (m.amount !== undefined && m.amount !== null && m.amount !== '') {
+          const s = amountToStroops(m.amount)
+          if (s === null) return null
+          sum += BigInt(s)
+          validMilestones++
+        }
+      }
+      if (validMilestones > 0 && sum > 0n) {
+        return sum
+      }
+    }
+  }
+
+  if (escrow.amount !== undefined && escrow.amount !== null && escrow.amount !== '') {
+    const s = amountToStroops(escrow.amount)
+    return s !== null ? BigInt(s) : null
+  }
+
+  return null
+}
+
 export function evaluateFundingStatus(
   escrow: TwIndexerEscrow
 ): 'funded' | 'partially_funded' | 'created' {
-  const balance = toNumber(escrow.balance)
-  const targetAmount = configuredAmount(escrow)
+  const targetStroops = configuredAmountStroops(escrow)
 
-  if (balance === null || balance <= 0) {
+  // Require a valid positive target amount before entering the funded path
+  if (targetStroops === null || targetStroops <= 0n) {
+    return 'created'
+  }
+
+  let balanceStroops: bigint | null = null
+  const rawBalance = escrow.balance
+  if (rawBalance !== undefined && rawBalance !== null && rawBalance !== '') {
+    if (rawBalance === 0 || rawBalance === '0' || rawBalance === '0.0') {
+      balanceStroops = 0n
+    } else {
+      const s = amountToStroops(rawBalance)
+      if (s !== null) {
+        balanceStroops = BigInt(s)
+      }
+    }
+  }
+
+  // If balance was not read by indexer snapshot, fundedBy indicates funded
+  if (balanceStroops === null) {
     if (Boolean(escrow.fundedBy)) {
-      return targetAmount > 0 ? 'partially_funded' : 'funded'
+      return 'funded'
     }
     return 'created'
   }
 
-  const balanceStroops = amountToStroops(balance)
-  const amountStroops = amountToStroops(targetAmount)
+  if (balanceStroops <= 0n) {
+    if (Boolean(escrow.fundedBy)) {
+      return 'partially_funded'
+    }
+    return 'created'
+  }
 
-  if (balanceStroops && amountStroops) {
-    const b = BigInt(balanceStroops)
-    const a = BigInt(amountStroops)
-    if (b >= a && a > 0n) {
-      return 'funded'
-    }
-    if (b > 0n && b < a) {
-      return 'partially_funded'
-    }
-  } else if (balance > 0) {
-    if (targetAmount > 0 && balance < targetAmount) {
-      return 'partially_funded'
-    }
+  if (balanceStroops >= targetStroops) {
     return 'funded'
+  }
+
+  if (balanceStroops > 0n && balanceStroops < targetStroops) {
+    return 'partially_funded'
   }
 
   return 'created'
@@ -167,6 +213,10 @@ export function deriveEscrowStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus
 
 /** Single-release: the configured amount. Multi-release: the sum of milestone amounts. */
 export function configuredAmount(escrow: TwIndexerEscrow): number {
+  const stroops = configuredAmountStroops(escrow)
+  if (stroops !== null) {
+    return Number(stroops) / 10_000_000
+  }
   if (!isMultiRelease(escrow)) return toNumber(escrow.amount) ?? 0
   const total = milestonesOf(escrow).reduce((sum, m) => sum + (toNumber(m.amount) ?? 0), 0)
   return total > 0 ? total : toNumber(escrow.amount) ?? 0

@@ -11,10 +11,21 @@ import {
   processExternalSubmission,
   processPendingConfirmationRetries,
   calculateBackoffMs,
+  validateSignedXdr,
   MAX_ATTEMPTS,
 } from '../confirmation.service'
 import { assertSignedXdrCannotAdvanceStatus, EscrowValidationError } from '../escrow.service'
 import db from '../db'
+import {
+  Keypair,
+  Account,
+  TransactionBuilder,
+  Networks,
+  Operation,
+  Asset,
+  xdr,
+  Address,
+} from '@stellar/stellar-sdk'
 
 jest.mock('../db', () => {
   const query = jest.fn()
@@ -105,11 +116,31 @@ describe('Confirmation Service - Issue #660', () => {
         .mockResolvedValueOnce({ rows: [] } as any) // update escrow_transactions
         .mockResolvedValueOnce({ rows: [] } as any) // updateRetryRecordStatus completed
 
+      // Generate a valid signed transaction for helper submission
+      const testKp = Keypair.random()
+      const account = new Account(testKp.publicKey(), '100')
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: Networks.TESTNET,
+      })
+        .addOperation(
+          Operation.payment({
+            destination: testKp.publicKey(),
+            asset: Asset.native(),
+            amount: '10',
+          })
+        )
+        .setTimeout(30)
+        .build()
+      tx.sign(testKp)
+      const validTestXdr = tx.toXDR()
+
       const result = await processHelperSubmission({
-        signedXdr: 'VALID_SIGNED_XDR',
+        signedXdr: validTestXdr,
         escrowId: ESCROW_ID,
-        action: 'deploy',
+        action: 'fund',
         network: 'testnet',
+        expectedSourceAccounts: [testKp.publicKey()],
       })
 
       expect(result.success).toBe(true)
@@ -124,7 +155,7 @@ describe('Confirmation Service - Issue #660', () => {
         expect.stringContaining('/helper/send-transaction'),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ signedXdr: 'VALID_SIGNED_XDR', network: 'testnet' }),
+          body: JSON.stringify({ signedXdr: validTestXdr, network: 'testnet' }),
         })
       )
 
@@ -477,6 +508,110 @@ describe('Confirmation Service - Issue #660', () => {
         expect.stringContaining('ON CONFLICT (tx_hash, escrow_action)'),
         expect.anything()
       )
+    })
+  })
+
+  // ── 8. validateSignedXdr Security & Correctness ──────────────────────────
+  describe('validateSignedXdr Security and Integrity', () => {
+    const CONTRACT_ID = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM'
+
+    function buildValidTx(options: {
+      keypair?: Keypair
+      networkPassphrase?: string
+      funcName?: string
+      contractId?: string
+      addSignatures?: boolean
+    } = {}): { xdr: string; keypair: Keypair } {
+      const kp = options.keypair ?? Keypair.random()
+      const account = new Account(kp.publicKey(), '100')
+      const builder = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: options.networkPassphrase ?? Networks.TESTNET,
+      })
+
+      if (options.funcName && options.contractId) {
+        builder.addOperation(
+          Operation.invokeHostFunction({
+            func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+              new xdr.InvokeContractArgs({
+                contractAddress: Address.fromString(options.contractId).toScAddress(),
+                functionName: options.funcName,
+                args: [],
+              })
+            ),
+            auth: [],
+          })
+        )
+      } else {
+        builder.addOperation(
+          Operation.payment({
+            destination: kp.publicKey(),
+            asset: Asset.native(),
+            amount: '10',
+          })
+        )
+      }
+
+      const tx = builder.setTimeout(30).build()
+      if (options.addSignatures !== false) {
+        tx.sign(kp)
+      }
+      return { xdr: tx.toXDR(), keypair: kp }
+    }
+
+    it('rejects mock string bypasses (VALID_SIGNED_XDR)', () => {
+      const result = validateSignedXdr('VALID_SIGNED_XDR', 'testnet')
+      expect(result.valid).toBe(false)
+      expect(result.error).toContain('Failed to decode signed XDR')
+    })
+
+    it('rejects unsigned transaction envelopes (empty signatures list)', () => {
+      const { xdr } = buildValidTx({ addSignatures: false })
+      const result = validateSignedXdr(xdr, 'testnet')
+      expect(result.valid).toBe(false)
+      expect(result.error).toContain('Signed XDR contains no signatures')
+    })
+
+    it('accepts validly signed payment XDR matching expected source account', () => {
+      const { xdr, keypair } = buildValidTx()
+      const result = validateSignedXdr(xdr, 'testnet', undefined, 'fund', [keypair.publicKey()])
+      expect(result.valid).toBe(true)
+      expect(result.sourceAccount).toBe(keypair.publicKey())
+    })
+
+    it('rejects signed XDR from unauthorized source party', () => {
+      const { xdr, keypair } = buildValidTx()
+      const result = validateSignedXdr(xdr, 'testnet', undefined, 'fund', ['GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'])
+      expect(result.valid).toBe(false)
+      expect(result.error).toContain('Unauthorized transaction source')
+    })
+
+    it('validates contract invocation using SDK 17 HostFunction properties and allows authorized function', () => {
+      const { xdr } = buildValidTx({ funcName: 'fund', contractId: CONTRACT_ID })
+      const result = validateSignedXdr(xdr, 'testnet', CONTRACT_ID, 'fund')
+      expect(result.valid).toBe(true)
+    })
+
+    it('rejects unauthorized contract function invocation', () => {
+      const { xdr } = buildValidTx({ funcName: 'unauthorized_dangerous_fn', contractId: CONTRACT_ID })
+      const result = validateSignedXdr(xdr, 'testnet', CONTRACT_ID, 'fund')
+      expect(result.valid).toBe(false)
+      expect(result.error).toContain('Unauthorized contract function invocation')
+    })
+
+    it('rejects action mismatch when funding transaction invokes deploy function', () => {
+      const { xdr } = buildValidTx({ funcName: 'initialize', contractId: CONTRACT_ID })
+      const result = validateSignedXdr(xdr, 'testnet', CONTRACT_ID, 'fund')
+      expect(result.valid).toBe(false)
+      expect(result.error).toContain('Action mismatch')
+    })
+
+    it('rejects contract address mismatch', () => {
+      const { xdr } = buildValidTx({ funcName: 'fund', contractId: CONTRACT_ID })
+      const DIFFERENT_CONTRACT = 'CBIELTK6YBZJU5UP2WWQEUCYJLPU6QXN54EXSKRMGQGELN7B57H7W5S3'
+      const result = validateSignedXdr(xdr, 'testnet', DIFFERENT_CONTRACT, 'fund')
+      expect(result.valid).toBe(false)
+      expect(result.error).toContain('Contract address mismatch')
     })
   })
 })

@@ -9,7 +9,7 @@
 import db, { withTransaction } from './db'
 import { hasuraRequest } from './hasura'
 import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
-import { TransactionBuilder, Networks, StrKey, Keypair } from '@stellar/stellar-sdk'
+import { TransactionBuilder, Networks, StrKey, Keypair, Address } from '@stellar/stellar-sdk'
 import { getStellarConfig } from '../config/stellar'
 
 // ── Types & Constants ─────────────────────────────────────────────────────────
@@ -525,25 +525,18 @@ export const AUTHORIZED_ESCROW_FUNCTIONS = new Set([
 
 /**
  * Validates a signed Stellar transaction XDR against network passphrase,
- * allowed operations, source accounts, and smart contract function names.
+ * allowed operations, expected contract address, action, source accounts,
+ * and smart contract function names.
  */
 export function validateSignedXdr(
   signedXdr: string,
   network: StellarNetwork,
-  expectedContractId?: string
+  expectedContractId?: string,
+  action?: EscrowAction,
+  expectedSourceAccounts?: string[]
 ): XdrValidationResult {
   if (!signedXdr || typeof signedXdr !== 'string') {
     return { valid: false, error: 'Signed XDR is required and must be a string' }
-  }
-
-  // Allow recognized test mocks from unit test suites
-  if (
-    signedXdr === 'VALID_SIGNED_XDR' ||
-    signedXdr.startsWith('AAAA_TEST') ||
-    signedXdr.startsWith('AAAA_FUNDING') ||
-    signedXdr.startsWith('AAAA_SIGNED_XDR')
-  ) {
-    return { valid: true, sourceAccount: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' }
   }
 
   try {
@@ -567,6 +560,19 @@ export function validateSignedXdr(
       return { valid: false, error: 'Signed XDR source account is invalid' }
     }
 
+    // Validate transaction source against expected booking parties if specified
+    if (expectedSourceAccounts && expectedSourceAccounts.length > 0) {
+      const isAllowed = expectedSourceAccounts.some(
+        (acc) => acc && acc.trim() === sourceAccount.trim()
+      )
+      if (!isAllowed) {
+        return {
+          valid: false,
+          error: `Unauthorized transaction source: account ${sourceAccount} does not match expected booking parties`,
+        }
+      }
+    }
+
     if (!tx.operations || tx.operations.length === 0) {
       return { valid: false, error: 'Signed XDR contains no operations' }
     }
@@ -585,50 +591,124 @@ export function validateSignedXdr(
         }
       }
 
-      if (op.type === 'invokeHostFunction' && op.func) {
-        try {
-          const func = op.func
-          const switchName = typeof func.switch === 'function' ? func.switch().name : null
-          if (switchName === 'hostFunctionTypeInvokeContract') {
-            const invokeArgs = func.invokeContract()
-            const fnName = invokeArgs.functionName().toString().trim()
+      if (op.type === 'invokeHostFunction') {
+        const func = op.func as any
+        if (!func) {
+          return { valid: false, error: 'Malformed invokeHostFunction operation: missing func' }
+        }
 
-            if (fnName && !AUTHORIZED_ESCROW_FUNCTIONS.has(fnName.toLowerCase())) {
+        const funcType = typeof func.type === 'string' ? func.type : (func.type?.name ?? '')
+        if (funcType === 'hostFunctionTypeInvokeContract' || func.invokeContract) {
+          const invokeArgs = func.invokeContract
+          if (!invokeArgs) {
+            return { valid: false, error: 'Malformed invokeContract args in host function' }
+          }
+
+          let invokedContractAddress = ''
+          try {
+            if (invokeArgs.contractAddress) {
+              invokedContractAddress = Address.fromScAddress(invokeArgs.contractAddress).toString()
+            }
+          } catch {
+            // ignore address decoding error
+          }
+
+          // Enforce expected escrow binding
+          if (
+            expectedContractId &&
+            expectedContractId.startsWith('C') &&
+            invokedContractAddress &&
+            invokedContractAddress !== expectedContractId
+          ) {
+            return {
+              valid: false,
+              error: `Contract address mismatch: expected ${expectedContractId}, observed ${invokedContractAddress}`,
+            }
+          }
+
+          const fnName = invokeArgs.functionName ? invokeArgs.functionName.toString().trim() : ''
+          if (fnName && !AUTHORIZED_ESCROW_FUNCTIONS.has(fnName.toLowerCase())) {
+            return {
+              valid: false,
+              error: `Unauthorized contract function invocation: "${fnName}"`,
+              functionName: fnName,
+            }
+          }
+
+          // Validate requested action against invoked function
+          if (action === 'fund') {
+            const fundFns = ['fund', 'deposit', 'approve']
+            if (fnName && !fundFns.includes(fnName.toLowerCase())) {
               return {
                 valid: false,
-                error: `Unauthorized contract function invocation: "${fnName}"`,
+                error: `Action mismatch: action "${action}" cannot invoke contract function "${fnName}"`,
+                functionName: fnName,
+              }
+            }
+          } else if (action === 'deploy') {
+            const deployFns = ['deploy', 'initialize', 'init', 'create']
+            if (fnName && !deployFns.includes(fnName.toLowerCase())) {
+              return {
+                valid: false,
+                error: `Action mismatch: action "${action}" cannot invoke contract function "${fnName}"`,
                 functionName: fnName,
               }
             }
           }
-        } catch {
-          // Continue operation checks
+        } else {
+          return {
+            valid: false,
+            error: `Unsupported host function type: "${funcType}"`,
+          }
+        }
+      } else if (op.type === 'payment') {
+        if (action === 'deploy') {
+          return {
+            valid: false,
+            error: `Action mismatch: payment operation cannot be used for "deploy" action`,
+          }
+        }
+        if (
+          expectedContractId &&
+          expectedContractId.startsWith('G') &&
+          op.destination !== expectedContractId
+        ) {
+          return {
+            valid: false,
+            error: `Payment destination mismatch: expected ${expectedContractId}, observed ${op.destination}`,
+          }
         }
       }
     }
 
-    if (tx.signatures && tx.signatures.length > 0) {
-      let hasValidSig = false
-      const txHash = tx.hash()
-      for (const sig of tx.signatures) {
-        const rawSig = sig.signature?.value || sig.signature
-        if (rawSig && sourceAccount) {
-          try {
-            const keypair = Keypair.fromPublicKey(sourceAccount)
-            if (keypair.verify(txHash, rawSig)) {
-              hasValidSig = true
-              break
-            }
-          } catch {
-            // Check next signature
+    // Reject envelopes with no signatures
+    if (!tx.signatures || tx.signatures.length === 0) {
+      return {
+        valid: false,
+        error: 'Signed XDR contains no signatures',
+      }
+    }
+
+    let hasValidSig = false
+    const txHash = tx.hash()
+    for (const sig of tx.signatures) {
+      const rawSig = sig.signature?.value || sig.signature
+      if (rawSig && sourceAccount) {
+        try {
+          const keypair = Keypair.fromPublicKey(sourceAccount)
+          if (keypair.verify(txHash, rawSig)) {
+            hasValidSig = true
+            break
           }
+        } catch {
+          // Check next signature
         }
       }
-      if (!hasValidSig) {
-        return {
-          valid: false,
-          error: `Transaction signature is invalid for network ${network}`,
-        }
+    }
+    if (!hasValidSig) {
+      return {
+        valid: false,
+        error: `Transaction signature is invalid for network ${network}`,
       }
     }
 
@@ -652,6 +732,7 @@ export async function processHelperSubmission(params: {
   action: EscrowAction
   network: StellarNetwork
   isTWGenerated?: boolean
+  expectedSourceAccounts?: string[]
 }): Promise<ConfirmationResult> {
   const { signedXdr, escrowId, action, network } = params
 
@@ -668,8 +749,40 @@ export async function processHelperSubmission(params: {
     }
   }
 
-  // Pre-validate signed XDR against network passphrase and authorized operations
-  const xdrValidation = validateSignedXdr(signedXdr, network, escrowId)
+  // Look up expected booking parties if not passed explicitly
+  let expectedSources = params.expectedSourceAccounts
+  if (!expectedSources || expectedSources.length === 0) {
+    try {
+      const escrowRow = await db.query(
+        `SELECT e.approver, e.marker, e.releaser, gw.wallet_address AS guest_wallet, hw.wallet_address AS host_wallet
+         FROM safetrust.trustless_work_escrows e
+         LEFT JOIN safetrust.reservations r ON r.escrow_id = e.id
+         LEFT JOIN safetrust.apartments a ON a.id = r.apartment_id
+         LEFT JOIN safetrust.user_wallets gw ON gw.user_id = r.guest_id AND gw.chain_type = 'STELLAR' AND gw.is_primary = true
+         LEFT JOIN safetrust.user_wallets hw ON hw.user_id = a.owner_id AND hw.chain_type = 'STELLAR' AND hw.is_primary = true
+         WHERE (e.contract_id = $1 OR e.id::text = $1)
+         LIMIT 1`,
+        [escrowId]
+      )
+      if (escrowRow.rows?.[0]) {
+        const r = escrowRow.rows[0]
+        const config = getStellarConfig()
+        expectedSources = [
+          r.approver,
+          r.guest_wallet,
+          r.marker,
+          r.host_wallet,
+          config.platformWallet,
+          config.releaseSigner,
+        ].filter(Boolean) as string[]
+      }
+    } catch {
+      // If DB query fails, continue with structural validation
+    }
+  }
+
+  // Pre-validate signed XDR against network passphrase, contract binding, action, and expected source party
+  const xdrValidation = validateSignedXdr(signedXdr, network, escrowId, action, expectedSources)
   if (!xdrValidation.valid) {
     return {
       success: false,

@@ -150,6 +150,16 @@ export async function linkEscrowToReservation(
       [escrowId, reservationId, tenantId]
     ) as { rowCount?: number }
     if (!result?.rowCount) {
+      // Allow completed same-escrow link to be retried (idempotent no-op)
+      const existing = (await client.query(
+        `SELECT id, escrow_id FROM safetrust.reservations WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+        [reservationId, tenantId]
+      )) as { rows?: Array<{ id: string; escrow_id: string | null }> }
+
+      if (existing?.rows?.[0] && existing.rows[0].escrow_id === escrowId) {
+        return
+      }
+
       throw new Error(
         `Reservation ${reservationId} was not linked: no matching pending unlinked reservation for tenant ${tenantId}`
       )
@@ -190,6 +200,25 @@ export async function linkEscrowToReservation(
 
   // No row means the reservation is missing, already linked to another escrow, or not pending.
   if (!data?.update_reservations?.affected_rows) {
+    const checkQuery = `
+      query CheckSameEscrowLink($reservationId: uuid!, $tenantId: String!) {
+        reservations: safetrust_reservations(
+          where: { id: { _eq: $reservationId }, tenantId: { _eq: $tenantId } }
+          limit: 1
+        ) {
+          id
+          escrowId
+        }
+      }
+    `
+    const checkData = await hasuraTenantRequest<{
+      reservations?: Array<{ id: string; escrowId: string | null }>
+    }>(tenantId, checkQuery, { reservationId, tenantId })
+
+    if (checkData?.reservations?.[0]?.escrowId === escrowId) {
+      return
+    }
+
     throw new Error(
       `Reservation ${reservationId} was not linked: no matching pending unlinked reservation for tenant ${tenantId}`
     )

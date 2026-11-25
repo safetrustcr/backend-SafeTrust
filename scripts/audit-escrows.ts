@@ -72,6 +72,9 @@ export async function runEscrowAudit(): Promise<AuditReport> {
         e.approver,
         e.releaser,
         e.resolver,
+        e.asset_code,
+        e.asset_issuer,
+        e.token_contract_id,
         r.id AS reservation_id,
         r.guest_id,
         r.total_amount,
@@ -109,23 +112,28 @@ export async function runEscrowAudit(): Promise<AuditReport> {
 
       const verification = verifyEscrowForReservation(
         {
+          id: row.id,
           contract_id: row.contract_id,
           amount: row.amount,
           marker: row.marker,
           approver: row.approver,
           releaser: row.releaser,
           resolver: row.resolver,
+          asset_code: row.asset_code,
+          asset_issuer: row.asset_issuer,
+          token_contract_id: row.token_contract_id,
+          engagementId: row.reservation_id,
         },
         {
           id: row.reservation_id,
-          status:
-            row.reservation_status === 'escrow_created' || row.reservation_status === 'pending'
-              ? 'pending'
-              : row.reservation_status ?? 'unknown',
+          status: row.reservation_status ?? 'unknown',
           total_amount: row.total_amount ?? 0,
           guest_id: row.guest_id ?? '',
           guest_wallet: row.guest_wallet,
           host_wallet: row.host_wallet,
+        },
+        {
+          phase: 'audit',
         }
       )
 

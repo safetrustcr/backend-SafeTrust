@@ -25,6 +25,7 @@ describe('Centralized Escrow Verification (verifyEscrowForReservation)', () => {
     contract_id: 'contract-tw-001',
     amount: 150.5,
     asset_code: 'USDC',
+    asset_issuer: GUEST_WALLET,
     approver: GUEST_WALLET,
     receiver: HOST_WALLET,
     marker: HOST_WALLET,
@@ -172,5 +173,89 @@ describe('Centralized Escrow Verification (verifyEscrowForReservation)', () => {
     } finally {
       process.env.SAFETRUST_PLATFORM_WALLET = originalEnv
     }
+  })
+
+  it('allows funded reservation status during reconciliation or audit phase', () => {
+    const result = verifyEscrowForReservation(
+      validEscrow,
+      {
+        ...validReservation,
+        status: 'funded',
+        escrow_id: 'contract-tw-001',
+      },
+      { phase: 'reconciliation' }
+    )
+
+    expect(result.valid).toBe(true)
+    expect(result.mismatches).toHaveLength(0)
+  })
+
+  it('allows idempotent re-verification with stored database escrow id', () => {
+    const result = verifyEscrowForReservation(
+      {
+        ...validEscrow,
+        id: 'db-escrow-uuid-999',
+      } as any,
+      {
+        ...validReservation,
+        escrow_id: 'db-escrow-uuid-999',
+      }
+    )
+
+    expect(result.valid).toBe(true)
+  })
+
+  it('rejects missing USDC identity evidence when both issuer and contract are omitted', () => {
+    const result = verifyEscrowForReservation(
+      {
+        ...validEscrow,
+        asset_issuer: null,
+        token_contract_id: null,
+      },
+      validReservation
+    )
+
+    expect(result.valid).toBe(false)
+    expect(result.mismatches.some((m) => m.includes('Missing USDC identity evidence'))).toBe(true)
+  })
+
+  it('rejects missing engagement evidence', () => {
+    const result = verifyEscrowForReservation(
+      {
+        ...validEscrow,
+        reservation_id: null,
+        booking_metadata: null,
+      },
+      validReservation
+    )
+
+    expect(result.valid).toBe(false)
+    expect(result.mismatches.some((m) => m.includes('Escrow missing engagement evidence'))).toBe(true)
+  })
+
+  it('rejects missing guest wallet on reservation', () => {
+    const result = verifyEscrowForReservation(
+      validEscrow,
+      {
+        ...validReservation,
+        guest_wallet: null,
+      }
+    )
+
+    expect(result.valid).toBe(false)
+    expect(result.mismatches.some((m) => m.includes('missing verified guest Stellar wallet'))).toBe(true)
+  })
+
+  it('rejects missing host wallet on reservation', () => {
+    const result = verifyEscrowForReservation(
+      validEscrow,
+      {
+        ...validReservation,
+        host_wallet: null,
+      }
+    )
+
+    expect(result.valid).toBe(false)
+    expect(result.mismatches.some((m) => m.includes('missing verified host Stellar wallet'))).toBe(true)
   })
 })

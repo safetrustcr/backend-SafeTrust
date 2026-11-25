@@ -82,7 +82,7 @@ describe('POST /api/escrows/confirm-transaction', () => {
       .post('/api/escrows/confirm-transaction')
       .send({
         submissionPath: 'helper',
-        signedXdr: 'AAAA_VALID_SIGNED_XDR',
+        signedXdr: 'AAAA_SIGNED_TESTNET_ENVELOPE_MOCK',
         escrowId: ESCROW_ID,
         action: 'deploy',
         network: 'testnet',

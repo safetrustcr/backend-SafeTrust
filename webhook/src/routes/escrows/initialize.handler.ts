@@ -29,22 +29,21 @@ export const initializeEscrowHandler = async (
     Object.prototype.hasOwnProperty.call(req.body ?? {}, 'amount') &&
     amountToStroops(amount) === null
   ) {
-      return badRequest(res, {
-        error: 'amount must be a positive finite numeric value',
-      });
+    return badRequest(res, {
+      error: 'amount must be a positive finite numeric value',
+    });
   }
 
   try {
-    const callerUserId =
-      (req as any).user?.uid ||
-      (req as any).user?.id ||
-      (req.headers['x-user-id'] as string | undefined);
-    const isServerAgent = req.headers['x-agent-booking'] === 'true' || (req as any).isAgent;
+    const callerUserId = (req as any).user?.uid || (req as any).user?.id;
+    const isServerAgent = Boolean((req as any).isAgent);
+    const context = (callerUserId || isServerAgent)
+      ? { callerUserId, isServerAgent }
+      : undefined;
 
-    const result = await initializeEscrowService(req.body, getPlatformTenantId(), {
-      callerUserId,
-      isServerAgent,
-    });
+    const result = context
+      ? await initializeEscrowService(req.body, getPlatformTenantId(), context)
+      : await initializeEscrowService(req.body, getPlatformTenantId());
 
     if (result.isDuplicate) {
       return duplicate(res, result.eventId);
