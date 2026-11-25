@@ -1,0 +1,28 @@
+table:
+  name: pricing_override_users
+  schema: safetrust
+configuration:
+  custom_name: pricing_override_users
+object_relationships:
+  - name: pricing_override
+    using:
+      foreign_key_constraint_on: override_id
+  - name: user
+    using:
+      foreign_key_constraint_on: user_id
+select_permissions:
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+insert_permissions:
+  - role: admin
+    permission:
+      check: {}
+      columns:
+        - override_id
+        - user_id
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}

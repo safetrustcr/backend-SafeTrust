@@ -4,7 +4,7 @@ import { query } from '../services/db'
 export interface BidRequest extends QueryResultRow {
   id: string
   apartment_id: string
-  tenant_id: string
+  bidder_id: string
   proposed_price: number | string
   desired_move_in: string
   current_status: string
@@ -19,7 +19,7 @@ export interface BidRequestWithOwner extends BidRequest {
 
 const EXISTING_ACTIVE = `
   SELECT id FROM safetrust.bid_requests
-  WHERE tenant_id = $1
+  WHERE bidder_id = $1
     AND current_status IN ('PENDING', 'VIEWED', 'APPROVED')
     AND deleted_at IS NULL
   LIMIT 1
@@ -27,7 +27,7 @@ const EXISTING_ACTIVE = `
 
 const INSERT_BID = `
   INSERT INTO safetrust.bid_requests
-    (apartment_id, tenant_id, proposed_price, desired_move_in, current_status)
+    (apartment_id, bidder_id, proposed_price, desired_move_in, current_status)
   VALUES ($1, $2, $3, $4, 'PENDING')
   RETURNING *
 `
