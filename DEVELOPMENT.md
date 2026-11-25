@@ -22,9 +22,9 @@ Tests are placed by what they need to run:
 
 - Unit tests live next to the code they cover, in the `__tests__/` folder of
   that module under `webhook/src/` (for example
-  `webhook/src/routes/escrows/__tests__/fund.atomic.test.ts`). Mock the I/O
-  boundaries (`services/db`, `services/hasura`, the `https` module) instead of
-  opening a connection.
+  `webhook/src/services/__tests__/reconciliation.service.test.ts`). Mock the
+  I/O boundaries (`services/db`, `services/hasura`, the `https` module) instead
+  of opening a connection.
 - Tests that need a real database or another external service live in
   `webhook/tests/integration/`.
 
