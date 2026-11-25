@@ -262,7 +262,11 @@ tenant — so it is created once, by `bin/start` after the metadata reload
 with `replace: false` first, resolving `{{WEBHOOK_URL}}` to the in-network
 webhook address, and retries with `replace: true` only when Hasura reports
 the trigger already exists, so re-running `bin/start` replaces the trigger
-instead of creating a duplicate. Exporting the metadata after a run shows
+instead of creating a duplicate. One trigger does not mean one tenant: the
+handler runs the sync once per tenant that owns escrow rows, discovered
+from `safetrust.trustless_work_escrows` (`fetchTenantIds`), so escrows
+owned by non-default tenants such as `hotel_industry` are reconciled too.
+Exporting the metadata after a run shows
 the trigger, and the
 
 ### Fail closed

@@ -10,6 +10,7 @@ import { Request, Response } from 'express'
 import { ok, serverError } from '../../utils/response'
 import {
   fetchEscrowContractIds,
+  listReconciliationTenants,
   syncEscrowsWithIndexer,
   validateSorobanDrift,
   detectStaleEscrows,
@@ -36,11 +37,15 @@ export {
 
 const STALE_ESCROW_DAYS = 7
 const NETWORK = process.env.STELLAR_NETWORK ?? 'testnet'
-const TENANT_ID = 'safetrust'
 
 /**
  * Handles the POST /reconciliation/sync-escrows trigger from Hasura cron job.
  * Synchronizes database escrow states against TrustlessWork indexer and optional Soroban RPC.
+ *
+ * The trigger is one platform-wide cron job, but the sync itself runs once
+ * per tenant that owns escrow rows (discovered from the escrow table), so
+ * escrows owned by non-default tenants such as `hotel_industry` are
+ * reconciled too instead of only the platform tenant's.
  *
  * @param req - Express request
  * @param res - Express response
@@ -54,22 +59,79 @@ export const syncEscrowsHandler = async (
   logger.info('reconciliation.sync.started')
 
   try {
-    const contractIds = await fetchEscrowContractIds(TENANT_ID)
-    const sync = await syncEscrowsWithIndexer(contractIds, {
-      applyTransitions: true,
-      tenantId: TENANT_ID,
-    })
-    const drift = await validateSorobanDrift(contractIds, NETWORK, {
-      skipStatusCorrectionFor: sync.transitions?.failedContractIds,
-    })
-    const stale = await detectStaleEscrows(STALE_ESCROW_DAYS)
+    const tenantIds = await listReconciliationTenants()
+
+    const syncTotals: SyncSummary = {
+      totalEscrows: 0,
+      chunks: 0,
+      updated: 0,
+      unchanged: 0,
+      skipped: 0,
+      errors: [],
+    }
+    const driftTotals: DriftSummary = {
+      enabled: false,
+      drift: 0,
+      corrected: 0,
+      unresolved: 0,
+      errors: [],
+    }
+    const transitionsTotals: NonNullable<SyncSummary['transitions']> = {
+      detected: 0,
+      applied: 0,
+      duplicates: 0,
+      failed: 0,
+      errors: [],
+      failedContractIds: [],
+    }
+    const staleIds: string[] = []
+
+    for (const tenantId of tenantIds) {
+      const contractIds = await fetchEscrowContractIds(tenantId)
+      const sync = await syncEscrowsWithIndexer(contractIds, {
+        applyTransitions: true,
+        tenantId,
+      })
+      const drift = await validateSorobanDrift(contractIds, NETWORK, {
+        skipStatusCorrectionFor: sync.transitions?.failedContractIds,
+        tenantId,
+      })
+      const stale = await detectStaleEscrows(STALE_ESCROW_DAYS, tenantId)
+
+      syncTotals.totalEscrows += sync.totalEscrows
+      syncTotals.chunks += sync.chunks
+      syncTotals.updated += sync.updated
+      syncTotals.unchanged += sync.unchanged
+      syncTotals.skipped += sync.skipped
+      syncTotals.errors.push(...sync.errors)
+      driftTotals.enabled = driftTotals.enabled || drift.enabled
+      driftTotals.drift += drift.drift
+      driftTotals.corrected += drift.corrected
+      driftTotals.unresolved =
+        (driftTotals.unresolved ?? 0) + (drift.unresolved ?? 0)
+      driftTotals.errors.push(...drift.errors)
+      staleIds.push(...stale)
+      if (sync.transitions) {
+        transitionsTotals.detected += sync.transitions.detected
+        transitionsTotals.applied += sync.transitions.applied
+        transitionsTotals.duplicates += sync.transitions.duplicates
+        transitionsTotals.failed += sync.transitions.failed
+        transitionsTotals.errors.push(...sync.transitions.errors)
+        for (const contractId of sync.transitions.failedContractIds) {
+          if (!transitionsTotals.failedContractIds.includes(contractId)) {
+            transitionsTotals.failedContractIds.push(contractId)
+          }
+        }
+      }
+    }
+
     const summary = formatReconciliationSummary(
-      sync,
-      drift,
-      stale,
+      syncTotals,
+      driftTotals,
+      staleIds,
       Date.now() - startTime,
       undefined,
-      sync.transitions
+      transitionsTotals
     )
 
     const level = summary.errors > 0 ? 'warn' : 'info'

@@ -1,6 +1,11 @@
 jest.mock('../../services/db', () => ({ query: jest.fn() }))
 
-import { upsertEscrows } from '../reconciliation.repository'
+import {
+  fetchSorobanEscrowRows,
+  fetchTenantIds,
+  findStaleEscrows,
+  upsertEscrows,
+} from '../reconciliation.repository'
 
 const db = require('../../services/db')
 
@@ -47,5 +52,44 @@ describe('reconciliation repository', () => {
       'safetrust.trustless_work_escrows.balance = EXCLUDED.balance'
     )
     expect(params).toContain('30')
+  })
+
+  it('lists distinct tenant ids that own escrow rows', async () => {
+    db.query.mockResolvedValueOnce({
+      rows: [{ tenant_id: 'hotel_industry' }, { tenant_id: 'safetrust' }],
+    })
+
+    await expect(fetchTenantIds()).resolves.toEqual([
+      'hotel_industry',
+      'safetrust',
+    ])
+
+    const [sql] = db.query.mock.calls[0]
+    expect(sql).toContain('SELECT DISTINCT tenant_id')
+    expect(sql).toContain('FROM safetrust.trustless_work_escrows')
+  })
+
+  it('fetches Soroban rows for a non-default tenant', async () => {
+    db.query.mockResolvedValueOnce({ rows: [] })
+
+    await expect(fetchSorobanEscrowRows('hotel_industry')).resolves.toEqual([])
+
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE tenant_id = $1'),
+      ['hotel_industry']
+    )
+  })
+
+  it('finds stale escrows for a non-default tenant', async () => {
+    db.query.mockResolvedValueOnce({ rows: [{ contract_id: 'hotel_1' }] })
+
+    await expect(findStaleEscrows(7, 'hotel_industry')).resolves.toEqual([
+      'hotel_1',
+    ])
+
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE tenant_id = $1'),
+      ['hotel_industry', 7]
+    )
   })
 })

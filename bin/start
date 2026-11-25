@@ -433,8 +433,8 @@ reload_metadata() {
   echo ""
 }
 
-# One platform-wide cron trigger, not per tenant: the reconciliation sync
-# reads every tenant's escrows in one call, so it is created once here,
+# One platform-wide cron trigger, not per tenant: the handler loops over
+# every tenant that owns escrow rows, so the trigger is created once here,
 # after metadata is applied and reloaded. The trigger is created with
 # replace: false first; if Hasura reports already-exists, the call is
 # retried with replace: true, so re-running bin/start replaces the trigger

@@ -85,7 +85,10 @@ Reconciliation is the only way escrow state reaches SafeTrust since #769:
 `POST /reconciliation/sync-escrows` reads Trustless Work and applies funded,
 completed, disputed and other transitions. The trigger that calls it is
 platform-wide — one trigger for all tenants, not one per tenant — and
-`bin/start` creates it once, after the metadata reload:
+`bin/start` creates it once, after the metadata reload. The handler then
+runs the sync once per tenant that owns escrow rows (discovered from
+`safetrust.trustless_work_escrows`), so non-default tenants such as
+`hotel_industry` are reconciled too:
 
 - **Definition**: `metadata/base/cron_triggers.yaml`
   (`reconciliation_sync_escrows`, schedule `*/15 * * * *`, header

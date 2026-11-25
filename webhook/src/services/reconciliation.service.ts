@@ -23,6 +23,7 @@ import {
   fetchEscrowContractIds as loadEscrowContractIds,
   fetchEscrowTransitionStates,
   fetchSorobanEscrowRows,
+  fetchTenantIds,
   findStaleEscrows,
   upsertEscrowBatch,
 } from '../repositories/reconciliation.repository'
@@ -501,6 +502,7 @@ export interface SyncSummary {
 
 export interface SorobanValidationOptions {
   skipStatusCorrectionFor?: Set<string> | string[]
+  tenantId?: string
 }
 
 export interface DriftSummary {
@@ -570,6 +572,15 @@ export async function fetchEscrowContractIds(
   tenantId: string = 'safetrust'
 ): Promise<string[]> {
   return loadEscrowContractIds(tenantId)
+}
+
+/**
+ * Lists the tenants that own escrow rows, so the scheduled sync can cover
+ * every tenant instead of only the platform tenant. Tenants are discovered
+ * from the escrow table itself, so no tenant list needs to be configured.
+ */
+export async function listReconciliationTenants(): Promise<string[]> {
+  return fetchTenantIds()
 }
 
 /**
@@ -752,7 +763,7 @@ export async function validateSorobanDrift(
     }
   }
 
-  const currentRows = await fetchSorobanEscrowRows()
+  const currentRows = await fetchSorobanEscrowRows(options.tenantId ?? 'safetrust')
   const dbStateMap = Object.fromEntries(
     currentRows.map((r) => [r.contract_id, r])
   )
@@ -804,12 +815,14 @@ export async function validateSorobanDrift(
  * Step 4: Detects escrows that haven't been updated in `staleDays` days.
  *
  * @param staleDays - Threshold in days for considering an escrow stale (default 7)
+ * @param tenantId - Tenant whose escrows to check (defaults to 'safetrust')
  * @returns Array of stale contract IDs
  */
 export async function detectStaleEscrows(
-  staleDays: number = 7
+  staleDays: number = 7,
+  tenantId: string = 'safetrust'
 ): Promise<string[]> {
-  const staleContractIds = (await findStaleEscrows(staleDays)) || []
+  const staleContractIds = (await findStaleEscrows(staleDays, tenantId)) || []
   if (staleContractIds.length > 0) {
     console.warn(
       `[reconciliation] ⚠️  ${staleContractIds.length} escrows not updated in ${staleDays}+ days:`,

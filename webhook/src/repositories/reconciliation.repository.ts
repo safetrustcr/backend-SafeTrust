@@ -202,11 +202,29 @@ export async function fetchEscrowContractIds(
   return rows.map((row) => row.contract_id)
 }
 
-export async function fetchSorobanEscrowRows(): Promise<ReconciliationEscrowRow[]> {
+/**
+ * Lists every tenant that owns escrow rows, so the scheduled sync can cover
+ * tenants other than the platform tenant. Tenants are discovered from the
+ * escrow table itself, so no tenant list needs to be configured anywhere.
+ */
+export async function fetchTenantIds(): Promise<string[]> {
+  const { rows } = await db.query<{ tenant_id: string }>(
+    `SELECT DISTINCT tenant_id
+       FROM safetrust.trustless_work_escrows
+      WHERE tenant_id IS NOT NULL
+      ORDER BY tenant_id`
+  )
+  return rows.map((row) => row.tenant_id)
+}
+
+export async function fetchSorobanEscrowRows(
+  tenantId = 'safetrust'
+): Promise<ReconciliationEscrowRow[]> {
   const { rows } = await db.query<ReconciliationEscrowRow>(
     `SELECT contract_id, id, status, balance, marker, approver
        FROM safetrust.trustless_work_escrows
-      WHERE tenant_id = 'safetrust'`
+      WHERE tenant_id = $1`,
+    [tenantId]
   )
   return rows
 }
@@ -371,7 +389,10 @@ export async function upsertEscrowBatch(escrows: EscrowRecord[]): Promise<Upsert
   }
 }
 
-export async function findStaleEscrows(staleDays = 7): Promise<string[]> {
+export async function findStaleEscrows(
+  staleDays = 7,
+  tenantId = 'safetrust'
+): Promise<string[]> {
   if (!Number.isFinite(staleDays) || staleDays < 1) {
     throw new RangeError('findStaleEscrows: staleDays must be a positive number')
   }
@@ -379,11 +400,11 @@ export async function findStaleEscrows(staleDays = 7): Promise<string[]> {
   const { rows } = await db.query<{ contract_id: string }>(
     `SELECT contract_id
        FROM safetrust.trustless_work_escrows
-      WHERE tenant_id = 'safetrust'
+      WHERE tenant_id = $1
         AND status NOT IN ('completed', 'resolved', 'cancelled')
-        AND updated_at < NOW() - ($1 * INTERVAL '1 day')
+        AND updated_at < NOW() - ($2 * INTERVAL '1 day')
       ORDER BY updated_at ASC`,
-    [staleDays]
+    [tenantId, staleDays]
   )
 
   return rows.map((r) => r.contract_id)
