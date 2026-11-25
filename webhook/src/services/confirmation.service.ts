@@ -7,7 +7,7 @@
  */
 
 import crypto from 'crypto'
-import db from './db'
+import db, { withTransaction } from './db'
 import { hasuraRequest } from './hasura'
 import {
   verifyStellarTransaction,
@@ -18,6 +18,7 @@ import {
   sendTransactionViaHelper,
   updateIndexerFromTxHash,
 } from '../clients/trustless-work.client'
+import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
 import {
   upsertRetryRecord,
   updateRetryRecordStatus,
@@ -31,7 +32,6 @@ export {
   fetchPendingRetries,
   type UpsertRetryRecordParams,
 }
-
 export { verifyStellarTransaction, type StellarVerificationResult, VALID_TX_HASH }
 
 // ── Types & Constants ─────────────────────────────────────────────────────────
@@ -139,8 +139,10 @@ export function calculateBackoffMs(attemptCount: number): number {
 /**
  * Promotes local PostgreSQL records once both ledger confirmation and TW indexing succeed.
  * Strictly separates deployment from funding:
- *  - deploy: sets status = 'created' (NOT 'funded'), sets tx_hash, network.
- *  - fund: sets status = 'funded', updates balance = amount, sets tx_hash, network.
+ *  - deploy: sets status = 'created' (NOT 'funded'), sets tx_hash, network on trustless_work_escrows.
+ *  - fund: sets status = 'funded', updates balance = amount, sets tx_hash, network on trustless_work_escrows.
+ * Status, balance and ledger freshness are written ONLY to trustless_work_escrows.
+ * In the same transaction (withTransaction), writes/updates the signed transaction on escrow_transactions.
  */
 export async function promoteEscrowStatus(
   escrowId: string,
@@ -148,61 +150,134 @@ export async function promoteEscrowStatus(
   txHash: string,
   network: StellarNetwork
 ): Promise<void> {
-  if (action === 'deploy') {
-    // Check if contract exists in trustless_work_escrows
-    await db.query(
-      `
-      UPDATE safetrust.trustless_work_escrows
-      SET
-        status = 'created',
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
+  const runner = db.withTransaction ?? withTransaction
+  await runner(async (client) => {
+    let updateResult: { rows: any[] }
+    if (action === 'deploy') {
+      updateResult = await client.query(
+        `
+        UPDATE safetrust.trustless_work_escrows
+        SET
+          status = 'created',
+          tx_hash = $1,
+          network = $2,
+          updated_at = NOW()
+        WHERE contract_id = $3
+        RETURNING id, tenant_id, contract_id, amount, marker, approver
+        `,
+        [txHash, network, escrowId]
+      )
+    } else if (action === 'fund') {
+      updateResult = await client.query(
+        `
+        UPDATE safetrust.trustless_work_escrows
+        SET
+          status = 'funded',
+          balance = amount,
+          tx_hash = $1,
+          network = $2,
+          updated_at = NOW()
+        WHERE contract_id = $3
+        RETURNING id, tenant_id, contract_id, amount, marker, approver
+        `,
+        [txHash, network, escrowId]
+      )
+    } else {
+      updateResult = { rows: [] }
+    }
 
-    await db.query(
-      `
-      UPDATE safetrust.escrow_transactions
-      SET
-        status = 'deploying',
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3 OR engagement_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
-  } else if (action === 'fund') {
-    await db.query(
-      `
-      UPDATE safetrust.trustless_work_escrows
-      SET
-        status = 'funded',
-        balance = amount,
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
+    const escrowRow = updateResult?.rows?.[0]
+    const internalEscrowId = escrowRow?.id
+    const tenantId = escrowRow?.tenant_id ?? 'safetrust'
 
-    await db.query(
-      `
-      UPDATE safetrust.escrow_transactions
-      SET
-        status = 'funded',
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3 OR engagement_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
-  }
+    if (internalEscrowId) {
+      const updateTx = await client.query(
+        `
+        WITH target_tx AS (
+          SELECT id
+          FROM safetrust.escrow_transactions
+          WHERE escrow_id = $2
+            AND (
+              tx_hash = $1
+              OR (tx_hash IS NULL AND kind = $3 AND status IN ('pending_signature', 'submitted'))
+            )
+          ORDER BY (tx_hash = $1) DESC, created_at DESC
+          LIMIT 1
+        )
+        UPDATE safetrust.escrow_transactions et
+        SET
+          status = 'confirmed',
+          tx_hash = COALESCE(et.tx_hash, $1),
+          updated_at = NOW()
+        FROM target_tx
+        WHERE et.id = target_tx.id
+        RETURNING et.id
+        `,
+        [txHash, internalEscrowId, action]
+      )
+
+      if (updateTx?.rows && updateTx.rows.length === 0) {
+        await client.query(
+          `
+          INSERT INTO safetrust.escrow_transactions (
+            escrow_id,
+            kind,
+            tx_hash,
+            status,
+            contract_id,
+            engagement_id,
+            sender_address,
+            receiver_address,
+            amount,
+            tenant_id,
+            created_at,
+            updated_at
+          ) VALUES ($1, $2, $3, 'confirmed', $4, $5, $6, $7, $8, $9, NOW(), NOW())
+          ON CONFLICT (escrow_id, kind, tx_hash)
+            WHERE tx_hash IS NOT NULL
+          DO UPDATE SET
+            status = EXCLUDED.status,
+            updated_at = NOW()
+          `,
+          [
+            internalEscrowId,
+            action,
+            txHash,
+            escrowRow.contract_id ?? escrowId,
+            `eng_${internalEscrowId}`,
+            escrowRow.approver ?? '',
+            escrowRow.marker ?? '',
+            escrowRow.amount ?? 0,
+            tenantId
+          ]
+        )
+      }
+    } else {
+      await client.query(
+        `
+        WITH target_tx AS (
+          SELECT id
+          FROM safetrust.escrow_transactions
+          WHERE escrow_id = (SELECT id FROM safetrust.trustless_work_escrows WHERE contract_id = $2 LIMIT 1)
+            AND (
+              tx_hash = $1
+              OR (tx_hash IS NULL AND kind = $3 AND status IN ('pending_signature', 'submitted'))
+            )
+          ORDER BY (tx_hash = $1) DESC, created_at DESC
+          LIMIT 1
+        )
+        UPDATE safetrust.escrow_transactions et
+        SET
+          status = 'confirmed',
+          tx_hash = COALESCE(et.tx_hash, $1),
+          updated_at = NOW()
+        FROM target_tx
+        WHERE et.id = target_tx.id
+        `,
+        [txHash, escrowId, action]
+      )
+    }
+  })
 }
 
 // ── Main Confirmation Workflows ───────────────────────────────────────────────

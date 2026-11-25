@@ -15,7 +15,7 @@ function positiveIntegerFromEnv(name: string, defaultValue: number): number {
   return parsed
 }
 
-// Fail fast — never use hardcoded credentials in production
+// Fail fast - never use hardcoded credentials in production
 const requiredEnvVars = ['POSTGRES_HOST', 'POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD']
 for (const key of requiredEnvVars) {
   if (!process.env[key] && process.env.NODE_ENV === 'production') {

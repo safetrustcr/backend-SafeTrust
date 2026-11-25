@@ -41,8 +41,12 @@ columns:
     default: 999999999
     is_nullable: true
 
-  - name: room_type
-    type: varchar(50)
+  - name: hotel_id
+    type: uuid
+    is_nullable: false
+
+  - name: room_type_id
+    type: uuid
     is_nullable: true
 
   - name: season
@@ -76,6 +80,7 @@ columns:
 indexes:
   - name: idx_hotel_pricing_rules_type_currency_active
     columns:
+      - hotel_id
       - rule_type
       - currency
       - is_active
@@ -83,7 +88,8 @@ indexes:
 
   - name: idx_hotel_pricing_rules_room_season
     columns:
-      - room_type
+      - hotel_id
+      - room_type_id
       - season
       - is_active
     where: "is_active = true"
@@ -101,13 +107,24 @@ indexes:
     where: "is_active = true AND advance_booking_days IS NOT NULL"
 
 constraints:
-  - name: unique_hotel_rule_type_currency
+  - name: unique_hotel_pricing_rule_scope
     type: unique
     columns:
+      - hotel_id
       - rule_type
       - currency
-      - room_type
+      - room_type_id
       - season
+      - rule_name
+      - advance_booking_days
+
+object_relationships:
+  - name: hotel
+    using:
+      foreign_key_constraint_on: hotel_id
+  - name: room_type
+    using:
+      foreign_key_constraint_on: room_type_id
 
 select_permissions:
   - role: anonymous
@@ -121,7 +138,8 @@ select_permissions:
         - percentage
         - min_amount
         - max_amount
-        - room_type
+        - hotel_id
+        - room_type_id
         - season
         - advance_booking_days
         - priority
@@ -142,7 +160,8 @@ select_permissions:
         - percentage
         - min_amount
         - max_amount
-        - room_type
+        - hotel_id
+        - room_type_id
         - season
         - advance_booking_days
         - priority
@@ -164,7 +183,8 @@ insert_permissions:
         - percentage
         - min_amount
         - max_amount
-        - room_type
+        - hotel_id
+        - room_type_id
         - season
         - advance_booking_days
         - priority
@@ -182,7 +202,8 @@ update_permissions:
         - percentage
         - min_amount
         - max_amount
-        - room_type
+        - hotel_id
+        - room_type_id
         - season
         - advance_booking_days
         - priority

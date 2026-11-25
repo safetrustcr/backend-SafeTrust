@@ -1,7 +1,7 @@
 # Native crate build gates
 
 The default Cargo workspace build includes only crates used by the safe startup
-path. `zk-verifier`, `x402-processor`, and `soroban-reconciler` remain workspace
+path. `x402-processor` and `soroban-reconciler` remain workspace
 members so they can be built deliberately, but are excluded from
 `default-members` and from the default webhook build and image.
 
@@ -10,7 +10,6 @@ and its optional path dependencies:
 
 | Crate | Cargo feature | Prerequisite before enabling |
 |---|---|---|
-| `zk-verifier` | `zk-verifier` | Close remaining ESC-05 prerequisites; `ZK_ENABLED` opt-in and verification-key pinning are enforced by the TypeScript consumer. |
 | `x402-processor` | `x402-processor` | Close ESC-05: resolve the payment-flow gaps and wire the experimental feature flag. |
 | `soroban-reconciler` | `soroban-reconciler` | Close ESC-02: establish an authoritative on-chain state source. |
 
@@ -36,7 +35,7 @@ Node's Neon package loader resolves the package's configured entry point
 crate is excluded, the artifact is absent and Node throws (normally
 `MODULE_NOT_FOUND`). The TypeScript consumers handle that load failure and take
 their existing fail-closed/fallback path:
-ZK proof requests fail closed, x402 payment validation fails closed without
+x402 payment validation fails closed without
 the validator, and Soroban reconciliation skips unavailable native work. The
 `webhook-verifier`, `stellar-utils`, and `escrow-state-machine` crates are not
 gated or otherwise changed; their active consumers remain on the default

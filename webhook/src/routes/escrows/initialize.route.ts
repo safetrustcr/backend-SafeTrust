@@ -1,7 +1,6 @@
-import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
+import { Router, Request, Response, NextFunction } from 'express'
 import { initializeEscrowHandler } from './initialize.handler'
 import { requireX402Payment } from '../../middleware/x402-payment.middleware'
-import verifyTrustlessWorkSignature from '../../middleware/trustlesswork-signature.middleware'
 
 const router = Router()
 const x402Middleware = requireX402Payment(0.10)
@@ -16,11 +15,6 @@ router.post(
       req.headers['x-payment-required'] !== undefined
     ) {
       return x402Middleware(req, res, next)
-    }
-
-    // TrustlessWork callbacks must still pass signature verification.
-    if (req.headers['x-trustlesswork-signature']) {
-      return (verifyTrustlessWorkSignature as RequestHandler)(req, res, next)
     }
 
     // Do not fall through to the handler when x402 is disabled.
