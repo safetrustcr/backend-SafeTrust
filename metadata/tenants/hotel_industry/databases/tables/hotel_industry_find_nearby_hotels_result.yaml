@@ -13,8 +13,10 @@ select_permissions:
         - distance
         - name
         - description
-        - address
-        - hotel_area
+        - address_line
+        - city
+        - neighborhood
+        - country_code
         - coordinates
       filter: {}
   - role: user
@@ -24,7 +26,9 @@ select_permissions:
         - distance
         - name
         - description
-        - address
-        - hotel_area
+        - address_line
+        - city
+        - neighborhood
+        - country_code
         - coordinates
       filter: {}

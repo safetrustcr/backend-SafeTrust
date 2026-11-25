@@ -23,3 +23,30 @@ array_relationships:
           schema: hotel_industry
           name: reservations
         column: room_id
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - room_number
+        - room_type_id
+        - price_night
+        - capacity
+        - is_active
+      filter:
+        hotel:
+          members:
+            user_id:
+              _eq: x-hasura-user-id
+            role:
+              _in:
+                - OWNER
+                - MANAGER
+      check:
+        hotel:
+          members:
+            user_id:
+              _eq: x-hasura-user-id
+            role:
+              _in:
+                - OWNER
+                - MANAGER

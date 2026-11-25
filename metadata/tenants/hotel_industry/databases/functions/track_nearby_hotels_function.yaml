@@ -4,47 +4,37 @@
     CREATE OR REPLACE FUNCTION hotel_industry.find_nearby_hotels(
         search_location POINT,
         radius_meters FLOAT,
-        location_area VARCHAR DEFAULT NULL
+        neighborhood TEXT DEFAULT NULL
     )
-    RETURNS TABLE (
-        id UUID,
-        distance FLOAT,
-        name VARCHAR(20),
-        description VARCHAR(50),
-        address VARCHAR(50),
-        hotel_area VARCHAR(20),
-        coordinates POINT
-    ) AS $$
+    RETURNS SETOF hotel_industry.find_nearby_hotels_result AS $$
     BEGIN
         RETURN QUERY
-        SELECT 
+        SELECT
             h.id,
-            ST_Distance(
-                h.coordinates::geometry, 
-                search_location::geometry
-            ) as distance,
+            ST_Distance(h.coordinates::geometry, search_location::geometry),
             h.name,
             h.description,
-            h.address,
-            h.location_area,
+            h.address_line,
+            h.city,
+            h.neighborhood,
+            h.country_code,
             h.coordinates
-        FROM hotels h
-        WHERE 
-            h.coordinates IS NOT NULL
-            AND ST_DWithin(
-                h.coordinates::geometry,
-                search_location::geometry,
-                radius_meters
-            )
-            AND (location_area IS NULL OR h.location_area = location_area)
-        ORDER BY distance;
+        FROM hotel_industry.hotels AS h
+        WHERE h.coordinates IS NOT NULL
+          AND ST_DWithin(
+              h.coordinates::geometry,
+              search_location::geometry,
+              radius_meters
+          )
+          AND ($3 IS NULL OR h.neighborhood = $3)
+        ORDER BY 2;
     END;
     $$ LANGUAGE plpgsql STABLE;
   dependencies:
     - extension: postgis
   description: |
     This function finds hotels within a specified radius from a given location point.
-    It returns hotels ordered by distance from the search location, with optional filtering by location area.
+    It returns hotels ordered by distance from the search location, with optional filtering by neighborhood.
   comment: |
     The function uses PostGIS spatial functions to calculate distances and find nearby hotels.
     The STABLE attribute indicates that the function does not modify the database and
