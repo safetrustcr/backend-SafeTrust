@@ -5,3 +5,43 @@ object_relationships:
   - name: room
     using:
       foreign_key_constraint_on: room_id
+
+select_permissions:
+  - role: anonymous
+    permission:
+      columns:
+        - id
+        - room_id
+        - image_url
+        - uploaded_at
+      filter: {}
+  - role: user
+    permission:
+      columns:
+        - id
+        - room_id
+        - image_url
+        - uploaded_at
+      filter: {}
+
+insert_permissions:
+  - role: admin
+    permission:
+      columns:
+        - room_id
+        - image_url
+      check: {}
+
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - room_id
+        - image_url
+      filter: {}
+      check: {}
+
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}

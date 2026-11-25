@@ -6,6 +6,7 @@ configuration:
   custom_column_names:
     escrow_id: escrowId
     milestone_id: milestoneId
+    index: index
     due_date: dueDate
     approved_at: approvedAt
     approved_by: approvedBy
@@ -14,3 +15,58 @@ configuration:
     created_at: createdAt
     updated_at: updatedAt
     tenant_id: tenantId
+object_relationships:
+  - name: escrow
+    using:
+      foreign_key_constraint_on: escrow_id
+select_permissions:
+  - role: guest
+    permission:
+      columns:
+        - id
+        - escrow_id
+        - milestone_id
+        - description
+        - amount
+        - status
+        - approved_at
+        - approved_by
+        - released_at
+        - released_by
+        - created_at
+        - updated_at
+        - tenant_id
+      filter:
+        escrow:
+          reservation:
+            guest_id:
+              _eq: X-Hasura-User-Id
+    comment: "Guests can view milestones for their escrows"
+  - role: host
+    permission:
+      columns:
+        - id
+        - escrow_id
+        - milestone_id
+        - description
+        - amount
+        - status
+        - approved_at
+        - approved_by
+        - released_at
+        - released_by
+        - created_at
+        - updated_at
+        - tenant_id
+      filter:
+        escrow:
+          reservation:
+            apartment:
+              owner_id:
+                _eq: X-Hasura-User-Id
+    comment: "Hosts can view milestones for escrows on their apartments"
+  - role: admin
+    permission:
+      columns: "*"
+      filter: {}
+    comment: "Admins can view all escrow milestones"

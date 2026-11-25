@@ -1,6 +1,6 @@
 import { PoolClient } from 'pg';
 import { AppError, ConflictError, NotFoundError, ServiceUnavailableError } from '../utils/errors';
-import { withTransaction } from './db';
+import { withTransaction, query } from './db';
 import { getPlatformTenantId } from '../config/tenant';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
 import { EscrowEventType, EscrowStatus } from '../types/escrow.types';
@@ -16,7 +16,6 @@ import {
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
 import { amountToStroops } from '../lib/stellar-amounts';
-import { verifyProofOfFunds } from '../lib/zk-verifier';
 
 export { TenantMismatchError };
 
@@ -36,10 +35,7 @@ export interface EscrowInitPayload {
   escrow_type: string;
   asset_code: string;
   asset_issuer: string | null;
-  booking_id: string | null;
-  room_id: string | null;
-  hotel_id: string | null;
-  guest_id: string | null;
+  reservation_id: string | null;
   booking_metadata: { reservation_id?: string; [key: string]: unknown } | null;
   raw: InitializeEscrowPayload;
 }
@@ -71,6 +67,12 @@ export class EscrowStateConflictError extends ConflictError {
   }
 }
 
+export class EscrowStaleObservationError extends EscrowStateConflictError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EscrowStaleObservationError';
+  }
+}
 
 export class EscrowValidationError extends AppError {
   constructor(message: string, statusCode = 400) {
@@ -79,24 +81,16 @@ export class EscrowValidationError extends AppError {
   }
 }
 
-/** Thrown when the ZK verifier native addon is unavailable. */
-export class ZkVerifierUnavailableError extends ServiceUnavailableError {
-  constructor(message: string) {
-    super(message, { code: 'zk_verifier_unavailable' });
-    this.name = 'ZkVerifierUnavailableError';
-  }
-}
-
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-/** Normalize an untrusted decimal string to its canonical u64 representation. */
-function normalizeU64(value: unknown): string | null {
-  if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) return null;
-  if (value.length > 20) return null;
-  const U64_MAX = 18_446_744_073_709_551_615n;
-  const parsed = BigInt(value);
-  if (parsed > U64_MAX) return null;
-  return parsed.toString();
+function toLedgerSeq(value: unknown): bigint | null {
+  if (value === null || value === undefined || value === '') return null;
+  try {
+    const parsed = BigInt(value as string | number | bigint);
+    return parsed < 0n ? null : parsed;
+  } catch {
+    return null;
+  }
 }
 
 // ── Service functions ──────────────────────────────────────────────────────────
@@ -104,8 +98,8 @@ function normalizeU64(value: unknown): string | null {
 /**
  * Validate and normalize an escrow initialization payload.
  *
- * Checks required fields, escrow_type whitelist, and optional ZK proof bundle.
- * Throws EscrowValidationError (400) or ZkVerifierUnavailableError (503) on failure.
+ * Checks required fields and escrow_type whitelist.
+ * Throws EscrowValidationError (400) on failure.
  */
 export function validateEscrowInitializationPayload(
   body: unknown
@@ -120,15 +114,8 @@ export function validateEscrowInitializationPayload(
     escrow_type,
     asset_code,
     asset_issuer = null,
-    booking_id = null,
-    room_id = null,
-    hotel_id = null,
-    guest_id = null,
+    reservation_id = null,
     booking_metadata = null,
-    zk_proof,
-    zk_verification_key,
-    zk_threshold_stroops,
-    zk_balance_commitment,
   } = (body as InitializeEscrowPayload) ?? {};
   
   // 1 — Required fields
@@ -160,66 +147,6 @@ export function validateEscrowInitializationPayload(
       `escrow_type must be one of: ${validTypes.join(', ')}`
     );
   }
-  
-  // 3 — Optional ZK proof bundle: must be all-or-nothing; validates threshold.
-  // Real-funds ZK enforcement remains disabled by default until the chosen
-  // eligibility architecture (ADR-0001) is fully implemented (blocks ZK-02 through ZK-09).
-  const isZkEnforced = process.env.ZK_ENFORCEMENT_ENABLED === 'true';
-  const zkValues = [zk_proof, zk_verification_key, zk_threshold_stroops, zk_balance_commitment];
-  const hasZkBundle = zkValues.some((v) => v !== undefined && v !== null);
-
-  if (isZkEnforced && !hasZkBundle) {
-    throw new EscrowValidationError(
-      'ZK proof of funds bundle is required for escrow initialization',
-      400
-    );
-  }
-
-  if (hasZkBundle && process.env.ZK_ENABLED !== 'true') {
-    throw new EscrowValidationError(
-      'Unsupported Feature: ZK proof verification is disabled'
-    );
-  }
-
-  if (hasZkBundle) {
-    const hasCompleteBundle =
-      typeof zk_proof === 'string' && zk_proof.length > 0 &&
-      typeof zk_verification_key === 'string' && zk_verification_key.length > 0 &&
-      typeof zk_threshold_stroops === 'string' && zk_threshold_stroops.length > 0 &&
-      typeof zk_balance_commitment === 'string' && zk_balance_commitment.length > 0;
-
-    if (!hasCompleteBundle) {
-      throw new EscrowValidationError(
-        'zk_proof, zk_verification_key, zk_threshold_stroops, and zk_balance_commitment must be supplied together'
-      );
-    }
-
-    const expectedThreshold = amountToStroops(amount);
-    const suppliedThreshold = normalizeU64(zk_threshold_stroops);
-    if (!expectedThreshold || !suppliedThreshold || suppliedThreshold !== expectedThreshold) {
-      throw new EscrowValidationError('Invalid ZK proof of funds');
-    }
-
-    try {
-      const isValidProof = verifyProofOfFunds(
-        zk_proof,
-        zk_verification_key,
-        suppliedThreshold,
-        zk_balance_commitment
-      );
-      if (!isValidProof) {
-        throw new EscrowValidationError('Invalid ZK proof of funds');
-      }
-    } catch (err) {
-      if (err instanceof EscrowValidationError) throw err;
-      const error = err as Error & { code?: string };
-      console.error('[escrow.service] ZK verifier error:', error.message);
-      if (error.code === 'ZK_VERIFIER_MISCONFIGURED') {
-        throw new EscrowValidationError('ZK proof verifier is misconfigured', 500);
-      }
-      throw new ZkVerifierUnavailableError('ZK proof verification is unavailable');
-    }
-  }
 
   return {
     contract_id,
@@ -231,10 +158,7 @@ export function validateEscrowInitializationPayload(
     escrow_type,
     asset_code: asset_code ?? 'USDC',
     asset_issuer: asset_issuer ?? null,
-    booking_id: booking_id ?? null,
-    room_id: room_id ?? null,
-    hotel_id: hotel_id ?? null,
-    guest_id: guest_id ?? null,
+    reservation_id: reservation_id ?? booking_metadata?.reservation_id ?? null,
     booking_metadata: booking_metadata ?? null,
     raw: body as InitializeEscrowPayload,
   };
@@ -281,13 +205,8 @@ export async function persistEscrow(
       assetIssuer: payload.asset_issuer,
       amount: payload.amount,
       balance: 0,
-      bookingId: payload.booking_id,
-      roomId: payload.room_id,
-      hotelId: payload.hotel_id,
-      guestId: payload.guest_id,
       tenantId,
       escrowMetadata: payload.raw,
-      bookingMetadata: payload.booking_metadata,
     },
   });
 
@@ -371,7 +290,7 @@ export async function initializeEscrow(
     return { isDuplicate: true, eventId };
   }
 
-  const reservationId = payload.booking_metadata?.reservation_id;
+  const reservationId = payload.reservation_id ?? payload.booking_metadata?.reservation_id;
   const escrowTenantId = reservationId
     ? await resolveReservationTenant(reservationId, tenantId)
     : tenantId;
@@ -393,6 +312,66 @@ export async function initializeEscrow(
   await markWebhookEventProcessed(eventId);
 
   return { isDuplicate: false, eventId, escrow };
+}
+
+/**
+ * Reads booking details for an escrow by joining safetrust.reservations.
+ * Replaces direct reads of booking fields on trustless_work_escrows.
+ */
+export async function getBookingByEscrowId(escrowId: string): Promise<{
+  reservationId: string;
+  apartmentId: string;
+  guestId: string;
+  checkInDate: string;
+  checkOutDate: string;
+  totalAmount: number;
+  assetCode: string;
+  status: string;
+  createdAt: string;
+} | null> {
+  const result = await query<{
+    id: string;
+    apartment_id: string;
+    guest_id: string;
+    check_in_date: string;
+    check_out_date: string;
+    total_amount: number;
+    asset_code: string;
+    status: string;
+    created_at: string;
+  }>(
+    `SELECT
+       r.id,
+       r.apartment_id,
+       r.guest_id,
+       r.check_in_date,
+       r.check_out_date,
+       r.total_amount,
+       r.asset_code,
+       r.status,
+       r.created_at
+     FROM safetrust.reservations r
+     WHERE r.escrow_id = $1
+     LIMIT 1`,
+    [escrowId]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    reservationId: row.id,
+    apartmentId: row.apartment_id,
+    guestId: row.guest_id,
+    checkInDate: row.check_in_date,
+    checkOutDate: row.check_out_date,
+    totalAmount: row.total_amount,
+    assetCode: row.asset_code,
+    status: row.status,
+    createdAt: row.created_at,
+  };
 }
 
 
@@ -438,6 +417,7 @@ export interface EscrowLifecycleParams {
   amount?: number;
   validPriorStates?: string[];
   tenantId?: string;
+  observedLedgerSeq?: string | number | bigint | null;
 }
 
 export interface EscrowLifecycleResult {
@@ -462,6 +442,7 @@ export async function executeEscrowLifecycleTransition(
     amount,
     validPriorStates,
     tenantId = getPlatformTenantId(),
+    observedLedgerSeq,
   } = params;
   const eventIdentity = getWebhookEventIdentity(
     contractId,
@@ -510,8 +491,13 @@ export async function executeEscrowLifecycleTransition(
     const eventId = insertedEvent.rows[0].id;
 
     // 4 — Lock the escrow row and check current status
-    const escrowResult = await client.query<{ id: string; status: string; balance?: number }>(
-      `SELECT id, status, balance
+    const escrowResult = await client.query<{
+      id: string;
+      status: string;
+      balance?: number;
+      ledger_seq?: string | null;
+    }>(
+      `SELECT id, status, balance, ledger_seq::text AS ledger_seq
        FROM safetrust.trustless_work_escrows
        WHERE contract_id = $1
        FOR UPDATE`,
@@ -543,6 +529,14 @@ export async function executeEscrowLifecycleTransition(
       };
     }
 
+    const observedSeq = toLedgerSeq(observedLedgerSeq);
+    const storedSeq = toLedgerSeq(escrow.ledger_seq);
+    if (observedSeq !== null && storedSeq !== null && observedSeq <= storedSeq) {
+      throw new EscrowStaleObservationError(
+        `Observation at ledger ${observedSeq} is not newer than stored ledger ${storedSeq}`
+      );
+    }
+
     // 6 — Prior-state guard: verify current state is legal for this transition
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
@@ -558,26 +552,26 @@ export async function executeEscrowLifecycleTransition(
       );
     }
 
-    // 7 — Update escrow state and balance in safetrust.trustless_work_escrows
+    // 7 — Update escrow state, balance and accepted ledger in safetrust.trustless_work_escrows
     const now = new Date().toISOString();
+    const updates = ['status = $1', 'updated_at = $2'];
+    const values: unknown[] = [targetStatus, now];
+    let paramIndex = 3;
     if (amount !== undefined) {
-      await client.query(
-        `UPDATE safetrust.trustless_work_escrows
-         SET status = $1,
-             balance = $2,
-             updated_at = $3
-         WHERE id = $4`,
-        [targetStatus, amount, now, escrowId]
-      );
-    } else {
-      await client.query(
-        `UPDATE safetrust.trustless_work_escrows
-         SET status = $1,
-             updated_at = $2
-         WHERE id = $3`,
-        [targetStatus, now, escrowId]
-      );
+      updates.push(`balance = $${paramIndex++}`);
+      values.push(amount);
     }
+    if (observedSeq !== null) {
+      updates.push(`ledger_seq = $${paramIndex++}`);
+      values.push(observedSeq.toString());
+    }
+    values.push(escrowId);
+    await client.query(
+      `UPDATE safetrust.trustless_work_escrows
+       SET ${updates.join(',\n           ')}
+       WHERE id = $${paramIndex}`,
+      values
+    );
 
     // 8 — Mirror status to safetrust.reservations within the SAME transaction client
     await mirrorReservationStatus(escrowId, reservationStatus, tenantId, client);

@@ -7,7 +7,7 @@
  */
 
 import crypto from 'crypto'
-import db from './db'
+import db, { withTransaction } from './db'
 import { hasuraRequest } from './hasura'
 import {
   verifyStellarTransaction,
@@ -18,6 +18,20 @@ import {
   sendTransactionViaHelper,
   updateIndexerFromTxHash,
 } from '../clients/trustless-work.client'
+import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
+import {
+  upsertRetryRecord,
+  updateRetryRecordStatus,
+  fetchPendingRetries,
+  type UpsertRetryRecordParams,
+} from '../repositories/confirmation-retry.repository'
+
+export {
+  upsertRetryRecord,
+  updateRetryRecordStatus,
+  fetchPendingRetries,
+  type UpsertRetryRecordParams,
+}
 
 export { verifyStellarTransaction, type StellarVerificationResult, VALID_TX_HASH }
 
@@ -119,114 +133,17 @@ export function calculateBackoffMs(attemptCount: number): number {
 }
 
 // ── Database Operations for Retries ───────────────────────────────────────────
-
-export async function upsertRetryRecord(params: {
-  txHash: string
-  escrowId: string
-  action: EscrowAction
-  network: StellarNetwork
-  submissionPath: SubmissionPath
-  status?: RetryStatus
-  lastError?: string | null
-  attemptCount?: number
-  metadata?: Record<string, unknown>
-}): Promise<ConfirmationRetryRecord> {
-  const status = params.status ?? 'retrying'
-  const attemptCount = params.attemptCount ?? 0
-  const nextRetryMs = status === 'retrying' ? calculateBackoffMs(attemptCount) : 0
-
-  const { rows } = await db.query<any>(
-    `
-    INSERT INTO safetrust.escrow_confirmation_retries (
-      tx_hash,
-      escrow_id,
-      escrow_action,
-      network,
-      submission_path,
-      status,
-      attempt_count,
-      max_attempts,
-      next_retry_at,
-      last_error,
-      metadata,
-      tenant_id,
-      updated_at
-    ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8,
-      NOW() + ($9 * INTERVAL '1 millisecond'),
-      $10, $11, 'safetrust', NOW()
-    )
-    ON CONFLICT (tx_hash, escrow_action)
-    DO UPDATE SET
-      status = EXCLUDED.status,
-      last_error = EXCLUDED.last_error,
-      attempt_count = EXCLUDED.attempt_count,
-      next_retry_at = EXCLUDED.next_retry_at,
-      updated_at = NOW()
-    RETURNING
-      id,
-      tx_hash AS "txHash",
-      escrow_id AS "escrowId",
-      escrow_action AS "escrowAction",
-      network,
-      submission_path AS "submissionPath",
-      status,
-      attempt_count AS "attemptCount",
-      max_attempts AS "maxAttempts",
-      next_retry_at AS "nextRetryAt",
-      last_error AS "lastError",
-      metadata,
-      created_at AS "createdAt",
-      updated_at AS "updatedAt"
-    `,
-    [
-      params.txHash,
-      params.escrowId,
-      params.action,
-      params.network,
-      params.submissionPath,
-      status,
-      attemptCount,
-      MAX_ATTEMPTS,
-      nextRetryMs,
-      params.lastError ?? null,
-      JSON.stringify(params.metadata ?? {}),
-    ]
-  )
-
-  return rows[0]
-}
-
-export async function updateRetryRecordStatus(
-  id: string,
-  status: RetryStatus,
-  attemptCount: number,
-  lastError: string | null
-): Promise<void> {
-  const nextRetryMs = status === 'retrying' ? calculateBackoffMs(attemptCount) : 0
-
-  await db.query(
-    `
-    UPDATE safetrust.escrow_confirmation_retries
-    SET
-      status = $1,
-      attempt_count = $2,
-      last_error = $3,
-      next_retry_at = NOW() + ($4 * INTERVAL '1 millisecond'),
-      updated_at = NOW()
-    WHERE id = $5
-    `,
-    [status, attemptCount, lastError, nextRetryMs, id]
-  )
-}
+// Handled by confirmation-retry.repository.ts and re-exported above.
 
 // ── Local Database Promotion ──────────────────────────────────────────────────
 
 /**
  * Promotes local PostgreSQL records once both ledger confirmation and TW indexing succeed.
  * Strictly separates deployment from funding:
- *  - deploy: sets status = 'created' (NOT 'funded'), sets tx_hash, network.
- *  - fund: sets status = 'funded', updates balance = amount, sets tx_hash, network.
+ *  - deploy: sets status = 'created' (NOT 'funded'), sets tx_hash, network on trustless_work_escrows.
+ *  - fund: sets status = 'funded', updates balance = amount, sets tx_hash, network on trustless_work_escrows.
+ * Status, balance and ledger freshness are written ONLY to trustless_work_escrows.
+ * In the same transaction (withTransaction), writes/updates the signed transaction on escrow_transactions.
  */
 export async function promoteEscrowStatus(
   escrowId: string,
@@ -234,61 +151,134 @@ export async function promoteEscrowStatus(
   txHash: string,
   network: StellarNetwork
 ): Promise<void> {
-  if (action === 'deploy') {
-    // Check if contract exists in trustless_work_escrows
-    await db.query(
-      `
-      UPDATE safetrust.trustless_work_escrows
-      SET
-        status = 'created',
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
+  const runner = db.withTransaction ?? withTransaction
+  await runner(async (client) => {
+    let updateResult: { rows: any[] }
+    if (action === 'deploy') {
+      updateResult = await client.query(
+        `
+        UPDATE safetrust.trustless_work_escrows
+        SET
+          status = 'created',
+          tx_hash = $1,
+          network = $2,
+          updated_at = NOW()
+        WHERE contract_id = $3
+        RETURNING id, tenant_id, contract_id, amount, marker, approver
+        `,
+        [txHash, network, escrowId]
+      )
+    } else if (action === 'fund') {
+      updateResult = await client.query(
+        `
+        UPDATE safetrust.trustless_work_escrows
+        SET
+          status = 'funded',
+          balance = amount,
+          tx_hash = $1,
+          network = $2,
+          updated_at = NOW()
+        WHERE contract_id = $3
+        RETURNING id, tenant_id, contract_id, amount, marker, approver
+        `,
+        [txHash, network, escrowId]
+      )
+    } else {
+      updateResult = { rows: [] }
+    }
 
-    await db.query(
-      `
-      UPDATE safetrust.escrow_transactions
-      SET
-        status = 'deploying',
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3 OR engagement_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
-  } else if (action === 'fund') {
-    await db.query(
-      `
-      UPDATE safetrust.trustless_work_escrows
-      SET
-        status = 'funded',
-        balance = amount,
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
+    const escrowRow = updateResult?.rows?.[0]
+    const internalEscrowId = escrowRow?.id
+    const tenantId = escrowRow?.tenant_id ?? 'safetrust'
 
-    await db.query(
-      `
-      UPDATE safetrust.escrow_transactions
-      SET
-        status = 'funded',
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3 OR engagement_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
-  }
+    if (internalEscrowId) {
+      const updateTx = await client.query(
+        `
+        WITH target_tx AS (
+          SELECT id
+          FROM safetrust.escrow_transactions
+          WHERE escrow_id = $2
+            AND (
+              tx_hash = $1
+              OR (tx_hash IS NULL AND kind = $3 AND status IN ('pending_signature', 'submitted'))
+            )
+          ORDER BY (tx_hash = $1) DESC, created_at DESC
+          LIMIT 1
+        )
+        UPDATE safetrust.escrow_transactions et
+        SET
+          status = 'confirmed',
+          tx_hash = COALESCE(et.tx_hash, $1),
+          updated_at = NOW()
+        FROM target_tx
+        WHERE et.id = target_tx.id
+        RETURNING et.id
+        `,
+        [txHash, internalEscrowId, action]
+      )
+
+      if (updateTx?.rows && updateTx.rows.length === 0) {
+        await client.query(
+          `
+          INSERT INTO safetrust.escrow_transactions (
+            escrow_id,
+            kind,
+            tx_hash,
+            status,
+            contract_id,
+            engagement_id,
+            sender_address,
+            receiver_address,
+            amount,
+            tenant_id,
+            created_at,
+            updated_at
+          ) VALUES ($1, $2, $3, 'confirmed', $4, $5, $6, $7, $8, $9, NOW(), NOW())
+          ON CONFLICT (escrow_id, kind, tx_hash)
+            WHERE tx_hash IS NOT NULL
+          DO UPDATE SET
+            status = EXCLUDED.status,
+            updated_at = NOW()
+          `,
+          [
+            internalEscrowId,
+            action,
+            txHash,
+            escrowRow.contract_id ?? escrowId,
+            `eng_${internalEscrowId}`,
+            escrowRow.approver ?? '',
+            escrowRow.marker ?? '',
+            escrowRow.amount ?? 0,
+            tenantId
+          ]
+        )
+      }
+    } else {
+      await client.query(
+        `
+        WITH target_tx AS (
+          SELECT id
+          FROM safetrust.escrow_transactions
+          WHERE escrow_id = (SELECT id FROM safetrust.trustless_work_escrows WHERE contract_id = $2 LIMIT 1)
+            AND (
+              tx_hash = $1
+              OR (tx_hash IS NULL AND kind = $3 AND status IN ('pending_signature', 'submitted'))
+            )
+          ORDER BY (tx_hash = $1) DESC, created_at DESC
+          LIMIT 1
+        )
+        UPDATE safetrust.escrow_transactions et
+        SET
+          status = 'confirmed',
+          tx_hash = COALESCE(et.tx_hash, $1),
+          updated_at = NOW()
+        FROM target_tx
+        WHERE et.id = target_tx.id
+        `,
+        [txHash, escrowId, action]
+      )
+    }
+  })
 }
 
 // ── Main Confirmation Workflows ───────────────────────────────────────────────
@@ -545,26 +535,7 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
   }
 
   // Fetch retries ready to execute
-  const { rows } = await db.query<any>(
-    `
-    SELECT
-      id,
-      tx_hash AS "txHash",
-      escrow_id AS "escrowId",
-      escrow_action AS "escrowAction",
-      network,
-      submission_path AS "submissionPath",
-      status,
-      attempt_count AS "attemptCount",
-      max_attempts AS "maxAttempts",
-      last_error AS "lastError"
-    FROM safetrust.escrow_confirmation_retries
-    WHERE status = 'retrying'
-      AND next_retry_at <= NOW()
-    ORDER BY next_retry_at ASC
-    LIMIT 50
-    `
-  )
+  const rows = await fetchPendingRetries(50)
 
   if (rows.length === 0) {
     return summary
