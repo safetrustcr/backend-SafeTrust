@@ -13,8 +13,13 @@ The TrustlessWork indexer reconciliation flow reads escrow data through
 from the observed milestone flags.
 
 - For single-release escrows, an approved milestone derives
-  `milestone_approved`.
-- For multi-release escrows, an approved or released milestone derives
+  `milestone_approved` only when higher-priority conditions do not apply.
+  A resolved escrow derives `resolved`, while a released escrow derives
+  `completed` and a disputed escrow derives `disputed`.
+- For multi-release escrows, settled and disputed conditions take precedence.
+  When all milestones are settled, reconciliation derives `completed` or
+  `resolved`; an unresolved disputed milestone derives `disputed`.
+  Only then does an approved or released milestone derive
   `milestone_approved`.
 - Reconciliation applies only legal local-to-observed transitions and checks
   the observed ledger sequence against the stored sequence when available.
