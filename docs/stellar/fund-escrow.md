@@ -1,8 +1,9 @@
 # Fund Escrow
 
-> **Status: Planned — post-Issue-03 behavior.** This is the intended
-> polling-based flow; the route implementation in this checkout has not yet
-> been migrated to it.
+> **Status:** the TrustlessWork `fund` callback was removed. Reconciliation
+> polling at `POST /reconciliation/sync-escrows` now applies the `funded`
+> transition. The client-facing XDR flow below is the intended post-Issue-03
+> integration; its SafeTrust routes are not present in this checkout.
 
 The frontend requests an unsigned funding transaction from SafeTrust. SafeTrust
 asks Trustless Work to build it and returns the XDR to the frontend. The user
@@ -53,8 +54,9 @@ Funding is reflected when the indexer reports a positive balance or `fundedBy`.
 An unsigned XDR or wallet signature by itself does not prove that the deposit
 was submitted.
 
-The V1 indexer returns an unversioned snapshot. Under the current freshness
-policy, polling may advance `created` or `pending_funding` to `funded`, but
-cannot safely advance later states without a version token or transaction
-confirmation. See [Trustless Work Indexer](./trustless-work-indexer.md) for
-status derivation, field mapping, and freshness rules.
+The V1 indexer returns an unversioned snapshot. Reconciliation applies the
+`funded` transition from `created` or `pending_funding` and checks the observed
+ledger sequence against the stored one when available. Later states cannot be
+advanced safely without a version token or transaction confirmation. See
+[Trustless Work Indexer](./trustless-work-indexer.md) for status derivation,
+field mapping, and freshness rules.

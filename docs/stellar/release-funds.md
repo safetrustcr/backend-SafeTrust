@@ -1,8 +1,10 @@
 # Release Funds
 
-> **Status: Planned — post-Issue-03 behavior.** This is the intended
-> polling-based flow; the route implementation in this checkout has not yet
-> been migrated to it.
+> **Status:** the TrustlessWork `release-funds` callback was removed.
+> Reconciliation polling at `POST /reconciliation/sync-escrows` now applies the
+> `completed` transition. The client-facing XDR flow below is the intended
+> post-Issue-03 integration; its SafeTrust routes are not present in this
+> checkout.
 
 The frontend requests an unsigned release transaction from SafeTrust. The
 authorized wallet signs it, the frontend submits the signed XDR through
@@ -49,8 +51,9 @@ sequenceDiagram
 
 For single-release escrows, `flags.released` derives `completed`. For
 multi-release escrows, all milestones must be released or resolved to derive
-the terminal status. The V1 snapshot does not contain a ledger sequence, so
-the current freshness policy cannot safely advance an escrow already beyond
-`created` or `pending_funding` based on polling alone. SafeTrust must rely on a
-versioned snapshot or transaction confirmation before applying the later
-transition. See [Trustless Work Indexer](./trustless-work-indexer.md).
+the terminal status. Reconciliation applies the `completed` transition through
+the lifecycle service and checks the observed ledger sequence against the
+stored one when available. The V1 snapshot does not contain a ledger sequence,
+so an escrow already beyond `created` or `pending_funding` needs a versioned
+snapshot or transaction confirmation before the later transition is safe. See
+[Trustless Work Indexer](./trustless-work-indexer.md).
