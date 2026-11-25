@@ -380,10 +380,17 @@ process_metadata_tables() {
 
         if [ "$table_write_perms_payload" != '{"type":"bulk","args":[]}' ]; then
             echo "🔎 Reconciling table insert/update permissions for $tenant_name..."
-            table_write_perms_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+            if ! table_write_perms_response=$(curl -sS --fail-with-body -X POST "${hasura_endpoint}/v1/metadata" \
                 -H "X-Hasura-Admin-Secret: ${admin_secret}" \
                 -H "Content-Type: application/json" \
-                -d "$table_write_perms_payload") || return 1
+                -d "$table_write_perms_payload"); then
+                echo "❌ Failed to reconcile table insert/update permissions for $tenant_name: $table_write_perms_response" >&2
+                return 1
+            fi
+            if ! echo "$table_write_perms_response" | jq -e 'type == "object" or type == "array"' >/dev/null 2>&1; then
+                echo "❌ Invalid response reconciling table insert/update permissions for $tenant_name: $table_write_perms_response" >&2
+                return 1
+            fi
             if echo "$table_write_perms_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
                 echo "❌ Error reconciling table insert/update permissions for $tenant_name: $table_write_perms_response" >&2
                 return 1

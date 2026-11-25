@@ -92,6 +92,8 @@ const CREATE_TABLE_SQL = `
     amount      DECIMAL(20,7) NOT NULL,
     balance     DECIMAL(20,7) DEFAULT 0,
     updated_at  TIMESTAMPTZ DEFAULT NOW(),
+    ledger_seq  BIGINT,
+    network     TEXT,
     tenant_id   VARCHAR(255) NOT NULL
   )
 `
