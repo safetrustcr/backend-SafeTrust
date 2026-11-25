@@ -96,7 +96,8 @@ async function markFailed(idempotencyKey: string, reason: string): Promise<void>
     await db.query(
       `UPDATE safetrust.x402_settlements
           SET status = 'failed', error = $2, updated_at = NOW()
-        WHERE idempotency_key = $1`,
+        WHERE idempotency_key = $1
+          AND status <> 'settled'`,
       [idempotencyKey, reason]
     )
   } catch (error) {
