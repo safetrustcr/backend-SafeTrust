@@ -9,6 +9,19 @@
 import db, { withTransaction } from './db'
 import { hasuraRequest } from './hasura'
 import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
+import {
+  upsertRetryRecord,
+  updateRetryRecordStatus,
+  fetchPendingRetries,
+  type UpsertRetryRecordParams,
+} from '../repositories/confirmation-retry.repository'
+
+export {
+  upsertRetryRecord,
+  updateRetryRecordStatus,
+  fetchPendingRetries,
+  type UpsertRetryRecordParams,
+}
 
 // ── Types & Constants ─────────────────────────────────────────────────────────
 
@@ -252,106 +265,7 @@ export function calculateBackoffMs(attemptCount: number): number {
 }
 
 // ── Database Operations for Retries ───────────────────────────────────────────
-
-export async function upsertRetryRecord(params: {
-  txHash: string
-  escrowId: string
-  action: EscrowAction
-  network: StellarNetwork
-  submissionPath: SubmissionPath
-  status?: RetryStatus
-  lastError?: string | null
-  attemptCount?: number
-  metadata?: Record<string, unknown>
-}): Promise<ConfirmationRetryRecord> {
-  const status = params.status ?? 'retrying'
-  const attemptCount = params.attemptCount ?? 0
-  const nextRetryMs = status === 'retrying' ? calculateBackoffMs(attemptCount) : 0
-
-  const { rows } = await db.query<any>(
-    `
-    INSERT INTO safetrust.escrow_confirmation_retries (
-      tx_hash,
-      escrow_id,
-      escrow_action,
-      network,
-      submission_path,
-      status,
-      attempt_count,
-      max_attempts,
-      next_retry_at,
-      last_error,
-      metadata,
-      tenant_id,
-      updated_at
-    ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8,
-      NOW() + ($9 * INTERVAL '1 millisecond'),
-      $10, $11, 'safetrust', NOW()
-    )
-    ON CONFLICT (tx_hash, escrow_action)
-    DO UPDATE SET
-      status = EXCLUDED.status,
-      last_error = EXCLUDED.last_error,
-      attempt_count = EXCLUDED.attempt_count,
-      next_retry_at = EXCLUDED.next_retry_at,
-      updated_at = NOW()
-    RETURNING
-      id,
-      tx_hash AS "txHash",
-      escrow_id AS "escrowId",
-      escrow_action AS "escrowAction",
-      network,
-      submission_path AS "submissionPath",
-      status,
-      attempt_count AS "attemptCount",
-      max_attempts AS "maxAttempts",
-      next_retry_at AS "nextRetryAt",
-      last_error AS "lastError",
-      metadata,
-      created_at AS "createdAt",
-      updated_at AS "updatedAt"
-    `,
-    [
-      params.txHash,
-      params.escrowId,
-      params.action,
-      params.network,
-      params.submissionPath,
-      status,
-      attemptCount,
-      MAX_ATTEMPTS,
-      nextRetryMs,
-      params.lastError ?? null,
-      JSON.stringify(params.metadata ?? {}),
-    ]
-  )
-
-  return rows[0]
-}
-
-export async function updateRetryRecordStatus(
-  id: string,
-  status: RetryStatus,
-  attemptCount: number,
-  lastError: string | null
-): Promise<void> {
-  const nextRetryMs = status === 'retrying' ? calculateBackoffMs(attemptCount) : 0
-
-  await db.query(
-    `
-    UPDATE safetrust.escrow_confirmation_retries
-    SET
-      status = $1,
-      attempt_count = $2,
-      last_error = $3,
-      next_retry_at = NOW() + ($4 * INTERVAL '1 millisecond'),
-      updated_at = NOW()
-    WHERE id = $5
-    `,
-    [status, attemptCount, lastError, nextRetryMs, id]
-  )
-}
+// Handled by confirmation-retry.repository.ts and re-exported above.
 
 // ── Local Database Promotion ──────────────────────────────────────────────────
 
@@ -719,26 +633,7 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
   }
 
   // Fetch retries ready to execute
-  const { rows } = await db.query<any>(
-    `
-    SELECT
-      id,
-      tx_hash AS "txHash",
-      escrow_id AS "escrowId",
-      escrow_action AS "escrowAction",
-      network,
-      submission_path AS "submissionPath",
-      status,
-      attempt_count AS "attemptCount",
-      max_attempts AS "maxAttempts",
-      last_error AS "lastError"
-    FROM safetrust.escrow_confirmation_retries
-    WHERE status = 'retrying'
-      AND next_retry_at <= NOW()
-    ORDER BY next_retry_at ASC
-    LIMIT 50
-    `
-  )
+  const rows = await fetchPendingRetries(50)
 
   if (rows.length === 0) {
     return summary
