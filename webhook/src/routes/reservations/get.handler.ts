@@ -21,7 +21,7 @@ export const getReservationHandler = async (
   }
 
   const { id } = req.params
-  if (!id) {
+  if (typeof id !== 'string' || !id) {
     return res.status(400).json({ error: 'Missing reservation id' })
   }
 

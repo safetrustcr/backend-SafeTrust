@@ -1,4 +1,4 @@
-import { initializeFirebaseAdmin } from '../src/config/firebase-admin'
+import { initializeFirebaseAdmin } from '../firebase-admin'
 
 jest.mock('firebase-admin/app', () => {
   const actual = jest.requireActual('firebase-admin/app')

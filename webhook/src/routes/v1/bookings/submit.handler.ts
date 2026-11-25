@@ -14,8 +14,8 @@ export async function submitBookingHandler(
       throw new AuthError()
     }
 
-    const { id } = req.params
-    if (!id) {
+    const reservationId = String(req.params.id ?? '')
+    if (!reservationId) {
       throw new ValidationError('Reservation id is required')
     }
 
@@ -26,7 +26,7 @@ export async function submitBookingHandler(
     }
 
     const result = await submitAgentBooking({
-      reservationId: id,
+      reservationId,
       userId: ctx.uid,
       tenantId: ctx.tenantId,
       signedXdr,
