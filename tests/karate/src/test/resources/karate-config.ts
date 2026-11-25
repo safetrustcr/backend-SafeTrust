@@ -89,48 +89,12 @@ function fn() {
     return "Bearer " + signingInput + "." + sig;
   };
 
-  // TrustlessWork webhook signature helper
-  // Signs canonical bytes `timestamp + '.' + rawBody`. Generates a timestamp
-  // and stores it so the per-request headers function can send the same value.
-  // Usage: header x-trustlesswork-signature = trustlessWorkSignature(bodyStr)
-  var twTimestamp: string | null = null;
-  var trustlessWorkSignature = function(rawBody: string) {
-    var Mac = Java.type("javax.crypto.Mac");
-    var SecretKeySpec = Java.type("javax.crypto.spec.SecretKeySpec");
+  var config = { ...endpoints, db, restToken };
 
-    var secret = java.lang.System.getenv("TRUSTLESSWORK_WEBHOOK_SECRET") || "dev-secret";
-    var ts = String(new Date().getTime());
-    twTimestamp = ts;
-
-    var mac = Mac.getInstance("HmacSHA256");
-    mac.init(new SecretKeySpec(bytes(secret), "HmacSHA256"));
-    var digest = mac.doFinal(bytes(ts + "." + rawBody));
-
-    var hex = "";
-    for (var i = 0; i < digest.length; i++) {
-      var b = digest[i] & 0xff;
-      hex += (b < 16 ? "0" : "") + b.toString(16);
-    }
-
-    return "sha256=" + hex;
-  };
-
-  // Returns the timestamp that was just signed, or a fresh one for unsigned calls.
-  var pendingTrustlessWorkTimestamp = function() {
-    if (twTimestamp) {
-      return twTimestamp;
-    }
-    return String(new Date().getTime());
-  };
-
-  var config = { ...endpoints, db, restToken, trustlessWorkSignature, pendingTrustlessWorkTimestamp };
-
-  // Evaluated for every HTTP request so the timestamp is not frozen at config load.
   karate.configure('headers', function() {
     return {
       'Content-Type': 'application/json',
-      'x-hasura-admin-secret': config.adminSecret,
-      'x-trustlesswork-timestamp': config.pendingTrustlessWorkTimestamp()
+      'x-hasura-admin-secret': config.adminSecret
     };
   });
 
