@@ -30,6 +30,9 @@ services:
       HASURA_GRAPHQL_DEV_MODE: "true"
       HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      # Resolved by Hasura from its own environment for cron-trigger headers
+      # (value_from_env: HASURA_EVENT_SECRET).
+      HASURA_EVENT_SECRET: ${TEST_EVENT_SECRET:-test-event-secret}
     depends_on:
       postgres_test:
         condition: service_healthy
@@ -79,6 +82,9 @@ services:
       - WEBHOOK_PORT=3001
       - HASURA_ADMIN_SECRET=${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       - HASURA_GRAPHQL_ADMIN_SECRET=${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      # Shared secret the Karate suite sends as `x-hasura-event-secret`;
+      # must match the value the karate service passes to karate-config.js.
+      - HASURA_EVENT_SECRET=${TEST_EVENT_SECRET:-test-event-secret}
       - HASURA_GRAPHQL_ENDPOINT=http://graphql-engine-test:8080/v1/graphql
       - POSTGRES_HOST=postgres_test
       - POSTGRES_PORT=5432
@@ -116,6 +122,9 @@ services:
       webhookUrl: http://webhook:3001
       HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      # Read by karate-config.js and sent as `x-hasura-event-secret` by the
+      # reconciliation scenarios; must match the webhook's value above.
+      HASURA_EVENT_SECRET: ${TEST_EVENT_SECRET:-test-event-secret}
       JWT_SECRET: ${TEST_JWT_SECRET:-testsecret}
       TRUSTLESSWORK_WEBHOOK_SECRET: ${TEST_WEBHOOK_SECRET:-dev-secret}
     command: >

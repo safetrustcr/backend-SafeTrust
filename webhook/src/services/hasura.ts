@@ -43,6 +43,29 @@ export function getHasuraAdminSecret(): string {
   return adminSecret
 }
 
+/**
+ * Require the shared secret the Hasura reconciliation cron trigger sends as
+ * `x-hasura-event-secret` on POST /reconciliation/sync-escrows.
+ *
+ * In production a missing secret throws so the service fails at startup
+ * instead of serving an endpoint anyone on the internet can call. In
+ * non-production a missing secret only warns: the guard in
+ * sync-escrows.route.ts stays open (dev mode) so local development works
+ * with the secret unset, and local setups that do set it (see
+ * webhook/.env.example) are already protected.
+ */
+export function requireHasuraEventSecret(): void {
+  if (process.env.HASURA_EVENT_SECRET) {
+    return
+  }
+
+  const msg = 'Missing HASURA_EVENT_SECRET'
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(msg)
+  }
+  console.warn(`${msg} — reconciliation endpoint is unauthenticated (non-production)`)
+}
+
 // ── Core request ───────────────────────────────────────────────────────────────
 
 /**
@@ -90,5 +113,6 @@ export async function hasuraRequest<T = Record<string, unknown>>(
 export default {
   getHasuraEndpoint,
   getHasuraAdminSecret,
+  requireHasuraEventSecret,
   hasuraRequest,
 }

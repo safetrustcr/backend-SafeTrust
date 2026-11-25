@@ -1,5 +1,5 @@
 import app from './app'
-import { getHasuraAdminSecret } from './services/hasura'
+import { getHasuraAdminSecret, requireHasuraEventSecret } from './services/hasura'
 import { initializeFirebaseAdmin } from './config/firebase-admin'
 import { pool } from './services/db'
 
@@ -13,6 +13,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 try {
   getHasuraAdminSecret()
+  requireHasuraEventSecret()
   initializeFirebaseAdmin()
 } catch (error) {
   console.error(`❌ ${error instanceof Error ? error.message : String(error)}`)

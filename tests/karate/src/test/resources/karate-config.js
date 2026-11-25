@@ -8,6 +8,10 @@ function fn() {
     if (!adminSecret) {
         throw new Error('HASURA_ADMIN_SECRET is required to run Karate tests');
     }
+    // Shared secret the reconciliation scenarios send as
+    // `x-hasura-event-secret`. The test webhook reads the same value from
+    // TEST_EVENT_SECRET (docker-compose-test.yml default: test-event-secret).
+    var eventSecret = java.lang.System.getenv('HASURA_EVENT_SECRET') || 'test-event-secret';
     // Basic configuration
     var endpoints = {
         baseUrl: karate.properties['baseUrl'] || 'http://graphql-engine-test:8080/v1/graphql',
@@ -99,7 +103,7 @@ function fn() {
         }
         return String(new Date().getTime());
     };
-    var config = { ...endpoints, db, restToken, trustlessWorkSignature, pendingTrustlessWorkTimestamp };
+    var config = { ...endpoints, db, restToken, trustlessWorkSignature, pendingTrustlessWorkTimestamp, eventSecret };
     // Evaluated for every HTTP request so the timestamp is not frozen at config load.
     karate.configure('headers', function () {
         return {
