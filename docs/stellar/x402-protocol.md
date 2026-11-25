@@ -122,18 +122,17 @@ flowchart TD
 
 `X402_ENABLED=false` is the default, and it is enforced as a hard boundary:
 
-- With the flag off, **no x402 payment is evaluated** on the escrow
-  initialization route. A request carrying `X-Payment`,
-  `X-Payment-Protocol`, or `X-Payment-Required` is treated like any other
-  request and must pass the TrustlessWork HMAC check.
-- The x402 middleware also fails closed with `503` if it is mounted while the
-  flag is off, so a stale route cannot accidentally grant eligibility.
+- With the flag off, the x402 middleware is still mounted but fails closed
+  with `503 Feature Unavailable` for every request on the escrow
+  initialization route, so a stale route cannot accidentally grant
+  eligibility.
 
-When `X402_ENABLED=true`, a request bypasses x402 only when it includes
-`X-TrustlessWork-Signature` and no explicit x402 header. Without either, the
-route returns `402 Payment Required`; with an explicit x402 header, it validates
-that payment even if a TrustlessWork signature is also present. Firebase
-authentication does not create an exemption on this route.
+When `X402_ENABLED=true`, every request must present a valid `X-Payment`
+header; without one the route returns `402 Payment Required`. The
+Trustless Work HMAC bypass that used to short-circuit this check has been
+removed — callbacks from Trustless Work are no longer accepted and the
+backend learns escrow state by polling instead. Firebase authentication
+does not create an exemption on this route either.
 
 This quarantine exists because findings **F2, F3, and F8** from the security
 review are unresolved. x402 must not be able to grant booking eligibility

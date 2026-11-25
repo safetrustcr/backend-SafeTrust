@@ -6,10 +6,18 @@
  * chunk-processor) return raw indexer JSON; this is the single mapping.
  *
  * ── Status derivation ───────────────────────────────────────────────────────
- * The V1 indexer has no `status` field. Status is derived from flags, first
- * match wins:
+ * The V1 indexer has no `status` field. Escrow-level V1 flags use this exact
+ * first-match precedence:
  *
- *   single-release (escrow `flags`, milestone `approved`)
+ *     isCancelled → cancelled
+ *     isDisputed  → disputed
+ *     isCompleted → completed
+ *     isPending   → pending_funding
+ *     no V1 flag  → legacy derivation below, then created
+ *
+ * During the indexer transition, legacy flags remain supported:
+ *
+ *   single-release (escrow legacy `flags`, milestone `approved`)
  *     flags.resolved                       → resolved
  *     flags.released                       → completed
  *     flags.disputed                       → disputed
@@ -25,17 +33,18 @@
  *     balance > 0 or fundedBy set          → funded
  *     otherwise                            → created
  *
- * Not derivable from the indexer: `active` and `pending_funding` (SafeTrust
- * steps with no V1 flag) and `cancelled` (V1 has no cancel operation). A
- * single-release `withdraw-remaining-funds` emits no V1 event, so it is not
- * observable here either.
+ * `active` remains a SafeTrust-only state with no V1 flag. Legacy payloads
+ * without the four `is*` flags continue through the older derivation rules.
  *
  * ── Roles ────────────────────────────────────────────────────────────────────
- * The table still uses the pre-V1 role columns until the schema migration:
+ * Migration 1795147840886 adds the canonical V1 role columns. The current
+ * reconciliation payload still emits these temporary aliases until TW-01
+ * switches its UPSERT parameters to the canonical columns:
  *   marker   ← roles.serviceProvider
  *   approver ← roles.approver
  *   releaser ← roles.releaseSigner
- * `platformAddress`, `disputeResolver` and `receiver` have no column yet.
+ * The canonical `platformAddress`, `disputeResolver`, and `receiver` values
+ * are stored once that parallel reconciliation change is deployed.
  */
 
 import type { EscrowRecord } from '../reconciliation.types'
@@ -43,11 +52,13 @@ import type { TwFlags, TwIndexerEscrow, TwMilestone } from './tw-indexer.types'
 
 export type DerivedEscrowStatus =
   | 'created'
+  | 'pending_funding'
   | 'funded'
   | 'milestone_approved'
   | 'disputed'
   | 'completed'
   | 'resolved'
+  | 'cancelled'
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -97,6 +108,15 @@ function deriveSingleReleaseStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus
   return isFunded(escrow) ? 'funded' : 'created'
 }
 
+/** Exact SafeTrust compatibility mapping for the four escrow-level V1 flags. */
+export function deriveV1FlagsStatus(flags: TwFlags): DerivedEscrowStatus | null {
+  if (flags.isCancelled === true) return 'cancelled'
+  if (flags.isDisputed === true) return 'disputed'
+  if (flags.isCompleted === true) return 'completed'
+  if (flags.isPending === true) return 'pending_funding'
+  return null
+}
+
 function deriveMultiReleaseStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus {
   const milestones = milestonesOf(escrow)
   if (milestones.length === 0) return deriveSingleReleaseStatus(escrow)
@@ -117,6 +137,8 @@ function deriveMultiReleaseStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus 
 
 /** Lifecycle status for a V1 indexer escrow (see the table at the top). */
 export function deriveEscrowStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus {
+  const v1Status = deriveV1FlagsStatus(flagsOf(escrow.flags))
+  if (v1Status) return v1Status
   return isMultiRelease(escrow)
     ? deriveMultiReleaseStatus(escrow)
     : deriveSingleReleaseStatus(escrow)

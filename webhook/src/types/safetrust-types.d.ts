@@ -64,6 +64,8 @@ declare module '@safetrust/types' {
     bedrooms?: string
     petFriendly?: string
     category?: string
+    checkIn?: string
+    checkOut?: string
     page?: string
     limit?: string
     sort?: string

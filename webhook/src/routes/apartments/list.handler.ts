@@ -42,6 +42,8 @@ export const listApartments = async (
       bedrooms,
       petFriendly,
       category,
+      checkIn,
+      checkOut,
       page = '1',
       limit = '10',
       sort = 'created_at',
@@ -85,6 +87,26 @@ export const listApartments = async (
       }
     }
 
+    // Dates held by someone else (pending_payment or active) are unavailable.
+    let stay: { checkIn: string; checkOut: string } | undefined
+    if (checkIn || checkOut) {
+      const dateRe = /^\d{4}-\d{2}-\d{2}$/
+      if (
+        typeof checkIn !== 'string' || typeof checkOut !== 'string' ||
+        !dateRe.test(checkIn) || !dateRe.test(checkOut) || checkOut <= checkIn
+      ) {
+        return res.status(400).json({ error: 'checkIn and checkOut must both be YYYY-MM-DD dates with checkOut after checkIn.' })
+      }
+      const isRealDate = (v: string) => {
+        const d = new Date(`${v}T00:00:00Z`)
+        return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v
+      }
+      if (!isRealDate(checkIn) || !isRealDate(checkOut)) {
+        return res.status(400).json({ error: 'checkIn and checkOut must be valid calendar dates.' })
+      }
+      stay = { checkIn, checkOut }
+    }
+
     const allowedSorts = ['price_asc', 'price_desc', 'created_at']
     if (sort && !allowedSorts.includes(sort)) {
       return res.status(400).json({ error: `Invalid sort parameter. Supported values: ${allowedSorts.join(', ')}` })
@@ -97,6 +119,7 @@ export const listApartments = async (
       bedrooms: beds,
       petFriendly: normalizedPet,
       category,
+      stay,
       limit: validatedLimit,
       offset,
       sort: (sort || 'created_at') as ApartmentListFilters['sort'],

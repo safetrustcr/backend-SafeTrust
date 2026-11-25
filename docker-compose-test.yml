@@ -92,7 +92,6 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${TEST_POSTGRES_PASSWORD:-postgrespassword}
       - USE_MOCK_DATA=true
-      - TRUSTLESSWORK_WEBHOOK_SECRET=${TEST_WEBHOOK_SECRET:-dev-secret}
       # The x402 Karate suite exercises the enabled payment gate. Settlement is
       # still disabled so tests never call a facilitator /settle endpoint.
       - X402_ENABLED=true
@@ -126,7 +125,6 @@ services:
       # reconciliation scenarios; must match the webhook's value above.
       HASURA_EVENT_SECRET: ${TEST_EVENT_SECRET:-test-event-secret}
       JWT_SECRET: ${TEST_JWT_SECRET:-testsecret}
-      TRUSTLESSWORK_WEBHOOK_SECRET: ${TEST_WEBHOOK_SECRET:-dev-secret}
     command: >
       java -cp /app/tests/karate.jar:/app/tests/postgresql-jdbc.jar:/app/tests/karate/src/test/resources
       com.intuit.karate.Main
