@@ -2,6 +2,7 @@
 - "!include public_apartments.yaml"
 - "!include public_bid_requests.yaml"
 - "!include public_bid_status_histories.yaml"
+- "!include public_booking_holds.yaml"
 - "!include public_conversations.yaml"
 - "!include public_escrow_claims.yaml"
 - "!include public_escrow_milestones.yaml"

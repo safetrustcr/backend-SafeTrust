@@ -15,7 +15,7 @@ function positiveIntegerFromEnv(name: string, defaultValue: number): number {
   return parsed
 }
 
-// Fail fast — never use hardcoded credentials in production
+// Fail fast - never use hardcoded credentials in production
 const requiredEnvVars = ['POSTGRES_HOST', 'POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD']
 for (const key of requiredEnvVars) {
   if (!process.env[key] && process.env.NODE_ENV === 'production') {
@@ -39,6 +39,13 @@ export const pool = new Pool({
 pool.on('error', (err: Error) => {
   console.error('[db] Unexpected error on idle database client:', err)
 })
+
+export interface Queryable {
+  query<T extends QueryResultRow = Record<string, unknown>>(
+    text: string,
+    params?: unknown[]
+  ): Promise<QueryResult<T>>
+}
 
 export async function query<T extends QueryResultRow = Record<string, unknown>>(
   text: string,
