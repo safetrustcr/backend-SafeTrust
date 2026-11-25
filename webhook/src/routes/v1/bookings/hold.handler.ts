@@ -6,6 +6,7 @@ import {
   releaseHold,
   releasePendingHold,
 } from '../../../repositories/hold.repository'
+import { settleBookingFee } from '../../../services/x402-settlement.service'
 import { AuthError, ValidationError } from '../../../utils/errors'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -56,12 +57,28 @@ export async function createHoldHandler(
     })
     holdId = hold.id
 
-    // requireX402Payment only lets the request through after the facilitator
-    // verified the payment (req.x402 is set), so reaching here means paid.
+    // requireX402Payment only verifies the payment authorization; funds move
+    // only when settlement is confirmed. Charge the hold fee before the hold
+    // becomes live, and never leave a live hold behind an unpaid request.
     if (!req.x402) {
       await releasePendingHold(hold.id)
       throw new ValidationError('x402 payment missing')
     }
+
+    try {
+      await settleBookingFee({
+        paymentHeader: req.x402.paymentHeader,
+        amountUsdc: req.x402.amountUsdc,
+        payer: req.x402.payer,
+        network: req.x402.network,
+        purpose: 'hold_fee',
+        holdId: hold.id,
+      })
+    } catch (error) {
+      await releasePendingHold(hold.id)
+      throw error
+    }
+
     const activated = await activateHold(hold.id)
     if (!activated) {
       throw new ValidationError('Hold expired before payment was confirmed')

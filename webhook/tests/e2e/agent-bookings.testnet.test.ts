@@ -247,13 +247,12 @@ describe('E2E Agent Bookings Flow on Testnet (Issue #778)', () => {
           amount_usdc: 0.10,
           network: 'stellar:testnet',
         }),
-      settleX402Payment: () =>
-        JSON.stringify({
-          settled: true,
-          transaction_hash: 'settlement-e2e-tx-hash',
-          network: 'stellar:testnet',
-          error: null,
-        }),
+      settleX402Payment: async () => ({
+        settled: true,
+        transaction_hash: 'settlement-e2e-tx-hash',
+        network: 'stellar:testnet',
+        error: null,
+      }),
       buildPaymentRequirement: (amount: number) =>
         JSON.stringify({ maxAmountRequired: amount, network: 'stellar:testnet' }),
     })

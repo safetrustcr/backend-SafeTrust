@@ -34,10 +34,15 @@ export function validateX402Payment(
   requiredAmount: number
 ): string
 
+/**
+ * Verify and settle an X-Payment header. The facilitator round-trip runs off
+ * the main JS thread, so this returns a promise that resolves once settlement
+ * is confirmed (or resolves with `settled: false` when it is declined).
+ */
 export function settleX402Payment(
   header: string,
   requiredAmount: number
-): string
+): Promise<X402SettlementResult>
 
 export function buildPaymentRequirement(
   amountUsdc: number,

@@ -59,7 +59,7 @@ pub struct FacilitatorSettleResponse {
     pub network: Option<String>,
 }
 
-/// Result of a synchronous settlement attempt returned to Node.js.
+/// Result of a settlement attempt, resolved from the addon's promise.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct X402SettlementResult {
     pub settled: bool,

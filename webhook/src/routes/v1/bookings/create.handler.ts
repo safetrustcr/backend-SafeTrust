@@ -54,6 +54,9 @@ export async function createBookingHandler(
           amountUsdc: x402.amountUsdc,
           payer: x402.payer,
           network: x402.network,
+          // Binds the receipt to this hold so the same proof cannot be
+          // replayed against a different one.
+          holdId: holdId ?? null,
         })
       },
     })

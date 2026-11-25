@@ -113,6 +113,69 @@ export async function resolveOwnerStellarWallet(ownerId: string | undefined): Pr
 }
 
 /**
+ * Read-only eligibility gate, run before the non-refundable booking fee is
+ * settled. Any unbookable request is rejected here with 409, so the guest is
+ * never charged for a booking that cannot be created. The transaction below
+ * repeats the checks under lock as the authoritative guard.
+ */
+async function assertBookingEligible(params: {
+  tenantId: string
+  propertyId: string
+  checkIn: string
+  checkOut: string
+  /** The caller's own hold is a live hold that obviously overlaps itself. */
+  excludeHoldId?: string
+}): Promise<void> {
+  const { tenantId, propertyId, checkIn, checkOut, excludeHoldId } = params
+
+  const apartment = await db.query<{ is_available: boolean | null }>(
+    `SELECT is_available
+       FROM safetrust.apartments
+      WHERE id = $1 AND deleted_at IS NULL`,
+    [propertyId]
+  )
+  if (apartment.rows[0]?.is_available === false) {
+    throw new ConflictError('Property is not available', { code: 'not_available' })
+  }
+
+  const overlappingHold = await db.query(
+    `
+    SELECT 1 FROM safetrust.booking_holds
+    WHERE apartment_id = $1
+      AND tenant_id = $2
+      AND status IN ('active', 'pending_payment')
+      AND expires_at > NOW()
+      AND check_in < $4 AND check_out > $3
+      AND ($5::uuid IS NULL OR id <> $5::uuid)
+    LIMIT 1
+    `,
+    [propertyId, tenantId, checkIn, checkOut, excludeHoldId ?? null]
+  )
+  if (overlappingHold.rows.length > 0) {
+    throw new ConflictError('Requested dates overlap with an active booking hold', {
+      code: 'dates_unavailable',
+    })
+  }
+
+  const overlappingRes = await db.query(
+    `
+    SELECT 1 FROM safetrust.reservations
+    WHERE apartment_id = $1
+      AND tenant_id = $2
+      AND status IN ('pending', 'escrow_created', 'funded', 'checked_in', 'checked_out')
+      AND check_in_date < $4 AND check_out_date > $3
+    LIMIT 1
+    `,
+    [propertyId, tenantId, checkIn, checkOut]
+  )
+  if (overlappingRes.rows.length > 0) {
+    throw new ConflictError('Requested dates are already booked', {
+      code: 'dates_unavailable',
+    })
+  }
+}
+
+/**
  * Create a booking reservation with backend-deployed Trustless Work escrow
  * and server-calculated deposit amount.
  */
@@ -220,9 +283,16 @@ export async function createAgentBooking(
     // Recompute quote strictly on the server (never trusting client amounts)
     quote = await getQuoteForProperty(propertyId, checkIn, checkOut, guests)
 
-    // The hold is active and unexpired: settle the booking fee before the
-    // reservation is created. The converted-hold path above returned already,
-    // so an idempotent retry never reaches this settlement.
+    // The hold is active and unexpired: re-check that the dates are still
+    // bookable, then settle the fee. The converted-hold path above returned
+    // already, so an idempotent retry never reaches this settlement.
+    await assertBookingEligible({
+      tenantId,
+      propertyId,
+      checkIn,
+      checkOut,
+      excludeHoldId: holdId,
+    })
     if (chargeBookingFee) {
       await chargeBookingFee()
     }
@@ -307,6 +377,10 @@ export async function createAgentBooking(
     guests = directGuests
 
     quote = await getQuoteForProperty(propertyId, checkIn, checkOut, guests)
+
+    // Reject unavailable properties and overlapping dates before charging, so
+    // a 409 never costs the guest the non-refundable fee.
+    await assertBookingEligible({ tenantId, propertyId, checkIn, checkOut })
 
     // Settle the booking fee before creating the reservation.
     if (chargeBookingFee) {

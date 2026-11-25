@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS safetrust.x402_settlements (
   amount_usdc NUMERIC(20, 7) NOT NULL CHECK (amount_usdc >= 0),
   network VARCHAR(32),
   payer_address TEXT,
+  -- The booking hold this payment proof paid for, when it bought a hold. A
+  -- settled proof may only be reused for the same hold.
+  hold_id UUID REFERENCES safetrust.booking_holds(id) ON DELETE SET NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'settled', 'failed')),
   tx_hash VARCHAR(64),
@@ -28,5 +31,8 @@ CREATE INDEX IF NOT EXISTS idx_x402_settlements_status
 CREATE INDEX IF NOT EXISTS idx_x402_settlements_purpose
   ON safetrust.x402_settlements (purpose);
 
+CREATE INDEX IF NOT EXISTS idx_x402_settlements_hold_id
+  ON safetrust.x402_settlements (hold_id);
+
 COMMENT ON TABLE safetrust.x402_settlements
-  IS 'Idempotent x402 settlement receipts. A settled row is reused on retry; pending rows block concurrent settlement of the same payment.';
+  IS 'Idempotent x402 settlement receipts. A settled row is reused on retry only for the hold it paid for; pending rows block concurrent settlement of the same payment.';

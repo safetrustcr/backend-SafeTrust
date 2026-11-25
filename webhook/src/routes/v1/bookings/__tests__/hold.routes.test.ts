@@ -12,6 +12,11 @@ jest.mock('../../../../repositories/hold.repository', () => ({
   createHold: (...a: unknown[]) => mockCreate(...a),
 }))
 
+const mockSettleBookingFee = jest.fn()
+jest.mock('../../../../services/x402-settlement.service', () => ({
+  settleBookingFee: (...a: unknown[]) => mockSettleBookingFee(...a),
+}))
+
 import bookingsRouter from '../index'
 import { errorHandler } from '../../../../middleware/error-handler'
 import { setX402Addon } from '../../../../middleware/x402-payment.middleware'
@@ -51,6 +56,7 @@ describe('v1 booking holds routes', () => {
 
   it('creates and activates a hold once paid', async () => {
     mockCreate.mockResolvedValue({ id: 'h1', expires_at: new Date('2026-12-01T14:32:00Z'), quote_deposit: '45', asset_code: 'USDC', price_total: '150.00' })
+    mockSettleBookingFee.mockResolvedValue({ idempotencyKey: 'k', transactionHash: 'tx', reused: false })
     mockQuery.mockResolvedValue({ rowCount: 1, rows: [] })
     const res = await request(app('u1')).post('/api/v1/bookings/hold').set('x-payment', 'abc').send(body)
     expect(res.status).toBe(201)
@@ -60,7 +66,29 @@ describe('v1 booking holds routes', () => {
       quote: { total: '150.00', deposit: '45.00', asset: 'USDC' },
     })
     expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1', tenantId: 'safetrust', payerAddress: 'GPAYER' }))
+    // The 0.01 USDC hold fee is settled before the hold is activated.
+    expect(mockSettleBookingFee).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentHeader: 'abc', amountUsdc: 0.01, purpose: 'hold_fee', holdId: 'h1' })
+    )
+    expect(mockSettleBookingFee.mock.invocationCallOrder[0]).toBeLessThan(
+      mockQuery.mock.invocationCallOrder[0]
+    )
     expect(mockQuery.mock.calls[0][0]).toContain("status = 'active'")
+  })
+
+  it('releases the pending hold when hold fee settlement fails', async () => {
+    mockCreate.mockResolvedValue({ id: 'h1', expires_at: new Date('2026-12-01T14:32:00Z'), quote_deposit: '45', asset_code: 'USDC', price_total: '150.00' })
+    mockSettleBookingFee.mockRejectedValueOnce(new Error('settlement down'))
+    mockQuery.mockResolvedValue({ rowCount: 1, rows: [] })
+
+    const res = await request(app('u1')).post('/api/v1/bookings/hold').set('x-payment', 'abc').send(body)
+
+    expect(res.status).toBe(500)
+    const releaseCall = mockQuery.mock.calls.find((call) => String(call[0]).includes("status = 'released'"))
+    expect(releaseCall).toBeDefined()
+    expect(releaseCall?.[1]).toEqual(['h1'])
+    // The unactivated hold must not be activated after a failed settlement.
+    expect(mockQuery.mock.calls.some((call) => String(call[0]).includes("status = 'active'"))).toBe(false)
   })
 
   it('rejects bad input with 400 after payment verification', async () => {

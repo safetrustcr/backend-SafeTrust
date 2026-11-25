@@ -1,10 +1,20 @@
 import { Request, Response, NextFunction } from 'express'
 import { logger } from './logger'
 
+export interface X402SettlementResult {
+  settled: boolean
+  transaction_hash?: string | null
+  network?: string
+  error?: string | null
+}
+
 type X402Addon = {
   validateX402Payment: (header: string, requiredAmount: number) => string
-  /** Synchronous settlement; returns JSON X402SettlementResult. */
-  settleX402Payment?: (header: string, requiredAmount: number) => string
+  /** Asynchronous settlement; the facilitator call runs off the JS thread. */
+  settleX402Payment?: (
+    header: string,
+    requiredAmount: number
+  ) => Promise<X402SettlementResult>
   buildPaymentRequirement: (
     amountUsdc: number,
     network: string,

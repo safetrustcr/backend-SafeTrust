@@ -70,67 +70,105 @@ fn validate_x402_payment(mut cx: FunctionContext) -> JsResult<JsString> {
     Ok(cx.string(json))
 }
 
-/// Verify and settle an X-Payment header synchronously.
-/// Returns JSON X402SettlementResult. A settle failure is returned as
-/// `settled: false` with a reason; it never reports success optimistically.
-fn settle_x402_payment(mut cx: FunctionContext) -> JsResult<JsString> {
-    let header = cx.argument::<JsString>(0)?.value(&mut cx);
-    let required_amount = cx.argument::<JsNumber>(1)?.value(&mut cx);
+async fn settle_payment(
+    header: &str,
+    required_amount: f64,
+) -> types::X402SettlementResult {
+    match parser::parse_x_payment_header(header) {
+        Err(e) => types::X402SettlementResult {
+            settled: false,
+            transaction_hash: None,
+            network: String::new(),
+            error: Some(e),
+        },
+        Ok(payment) => {
+            if let Some(reason) = insufficient_amount(&payment, required_amount) {
+                return types::X402SettlementResult {
+                    settled: false,
+                    transaction_hash: None,
+                    network: payment.network,
+                    error: Some(reason),
+                };
+            }
 
-    let result = RUNTIME.block_on(async {
-        match parser::parse_x_payment_header(&header) {
-            Err(e) => types::X402SettlementResult {
-                settled: false,
-                transaction_hash: None,
-                network: String::new(),
-                error: Some(e),
-            },
-            Ok(payment) => {
-                if let Some(reason) = insufficient_amount(&payment, required_amount) {
-                    return types::X402SettlementResult {
-                        settled: false,
-                        transaction_hash: None,
-                        network: payment.network,
-                        error: Some(reason),
-                    };
-                }
-
-                match facilitator::resolve_facilitator_url(&payment) {
-                    Err(e) => types::X402SettlementResult {
-                        settled: false,
-                        transaction_hash: None,
-                        network: payment.network,
-                        error: Some(e),
-                    },
-                    Ok(facilitator_url) => {
-                        match facilitator::settle_with_facilitator(&payment, &facilitator_url)
-                            .await
-                        {
-                            Ok(transaction_hash) => types::X402SettlementResult {
-                                settled: true,
-                                transaction_hash,
-                                network: payment.network,
-                                error: None,
-                            },
-                            Err(e) => types::X402SettlementResult {
-                                settled: false,
-                                transaction_hash: None,
-                                network: payment.network,
-                                error: Some(e),
-                            },
-                        }
+            match facilitator::resolve_facilitator_url(&payment) {
+                Err(e) => types::X402SettlementResult {
+                    settled: false,
+                    transaction_hash: None,
+                    network: payment.network,
+                    error: Some(e),
+                },
+                Ok(facilitator_url) => {
+                    match facilitator::settle_with_facilitator(&payment, &facilitator_url).await {
+                        Ok(transaction_hash) => types::X402SettlementResult {
+                            settled: true,
+                            transaction_hash,
+                            network: payment.network,
+                            error: None,
+                        },
+                        Err(e) => types::X402SettlementResult {
+                            settled: false,
+                            transaction_hash: None,
+                            network: payment.network,
+                            error: Some(e),
+                        },
                     }
                 }
             }
         }
+    }
+}
+
+fn settlement_result_to_js<'a, C: Context<'a>>(
+    cx: &mut C,
+    result: &types::X402SettlementResult,
+) -> JsResult<'a, JsObject> {
+    let obj = cx.empty_object();
+
+    let settled = cx.boolean(result.settled);
+    obj.set(cx, "settled", settled)?;
+
+    let transaction_hash = match &result.transaction_hash {
+        Some(hash) => cx.string(hash).upcast::<JsValue>(),
+        None => cx.null().upcast::<JsValue>(),
+    };
+    obj.set(cx, "transaction_hash", transaction_hash)?;
+
+    let network = cx.string(&result.network);
+    obj.set(cx, "network", network)?;
+
+    let error = match &result.error {
+        Some(reason) => cx.string(reason).upcast::<JsValue>(),
+        None => cx.null().upcast::<JsValue>(),
+    };
+    obj.set(cx, "error", error)?;
+
+    Ok(obj)
+}
+
+/// Verify and settle an X-Payment header off the main JS thread.
+///
+/// Returns a `Promise<X402SettlementResult>`. The facilitator round-trip runs
+/// on the shared Tokio runtime, so a slow settlement never blocks the Node.js
+/// event loop; the promise is settled back on the JS thread through a Neon
+/// `Channel`. A settle failure resolves as `settled: false` with a reason; the
+/// promise never reports success optimistically.
+fn settle_x402_payment(mut cx: FunctionContext) -> JsResult<JsPromise> {
+    let header = cx.argument::<JsString>(0)?.value(&mut cx);
+    let required_amount = cx.argument::<JsNumber>(1)?.value(&mut cx);
+
+    let (deferred, promise) = cx.promise();
+    let channel = cx.channel();
+
+    RUNTIME.spawn(async move {
+        let result = settle_payment(&header, required_amount).await;
+        deferred.settle_with(&channel, move |mut cx| {
+            let obj = settlement_result_to_js(&mut cx, &result)?;
+            Ok(obj)
+        });
     });
 
-    let json = match serde_json::to_string(&result) {
-        Ok(j) => j,
-        Err(e) => return cx.throw_error(e.to_string()),
-    };
-
-    Ok(cx.string(json))
+    Ok(promise)
 }
 
 /// Build the X-Accepts-Payment header value for 402 responses.

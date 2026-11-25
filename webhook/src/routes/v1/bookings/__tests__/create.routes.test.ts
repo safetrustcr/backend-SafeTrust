@@ -213,6 +213,11 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
       ],
     })
 
+    // 2b. Pre-settlement eligibility: apartment available, no overlapping hold, no overlapping reservation
+    mockQuery.mockResolvedValueOnce({ rows: [{ is_available: true }] })
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+
     // 3. withTransaction executing atomic hold conversion and reservation creation in escrow_created status
     mockWithTransaction.mockImplementationOnce(async (cb) => {
       const mockClient = {
@@ -329,6 +334,10 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
         },
       ],
     })
+    // Pre-settlement eligibility passes, so settlement is attempted.
+    mockQuery.mockResolvedValueOnce({ rows: [{ is_available: true }] })
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    mockQuery.mockResolvedValueOnce({ rows: [] })
     mockSettleBookingFee.mockRejectedValueOnce(
       new PaymentRequiredError('Facilitator declined settlement', {
         code: 'settlement_failed',
@@ -342,6 +351,63 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
 
     expect(res.status).toBe(402)
     expect(res.body.code).toBe('settlement_failed')
+    expect(mockWithTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unavailable property with 409 without settling the $0.10 fee', async () => {
+    // 1. getQuoteForProperty query
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: APT_ID,
+          name: 'Modern Apartment',
+          price: '100.00',
+          warranty_deposit: '50.00',
+          owner_id: 'host-1',
+          is_available: false,
+          bedrooms: 1,
+        },
+      ],
+    })
+    // 2. Availability check rejects before any settlement.
+    mockQuery.mockResolvedValueOnce({ rows: [{ is_available: false }] })
+
+    const res = await request(app('agent-1'))
+      .post('/api/v1/bookings')
+      .set('x-payment', 'valid-x402-proof')
+      .send({ property_id: APT_ID, check_in: '2026-12-15', check_out: '2026-12-20', guests: 2 })
+
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('not_available')
+    expect(mockSettleBookingFee).not.toHaveBeenCalled()
+    expect(mockWithTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects overlapping dates with 409 without settling the $0.10 fee', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: APT_ID,
+          name: 'Modern Apartment',
+          price: '100.00',
+          warranty_deposit: '50.00',
+          owner_id: 'host-1',
+          is_available: true,
+          bedrooms: 1,
+        },
+      ],
+    })
+    mockQuery.mockResolvedValueOnce({ rows: [{ is_available: true }] })
+    mockQuery.mockResolvedValueOnce({ rows: [{}] }) // overlapping hold
+
+    const res = await request(app('agent-1'))
+      .post('/api/v1/bookings')
+      .set('x-payment', 'valid-x402-proof')
+      .send({ property_id: APT_ID, check_in: '2026-12-15', check_out: '2026-12-20', guests: 2 })
+
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('dates_unavailable')
+    expect(mockSettleBookingFee).not.toHaveBeenCalled()
     expect(mockWithTransaction).not.toHaveBeenCalled()
   })
 
