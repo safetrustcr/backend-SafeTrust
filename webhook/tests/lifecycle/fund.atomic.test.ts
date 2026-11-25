@@ -40,14 +40,6 @@ jest.mock('../../src/services/db', () => {
   };
 });
 
-jest.mock('../../../crates/escrow-state-machine', () => ({
-  getValidPriorStates: jest.fn((to: string, _event: string) => {
-    if (to === 'funded') return '["created","pending_funding"]';
-    if (to === 'completed') return '["milestone_approved"]';
-    return '["created"]';
-  }),
-}), { virtual: true });
-
 const mockedNotify = notifyHotelEscrowConversation as jest.MockedFunction<
   typeof notifyHotelEscrowConversation
 >;

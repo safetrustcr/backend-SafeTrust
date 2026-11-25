@@ -17,9 +17,8 @@ graph LR
 | File | Responsibility |
 |---|---|
 | `webhook/src/lib/source-adapters/tw.adapter.ts` | Configuration, request URL, sequential fetch |
-| `crates/chunk-processor` | Parallel fetch of the same URL (`RUST_CHUNKS_ENABLED=true`) |
 | `webhook/src/lib/source-adapters/tw-indexer.types.ts` | V1 response type |
-| `webhook/src/lib/source-adapters/tw-indexer.normalize.ts` | Mapping onto table columns (both paths) |
+| `webhook/src/lib/source-adapters/tw-indexer.normalize.ts` | Mapping onto table columns |
 | `webhook/src/repositories/reconciliation.repository.ts` | Guarded UPSERT |
 
 ## Configuration
@@ -109,16 +108,15 @@ escrow from `funded` to `milestone_approved`, `completed`, `disputed` or
 `resolved`. Those transitions need a version token for the snapshot (for
 example a ledger sequence) before polling can drive them.
 
-The unversioned UPSERT matches the Rust bulk path (`pg-bulk-upsert`): a
-snapshot with a confirmed status may not create a row, but for an existing row
-the stored status decides. `reconciliation.repository.integration.test.ts`
-checks this against a real database (opt-in with `RECONCILIATION_DB_TEST=true`):
-a stored `created` escrow accepts a `funded` snapshot, while confirmed rows,
-invalid transitions, other networks and nonzero balances stay protected.
+The unversioned UPSERT applies the same rules as `evaluateFreshness`
+(`webhook/src/lib/escrow-freshness.ts`): a snapshot with a confirmed status
+may not create a row, but for an existing row the stored status decides.
+`reconciliation.repository.integration.test.ts` checks this against a real
+database (opt-in with `RECONCILIATION_DB_TEST=true`): a stored `created`
+escrow accepts a `funded` snapshot, while confirmed rows, invalid transitions,
+other networks and nonzero balances stay protected.
 
-## Soroban drift reader
-
-The optional drift check (`SOROBAN_VALIDATION_ENABLED`, `crates/soroban-reconciler`)
-reads the same endpoint. `normalize_tw_v1_response` applies the status table
-above before the crate's existing identity, status and exact-balance checks.
-It requires the V1 `balance` and never substitutes the configured `amount`.
+Chunks are fetched one after another and each escrow is written with its own
+UPSERT. The opt-in Rust parallel-fetch and bulk-UPSERT paths, and the Soroban
+drift reader, were removed in #755 (see
+[Crate Boundaries](../architecture/crate-boundaries.md)).

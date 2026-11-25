@@ -89,9 +89,9 @@ HASURA_EVENT_SECRET=your_event_secret
 The webhook exposes `/health/live` for process liveness and `/health/ready`
 for Firebase and PostgreSQL readiness. PostgreSQL connection acquisition and
 query timeouts are configurable with `DB_CONNECTION_TIMEOUT_MS` (default
-`5000`) and `DB_QUERY_TIMEOUT_MS` (default `30000`). Native Rust modules are
-loaded only when their corresponding operations run; they do not gate liveness
-or readiness.
+`5000`) and `DB_QUERY_TIMEOUT_MS` (default `30000`). The one native module,
+the opt-in `x402-processor` addon, is loaded only when an x402 payment is
+validated; it does not gate liveness or readiness.
 
 ### 2. 🔮 Start everything
 
@@ -319,10 +319,11 @@ npm --prefix webhook test
 npm --prefix webhook run build
 ```
 
-Native-addon helpers, fallback loaders, benchmarks, and examples use TypeScript
-sources under `crates/`. Run `npm --prefix webhook run build:tooling` before invoking
-their JavaScript entry points directly. `build:rust` and `test` do this automatically.
-The adjacent `.js` files are generated compatibility outputs; edit the `.ts` sources.
+The native-addon build helper (`crates/scripts/copy-native.ts`) is TypeScript.
+Run `npm --prefix webhook run build:tooling` before invoking its JavaScript entry
+point directly; `build:rust` and `test` do this automatically. The adjacent `.js`
+file is generated compatibility output; edit the `.ts` source. Only
+`x402-processor.test.ts` needs the Rust toolchain (`npm --prefix webhook run build:rust`).
 
 Karate configuration and token helpers are also authored in TypeScript. The test
 image compiles them automatically. For a local Java runner, first run

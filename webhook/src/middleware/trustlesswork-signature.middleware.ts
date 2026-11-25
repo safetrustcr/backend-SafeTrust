@@ -2,6 +2,7 @@
 
 import { Request, Response, NextFunction } from 'express'
 import { logger } from './logger'
+import { verifyHmacSignature } from '../lib/hmac-signature'
 
 /**
  * Request populated with the exact request bytes by
@@ -89,25 +90,7 @@ export const verifyTrustlessWorkSignature = (
   const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.alloc(0)
   const payload = canonicalSignedPayload(timestamp, rawBody)
 
-  let isValid: boolean
-  try {
-    // Load the optional native verifier only when a signed callback arrives.
-    // Its absence must not prevent the service's liveness endpoint from starting.
-    const { verifyHmacSignature } = require('../../../crates/webhook-verifier') as {
-      verifyHmacSignature: (
-        payload: Buffer | Uint8Array,
-        signature: string,
-        secret: string
-      ) => boolean
-    }
-    isValid = verifyHmacSignature(payload, signature, secret)
-  } catch (err) {
-    logger.error('trustlesswork_signature.verifier_failed', { error: err })
-    res.status(500).json({ error: 'Signature verification failed' })
-    return
-  }
-
-  if (!isValid) {
+  if (!verifyHmacSignature(payload, signature, secret)) {
     res.status(401).json({ error: 'Invalid webhook signature' })
     return
   }

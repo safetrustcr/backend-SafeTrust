@@ -7,29 +7,9 @@ import type {
 } from '@safetrust/types'
 import { logger } from '../../middleware/logger'
 import { syncWallet } from '../../repositories/wallet.repository'
+import { isStellarAccountAddress as isStellarAddress } from '../../lib/stellar-wallet'
 
 const VALID_CHAIN_TYPES: readonly ChainType[] = ['ETH', 'STELLAR', 'BSC']
-
-interface StellarUtils {
-  validateStellarAddress(address: string): boolean
-}
-
-let nativeStellarUtils: StellarUtils | null = null
-try {
-  nativeStellarUtils = require('../../../../crates/stellar-utils') as StellarUtils
-} catch (error: unknown) {
-  const message = error instanceof Error ? error.message : String(error)
-  logger.warn('auth.sync_wallet.native_addon_unavailable', {
-    fallback: 'js-validation',
-    error: message,
-  })
-}
-
-function isStellarAddress(address: unknown): boolean {
-  if (typeof address !== 'string') return false
-  if (nativeStellarUtils) return nativeStellarUtils.validateStellarAddress(address)
-  return /^G[A-Z2-7]{55}$/.test(address)
-}
 
 export async function syncWalletHandler(
   req: AuthenticatedRequest & { body: Partial<SyncWalletPayload> },

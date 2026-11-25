@@ -13,8 +13,8 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 |---|---|
 | [Architecture Overview](architecture/overview.md) | System layers, SafeTrust-built unsigned XDR, wallet signing, and indexer reconciliation |
 | [Multi-Tenant Architecture](architecture/multi-tenant.md) | Two-tenant isolation model (`safetrust` and `hotel_industry`), schema routing, and RBAC rules |
-| [Rust Crates in SafeTrust](architecture/rust-crates.md) | High-assurance native extensions via Neon bindings for cryptography and blockchain operations |
-| [Crate Boundaries](architecture/crate-boundaries.md) | Consumers, exports, fallbacks, dispositions, and quarantine gates for all eight Rust crates |
+| [Rust Crates in SafeTrust](architecture/rust-crates.md) | The remaining `x402-processor` addon, and the TypeScript that replaced the other crates |
+| [Crate Boundaries](architecture/crate-boundaries.md) | Consumers, exports, fallback and quarantine gate of `x402-processor`, and the record of each crate removal |
 | [Escrow Claims API](architecture/escrow-claims-api.md) | Request and response contract, error codes, idempotency and rate limit for claims on released escrows |
 | [Reservations API](architecture/reservations-api.md) | Lifecycle, allowed actions computation, read endpoints, and safe cancellation protocol |
 | [Wallet Registry API](architecture/wallets-api.md) | Verified wallet management lifecycle (list, unlink, and atomic set-primary endpoints) |

@@ -1,11 +1,11 @@
-# Builds the webhook Docker image and smoke-tests the Rust Neon addons
-# (stellar-utils, webhook-verifier, escrow-state-machine, soroban-reconciler)
-# inside the container.
+# Builds the webhook Docker image and smoke-tests, inside the container, the
+# x402-processor Neon addon and the TypeScript modules that replaced the other
+# Rust addons (Stellar wallet checks, HMAC verification, escrow transitions).
 #
 # This is the verification that requires Docker (Debian bookworm glibc
 # toolchain + cargo build, matching the node:24-bookworm-slim image), so it runs
 # for free on GitHub runners instead of locally.
-# A failing build or a broken addon will show up directly on the PR.
+# A failing build or a broken module will show up directly on the PR.
 name: webhook build
 
 on:
@@ -50,37 +50,47 @@ jobs:
       - name: Build webhook image
         run: docker build -t safetrust-webhook:verify -f webhook/Dockerfile .
 
-      - name: Smoke-test native addons inside the image
+      # Runs the compiled dist/ modules with the production node_modules, so it
+      # also proves Node 24 can require() the ESM-only dependencies of
+      # @stellar/stellar-sdk (Jest transpiles those, the runtime does not).
+      - name: Smoke-test the image's native addon and TypeScript replacements
         run: |
-          docker run --rm safetrust-webhook:verify node -e "
-            const stellar = require('/app/crates/stellar-utils');
-            const verifier = require('/app/crates/webhook-verifier');
-            const escrow = require('/app/crates/escrow-state-machine');
-            const soroban = require('/app/crates/soroban-reconciler');
-            const good = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57';
-            const checks = [
-              stellar.validateStellarAddress(good) === true,
-              stellar.validateStellarAddress('not-a-stellar-address') === false,
-              stellar.validateStellarAddress('GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z') === false,
-              Object.keys(stellar).sort().join(',') === 'validateStellarAddress,verifyStellarEd25519',
-              typeof verifier.verifyHmacSignature === 'function',
-              typeof verifier.validateStellarAddress === 'function',
-              typeof escrow.validateTransition === 'function',
-              typeof escrow.getValidPriorStates === 'function',
-              typeof escrow.getTransitionTable === 'function',
-              escrow.validateTransition('created', 'funded', 'escrow.funded') === true,
-              escrow.validateTransition('completed', 'created', 'escrow.initialized') === false,
-              escrow.getValidPriorStates('funded', 'escrow.funded') === '[\"created\",\"pending_funding\"]',
-              (() => { try { escrow.getValidPriorStates('completed', 'dispute.raised'); return false; } catch (e) { return /No valid prior states/.test(e.message); } })(),
-              typeof soroban.queryEscrowStateBatch === 'function',
-              typeof soroban.reconcileBatch === 'function'
-            ];
-            if (checks.includes(false)) {
-              console.error('addon smoke test FAILED:', checks);
-              process.exit(1);
-            }
-            console.log('addon smoke test OK - exports and validation behave as expected');
-          "
+          docker run --rm -i -w /app/webhook safetrust-webhook:verify node - <<'EOF'
+          const fs = require('node:fs');
+          const x402 = require('/app/crates/x402-processor');
+          const wallet = require('./dist/lib/stellar-wallet');
+          const hmac = require('./dist/lib/hmac-signature');
+          const escrow = require('./dist/lib/escrow-transitions');
+          const good = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57';
+          // ed25519 signature of 'Hello, SafeTrust!' by seed [7u8; 32], from the former Rust crate.
+          const sig = '1eea5b08a29d119057e2b1ef77e0e9f95f0876664d0e42062788fdc1f5a9a682ca1a74fd425bd780f5058dd0f6f7a12362136505fb8f2ae8fecdd4306148560e';
+          const checks = {
+            x402Exports: typeof x402.validateX402Payment === 'function' && typeof x402.buildPaymentRequirement === 'function',
+            onlyX402Remains: fs.readdirSync('/app/crates').join(',') === 'x402-processor',
+            validAddress: wallet.isStellarAccountAddress(good) === true,
+            badChecksum: wallet.isStellarAccountAddress('GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z') === false,
+            signature: wallet.verifyStellarEd25519('Hello, SafeTrust!', sig, good) === true,
+            tampered: wallet.verifyStellarEd25519('Hello, SafeTrust?', sig, good) === false,
+            hmac: hmac.verifyHmacSignature(
+              Buffer.from('{"contractId":"escrow-1","status":"funded"}'),
+              'sha256=e258ba1e4532f7ffcb94438be44e8a3671a24988a212b0144ba43fc65fae836a',
+              'dev-secret'
+            ) === true,
+            legalTransition: escrow.validateTransition('created', 'funded', 'escrow.funded') === true,
+            illegalTransition: escrow.validateTransition('completed', 'created', 'escrow.initialized') === false,
+            priorStates: JSON.stringify(escrow.getValidPriorStates('funded', 'escrow.funded')) === '["created","pending_funding"]',
+            noPriorStates: (() => {
+              try { escrow.getValidPriorStates('completed', 'dispute.raised'); return false; }
+              catch (e) { return /No valid prior states/.test(e.message); }
+            })(),
+          };
+          const failed = Object.keys(checks).filter((name) => !checks[name]);
+          if (failed.length > 0) {
+            console.error('image smoke test FAILED:', failed);
+            process.exit(1);
+          }
+          console.log('image smoke test OK:', Object.keys(checks).join(', '));
+          EOF
 
   webhook-checks:
     runs-on: ubuntu-latest
@@ -103,21 +113,19 @@ jobs:
       - name: Type-check webhook and tests
         run: npm --prefix webhook run type-check
 
-      - name: Run reconciliation tests
+      - name: Run reconciliation and ported-crate tests
         working-directory: webhook
         run: >-
-          npm run build:tooling &&
           npx jest --runInBand --runTestsByPath
           src/lib/__tests__/reconciliation.test.ts
-          src/lib/__tests__/reconciliation-parallel.test.ts
-          src/lib/__tests__/reconciliation-bulk.test.ts
-          src/lib/native-adapters/__tests__/rust-chunk.adapter.test.ts
-          src/lib/native-adapters/__tests__/rust-upsert.adapter.test.ts
-          src/lib/source-adapters/__tests__/soroban.adapter.test.ts
           src/lib/source-adapters/__tests__/tw.adapter.test.ts
+          src/lib/source-adapters/__tests__/tw-indexer.normalize.test.ts
           src/repositories/__tests__/reconciliation.repository.test.ts
           src/services/__tests__/reconciliation.service.test.ts
           src/routes/reconciliation/__tests__/sync-escrows.handler.test.ts
+          src/lib/__tests__/escrow-state-machine.test.ts
+          src/lib/__tests__/stellar-wallet.test.ts
+          src/lib/__tests__/hmac-signature.test.ts
 
   cargo-test:
     runs-on: ubuntu-latest
@@ -150,9 +158,9 @@ jobs:
   # with jest.mock factories — so Jest runs entirely in-process under
   # testEnvironment: node and never opens a connection.
   #
-  # The Jest suites that exercise the Neon addons load their compiled binaries,
-  # so this job builds those addons before running Jest. Other addon-backed
-  # suites inject a fake through the exported test seam.
+  # x402-processor is the only remaining Neon addon. Its Jest suite loads the
+  # compiled binary, so this job builds it before running Jest; the x402
+  # middleware suite injects a fake through the exported test seam.
   webhook-test:
     runs-on: ubuntu-latest
     permissions:
@@ -181,14 +189,10 @@ jobs:
         run: npm ci
         working-directory: webhook
 
-      - name: Build native addons used by the Jest suite
+      - name: Build the x402-processor addon used by the Jest suite
         run: |
-          cargo build --release --manifest-path crates/Cargo.toml \
-            -p webhook-verifier -p escrow-state-machine -p x402-processor \
-            -p stellar-utils -p soroban-reconciler
-          for addon in webhook-verifier escrow-state-machine x402-processor stellar-utils soroban-reconciler; do
-            node crates/scripts/copy-native.js --crate="$addon"
-          done
+          cargo build --release --manifest-path crates/Cargo.toml -p x402-processor
+          node crates/scripts/copy-native.js --crate=x402-processor
 
       - name: Type-check
         run: npm --prefix webhook run type-check

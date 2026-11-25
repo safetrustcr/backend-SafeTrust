@@ -3,7 +3,7 @@
 /**
  * @file src/routes/reconciliation/sync-escrows.handler.ts
  * @description POST /reconciliation/sync-escrows — Hasura cron trigger target.
- * Orchestrates escrow synchronization across DB, TrustlessWork indexer, and Soroban.
+ * Orchestrates escrow synchronization between the DB and the TrustlessWork indexer.
  */
 
 import { Request, Response } from 'express'
@@ -11,13 +11,10 @@ import { ok, serverError } from '../../utils/response'
 import {
   fetchEscrowContractIds,
   syncEscrowsWithIndexer,
-  validateSorobanDrift,
   detectStaleEscrows,
   formatReconciliationSummary,
   SyncSummary,
-  DriftSummary,
   ReconciliationResponse,
-  runSorobanValidation,
 } from '../../services/reconciliation.service'
 import { logger } from '../../middleware/logger'
 
@@ -27,19 +24,13 @@ export interface SyncEscrowsPayload {
 
 export type SyncEscrowsResult = ReconciliationResponse
 
-export {
-  runSorobanValidation,
-  SyncSummary,
-  DriftSummary,
-  ReconciliationResponse,
-}
+export { SyncSummary, ReconciliationResponse }
 
 const STALE_ESCROW_DAYS = 7
-const NETWORK = process.env.STELLAR_NETWORK ?? 'testnet'
 
 /**
  * Handles the POST /reconciliation/sync-escrows trigger from Hasura cron job.
- * Synchronizes database escrow states against TrustlessWork indexer and optional Soroban RPC.
+ * Synchronizes database escrow states against the TrustlessWork indexer.
  *
  * @param req - Express request
  * @param res - Express response
@@ -55,9 +46,8 @@ export const syncEscrowsHandler = async (
   try {
     const contractIds = await fetchEscrowContractIds('safetrust')
     const sync = await syncEscrowsWithIndexer(contractIds)
-    const drift = await validateSorobanDrift(contractIds, NETWORK)
     const stale = await detectStaleEscrows(STALE_ESCROW_DAYS)
-    const summary = formatReconciliationSummary(sync, drift, stale, Date.now() - startTime)
+    const summary = formatReconciliationSummary(sync, stale, Date.now() - startTime)
 
     const level = summary.errors > 0 ? 'warn' : 'info'
     logger[level]('reconciliation.sync.completed', {
@@ -68,8 +58,6 @@ export const syncEscrowsHandler = async (
       unchanged: summary.unchanged,
       skipped: summary.skipped,
       stale: summary.staleCount,
-      sorobanDrift: summary.sorobanDrift,
-      sorobanCorrected: summary.sorobanCorrected,
       errors: summary.errors,
     })
 

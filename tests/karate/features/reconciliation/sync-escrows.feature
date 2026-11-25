@@ -33,10 +33,10 @@ Feature: Reconciliation — POST /reconciliation/sync-escrows
     And match response.data.staleCount == '#number'
     And match response.data.staleContractIds == '#[]'
     And match response.data.errors == '#number'
-    And match response.data.sorobanEnabled == false
-    And match response.data.sorobanDrift == 0
-    And match response.data.sorobanCorrected == 0
     And match response.data.durationMs == '#number'
+    # The Soroban drift check was removed with the soroban-reconciler crate.
+    And match response.data.sorobanEnabled == '#notpresent'
+    And match response.data.sorobanDrift == '#notpresent'
 
   # ───────────────────────────────────────────────────────────────────────────
   # Scenario 2: Idempotency — calling twice returns updated: 0 on the second call

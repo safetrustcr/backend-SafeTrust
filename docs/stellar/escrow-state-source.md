@@ -1,5 +1,12 @@
 # Escrow State Source Selection and Reconciliation Architecture
 
+> **Status: historical.** The `soroban-reconciler` crate, its adapter and the
+> `SOROBAN_*` settings described below were deleted in #755; the drift check
+> was never enabled. The state-source analysis still applies: an on-chain
+> check for ESC-02 would be written in TypeScript with
+> `@stellar/stellar-sdk/rpc`. See
+> [Crate Boundaries](../architecture/crate-boundaries.md).
+
 This document records the architectural decision regarding authoritative escrow
 state sources for SafeTrust, the removal of fabricated responses (Security Review
 Finding F1), the adapter validation boundaries, and the gap analysis between

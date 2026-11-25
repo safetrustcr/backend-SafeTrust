@@ -1,7 +1,6 @@
 'use strict'
 
 import db from '../db'
-import { hasuraRequest } from '../hasura'
 import {
   fetchEscrowsByContractIds,
 
@@ -12,21 +11,15 @@ import * as reconciliationRepository from '../../repositories/reconciliation.rep
 import {
   fetchEscrowContractIds,
   syncEscrowsWithIndexer,
-  validateSorobanDrift,
+  syncAllChunks,
+  CHUNK_SIZE,
   detectStaleEscrows,
   formatReconciliationSummary,
-  runSorobanValidation,
-  setSorobanReconcilerAddon,
   SyncSummary,
-  DriftSummary,
 } from '../reconciliation.service'
 
 jest.mock('../db', () => ({
   query: jest.fn(),
-}))
-
-jest.mock('../hasura', () => ({
-  hasuraRequest: jest.fn(),
 }))
 
 jest.mock('../../lib/source-adapters/tw.adapter', () => ({
@@ -37,11 +30,8 @@ jest.mock('../../lib/source-adapters/tw.adapter', () => ({
 
 describe('reconciliation.service', () => {
   beforeEach(() => {
+    jest.restoreAllMocks()
     jest.clearAllMocks()
-    setSorobanReconcilerAddon(null)
-    process.env.SOROBAN_VALIDATION_ENABLED = 'false'
-    process.env.RUST_CHUNK_PROCESSING_ENABLED = 'false'
-
   })
 
   // ─── 1. fetchEscrowContractIds ─────────────────────────────────────────────
@@ -113,9 +103,9 @@ describe('reconciliation.service', () => {
 
       ])
 
-      const upsertEscrowBatch = jest
+      const upsertEscrows = jest
 
-        .spyOn(reconciliationRepository, 'upsertEscrowBatch')
+        .spyOn(reconciliationRepository, 'upsertEscrows')
 
         .mockResolvedValueOnce({
 
@@ -134,7 +124,7 @@ describe('reconciliation.service', () => {
       expect(fetchEscrowsByContractIds).toHaveBeenCalledWith(contractIds)
 
       // Raw indexer rows are normalized before the write (tw-indexer.normalize.ts).
-      expect(upsertEscrowBatch).toHaveBeenCalledWith([
+      expect(upsertEscrows).toHaveBeenCalledWith([
         expect.objectContaining({ contractId: 'c1', status: 'created', escrowType: 'single_release' }),
       ])
 
@@ -173,7 +163,7 @@ describe('reconciliation.service', () => {
 
       jest
 
-        .spyOn(reconciliationRepository, 'upsertEscrowBatch')
+        .spyOn(reconciliationRepository, 'upsertEscrows')
 
         .mockRejectedValueOnce(new Error('database write failed'))
 
@@ -187,282 +177,54 @@ describe('reconciliation.service', () => {
     })
   })
 
-  // ─── 3. validateSorobanDrift & runSorobanValidation ────────────────────────
-  describe('validateSorobanDrift', () => {
-    it('returns disabled summary when SOROBAN_VALIDATION_ENABLED is false', async () => {
-      process.env.SOROBAN_VALIDATION_ENABLED = 'false'
+  // ─── 3. syncAllChunks ──────────────────────────────────────────────────────
+  describe('syncAllChunks', () => {
+    it('fetches every chunk in turn and keeps going after a failed chunk', async () => {
+      const ids = Array.from({ length: CHUNK_SIZE * 2 + 1 }, (_, i) => `c${i}`)
+      const calls: string[][] = []
+      ;(fetchEscrowsByContractIds as jest.Mock).mockImplementation(async (chunk: string[]) => {
+        calls.push(chunk)
+        if (calls.length === 2) throw new Error('indexer 503')
+        return []
+      })
+      jest
+        .spyOn(reconciliationRepository, 'upsertEscrows')
+        .mockResolvedValue({ updated: 0, unchanged: 0, skipped: 0 })
 
-      const result = await validateSorobanDrift(['c1', 'c2'], 'testnet')
+      const result = await syncAllChunks(ids)
 
-      expect(db.query).not.toHaveBeenCalled()
+      expect(calls.map((chunk) => chunk.length)).toEqual([CHUNK_SIZE, CHUNK_SIZE, 1])
+      expect(calls.flat()).toEqual(ids)
       expect(result).toEqual({
-        enabled: false,
-        drift: 0,
-        corrected: 0,
-        unresolved: 0,
-        errors: [],
+        chunks: 3,
+        updated: 0,
+        unchanged: 0,
+        skipped: 0,
+        errors: ['chunk_1: indexer 503'],
       })
     })
 
-    it('returns enabled but zero summary when contractIds is empty', async () => {
-      process.env.SOROBAN_VALIDATION_ENABLED = 'true'
-
-      const result = await validateSorobanDrift([], 'testnet')
-
-      expect(db.query).not.toHaveBeenCalled()
-      expect(result).toEqual({
-        enabled: true,
-        drift: 0,
-        corrected: 0,
-        unresolved: 0,
-        errors: [],
+    it('does not start the next chunk before the current one finishes', async () => {
+      const ids = Array.from({ length: CHUNK_SIZE * 3 }, (_, i) => `c${i}`)
+      let inFlight = 0
+      let maxInFlight = 0
+      ;(fetchEscrowsByContractIds as jest.Mock).mockImplementation(async () => {
+        inFlight++
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise((resolve) => setImmediate(resolve))
+        inFlight--
+        return []
       })
-    })
+      jest
+        .spyOn(reconciliationRepository, 'upsertEscrows')
+        .mockResolvedValue({ updated: 0, unchanged: 0, skipped: 0 })
 
+      await syncAllChunks(ids)
 
-    it('captures chunk error when soroban native addon is unavailable', async () => {
-      process.env.SOROBAN_VALIDATION_ENABLED = 'true'
-      setSorobanReconcilerAddon(null)
-
-      ;(db.query as jest.Mock).mockResolvedValueOnce({
-        rows: [{ contract_id: 'c1', status: 'ACTIVE', balance: '100' }],
-      })
-
-      const result = await validateSorobanDrift(['c1'], 'testnet')
-
-      expect(result.enabled).toBe(true)
-      expect(result.drift).toBe(0)
-      expect(result.corrected).toBe(0)
-      expect(result.errors.length).toBe(1)
-      expect(result.errors[0]).toContain('soroban_chunk_1: soroban-reconciler native addon is not available')
-    })
-
-    it('validates drift and preserves database state when auto-correction is disabled by default', async () => {
-      process.env.SOROBAN_VALIDATION_ENABLED = 'true'
-      delete process.env.SOROBAN_AUTO_CORRECT_ENABLED
-
-      const mockQueryEscrowStateBatch = jest.fn().mockReturnValue(
-        JSON.stringify({
-          status: 'COMPLETED',
-          balance: 0,
-        })
-      )
-
-      const mockReconcileBatch = jest.fn().mockReturnValue(
-        JSON.stringify({
-          in_sync: false,
-          discrepancies: [
-            {
-              field: 'status',
-              severity: 'critical',
-              in_database: 'ACTIVE',
-              on_chain: 'COMPLETED',
-            },
-          ],
-        })
-      )
-
-      setSorobanReconcilerAddon({
-        queryEscrowStateBatch: mockQueryEscrowStateBatch,
-        reconcileBatch: mockReconcileBatch,
-      })
-
-      ;(db.query as jest.Mock).mockResolvedValueOnce({
-        rows: [
-          {
-            contract_id: 'c1',
-            status: 'ACTIVE',
-            balance: '10000000',
-            marker: 'm',
-            approver: 'a',
-          },
-        ],
-      })
-
-      const result = await validateSorobanDrift(['c1'], 'testnet')
-
-      expect(mockQueryEscrowStateBatch).toHaveBeenCalledWith('c1', 'testnet')
-      // Auto-correction is disabled by default — Hasura mutation is NEVER called
-      expect(hasuraRequest).not.toHaveBeenCalled()
-      expect(result).toEqual({
-        enabled: true,
-        drift: 1,
-        corrected: 0,
-        unresolved: 0,
-        errors: [],
-      })
-    })
-
-    it('validates drift and auto-corrects critical discrepancies when SOROBAN_AUTO_CORRECT_ENABLED is true', async () => {
-      process.env.SOROBAN_VALIDATION_ENABLED = 'true'
-      process.env.SOROBAN_AUTO_CORRECT_ENABLED = 'true'
-
-      const mockQueryEscrowStateBatch = jest.fn().mockReturnValue(
-        JSON.stringify({
-          status: 'COMPLETED',
-          balance: 0,
-        })
-      )
-
-      const mockReconcileBatch = jest.fn().mockReturnValue(
-        JSON.stringify({
-          in_sync: false,
-          discrepancies: [
-            {
-              field: 'status',
-              severity: 'critical',
-              in_database: 'ACTIVE',
-              on_chain: 'COMPLETED',
-            },
-          ],
-        })
-      )
-
-      setSorobanReconcilerAddon({
-        queryEscrowStateBatch: mockQueryEscrowStateBatch,
-        reconcileBatch: mockReconcileBatch,
-      })
-
-      ;(db.query as jest.Mock).mockResolvedValueOnce({
-        rows: [
-          {
-            contract_id: 'c1',
-            status: 'ACTIVE',
-            balance: '10000000',
-            marker: 'm',
-            approver: 'a',
-          },
-        ],
-      })
-      ;(hasuraRequest as jest.Mock).mockResolvedValueOnce({ affected_rows: 1 })
-
-      const result = await validateSorobanDrift(['c1'], 'testnet')
-
-      expect(mockQueryEscrowStateBatch).toHaveBeenCalledWith('c1', 'testnet')
-      expect(hasuraRequest).toHaveBeenCalledWith(
-        expect.stringContaining('mutation CorrectDriftFromSoroban'),
-        {
-          contractId: 'c1',
-          status: 'COMPLETED',
-          balance: 0,
-        }
-      )
-      expect(result).toEqual({
-        enabled: true,
-        drift: 1,
-        corrected: 1,
-        unresolved: 0,
-        errors: [],
-      })
-    })
-
-
-    it('does not auto-correct when discrepancy severity is non-critical', async () => {
-      process.env.SOROBAN_VALIDATION_ENABLED = 'true'
-
-      setSorobanReconcilerAddon({
-        queryEscrowStateBatch: jest.fn().mockReturnValue(
-          JSON.stringify({ status: 'ACTIVE', balance: 100 })
-        ),
-        reconcileBatch: jest.fn().mockReturnValue(
-          JSON.stringify({
-            in_sync: false,
-            discrepancies: [
-              {
-                field: 'marker',
-                severity: 'warning',
-                in_database: 'm1',
-                on_chain: 'm2',
-              },
-            ],
-          })
-        ),
-      })
-
-      ;(db.query as jest.Mock).mockResolvedValueOnce({
-        rows: [{ contract_id: 'c1', status: 'ACTIVE', balance: '100' }],
-      })
-
-      const result = await validateSorobanDrift(['c1'], 'testnet')
-
-      expect(hasuraRequest).not.toHaveBeenCalled()
-      expect(result.drift).toBe(1)
-      expect(result.corrected).toBe(0)
+      expect(fetchEscrowsByContractIds).toHaveBeenCalledTimes(3)
+      expect(maxInFlight).toBe(1)
     })
   })
-
-  describe('runSorobanValidation', () => {
-    it('throws error when addon is not available', async () => {
-      setSorobanReconcilerAddon(null)
-
-      await expect(
-        runSorobanValidation(['c1'], {}, 'testnet')
-      ).rejects.toThrow('soroban-reconciler native addon is not available')
-    })
-
-    it('skips contract if not found in dbStateMap', async () => {
-      const mockQuery = jest.fn().mockReturnValue(JSON.stringify({ status: 'ACTIVE', balance: 100 }))
-      const mockReconcile = jest.fn()
-
-      setSorobanReconcilerAddon({
-        queryEscrowStateBatch: mockQuery,
-        reconcileBatch: mockReconcile,
-      })
-
-      const result = await runSorobanValidation(['c1'], {}, 'testnet')
-
-      expect(mockQuery).toHaveBeenCalledWith('c1', 'testnet')
-      expect(mockReconcile).not.toHaveBeenCalled()
-      expect(result).toEqual({ drifted: 0, corrected: 0, unresolved: 0 })
-    })
-
-    it('handles per-contract errors gracefully without crashing the chunk and preserves DB value as unresolved', async () => {
-      setSorobanReconcilerAddon({
-        queryEscrowStateBatch: jest.fn().mockImplementation(() => {
-          throw new Error('RPC error: contract not found')
-        }),
-        reconcileBatch: jest.fn(),
-      })
-
-      const result = await runSorobanValidation(
-        ['c1'],
-        { c1: { contract_id: 'c1', status: 'funded', balance: '100' } },
-        'testnet'
-      )
-
-      expect(result).toEqual({ drifted: 0, corrected: 0, unresolved: 1 })
-      expect(hasuraRequest).not.toHaveBeenCalled()
-    })
-
-    it('never auto-corrects or mutates DB when adapter fails or getHealth alone is returned (AC 1 & 9)', async () => {
-      setSorobanReconcilerAddon({
-        queryEscrowStateBatch: jest.fn().mockImplementation(() => {
-          throw new Error(
-            'Missing contract data: getHealth confirms node reachability but does not establish contract state'
-          )
-        }),
-        reconcileBatch: jest.fn(),
-      })
-
-      const result = await runSorobanValidation(
-        ['CAZTM2P4QYFODK3Q242A5Q24P2BODU3RQQN4S3Q4Z4V6R7S8T9U0V1W2'],
-        {
-          CAZTM2P4QYFODK3Q242A5Q24P2BODU3RQQN4S3Q4Z4V6R7S8T9U0V1W2: {
-            contract_id: 'CAZTM2P4QYFODK3Q242A5Q24P2BODU3RQQN4S3Q4Z4V6R7S8T9U0V1W2',
-            status: 'funded',
-            balance: '100',
-          },
-        },
-        'testnet'
-      )
-
-      // Verifies getHealth alone NEVER triggers status, balance, or participant updates
-      expect(hasuraRequest).not.toHaveBeenCalled()
-      expect(result.corrected).toBe(0)
-      expect(result.unresolved).toBe(1)
-    })
-  })
-
 
   // ─── 4. detectStaleEscrows ─────────────────────────────────────────────────
   describe('detectStaleEscrows', () => {
@@ -536,33 +298,23 @@ describe('reconciliation.service', () => {
       errors: ['chunk_0: error 1'],
     }
 
-    const driftSample: DriftSummary = {
-      enabled: true,
-      drift: 1,
-      corrected: 1,
-      errors: ['soroban_chunk_1: timeout'],
-    }
-
     it('is a pure function that does not mutate its inputs', () => {
       const syncInput = { ...syncSample, errors: [...syncSample.errors] }
-      const driftInput = { ...driftSample, errors: [...driftSample.errors] }
       const staleInput = ['stale_1', 'stale_2']
 
       const syncSnapshot = JSON.stringify(syncInput)
-      const driftSnapshot = JSON.stringify(driftInput)
       const staleSnapshot = JSON.stringify(staleInput)
 
-      const response = formatReconciliationSummary(syncInput, driftInput, staleInput, 150)
+      const response = formatReconciliationSummary(syncInput, staleInput, 150)
 
       expect(JSON.stringify(syncInput)).toBe(syncSnapshot)
-      expect(JSON.stringify(driftInput)).toBe(driftSnapshot)
       expect(JSON.stringify(staleInput)).toBe(staleSnapshot)
       expect(response).toBeDefined()
     })
 
     it('formats normal reconciliation results into expected response structure', () => {
       const stale = ['stale_1', 'stale_2']
-      const response = formatReconciliationSummary(syncSample, driftSample, stale, 250)
+      const response = formatReconciliationSummary(syncSample, stale, 250)
 
       expect(response).toEqual({
         success: true,
@@ -573,11 +325,7 @@ describe('reconciliation.service', () => {
         skipped: 0,
         staleCount: 2,
         staleContractIds: ['stale_1', 'stale_2'],
-        errors: 2, // 1 from sync + 1 from drift
-        sorobanEnabled: true,
-        sorobanDrift: 1,
-        sorobanCorrected: 1,
-        sorobanUnresolved: 0,
+        errors: 1,
         durationMs: 250,
       })
       expect(response.message).toBeUndefined()
@@ -592,14 +340,7 @@ describe('reconciliation.service', () => {
         skipped: 0,
         errors: [],
       }
-      const emptyDrift: DriftSummary = {
-        enabled: false,
-        drift: 0,
-        corrected: 0,
-        errors: [],
-      }
-
-      const response = formatReconciliationSummary(emptySync, emptyDrift, [], 10)
+      const response = formatReconciliationSummary(emptySync, [], 10)
 
       expect(response).toEqual({
         success: true,
@@ -612,10 +353,6 @@ describe('reconciliation.service', () => {
         staleCount: 0,
         staleContractIds: [],
         errors: 0,
-        sorobanEnabled: false,
-        sorobanDrift: 0,
-        sorobanCorrected: 0,
-        sorobanUnresolved: 0,
         durationMs: 10,
       })
 
@@ -626,7 +363,6 @@ describe('reconciliation.service', () => {
 
       const response = formatReconciliationSummary(
         syncSample,
-        { enabled: false, drift: 0, corrected: 0, errors: [] },
         manyStale,
         100
       )

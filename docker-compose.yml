@@ -88,8 +88,6 @@ services:
       # x402 is quarantined from the eligibility path until F2/F3/F8 are closed.
       X402_ENABLED: ${X402_ENABLED:-false}
       X402_SETTLE_ENABLED: ${X402_SETTLE_ENABLED:-false}
-      # The current Soroban reader fabricates state; keep drift validation off.
-      SOROBAN_VALIDATION_ENABLED: ${SOROBAN_VALIDATION_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy
