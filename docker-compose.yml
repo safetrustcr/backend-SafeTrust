@@ -27,8 +27,9 @@ services:
         postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
       PG_DATABASE_URL: >-
         postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
-      HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
-      HASURA_GRAPHQL_DEV_MODE: "true"
+      HASURA_GRAPHQL_ENABLE_CONSOLE: ${HASURA_GRAPHQL_ENABLE_CONSOLE:-false}
+      HASURA_GRAPHQL_DEV_MODE: ${HASURA_GRAPHQL_DEV_MODE:-false}
+      HASURA_GRAPHQL_CORS_DOMAIN: ${CORS_ALLOWED_ORIGINS:-http://localhost:4321}
       HASURA_GRAPHQL_ENABLED_LOG_TYPES: >-
         startup, http-log, webhook-log, websocket-log, query-log
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:?HASURA_ADMIN_SECRET must be set in .env or the environment}
