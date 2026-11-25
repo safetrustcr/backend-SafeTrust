@@ -92,4 +92,15 @@ describe('reconciliation repository', () => {
       ['hotel_industry', 7]
     )
   })
+
+  it('passes a non-default tenant as the last upsert param', async () => {
+    db.query.mockResolvedValueOnce({ rows: [{ contract_id: 'C1' }] })
+
+    await expect(
+      upsertEscrows([{ contractId: 'C1' }], 'hotel_industry')
+    ).resolves.toEqual({ updated: 1, unchanged: 0, skipped: 0 })
+
+    const [, params] = db.query.mock.calls[0]
+    expect(params[params.length - 1]).toBe('hotel_industry')
+  })
 })

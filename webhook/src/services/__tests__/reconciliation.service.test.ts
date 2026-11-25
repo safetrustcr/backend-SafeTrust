@@ -136,7 +136,7 @@ describe('reconciliation.service', () => {
       // Raw indexer rows are normalized before the write (tw-indexer.normalize.ts).
       expect(upsertEscrowBatch).toHaveBeenCalledWith([
         expect.objectContaining({ contractId: 'c1', status: 'created', escrowType: 'single_release' }),
-      ])
+      ], 'safetrust')
 
       expect(result).toEqual({
         totalEscrows: 3,

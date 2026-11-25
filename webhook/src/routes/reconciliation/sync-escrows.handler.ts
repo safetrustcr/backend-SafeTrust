@@ -87,41 +87,47 @@ export const syncEscrowsHandler = async (
     const staleIds: string[] = []
 
     for (const tenantId of tenantIds) {
-      const contractIds = await fetchEscrowContractIds(tenantId)
-      const sync = await syncEscrowsWithIndexer(contractIds, {
-        applyTransitions: true,
-        tenantId,
-      })
-      const drift = await validateSorobanDrift(contractIds, NETWORK, {
-        skipStatusCorrectionFor: sync.transitions?.failedContractIds,
-        tenantId,
-      })
-      const stale = await detectStaleEscrows(STALE_ESCROW_DAYS, tenantId)
+      try {
+        const contractIds = await fetchEscrowContractIds(tenantId)
+        const sync = await syncEscrowsWithIndexer(contractIds, {
+          applyTransitions: true,
+          tenantId,
+        })
+        const drift = await validateSorobanDrift(contractIds, NETWORK, {
+          skipStatusCorrectionFor: sync.transitions?.failedContractIds,
+          tenantId,
+        })
+        const stale = await detectStaleEscrows(STALE_ESCROW_DAYS, tenantId)
 
-      syncTotals.totalEscrows += sync.totalEscrows
-      syncTotals.chunks += sync.chunks
-      syncTotals.updated += sync.updated
-      syncTotals.unchanged += sync.unchanged
-      syncTotals.skipped += sync.skipped
-      syncTotals.errors.push(...sync.errors)
-      driftTotals.enabled = driftTotals.enabled || drift.enabled
-      driftTotals.drift += drift.drift
-      driftTotals.corrected += drift.corrected
-      driftTotals.unresolved =
-        (driftTotals.unresolved ?? 0) + (drift.unresolved ?? 0)
-      driftTotals.errors.push(...drift.errors)
-      staleIds.push(...stale)
-      if (sync.transitions) {
-        transitionsTotals.detected += sync.transitions.detected
-        transitionsTotals.applied += sync.transitions.applied
-        transitionsTotals.duplicates += sync.transitions.duplicates
-        transitionsTotals.failed += sync.transitions.failed
-        transitionsTotals.errors.push(...sync.transitions.errors)
-        for (const contractId of sync.transitions.failedContractIds) {
-          if (!transitionsTotals.failedContractIds.includes(contractId)) {
-            transitionsTotals.failedContractIds.push(contractId)
+        syncTotals.totalEscrows += sync.totalEscrows
+        syncTotals.chunks += sync.chunks
+        syncTotals.updated += sync.updated
+        syncTotals.unchanged += sync.unchanged
+        syncTotals.skipped += sync.skipped
+        syncTotals.errors.push(...sync.errors)
+        driftTotals.enabled = driftTotals.enabled || drift.enabled
+        driftTotals.drift += drift.drift
+        driftTotals.corrected += drift.corrected
+        driftTotals.unresolved =
+          (driftTotals.unresolved ?? 0) + (drift.unresolved ?? 0)
+        driftTotals.errors.push(...drift.errors)
+        staleIds.push(...stale)
+        if (sync.transitions) {
+          transitionsTotals.detected += sync.transitions.detected
+          transitionsTotals.applied += sync.transitions.applied
+          transitionsTotals.duplicates += sync.transitions.duplicates
+          transitionsTotals.failed += sync.transitions.failed
+          transitionsTotals.errors.push(...sync.transitions.errors)
+          for (const contractId of sync.transitions.failedContractIds) {
+            if (!transitionsTotals.failedContractIds.includes(contractId)) {
+              transitionsTotals.failedContractIds.push(contractId)
+            }
           }
         }
+      } catch (error) {
+        const message = (error as Error).message ?? String(error)
+        logger.error('reconciliation.sync.tenant_failed', { tenantId, error: message })
+        syncTotals.errors.push(`tenant ${tenantId}: ${message}`)
       }
     }
 

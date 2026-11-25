@@ -180,7 +180,10 @@ describe('syncEscrowsHandler', () => {
     )
   })
   it('handles fatal database error with 500 status', async () => {
-    ;(reconciliationService.fetchEscrowContractIds as jest.Mock).mockRejectedValueOnce(
+    // Tenant discovery failure is fatal (500): a per-tenant failure is
+    // recorded in the summary instead, so the rejection must come from
+    // listReconciliationTenants, not from a single tenant's sync.
+    ;(reconciliationService.listReconciliationTenants as jest.Mock).mockRejectedValueOnce(
       new Error('DB connection failed')
     )
 
@@ -199,5 +202,41 @@ describe('syncEscrowsHandler', () => {
         error: 'Reconciliation failed',
       })
     )
+  it('records a per-tenant failure and still syncs the next tenant', async () => {
+    ;(reconciliationService.listReconciliationTenants as jest.Mock).mockResolvedValue([
+      'safetrust',
+      'hotel_industry',
+    ])
+    ;(reconciliationService.syncEscrowsWithIndexer as jest.Mock)
+      .mockRejectedValueOnce(new Error('indexer unavailable'))
+      .mockResolvedValueOnce({
+        totalEscrows: 1,
+        chunks: 1,
+        updated: 1,
+        unchanged: 0,
+        skipped: 0,
+        errors: [],
+      })
+
+    const req = {} as Request
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    } as unknown as Response
+
+    await syncEscrowsHandler(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(200)
+    expect(res.json).toHaveBeenCalledWith(
+      {
+        success: true,
+        data: expect.objectContaining({
+          totalEscrows: 1,
+          updated: 1,
+          errors: 1,
+        }),
+      }
+    )
+  })
   })
 })

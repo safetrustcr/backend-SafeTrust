@@ -93,7 +93,7 @@ pub const UPDATE_ROW_SQL: &str = "
 pub const INSERT_ROW_SQL: &str = "
     INSERT INTO safetrust.trustless_work_escrows
       (contract_id, status, amount, balance, marker, approver, releaser, escrow_type, ledger_seq, network, updated_at, tenant_id)
-    VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NULLIF(TRIM($10), ''), NOW(), 'safetrust')
+    VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NULLIF(TRIM($10), ''), NOW(), $11)
     ON CONFLICT (contract_id) DO NOTHING
 ";
 
@@ -147,6 +147,8 @@ pub struct EscrowUpdate {
     pub ledger_seq: Option<i64>,
     #[serde(default)]
     pub network: Option<String>,
+    #[serde(default)]
+    pub tenant_id: String,
 }
 
 /// Stored database state for an escrow record.
@@ -617,6 +619,11 @@ async fn run_bulk_upsert(
                 } else {
                     u.amount.as_str()
                 };
+                let tenant_id = if u.tenant_id.is_empty() {
+                    "safetrust"
+                } else {
+                    u.tenant_id.as_str()
+                };
 
                 if stored.is_some() {
                     let rows = tx
@@ -653,6 +660,7 @@ async fn run_bulk_upsert(
                                 &escrow_type,
                                 &new_ledger_seq,
                                 &u.network,
+                                &tenant_id,
                             ],
                         )
                         .await

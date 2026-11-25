@@ -24,6 +24,7 @@ interface BulkUpsertRow {
   escrow_type: string
   ledger_seq: string | null
   network: string | null
+  tenant_id: string
 }
 
 const SQL_TRANSITION_RULES = Object.entries(CANONICAL_TRANSITIONS)
@@ -61,7 +62,7 @@ const UPSERT_ESCROW_SQL = `
   -- comparisons, and without casts Postgres deduces conflicting types for them
   -- ("inconsistent types deduced for parameter") and rejects every row.
   SELECT $1::text, $2::text, $3::numeric, $4::numeric, $5::text, $6::text, $7::text,
-         $8::text, NULL, $9::text, NOW(), 'safetrust'
+         $8::text, NULL, $9::text, NOW(), $10::text
   WHERE $2::text IN ('created', 'pending_funding')
      OR EXISTS (
        SELECT 1 FROM safetrust.trustless_work_escrows existing
@@ -128,7 +129,7 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     network,
     updated_at,
     tenant_id
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust')
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), $11::text)
   ON CONFLICT (contract_id)
   DO UPDATE SET
     status     = EXCLUDED.status,
@@ -251,7 +252,7 @@ export async function fetchEscrowTransitionStates(
   return result?.rows ?? []
 }
 
-export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResult> {
+export async function upsertEscrows(escrows: EscrowRecord[], tenantId = 'safetrust'): Promise<UpsertResult> {
   let updated = 0
   let unchanged = 0
   let skipped = 0
@@ -281,10 +282,12 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
               ...params,
               typeof seq === 'bigint' ? seq.toString() : seq,
               escrow.network ?? null,
+              tenantId,
             ])
           : await db.query<{ contract_id: string }>(UPSERT_ESCROW_SQL, [
               ...params,
               escrow.network ?? null,
+              tenantId,
             ])
 
       if (result.rows.length > 0) {
@@ -328,7 +331,7 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
   return { updated, unchanged, skipped }
 }
 
-export async function upsertEscrowsBulk(escrows: EscrowRecord[]): Promise<UpsertResult> {
+export async function upsertEscrowsBulk(escrows: EscrowRecord[], tenantId = 'safetrust'): Promise<UpsertResult> {
   assertBulkUpsertAvailable()
 
   let skipped = 0
@@ -359,6 +362,7 @@ export async function upsertEscrowsBulk(escrows: EscrowRecord[]): Promise<Upsert
       escrow_type: escrow.escrowType ?? 'single_release',
       ledger_seq: seq == null ? null : typeof seq === 'bigint' ? seq.toString() : String(seq),
       network: escrow.network ?? null,
+      tenant_id: tenantId,
     }
   })
 
@@ -375,17 +379,17 @@ export async function upsertEscrowsBulk(escrows: EscrowRecord[]): Promise<Upsert
   }
 }
 
-export async function upsertEscrowBatch(escrows: EscrowRecord[]): Promise<UpsertResult> {
+export async function upsertEscrowBatch(escrows: EscrowRecord[], tenantId = 'safetrust'): Promise<UpsertResult> {
   if (!isRustBulkUpsertEnabled() || escrows.length === 0) {
-    return upsertEscrows(escrows)
+    return upsertEscrows(escrows, tenantId)
   }
   try {
-    return await upsertEscrowsBulk(escrows)
+    return await upsertEscrowsBulk(escrows, tenantId)
   } catch (err) {
     console.error(
       `[reconciliation] ⚠️  Bulk upsert failed, using row-by-row: ${(err as Error).message}`
     )
-    return upsertEscrows(escrows)
+    return upsertEscrows(escrows, tenantId)
   }
 }
 

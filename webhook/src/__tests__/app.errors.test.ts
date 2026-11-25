@@ -14,12 +14,13 @@ jest.mock('../../../crates/stellar-utils', () => ({
 jest.mock('../repositories/reconciliation.repository', () => ({
   ...jest.requireActual('../repositories/reconciliation.repository'),
   fetchEscrowContractIds: jest.fn(),
+  fetchTenantIds: jest.fn().mockResolvedValue(['safetrust']),
 }))
 
-import { fetchEscrowContractIds } from '../repositories/reconciliation.repository'
+import { fetchTenantIds } from '../repositories/reconciliation.repository'
 import { logger } from '../middleware/logger'
 
-const mockedFetchContractIds = fetchEscrowContractIds as jest.MockedFunction<typeof fetchEscrowContractIds>
+const mockedFetchTenantIds = fetchTenantIds as jest.MockedFunction<typeof fetchTenantIds>
 const RECONCILE_PATH = '/reconciliation/sync-escrows'
 const ALLOWED_ORIGIN = 'http://localhost:3001'
 
@@ -93,7 +94,10 @@ describe('app error classification', () => {
   })
 
   it('answers an unexpected failure with a sanitized 500 and a correlated log', async () => {
-    mockedFetchContractIds.mockRejectedValue(
+    // Tenant discovery failure is fatal (500): a per-tenant failure is
+    // recorded in the summary instead, so the rejection must come from
+    // listReconciliationTenants, not from a single tenant's sync.
+    mockedFetchTenantIds.mockRejectedValueOnce(
       Object.assign(new Error('relation "safetrust.trustless_work_escrows" does not exist'), {
         details: [{ message: 'hasura: field "secret_column" not found' }],
       })

@@ -377,7 +377,7 @@ async function writeIndexerEscrows(
     }
   }
 
-  const counts = await upsertEscrowBatch(escrowsToUpsert)
+  const counts = await upsertEscrowBatch(escrowsToUpsert, options.tenantId ?? 'safetrust')
   return {
     ...counts,
     skipped: counts.skipped + invalid.length + withheld,
