@@ -41,11 +41,15 @@
       "**/__tests__/**/*.test.ts",
       "**/?(*.)+(spec|test).ts"
     ],
+    "moduleNameMapper": {
+      "^@stellar/stellar-sdk$": "<rootDir>/node_modules/@stellar/stellar-sdk/dist/stellar-sdk.js"
+    },
     "transform": {
       "^.+\\.tsx?$": "ts-jest"
     }
   },
   "dependencies": {
+    "@stellar/stellar-sdk": "^17.4.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

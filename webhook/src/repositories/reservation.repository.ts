@@ -131,14 +131,43 @@ export async function findReservationTenantId(
 export async function linkEscrowToReservation(
   reservationId: string,
   escrowId: string,
-  tenantId: string
+  tenantId: string,
+  client?: TransactionClient
 ): Promise<void> {
+  if (client) {
+    const result = await client.query(
+      `
+        UPDATE safetrust.reservations
+        SET
+          escrow_id = $1,
+          status = 'escrow_created',
+          updated_at = NOW()
+        WHERE id = $2
+          AND tenant_id = $3
+          AND status = 'pending'
+          AND (escrow_id IS NULL OR escrow_id = $1)
+      `,
+      [escrowId, reservationId, tenantId]
+    ) as { rowCount?: number }
+    if (!result?.rowCount) {
+      throw new Error(
+        `Reservation ${reservationId} was not linked: no matching pending unlinked reservation for tenant ${tenantId}`
+      )
+    }
+    return
+  }
+
   const mutation = `
     mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!, $tenantId: String!) {
       update_reservations: update_safetrust_reservations(
         where: {
           id: { _eq: $reservationId }
           tenantId: { _eq: $tenantId }
+          status: { _eq: "pending" }
+          _or: [
+            { escrowId: { _is_null: true } }
+            { escrowId: { _eq: $escrowId } }
+          ]
         }
         _set: {
           escrowId: $escrowId,
@@ -159,11 +188,10 @@ export async function linkEscrowToReservation(
     tenantId,
   })
 
-  // No row means the reservation is missing or belongs to another tenant.
-  // Throw so the caller leaves the webhook event unprocessed for a retry.
+  // No row means the reservation is missing, already linked to another escrow, or not pending.
   if (!data?.update_reservations?.affected_rows) {
     throw new Error(
-      `Reservation ${reservationId} was not linked: no matching reservation for tenant ${tenantId}`
+      `Reservation ${reservationId} was not linked: no matching pending unlinked reservation for tenant ${tenantId}`
     )
   }
 }

@@ -250,3 +250,43 @@ stateDiagram-v2
     resolved --> [*]
     cancelled --> [*]
 ```
+
+---
+
+## 9. Escrow Verification Against Booking (Issue #832)
+
+To prevent financial drift, malicious contract substitution, unauthorized roles, and network mismatch, SafeTrust verifies escrows against their booking reservations at initialization, during confirmation, and on every reconciliation run.
+
+### 9.1 Verification Rules
+
+1. **Reservation Ownership & State:**
+   - The booking reservation must be in `pending` state when initialized.
+   - The reservation must not already be linked to a different escrow (idempotent re-initialization with the same contract ID is permitted).
+   - The authenticated caller must be the reservation's guest (unless an authorized server-side agent flow is used).
+   - Escrow `engagementId` (or `reservation_id` in metadata) must match the reservation ID.
+
+2. **Role Verification & Key Rotation:**
+   - **`approver`**: Must match the guest's verified primary Stellar wallet address.
+   - **`receiver` / `marker`**: Must match the host's verified primary Stellar wallet address.
+   - **`platformAddress` / `releaseSigner` / `disputeResolver`**: Must match SafeTrust's configured operational wallets (`SAFETRUST_PLATFORM_WALLET`, `SAFETRUST_RELEASE_SIGNER`, `SAFETRUST_DISPUTE_RESOLVER`), supporting operational key rotation without hardcoding.
+
+3. **Asset & Network Integrity:**
+   - Asset code must be `USDC`.
+   - Asset issuer must match the official network USDC issuer (`GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` for mainnet, `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` for testnet).
+   - Token contract ID must match the official USDC SAC contract.
+   - Server-configured network (`getStellarNetwork()`) is strictly enforced; client requests attempting to override `network` are rejected with HTTP 400.
+
+4. **Full Funding & Exact Stroop Comparison:**
+   - Financial comparisons use exact integer stroops (`1 unit = 10,000,000 stroops`) via `amountToStroops` to eliminate floating-point rounding errors.
+   - **`funded`**: Requires `balance >= targetAmount`.
+   - **`partially_funded`**: Derived when `0 < balance < targetAmount`. Partial funding **never** advances the reservation to `funded`.
+   - **`untrusted`**: Flagged when on-chain state contradicts indexer claims or booking constraints.
+
+5. **Signed XDR Inspection:**
+   - Signed XDR submitted via helper is pre-validated with `@stellar/stellar-sdk` using the configured network passphrase.
+   - Checks operations against dangerous calls (`setOptions`, `accountMerge`, `inflation`, `manageData`) and validates that smart contract function calls invoke authorized escrow methods (`initialize`, `fund`, `approve`, `release`, `dispute`, `resolve`).
+
+6. **Audit Table & Verification Script:**
+   - Verification events and mismatch details are persisted to `safetrust.escrow_verification_events`.
+   - Operators can execute `npx ts-node scripts/audit-escrows.ts` to audit all existing escrows and linked reservations.
+

@@ -35,7 +35,16 @@ export const initializeEscrowHandler = async (
   }
 
   try {
-    const result = await initializeEscrowService(req.body, getPlatformTenantId());
+    const callerUserId =
+      (req as any).user?.uid ||
+      (req as any).user?.id ||
+      (req.headers['x-user-id'] as string | undefined);
+    const isServerAgent = req.headers['x-agent-booking'] === 'true' || (req as any).isAgent;
+
+    const result = await initializeEscrowService(req.body, getPlatformTenantId(), {
+      callerUserId,
+      isServerAgent,
+    });
 
     if (result.isDuplicate) {
       return duplicate(res, result.eventId);

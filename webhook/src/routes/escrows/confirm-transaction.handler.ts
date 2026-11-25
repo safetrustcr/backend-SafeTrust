@@ -15,6 +15,7 @@ import {
   SubmissionPath,
 } from '../../services/confirmation.service'
 import { assertSignedXdrCannotAdvanceStatus } from '../../services/escrow.service'
+import { getStellarNetwork } from '../../config/stellar'
 
 export interface ConfirmTransactionPayload {
   submissionPath?: SubmissionPath
@@ -31,13 +32,20 @@ export async function confirmTransactionHandler(
   req: Request<{}, {}, ConfirmTransactionPayload>,
   res: Response
 ): Promise<Response> {
+  const serverNetwork = getStellarNetwork()
+  if (req.body.network && req.body.network !== serverNetwork) {
+    return res.status(400).json({
+      error: `Network mismatch: client requested "${req.body.network}" but server operates on "${serverNetwork}"`,
+    })
+  }
+
   const {
     submissionPath = 'external',
     txHash,
     signedXdr,
     escrowId,
     action,
-    network = (process.env.STELLAR_NETWORK as StellarNetwork) || 'testnet',
+    network = serverNetwork,
     isTWGenerated = true,
     signingOnly = false,
   } = req.body

@@ -16,8 +16,14 @@ import {
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
 import { amountToStroops } from '../lib/stellar-amounts';
+import {
+  verifyEscrowForReservation,
+  getReservationVerificationData,
+  recordEscrowVerificationEvent,
+  VerificationContext,
+} from './escrow-verification';
 
-export { TenantMismatchError };
+export { TenantMismatchError, VerificationContext };
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -274,7 +280,8 @@ export async function linkReservationToEscrow(
  */
 export async function initializeEscrow(
   body: unknown,
-  tenantId: string
+  tenantId: string,
+  context?: VerificationContext
 ): Promise<{ isDuplicate: boolean; eventId: string; escrow?: TrustlessWorkEscrow }> {
   const payload = validateEscrowInitializationPayload(body);
   const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
@@ -295,6 +302,26 @@ export async function initializeEscrow(
     ? await resolveReservationTenant(reservationId, tenantId)
     : tenantId;
 
+  if (reservationId) {
+    const reservationData = await getReservationVerificationData(reservationId);
+    if (reservationData) {
+      const verification = verifyEscrowForReservation(payload, reservationData, context);
+      await recordEscrowVerificationEvent({
+        reservationId,
+        contractId: payload.contract_id,
+        result: verification.valid ? 'valid' : 'mismatch',
+        mismatches: verification.mismatches,
+        tenantId: escrowTenantId,
+      });
+
+      if (!verification.valid) {
+        throw new EscrowValidationError(
+          `Escrow verification failed for reservation ${reservationId}: ${verification.mismatches.join('; ')}`
+        );
+      }
+    }
+  }
+
   const escrow = await persistEscrow(payload, escrowTenantId);
 
   // The upsert on contract_id returns an existing row unchanged, so a row
@@ -307,6 +334,13 @@ export async function initializeEscrow(
 
   if (reservationId) {
     await linkReservationToEscrow(reservationId, escrow.id, escrowTenantId);
+    await recordEscrowVerificationEvent({
+      escrowId: escrow.id,
+      reservationId,
+      contractId: payload.contract_id,
+      result: 'valid',
+      tenantId: escrowTenantId,
+    });
   }
 
   await markWebhookEventProcessed(eventId);
