@@ -30,9 +30,17 @@ function buildSignedXdr(): { xdr: string; hash: string } {
   return { xdr: tx.toXDR(), hash: tx.hash().toString('hex') }
 }
 
-jest.mock('../db', () => ({
-  query: jest.fn(),
-}))
+jest.mock('../db', () => {
+  const query = jest.fn()
+  return {
+    query,
+    withTransaction: jest.fn(async (fn: any) => fn({ query })),
+    default: {
+      query,
+      withTransaction: jest.fn(async (fn: any) => fn({ query })),
+    },
+  }
+})
 
 const mockedDbQuery = db.query as jest.MockedFunction<typeof db.query>
 

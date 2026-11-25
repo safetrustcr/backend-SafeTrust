@@ -31,6 +31,9 @@ dump_logs_and_exit() {
   exit "$status"
 }
 
+# Ensure test stack starts from an empty database every run
+docker compose -p safetrust-test -f docker-compose-test.yml "${ENV_FILE_FLAGS[@]}" down -v --remove-orphans
+
 set +e
 docker compose -p safetrust-test -f docker-compose-test.yml "${ENV_FILE_FLAGS[@]}" run --rm --build karate
 run_status=$?
