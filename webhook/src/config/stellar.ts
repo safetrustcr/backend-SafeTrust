@@ -72,12 +72,16 @@ export function getStellarConfig(): StellarNetworkConfig {
   }
 }
 
-function normalizeOrigin(urlStr?: string): string {
-  if (!urlStr) return ''
+function parseHttpUrl(urlStr?: string): URL | null {
+  if (!urlStr) return null
   try {
-    return new URL(urlStr).origin.toLowerCase()
+    const parsed = new URL(urlStr)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed
+    }
+    return null
   } catch {
-    return urlStr.replace(/\/+$/, '').toLowerCase()
+    return null
   }
 }
 
@@ -105,31 +109,54 @@ export function validateStellarConfig(): { valid: boolean; errors: string[] } {
   checkAddress('SAFETRUST_RELEASE_SIGNER', config.releaseSigner)
   checkAddress('SAFETRUST_DISPUTE_RESOLVER', config.disputeResolver)
 
-  const horizonOrigin = normalizeOrigin(config.horizonUrl)
-  const twOrigin = normalizeOrigin(config.trustlessWorkApiUrl)
+  const horizonParsed = parseHttpUrl(config.horizonUrl)
+  if (!horizonParsed) {
+    errors.push(`Invalid Horizon URL: "${config.horizonUrl}". Must be a valid HTTP(S) URL.`)
+  }
 
-  // Cross-network sanity check
-  if (config.network === 'mainnet') {
-    if (horizonOrigin.includes('testnet')) {
-      errors.push(
-        `Configuration mismatch: mainnet configured with testnet Horizon URL: ${config.horizonUrl}`
-      )
-    }
-    if (twOrigin.includes('dev.api')) {
-      errors.push(
-        `Configuration mismatch: mainnet configured with dev Trustless Work API: ${config.trustlessWorkApiUrl}`
-      )
-    }
-  } else if (config.network === 'testnet') {
-    if (horizonOrigin === 'https://horizon.stellar.org') {
-      errors.push(
-        `Configuration mismatch: testnet configured with public mainnet Horizon URL: ${config.horizonUrl}`
-      )
-    }
-    if (twOrigin === 'https://api.trustlesswork.com') {
-      errors.push(
-        `Configuration mismatch: testnet configured with production Trustless Work API: ${config.trustlessWorkApiUrl}`
-      )
+  const twParsed = parseHttpUrl(config.trustlessWorkApiUrl)
+  if (!twParsed) {
+    errors.push(
+      `Invalid Trustless Work API URL: "${config.trustlessWorkApiUrl}". Must be a valid HTTP(S) URL.`
+    )
+  }
+
+  // Validate Trustless Work API key: mainnet requires it (accepting either env var name)
+  const twApiKey =
+    process.env.TRUSTLESSWORK_API_KEY || process.env.TRUSTLESS_WORK_API_KEY
+  if (config.network === 'mainnet' && !twApiKey) {
+    errors.push(
+      'Missing required Trustless Work API key (TRUSTLESSWORK_API_KEY or TRUSTLESS_WORK_API_KEY) for mainnet'
+    )
+  }
+
+  if (horizonParsed && twParsed) {
+    const horizonHostname = horizonParsed.hostname.toLowerCase()
+    const twHostname = twParsed.hostname.toLowerCase()
+
+    // Cross-network sanity check
+    if (config.network === 'mainnet') {
+      if (horizonHostname.includes('testnet')) {
+        errors.push(
+          `Configuration mismatch: mainnet configured with testnet Horizon URL: ${config.horizonUrl}`
+        )
+      }
+      if (twHostname.includes('dev.api')) {
+        errors.push(
+          `Configuration mismatch: mainnet configured with dev Trustless Work API: ${config.trustlessWorkApiUrl}`
+        )
+      }
+    } else if (config.network === 'testnet') {
+      if (horizonHostname === 'horizon.stellar.org') {
+        errors.push(
+          `Configuration mismatch: testnet configured with public mainnet Horizon URL: ${config.horizonUrl}`
+        )
+      }
+      if (twHostname === 'api.trustlesswork.com') {
+        errors.push(
+          `Configuration mismatch: testnet configured with production Trustless Work API: ${config.trustlessWorkApiUrl}`
+        )
+      }
     }
   }
 

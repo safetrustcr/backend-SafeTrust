@@ -577,7 +577,24 @@ export function validateSignedXdr(
       return { valid: false, error: 'Signed XDR contains no operations' }
     }
 
+    const effectiveAction = action ?? 'fund'
+    const PERMITTED_OPS_BY_ACTION: Record<string, string[]> = {
+      deploy: ['invokeHostFunction'],
+      fund: ['invokeHostFunction', 'payment'],
+      release: ['invokeHostFunction'],
+      refund: ['invokeHostFunction'],
+      resolve: ['invokeHostFunction'],
+    }
+    const permittedOps = PERMITTED_OPS_BY_ACTION[effectiveAction] ?? ['invokeHostFunction', 'payment']
+
     for (const op of tx.operations) {
+      if (!permittedOps.includes(op.type)) {
+        return {
+          valid: false,
+          error: `Security violation: unauthorized operation "${op.type}" for action "${effectiveAction}"`,
+        }
+      }
+
       if (
         op.type === 'setOptions' ||
         op.type === 'accountMerge' ||
@@ -662,10 +679,16 @@ export function validateSignedXdr(
           }
         }
       } else if (op.type === 'payment') {
-        if (action === 'deploy') {
+        if (effectiveAction === 'deploy') {
           return {
             valid: false,
             error: `Action mismatch: payment operation cannot be used for "deploy" action`,
+          }
+        }
+        if (expectedContractId && expectedContractId.startsWith('C')) {
+          return {
+            valid: false,
+            error: `Action mismatch: contract escrow ${expectedContractId} cannot be funded with classic payment operation`,
           }
         }
         if (
@@ -764,20 +787,52 @@ export async function processHelperSubmission(params: {
          LIMIT 1`,
         [escrowId]
       )
-      if (escrowRow.rows?.[0]) {
-        const r = escrowRow.rows[0]
-        const config = getStellarConfig()
-        expectedSources = [
-          r.approver,
-          r.guest_wallet,
-          r.marker,
-          r.host_wallet,
-          config.platformWallet,
-          config.releaseSigner,
-        ].filter(Boolean) as string[]
+      if (!escrowRow.rows?.[0]) {
+        return {
+          success: false,
+          stage: 'xdr_issued',
+          txHash: '',
+          escrowId,
+          action,
+          network,
+          submissionPath: 'helper',
+          error: `Escrow record not found for ${escrowId}: party verification failed`,
+        }
       }
-    } catch {
-      // If DB query fails, continue with structural validation
+      const r = escrowRow.rows[0]
+      const config = getStellarConfig()
+      expectedSources = [
+        r.approver,
+        r.guest_wallet,
+        r.marker,
+        r.host_wallet,
+        config.platformWallet,
+        config.releaseSigner,
+      ].filter(Boolean) as string[]
+
+      if (expectedSources.length === 0) {
+        return {
+          success: false,
+          stage: 'xdr_issued',
+          txHash: '',
+          escrowId,
+          action,
+          network,
+          submissionPath: 'helper',
+          error: `No authorized party sources found for escrow ${escrowId}`,
+        }
+      }
+    } catch (err) {
+      return {
+        success: false,
+        stage: 'xdr_issued',
+        txHash: '',
+        escrowId,
+        action,
+        network,
+        submissionPath: 'helper',
+        error: `Database lookup failure while verifying party sources for escrow ${escrowId}: ${(err as Error).message}`,
+      }
     }
   }
 

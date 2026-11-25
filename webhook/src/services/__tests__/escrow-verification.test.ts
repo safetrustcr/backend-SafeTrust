@@ -5,6 +5,29 @@ import {
 } from '../escrow-verification'
 
 describe('Centralized Escrow Verification (verifyEscrowForReservation)', () => {
+  const originalNetwork = process.env.STELLAR_NETWORK
+  const originalPlatformWallet = process.env.SAFETRUST_PLATFORM_WALLET
+  const originalReleaseSigner = process.env.SAFETRUST_RELEASE_SIGNER
+  const originalDisputeResolver = process.env.SAFETRUST_DISPUTE_RESOLVER
+
+  beforeEach(() => {
+    process.env.STELLAR_NETWORK = 'testnet'
+    delete process.env.SAFETRUST_PLATFORM_WALLET
+    delete process.env.SAFETRUST_RELEASE_SIGNER
+    delete process.env.SAFETRUST_DISPUTE_RESOLVER
+  })
+
+  afterAll(() => {
+    if (originalNetwork === undefined) delete process.env.STELLAR_NETWORK
+    else process.env.STELLAR_NETWORK = originalNetwork
+    if (originalPlatformWallet === undefined) delete process.env.SAFETRUST_PLATFORM_WALLET
+    else process.env.SAFETRUST_PLATFORM_WALLET = originalPlatformWallet
+    if (originalReleaseSigner === undefined) delete process.env.SAFETRUST_RELEASE_SIGNER
+    else process.env.SAFETRUST_RELEASE_SIGNER = originalReleaseSigner
+    if (originalDisputeResolver === undefined) delete process.env.SAFETRUST_DISPUTE_RESOLVER
+    else process.env.SAFETRUST_DISPUTE_RESOLVER = originalDisputeResolver
+  })
+
   const GUEST_WALLET = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
   const HOST_WALLET = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
   const PLATFORM_WALLET = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
@@ -171,7 +194,11 @@ describe('Centralized Escrow Verification (verifyEscrowForReservation)', () => {
       expect(result.valid).toBe(false)
       expect(result.mismatches.some((m) => m.includes('Platform address mismatch'))).toBe(true)
     } finally {
-      process.env.SAFETRUST_PLATFORM_WALLET = originalEnv
+      if (originalEnv === undefined) {
+        delete process.env.SAFETRUST_PLATFORM_WALLET
+      } else {
+        process.env.SAFETRUST_PLATFORM_WALLET = originalEnv
+      }
     }
   })
 

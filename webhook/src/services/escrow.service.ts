@@ -20,6 +20,7 @@ import {
   verifyEscrowForReservation,
   getReservationVerificationData,
   recordEscrowVerificationEvent,
+  markEscrowUntrusted,
   VerificationContext,
 } from './escrow-verification';
 
@@ -62,6 +63,7 @@ export interface TrustlessWorkEscrow {
   resolver?: string | null;
   assetCode?: string;
   assetIssuer?: string | null;
+  escrowMetadata?: Record<string, unknown> | null;
 }
 
 // ── Validation error ───────────────────────────────────────────────────────────
@@ -165,7 +167,13 @@ export function validateEscrowInitializationPayload(
   const rawObj = (body as Record<string, unknown>) ?? {};
   const resIdAlias = rawObj.reservation_id as string | undefined;
   const bookingResId = (rawObj.booking_metadata as Record<string, unknown> | undefined)?.reservation_id as string | undefined;
-  const engagementAlias = (rawObj.engagementId ?? rawObj.engagement_id) as string | undefined;
+  const rawEngagementId = rawObj.engagementId as string | undefined;
+  const rawEngagement_id = rawObj.engagement_id as string | undefined;
+
+  if (rawEngagementId && rawEngagement_id && rawEngagementId !== rawEngagement_id) {
+    throw new EscrowValidationError('Conflicting engagementId and engagement_id in payload');
+  }
+  const engagementAlias = rawEngagementId ?? rawEngagement_id;
 
   if (resIdAlias && bookingResId && resIdAlias !== bookingResId) {
     throw new EscrowValidationError('Conflicting reservation_id and booking_metadata.reservation_id in payload');
@@ -222,9 +230,15 @@ export async function persistEscrow(
         resolver
         assetCode
         assetIssuer
+        escrowMetadata
       }
     }
   `;
+
+  const tokenContractId =
+    (payload.raw as any)?.token_contract_id ??
+    (payload.raw as any)?.tokenContractId ??
+    null;
 
   const data = await hasuraTenantRequest<{
     insert_trustless_work_escrows_one?: TrustlessWorkEscrow;
@@ -242,7 +256,10 @@ export async function persistEscrow(
       amount: payload.amount,
       balance: 0,
       tenantId,
-      escrowMetadata: payload.raw,
+      escrowMetadata: {
+        ...(payload.raw ?? {}),
+        ...(tokenContractId ? { token_contract_id: tokenContractId } : {}),
+      },
     },
   });
 
@@ -345,6 +362,13 @@ export async function initializeEscrow(
   if (reservationId) {
     const reservationData = await getReservationVerificationData(reservationId);
     if (reservationData) {
+      const meta = (escrow.escrowMetadata ?? payload.raw ?? {}) as Record<string, unknown>;
+      const authoritativeEngagementId =
+        (meta.engagementId as string | undefined) ??
+        (meta.engagement_id as string | undefined) ??
+        (meta.reservation_id as string | undefined) ??
+        null;
+
       // Verify the persisted escrow record before linking to reservation
       const verification = verifyEscrowForReservation(
         {
@@ -358,36 +382,54 @@ export async function initializeEscrow(
           asset_code: escrow.assetCode ?? payload.asset_code,
           asset_issuer: escrow.assetIssuer ?? payload.asset_issuer,
           token_contract_id:
+            (meta.token_contract_id as string | undefined) ??
+            (meta.tokenContractId as string | undefined) ??
             (payload.raw as any)?.token_contract_id ??
             (payload.raw as any)?.tokenContractId ??
             null,
-          engagementId:
-            payload.reservation_id ??
-            (payload.raw as any)?.engagementId ??
-            (payload.raw as any)?.engagement_id ??
-            reservationId,
+          engagementId: authoritativeEngagementId,
         },
         reservationData,
         context
       );
 
-      await recordEscrowVerificationEvent({
-        escrowId: escrow.id,
-        reservationId,
-        contractId: escrow.contractId,
-        result: verification.valid ? 'valid' : 'mismatch',
-        mismatches: verification.mismatches,
-        tenantId: escrowTenantId,
-      });
-
       if (!verification.valid) {
+        await recordEscrowVerificationEvent({
+          escrowId: escrow.id,
+          reservationId,
+          contractId: escrow.contractId,
+          result: 'mismatch',
+          mismatches: verification.mismatches,
+          tenantId: escrowTenantId,
+        });
+
+        // Mark untrusted and emit operator alert for data mismatches (leave caller auth failures unchanged)
+        const isCallerAuthOnly = verification.mismatches.every((m) =>
+          m.includes('is not the reservation guest')
+        );
+        if (!isCallerAuthOnly) {
+          console.error('[escrow.service] OPERATOR ALERT: Escrow data mismatches reservation, marking untrusted', {
+            contractId: escrow.contractId,
+            escrowId: escrow.id,
+            reservationId,
+            mismatches: verification.mismatches,
+          });
+          await markEscrowUntrusted(
+            escrow.contractId,
+            `Initialization verification failed: ${verification.mismatches.join('; ')}`,
+            escrowTenantId
+          );
+        }
+
         throw new EscrowValidationError(
           `Escrow verification failed for reservation ${reservationId}: ${verification.mismatches.join('; ')}`
         );
       }
     }
 
-    await linkReservationToEscrow(reservationId, escrow.id, escrowTenantId);
+    if (reservationData?.status !== 'escrow_created' || reservationData?.escrow_id !== escrow.id) {
+      await linkReservationToEscrow(reservationId, escrow.id, escrowTenantId);
+    }
     await recordEscrowVerificationEvent({
       escrowId: escrow.id,
       reservationId,

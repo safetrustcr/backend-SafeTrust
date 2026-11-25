@@ -11,11 +11,16 @@ describe('Stellar Configuration', () => {
     'STELLAR_NETWORK',
     'HORIZON_URL',
     'TRUSTLESS_WORK_API_URL',
+    'TRUSTLESSWORK_API_URL',
     'SAFETRUST_PLATFORM_WALLET',
     'SAFETRUST_RELEASE_SIGNER',
     'SAFETRUST_DISPUTE_RESOLVER',
+    'ESCROW_RELEASER_ADDRESS',
+    'ESCROW_RESOLVER_ADDRESS',
     'USDC_ISSUER',
     'USDC_CONTRACT_ID',
+    'TRUSTLESSWORK_API_KEY',
+    'TRUSTLESS_WORK_API_KEY',
   ]
 
   beforeEach(() => {
@@ -113,10 +118,26 @@ describe('Stellar Configuration', () => {
 
     it('flags cross-network URL pollution', () => {
       process.env.STELLAR_NETWORK = 'mainnet'
+      process.env.TRUSTLESSWORK_API_KEY = 'test-key'
       process.env.HORIZON_URL = 'https://horizon-testnet.stellar.org'
       const result = validateStellarConfig()
       expect(result.valid).toBe(false)
       expect(result.errors.some((e) => e.includes('testnet Horizon URL'))).toBe(true)
+    })
+
+    it('flags malformed or non-http URLs', () => {
+      process.env.STELLAR_NETWORK = 'testnet'
+      process.env.HORIZON_URL = 'not-a-valid-url'
+      const result = validateStellarConfig()
+      expect(result.valid).toBe(false)
+      expect(result.errors.some((e) => e.includes('Invalid Horizon URL'))).toBe(true)
+    })
+
+    it('requires API key for mainnet', () => {
+      process.env.STELLAR_NETWORK = 'mainnet'
+      const result = validateStellarConfig()
+      expect(result.valid).toBe(false)
+      expect(result.errors.some((e) => e.includes('Trustless Work API key'))).toBe(true)
     })
 
     it('flags mainnet Horizon URL with trailing slash when configured for testnet', () => {

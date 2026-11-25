@@ -51,7 +51,8 @@ describe('deriveEscrowStatus — single-release', () => {
   it.each<[string, Partial<TwIndexerEscrow>, string]>([
     ['nothing funded', {}, 'created'],
     ['balance above zero', { balance: 500 }, 'funded'],
-    ['fundedBy set without a balance read', { balance: undefined, fundedBy: 'GGUEST' }, 'funded'],
+    ['fundedBy set without a balance read', { balance: undefined, fundedBy: 'GGUEST' }, 'partially_funded'],
+    ['balance of 0.0000000 with fundedBy', { balance: '0.0000000', fundedBy: 'GGUEST' }, 'partially_funded'],
     ['one milestone approved', {
       balance: 500,
       milestones: [{ description: 'a', approved: true }, { description: 'b', approved: false }],

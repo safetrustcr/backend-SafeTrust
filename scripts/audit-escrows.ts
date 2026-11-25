@@ -55,7 +55,11 @@ export async function runEscrowAudit(): Promise<AuditReport> {
       approver: string
       releaser: string
       resolver: string | null
+      asset_code: string | null
+      asset_issuer: string | null
+      escrow_metadata: Record<string, unknown> | null
       reservation_id: string | null
+      reservation_escrow_id: string | null
       guest_id: string | null
       total_amount: number | string | null
       reservation_status: string | null
@@ -74,8 +78,9 @@ export async function runEscrowAudit(): Promise<AuditReport> {
         e.resolver,
         e.asset_code,
         e.asset_issuer,
-        e.token_contract_id,
+        e.escrow_metadata,
         r.id AS reservation_id,
+        r.escrow_id AS reservation_escrow_id,
         r.guest_id,
         r.total_amount,
         r.status AS reservation_status,
@@ -110,6 +115,14 @@ export async function runEscrowAudit(): Promise<AuditReport> {
         continue
       }
 
+      const meta = (row.escrow_metadata ?? {}) as Record<string, unknown>
+      const observedTokenContract =
+        (meta.token_contract_id ?? meta.tokenContractId ?? null) as string | null
+      const independentEngagementId =
+        (meta.engagementId ?? meta.engagement_id ?? meta.reservation_id ?? null) as string | null
+      const observedPlatform =
+        (meta.platformAddress ?? meta.platform_address ?? row.releaser) as string | undefined
+
       const verification = verifyEscrowForReservation(
         {
           id: row.id,
@@ -119,13 +132,15 @@ export async function runEscrowAudit(): Promise<AuditReport> {
           approver: row.approver,
           releaser: row.releaser,
           resolver: row.resolver,
-          asset_code: row.asset_code,
+          platformAddress: observedPlatform,
+          asset_code: row.asset_code ?? 'USDC',
           asset_issuer: row.asset_issuer,
-          token_contract_id: row.token_contract_id,
-          engagementId: row.reservation_id,
+          token_contract_id: observedTokenContract,
+          engagementId: independentEngagementId,
         },
         {
           id: row.reservation_id,
+          escrow_id: row.reservation_escrow_id,
           status: row.reservation_status ?? 'unknown',
           total_amount: row.total_amount ?? 0,
           guest_id: row.guest_id ?? '',

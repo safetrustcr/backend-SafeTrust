@@ -90,18 +90,21 @@ export function configuredAmountStroops(escrow: TwIndexerEscrow): bigint | null 
     const milestones = milestonesOf(escrow)
     if (milestones.length > 0) {
       let sum = 0n
-      let validMilestones = 0
       for (const m of milestones) {
         if (m.amount !== undefined && m.amount !== null && m.amount !== '') {
           const s = amountToStroops(m.amount)
           if (s === null) return null
           sum += BigInt(s)
-          validMilestones++
+        } else {
+          // A multi-release escrow with any missing, null, or empty milestone amount
+          // cannot use the remaining amounts' partial sum as its funding target.
+          return null
         }
       }
-      if (validMilestones > 0 && sum > 0n) {
+      if (sum > 0n) {
         return sum
       }
+      return null
     }
   }
 
@@ -126,7 +129,12 @@ export function evaluateFundingStatus(
   let balanceStroops: bigint | null = null
   const rawBalance = escrow.balance
   if (rawBalance !== undefined && rawBalance !== null && rawBalance !== '') {
-    if (rawBalance === 0 || rawBalance === '0' || rawBalance === '0.0') {
+    const trimmed = typeof rawBalance === 'string' ? rawBalance.trim() : rawBalance
+    if (
+      trimmed === 0 ||
+      trimmed === '0' ||
+      (typeof trimmed === 'string' && /^0+(\.0+)?$/.test(trimmed))
+    ) {
       balanceStroops = 0n
     } else {
       const s = amountToStroops(rawBalance)
@@ -136,10 +144,11 @@ export function evaluateFundingStatus(
     }
   }
 
-  // If balance was not read by indexer snapshot, fundedBy indicates funded
+  // If balance was not read by indexer snapshot, fundedBy alone never produces the funded state;
+  // return a non-funded state for unread balances until an authoritative balance observation confirms the target deposit.
   if (balanceStroops === null) {
     if (Boolean(escrow.fundedBy)) {
-      return 'funded'
+      return 'partially_funded'
     }
     return 'created'
   }

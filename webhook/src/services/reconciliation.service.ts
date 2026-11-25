@@ -40,6 +40,7 @@ import {
   verifyEscrowForReservation,
   recordEscrowVerificationEvent,
   getReservationVerificationData,
+  markEscrowUntrusted,
 } from './escrow-verification'
 import { getStellarConfig } from '../config/stellar'
 import type {
@@ -52,7 +53,7 @@ import type {
   UpsertResult,
 } from '../lib/reconciliation.types'
 
-export { isRustBulkUpsertEnabled, setSorobanReconcilerAddon }
+export { isRustBulkUpsertEnabled, setSorobanReconcilerAddon, markEscrowUntrusted }
 
 export const CHUNK_SIZE = 50
 
@@ -76,6 +77,7 @@ export interface ReconciliationTransition {
   targetStatus: string
   reservationStatus: string
   amount?: number
+  balance?: number | string
   notification?: { eventType: string; body: string }
   observedLedgerSeq?: string | null
 }
@@ -183,6 +185,7 @@ export function detectReconciliationTransitions(
         targetStatus: spec.targetStatus,
         reservationStatus: spec.reservationStatus,
         amount: transitionAmount(targetStatus, record),
+        balance: record.balance,
         notification: spec.notification,
         observedLedgerSeq: seq,
       })
@@ -194,7 +197,15 @@ export function detectReconciliationTransitions(
 
 function parseStroopsAllowZero(value: unknown): bigint | null {
   if (value === null || value === undefined || value === '') return null
-  if (value === 0 || value === '0' || value === '0.0' || value === 0n) return 0n
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0) return null
+    if (value === 0) return 0n
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (/^0+(\.0+)?$/.test(trimmed)) return 0n
+  }
+  if (value === 0n) return 0n
   const stroopStr = amountToStroops(value)
   if (stroopStr !== null) return BigInt(stroopStr)
   return null
@@ -238,18 +249,6 @@ export async function verifyOnChainEscrowTransition(
           mismatchType: 'balance_mismatch',
         }
       }
-
-      // If targetStatus is 'funded', verify on-chain balance is >= expected deposit
-      if (targetStatus === 'funded' && expectedAmount !== undefined) {
-        const expectedStroops = amountToStroops(expectedAmount)
-        if (!expectedStroops || onChainStroops < BigInt(expectedStroops)) {
-          return {
-            verified: false,
-            error: `On-chain balance (${onChainStroops} stroops) is less than required deposit (${expectedStroops ?? expectedAmount} stroops)`,
-            mismatchType: 'balance_mismatch',
-          }
-        }
-      }
     } catch (err) {
       return {
         verified: false,
@@ -270,10 +269,10 @@ export async function verifyOnChainEscrowTransition(
       resolver: string | null
       asset_code: string | null
       asset_issuer: string | null
-      token_contract_id: string | null
+      escrow_metadata: Record<string, unknown> | null
     }>(
       `SELECT id, amount, balance, marker, approver, releaser, resolver,
-              asset_code, asset_issuer, token_contract_id
+              asset_code, asset_issuer, escrow_metadata
        FROM safetrust.trustless_work_escrows
        WHERE contract_id = $1 AND tenant_id = $2
        LIMIT 1`,
@@ -290,14 +289,51 @@ export async function verifyOnChainEscrowTransition(
 
     const row = escrowRes.rows[0]
 
+    // Use transition.amount when it is valid and present; otherwise use the stored deposit (row.amount)
+    const depositAmount =
+      expectedAmount !== undefined && expectedAmount > 0 ? expectedAmount : row.amount
+    const depositStroopsStr = amountToStroops(depositAmount)
+    if (!depositStroopsStr) {
+      return {
+        verified: false,
+        error: `Invalid escrow deposit amount: ${depositAmount}`,
+        mismatchType: 'unavailable',
+      }
+    }
+    const depositStroops = BigInt(depositStroopsStr)
+
     // Compare on-chain and indexer balances for protected transitions (funded, completed, resolved)
-    if (onChainStroops !== null) {
-      const effectiveIndexerBal = indexerBalance !== undefined ? indexerBalance : row.balance
-      const indexerStroops = parseStroopsAllowZero(effectiveIndexerBal)
-      if (indexerStroops !== null && indexerStroops !== onChainStroops) {
+    const effectiveIndexerBal = indexerBalance !== undefined ? indexerBalance : row.balance
+    const indexerStroops = parseStroopsAllowZero(effectiveIndexerBal)
+    if (indexerStroops === null) {
+      return {
+        verified: false,
+        error: `Unable to parse indexer balance: ${effectiveIndexerBal}`,
+        mismatchType: 'unavailable',
+      }
+    }
+
+    if (onChainStroops !== null && onChainStroops !== indexerStroops) {
+      return {
+        verified: false,
+        error: `Balance disagreement between on-chain (${onChainStroops} stroops) and indexer (${indexerStroops} stroops)`,
+        mismatchType: 'balance_mismatch',
+      }
+    }
+
+    // If targetStatus is 'funded', ensure neither the on-chain nor indexer balance can be below deposit
+    if (targetStatus === 'funded') {
+      if (onChainStroops !== null && onChainStroops < depositStroops) {
         return {
           verified: false,
-          error: `Balance disagreement between on-chain (${onChainStroops} stroops) and indexer (${indexerStroops} stroops)`,
+          error: `On-chain balance (${onChainStroops} stroops) is less than required deposit (${depositStroops} stroops)`,
+          mismatchType: 'balance_mismatch',
+        }
+      }
+      if (indexerStroops < depositStroops) {
+        return {
+          verified: false,
+          error: `Indexer balance (${indexerStroops} stroops) is less than required deposit (${depositStroops} stroops)`,
           mismatchType: 'balance_mismatch',
         }
       }
@@ -328,6 +364,11 @@ export async function verifyOnChainEscrowTransition(
       }
     }
 
+    const meta = (row.escrow_metadata ?? {}) as Record<string, unknown>
+    const observedPlatform = (meta.platformAddress ?? meta.platform_address ?? row.releaser) as string | undefined
+    const observedTokenContract = (meta.token_contract_id ?? meta.tokenContractId ?? null) as string | null
+    const independentEngagementId = (meta.engagementId ?? meta.engagement_id ?? meta.reservation_id ?? null) as string | null
+
     const verification = verifyEscrowForReservation(
       {
         id: row.id,
@@ -337,10 +378,11 @@ export async function verifyOnChainEscrowTransition(
         approver: row.approver,
         releaser: row.releaser,
         resolver: row.resolver,
+        platformAddress: observedPlatform,
         asset_code: row.asset_code ?? 'USDC',
         asset_issuer: row.asset_issuer,
-        token_contract_id: row.token_contract_id,
-        engagementId: reservationTarget.id,
+        token_contract_id: observedTokenContract,
+        engagementId: independentEngagementId,
       },
       reservationTarget,
       {
@@ -364,30 +406,6 @@ export async function verifyOnChainEscrowTransition(
   }
 
   return { verified: true }
-}
-
-export async function markEscrowUntrusted(
-  contractId: string,
-  reason: string,
-  tenantId: string = 'safetrust'
-): Promise<void> {
-  try {
-    await query(
-      `UPDATE safetrust.trustless_work_escrows
-       SET status = 'untrusted', updated_at = NOW()
-       WHERE contract_id = $1 AND tenant_id = $2`,
-      [contractId, tenantId]
-    )
-
-    await recordEscrowVerificationEvent({
-      contractId,
-      result: 'untrusted',
-      mismatches: [reason],
-      tenantId,
-    })
-  } catch (err) {
-    logger.error('reconciliation.mark_untrusted_failed', { contractId, error: err })
-  }
 }
 
 export interface ApplyReconciliationTransitionsOptions {
@@ -425,7 +443,8 @@ export async function applyReconciliationTransitions(
           transition.contractId,
           transition.targetStatus,
           transition.amount,
-          tenantId
+          tenantId,
+          transition.balance
         )
 
         if (!onChainCheck.verified) {
@@ -436,9 +455,16 @@ export async function applyReconciliationTransitions(
               targetStatus: transition.targetStatus,
               error: onChainCheck.error,
             })
+            await recordEscrowVerificationEvent({
+              contractId: transition.contractId,
+              result: 'balance_disagreement' as any,
+              mismatches: [onChainCheck.error ?? 'balance disagreement'],
+              tenantId,
+            })
             summary.failed++
             summary.errors.push(`${transition.contractId}: balance_disagreement - ${onChainCheck.error}`)
             summary.failedContractIds.push(transition.contractId)
+            options.onFailed?.(transition.contractId, new Error(onChainCheck.error ?? 'balance disagreement'))
             continue
           } else if (onChainCheck.mismatchType === 'booking_mismatch') {
             // Booking or contract role/asset mismatch: mark untrusted
@@ -455,6 +481,7 @@ export async function applyReconciliationTransitions(
             summary.failed++
             summary.errors.push(`${transition.contractId}: untrusted - ${onChainCheck.error}`)
             summary.failedContractIds.push(transition.contractId)
+            options.onFailed?.(transition.contractId, new Error(onChainCheck.error ?? 'booking mismatch'))
             continue
           } else {
             // Verification unavailable (transient DB error, query failure, etc.) - leave unchanged
@@ -465,6 +492,7 @@ export async function applyReconciliationTransitions(
             summary.failed++
             summary.errors.push(`${transition.contractId}: verification_unavailable - ${onChainCheck.error}`)
             summary.failedContractIds.push(transition.contractId)
+            options.onFailed?.(transition.contractId, new Error(onChainCheck.error ?? 'verification unavailable'))
             continue
           }
         }

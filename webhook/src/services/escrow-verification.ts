@@ -7,7 +7,7 @@
 
 import { amountToStroops } from '../lib/stellar-amounts'
 import { getStellarConfig } from '../config/stellar'
-import { query } from './db'
+import { query, withTransaction } from './db'
 import type { PoolClient } from 'pg'
 
 export interface EscrowVerificationTarget {
@@ -87,10 +87,18 @@ export function verifyEscrowForReservation(
   const phase = context?.phase ?? 'initialization'
 
   // 1. Reservation State: phase-specific
+  const escrowIdentifier = escrow.contract_id || escrow.contractId
+  const escrowDbId = (escrow as { id?: string }).id
+  const isSameLinkRetry =
+    reservation.status === 'escrow_created' &&
+    Boolean(reservation.escrow_id) &&
+    (reservation.escrow_id === escrowIdentifier ||
+      (escrowDbId !== undefined && reservation.escrow_id === escrowDbId))
+
   if (phase === 'initialization') {
-    if (reservation.status !== 'pending') {
+    if (reservation.status !== 'pending' && !isSameLinkRetry) {
       mismatches.push(
-        `Reservation state invalid: expected "pending", observed "${reservation.status}"`
+        `Reservation state invalid: expected "pending" (or retry with "escrow_created" matching current escrow), observed "${reservation.status}"`
       )
     }
   } else {
@@ -112,8 +120,6 @@ export function verifyEscrowForReservation(
   }
 
   // 2. Reservation Escrow Link
-  const escrowIdentifier = escrow.contract_id || escrow.contractId
-  const escrowDbId = (escrow as { id?: string }).id
   if (reservation.escrow_id) {
     const isIdempotent =
       reservation.escrow_id === escrowIdentifier ||
@@ -233,9 +239,11 @@ export function verifyEscrowForReservation(
   }
 
   // SafeTrust Platform Roles
-  const platformRole = escrow.platformAddress
-  if (platformRole && config.platformWallet) {
-    if (normalizeAddress(platformRole) !== normalizeAddress(config.platformWallet)) {
+  const platformRole = escrow.platformAddress || escrow.releaser
+  if (config.platformWallet) {
+    if (!platformRole) {
+      mismatches.push('Escrow is missing required platform address/role')
+    } else if (normalizeAddress(platformRole) !== normalizeAddress(config.platformWallet)) {
       mismatches.push(
         `Platform address mismatch: expected ${config.platformWallet}, observed ${platformRole}`
       )
@@ -244,8 +252,10 @@ export function verifyEscrowForReservation(
 
   const releaserRole = escrow.releaseSigner || escrow.releaser
   const expectedReleaser = config.releaseSigner || config.platformWallet
-  if (releaserRole && expectedReleaser) {
-    if (normalizeAddress(releaserRole) !== normalizeAddress(expectedReleaser)) {
+  if (expectedReleaser) {
+    if (!releaserRole) {
+      mismatches.push('Escrow is missing required release signer role')
+    } else if (normalizeAddress(releaserRole) !== normalizeAddress(expectedReleaser)) {
       mismatches.push(
         `Release signer mismatch: expected ${expectedReleaser}, observed ${releaserRole}`
       )
@@ -360,4 +370,32 @@ export async function recordEscrowVerificationEvent(
     // If table doesn't exist yet (e.g. before migration), log error but don't break flow
     console.error('[escrow-verification] Failed to record verification audit event:', err)
   }
+}
+
+/**
+ * Atomically marks an escrow untrusted and records the verification event.
+ */
+export async function markEscrowUntrusted(
+  contractId: string,
+  reason: string,
+  tenantId: string = 'safetrust'
+): Promise<void> {
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE safetrust.trustless_work_escrows
+       SET status = 'untrusted', updated_at = NOW()
+       WHERE contract_id = $1 AND tenant_id = $2`,
+      [contractId, tenantId]
+    )
+
+    await recordEscrowVerificationEvent(
+      {
+        contractId,
+        result: 'untrusted',
+        mismatches: [reason],
+        tenantId,
+      },
+      client
+    )
+  })
 }

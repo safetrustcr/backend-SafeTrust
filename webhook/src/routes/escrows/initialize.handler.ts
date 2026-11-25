@@ -6,6 +6,7 @@ import {
   ok,
   sendError,
   serverError,
+  unauthorized,
 } from '../../utils/response'
 import { AppError } from '../../utils/errors'
 import {
@@ -37,13 +38,13 @@ export const initializeEscrowHandler = async (
   try {
     const callerUserId = (req as any).user?.uid || (req as any).user?.id;
     const isServerAgent = Boolean((req as any).isAgent);
-    const context = (callerUserId || isServerAgent)
-      ? { callerUserId, isServerAgent }
-      : undefined;
 
-    const result = context
-      ? await initializeEscrowService(req.body, getPlatformTenantId(), context)
-      : await initializeEscrowService(req.body, getPlatformTenantId());
+    if (!callerUserId && !isServerAgent) {
+      return unauthorized(res, { error: 'Authentication required: caller identity must be verified' });
+    }
+
+    const context = { callerUserId, isServerAgent };
+    const result = await initializeEscrowService(req.body, getPlatformTenantId(), context);
 
     if (result.isDuplicate) {
       return duplicate(res, result.eventId);

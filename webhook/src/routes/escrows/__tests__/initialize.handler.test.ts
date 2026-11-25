@@ -17,8 +17,9 @@ const {
   initializeEscrow,
 } = require('../../../services/escrow.service');
 
-function makeRequest(overrides = {}) {
+function makeRequest(overrides = {}, user: { uid?: string; id?: string } | null = { uid: 'user-1' }) {
   return {
+    ...(user ? { user } : {}),
     body: {
       contract_id: 'contract-1',
       marker: 'GMARKER',
@@ -49,16 +50,29 @@ describe('initializeEscrowHandler', () => {
     delete process.env.PLATFORM_TENANT_ID;
   });
 
-  it('delegates initialization to the service with the request body and platform tenant', async () => {
+  it('delegates initialization to the service with the request body, platform tenant, and auth context', async () => {
     process.env.PLATFORM_TENANT_ID = 'tenant-b';
     const req = makeRequest();
     const res = makeResponse();
 
     await initializeEscrowHandler(req, res);
 
-    expect(initializeEscrow).toHaveBeenCalledWith(req.body, 'tenant-b');
+    expect(initializeEscrow).toHaveBeenCalledWith(req.body, 'tenant-b', {
+      callerUserId: 'user-1',
+      isServerAgent: false,
+    });
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ success: true });
+  });
+
+  it('rejects unauthenticated requests before calling the service', async () => {
+    const req = makeRequest({}, null);
+    const res = makeResponse();
+
+    await initializeEscrowHandler(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(initializeEscrow).not.toHaveBeenCalled();
   });
 
   it('responds with the duplicate event when the service detects a duplicate', async () => {
