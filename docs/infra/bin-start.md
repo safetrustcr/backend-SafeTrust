@@ -9,7 +9,7 @@ flowchart TD
     D --> E[Apply migrations\nhasura migrate apply × N tenants]
     E --> F[Deploy metadata\nsetup-tenant.sh × N tenants, in parallel]
     F --> G[Reload metadata\nhasura metadata reload]
-    G --> H[Register cron triggers\ncreate_cron_trigger\nreplace: true]
+    G --> H[Register cron triggers\ncreate_cron_trigger\ncreate, replace if exists]
     H --> I[Apply seeds\nhasura seed apply × N tenants]
     I --> J[Health checks\nHasura · Postgres · webhook]
     J --> K([DEPLOYMENT SUMMARY\nlogs + JSON report])
@@ -91,9 +91,11 @@ platform-wide — one trigger for all tenants, not one per tenant — and
   (`reconciliation_sync_escrows`, schedule `*/15 * * * *`, header
   `x-hasura-event-secret` from `HASURA_EVENT_SECRET`).
 - **Creation**: `bin/start` sends `create_cron_trigger` to the Hasura metadata
-  API with `replace: true`, resolving `{{WEBHOOK_URL}}` to the in-network
-  webhook address (`http://safetrust-webhook:3000` by default). Re-running
-  `bin/start` replaces the trigger instead of creating a duplicate.
+  API with `replace: false` first, resolving `{{WEBHOOK_URL}}` to the
+  in-network webhook address (`http://safetrust-webhook:3000` by default). If
+  Hasura reports the trigger already exists, it retries with `replace: true`,
+  so re-running `bin/start` replaces the trigger instead of creating a
+  duplicate.
 - **Secret**: `HASURA_EVENT_SECRET` must be set in `.env` (see `.env.example`);
   `bin/start` fails before starting any container when it is missing. The
   same value is passed to the Hasura service (so the trigger can send the

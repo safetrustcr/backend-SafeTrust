@@ -203,7 +203,7 @@ load_env() {
   # Address Hasura calls for the reconciliation cron trigger. Hasura runs
   # inside the Compose network, so this must be the in-network webhook
   # address (same default as docker-compose.yml), not localhost.
-  WEBHOOK_URL="${WEBHOOK_URL:-http://safetrust-webhook:3000}"
+  WEBHOOK_URL="${WEBHOOK_URL:-http://safetrust-webhook:${WEBHOOK_PORT}}"
   HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
 }
 
@@ -435,29 +435,44 @@ reload_metadata() {
 
 # One platform-wide cron trigger, not per tenant: the reconciliation sync
 # reads every tenant's escrows in one call, so it is created once here,
-# after metadata is applied and reloaded. create_cron_trigger with
-# replace: true is idempotent — re-running bin/start replaces the trigger
-# instead of creating a duplicate. The definition comes from
-# metadata/base/cron_triggers.yaml; only {{WEBHOOK_URL}} is resolved here
-# (Hasura resolves value_from_env: HASURA_EVENT_SECRET from its own
-# environment when the trigger fires).
+# after metadata is applied and reloaded. The trigger is created with
+# replace: false first; if Hasura reports already-exists, the call is
+# retried with replace: true, so re-running bin/start replaces the trigger
+# instead of creating a duplicate, while any other error still fails the
+# run, mirroring how register_sources() treats its already-exists case.
+# The definition comes from metadata/base/cron_triggers.yaml; only
+# {{WEBHOOK_URL}} is resolved here (Hasura resolves value_from_env:
+# HASURA_EVENT_SECRET from its own environment when the trigger fires).
 register_cron_triggers() {
   begin_phase cron_triggers
   echo "⏰ Registering reconciliation cron trigger..."
 
   local trigger payload response code
   trigger=$(yq -o json e '.[0]' metadata/base/cron_triggers.yaml | jq -c \
-    --arg webhook_base "${WEBHOOK_URL:-http://safetrust-webhook:3000}" \
-    '.webhook |= sub("\\{\\{WEBHOOK_URL\\}\\}"; $webhook_base) | . + {replace: true}') || {
+    --arg webhook_base "${WEBHOOK_URL:-http://safetrust-webhook:${WEBHOOK_PORT:-3000}}" \
+    '.webhook |= sub("\\{\\{WEBHOOK_URL\\}\\}"; $webhook_base)') || {
     echo "❌ Failed to read metadata/base/cron_triggers.yaml" >&2
     return 1
   }
 
-  payload=$(jq -cn --argjson trigger "$trigger" '{type:"create_cron_trigger", args:$trigger}')
+  payload=$(jq -cn --argjson trigger "$trigger" '{type:"create_cron_trigger", args:($trigger + {replace: false})}')
   response=$(hasura_metadata "$payload")
   code=$(jq -r 'if type == "object" and has("error") then (.code // "error") else "ok" end' <<< "$response" 2>/dev/null || echo "invalid-response")
   case "$code" in
     ok) echo "   ✅ Cron trigger registered: reconciliation_sync_escrows (every 15 minutes)" ;;
+    already-exists)
+      echo "   ℹ️  Cron trigger already exists: reconciliation_sync_escrows (replacing)"
+      payload=$(jq -cn --argjson trigger "$trigger" '{type:"create_cron_trigger", args:($trigger + {replace: true})}')
+      response=$(hasura_metadata "$payload")
+      code=$(jq -r 'if type == "object" and has("error") then (.code // "error") else "ok" end' <<< "$response" 2>/dev/null || echo "invalid-response")
+      case "$code" in
+        ok) echo "   ✅ Cron trigger replaced: reconciliation_sync_escrows (every 15 minutes)" ;;
+        *)
+          echo "   ❌ Failed to replace cron trigger: $response" >&2
+          return 1
+          ;;
+      esac
+      ;;
     *)
       echo "   ❌ Failed to register cron trigger: $response" >&2
       return 1

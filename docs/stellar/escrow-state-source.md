@@ -259,10 +259,11 @@ The trigger is platform-wide — one trigger for all tenants, not one per
 tenant — so it is created once, by `bin/start` after the metadata reload
 (see `docs/infra/bin-start.md`). The definition lives in
 `metadata/base/cron_triggers.yaml`; `bin/start` sends `create_cron_trigger`
-with `replace: true`, resolving `{{WEBHOOK_URL}}` to the in-network webhook
-address, so re-running `bin/start` replaces the trigger instead of creating
-a duplicate. Exporting the metadata after a run shows the trigger, and the
-Hasura console shows a successful invocation within 15 minutes.
+with `replace: false` first, resolving `{{WEBHOOK_URL}}` to the in-network
+webhook address, and retries with `replace: true` only when Hasura reports
+the trigger already exists, so re-running `bin/start` replaces the trigger
+instead of creating a duplicate. Exporting the metadata after a run shows
+the trigger, and the
 
 ### Fail closed
 
