@@ -115,7 +115,7 @@ INSERT INTO safetrust.trustless_work_escrows (
 );
 
 -- status: disputed
--- Used by: open_dispute.feature, resolve dispute tests
+-- Used by: dispute-state reservation tests
 INSERT INTO safetrust.trustless_work_escrows (
   contract_id,
   marker,

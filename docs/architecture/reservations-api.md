@@ -14,7 +14,7 @@ The Reservations API provides endpoints to:
 ### Key Lifecycle Rules
 
 - **Allowed cancellation stages**: Reservations can only be cancelled while in `pending` or `escrow_created` status.
-- **Funded escrows**: Once a reservation reaches `funded` or beyond, funds are locked in the Trustless Work smart contract. These cannot be cancelled via this endpoint and must follow the refund or dispute resolution protocol (`process_refund_request`, `open_dispute`).
+- **Funded escrows**: Once a reservation reaches `funded` or beyond, funds are locked in the Trustless Work smart contract. These cannot be cancelled via this endpoint and must follow the off-chain refund or dispute resolution protocol.
 - **No manual completion**: Completion is never triggered by a manual status button. Status reaches `completed` only when funds are released to the host upon approved milestone completion via on-chain Trustless Work webhooks.
 - **`escrow_created` contract behavior**: If a reservation in `escrow_created` status is cancelled, the on-chain escrow contract on Stellar was initialized but never funded. No funds were locked. The contract remains permanently unfunded and inactive, and is no longer linked to an active booking. The PostgreSQL exclusion constraint unblocks the apartment calendar dates for new reservations.
 
