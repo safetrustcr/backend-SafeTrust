@@ -48,6 +48,15 @@ const ms = (flags: TwMilestone['flags'] = {}, amount = 100): TwMilestone => ({
 })
 
 describe('deriveEscrowStatus — single-release', () => {
+  it.each([
+    [{ isCancelled: true, isDisputed: true, isCompleted: true, isPending: true }, 'cancelled'],
+    [{ isDisputed: true, isCompleted: true, isPending: true }, 'disputed'],
+    [{ isCompleted: true, isPending: true }, 'completed'],
+    [{ isPending: true }, 'pending_funding'],
+  ])('applies V1 flag precedence for %j', (flags, expected) => {
+    expect(deriveEscrowStatus(single({ flags }))).toBe(expected)
+  })
+
   it.each<[string, Partial<TwIndexerEscrow>, string]>([
     ['nothing funded', {}, 'created'],
     ['balance above zero', { balance: 500 }, 'funded'],
@@ -126,6 +135,12 @@ describe('normalizeIndexerEscrow', () => {
       roles: { marker: 'GHOST', approver: 'GAPPROVER', releaser: 'GRELEASER' },
       ledgerSeq: null,
     })
+  })
+
+  it('preserves a ledger sequence supplied by the adapter', () => {
+    expect(normalizeIndexerEscrow(single({ ledgerSeq: '30' } as never)).ledgerSeq).toBe('30')
+    expect(normalizeIndexerEscrow(single({ ledger_seq: 42 } as never)).ledgerSeq).toBe('42')
+    expect(normalizeIndexerEscrow(single({ ledgerSeq: {} } as never)).ledgerSeq).toBeNull()
   })
 
   it('marks multi-release escrows', () => {

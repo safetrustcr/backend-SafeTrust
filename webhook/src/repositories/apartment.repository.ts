@@ -5,6 +5,7 @@ import type {
 } from '@safetrust/types'
 import type { QueryResultRow } from 'pg'
 import { query } from '../services/db'
+import { liveHoldOverlapSql } from './hold.repository'
 
 export interface ApartmentListFilters {
   location?: ApartmentListQuery['location']
@@ -13,6 +14,7 @@ export interface ApartmentListFilters {
   bedrooms?: number
   petFriendly?: boolean
   category?: ApartmentListQuery['category']
+  stay?: { checkIn: string; checkOut: string }
   limit: number
   offset: number
   sort: 'price_asc' | 'price_desc' | 'created_at'
@@ -69,6 +71,11 @@ export async function listApartments(filters: ApartmentListFilters): Promise<{
   if (filters.bedrooms !== undefined) add((index) => `a.bedrooms = $${index}`, filters.bedrooms)
   if (filters.petFriendly !== undefined) add((index) => `a.pet_friendly = $${index}`, filters.petFriendly)
   if (filters.category) add((index) => `a.category = $${index}`, filters.category)
+
+  if (filters.stay) {
+    params.push(filters.stay.checkIn, filters.stay.checkOut)
+    where.push(`NOT ${liveHoldOverlapSql('a', `$${params.length - 1}`, `$${params.length}`)}`)
+  }
 
   const whereString = `WHERE ${where.join(' AND ')}`
   const count = await query<CountRow>(
