@@ -129,6 +129,14 @@ export function configuredAmount(escrow: TwIndexerEscrow): number {
   return total > 0 ? total : toNumber(escrow.amount) ?? 0
 }
 
+function ledgerSeqOrNull(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint') {
+    return String(value)
+  }
+  return null
+}
+
 /**
  * Normalize one raw indexer escrow. Never drops a record: an escrow without a
  * contract id is returned with an empty one so the UPSERT counts it as skipped.
@@ -137,6 +145,10 @@ export function normalizeIndexerEscrow(raw: unknown): EscrowRecord {
   const escrow: TwIndexerEscrow = isPlainObject(raw) ? (raw as TwIndexerEscrow) : {}
   const roles: Record<string, unknown> = isPlainObject(escrow.roles) ? escrow.roles : {}
   const balance = toNumber(escrow.balance)
+  const rawWithSeq = escrow as TwIndexerEscrow & {
+    ledgerSeq?: unknown
+    ledger_seq?: unknown
+  }
 
   return {
     contractId: stringOr(escrow.contractId),
@@ -151,8 +163,8 @@ export function normalizeIndexerEscrow(raw: unknown): EscrowRecord {
       approver: stringOr(roles.approver),
       releaser: stringOr(roles.releaseSigner),
     },
-    // The V1 indexer carries no ledger sequence (see escrow-freshness.ts).
-    ledgerSeq: null,
+    ledgerSeq:
+      ledgerSeqOrNull(rawWithSeq.ledgerSeq) ?? ledgerSeqOrNull(rawWithSeq.ledger_seq),
   }
 }
 

@@ -1,8 +1,10 @@
 # Dispute and Resolve
 
-> **Status: Planned — post-Issue-03 behavior.** This is the intended
-> polling-based flow; the route implementation in this checkout has not yet
-> been migrated to it.
+> **Status:** the TrustlessWork `dispute` and `resolve-dispute` callbacks were
+> removed. Reconciliation polling at `POST /reconciliation/sync-escrows` now
+> applies the `disputed` and `resolved` transitions. The client-facing XDR flow
+> below is the intended post-Issue-03 integration; its SafeTrust routes are not
+> present in this checkout.
 
 A dispute or its resolution is an on-chain transaction, not a local status
 update. SafeTrust builds an unsigned XDR through Trustless Work and returns it
@@ -44,8 +46,9 @@ the unsigned XDR from Trustless Work using:
 
 The frontend signs the XDR with the authorized wallet and submits it using
 `POST /helper/send-transaction`. `flags.disputed` derives the `disputed`
-state. The current unversioned-snapshot policy does not allow polling alone to
-advance a funded escrow to `disputed`; see
+state. Reconciliation polling applies the `disputed` transition when the
+observed ledger sequence is newer than the stored one; an unversioned snapshot
+cannot safely advance a funded escrow on its own. See
 [Trustless Work Indexer](./trustless-work-indexer.md).
 
 ## Resolve a dispute
@@ -83,11 +86,26 @@ builds the unsigned XDR with:
 The **Dispute Resolver** wallet signs the resolution transaction; this role is
 distinct from the Release Signer. The frontend submits the signed XDR through
 `POST /helper/send-transaction`. `flags.resolved` derives the `resolved`
-state. The current V1 snapshot policy cannot safely advance a funded escrow
-through polling alone to this terminal state. SafeTrust requires a versioned
-snapshot or transaction confirmation before applying the transition.
+state. Reconciliation polling applies the `resolved` transition from `disputed`
+when the observed ledger sequence is newer than the stored one; the V1 snapshot
+is unversioned, so a versioned snapshot or transaction confirmation is required
+to advance safely.
 
 Resolution is distinct from cancellation. `resolved` records a dispute outcome;
-`cancelled` is a separate pre-check-in transition. See the [escrow
-lifecycle](./escrow-lifecycle.md) and [Trustless Work
+`cancelled` is the other terminal dispute outcome when funds are returned to the
+tenant, and is also legal from `created`, `pending_funding`, and `funded`. See
+the [escrow lifecycle](./escrow-lifecycle.md) and [Trustless Work
 Indexer](./trustless-work-indexer.md) documentation.
+
+## Reconciliation synchronization
+
+`POST /reconciliation/sync-escrows` is the authoritative recording leg. It reads
+tracked contracts through `GET /helper/get-escrow-by-contract-ids`, detects legal
+local-to-observed transitions (`funded` → `disputed`, `disputed` → `resolved`),
+and calls
+[`executeEscrowLifecycleTransition`](../../webhook/src/services/escrow.service.ts)
+inside a single transaction that records the business event, enforces the
+state machine's prior-state guard, mirrors reservation status, and persists the
+accepted ledger sequence. Only after those effects succeed are the remaining
+indexer fields upserted; records whose transition failed are withheld so they
+remain retryable on the next poll.
