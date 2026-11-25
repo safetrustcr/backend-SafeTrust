@@ -39,12 +39,18 @@ export interface X402SettlementReceipt {
   transactionHash: string | null
   /** True when a previously confirmed settlement was reused. */
   reused: boolean
+  /**
+   * Reservation this proof already paid for. Set for direct (non-hold)
+   * bookings, where one settled proof may authorize at most one reservation.
+   */
+  reservationId: string | null
 }
 
 interface SettlementRow {
   status: string
   tx_hash: string | null
   hold_id: string | null
+  reservation_id: string | null
   updated_at: Date | string
 }
 
@@ -64,12 +70,42 @@ export function settlementIdempotencyKey(
 
 async function findSettlement(idempotencyKey: string): Promise<SettlementRow | undefined> {
   const result = await db.query<SettlementRow>(
-    `SELECT status, tx_hash, hold_id, updated_at
+    `SELECT status, tx_hash, hold_id, reservation_id, updated_at
        FROM safetrust.x402_settlements
       WHERE idempotency_key = $1`,
     [idempotencyKey]
   )
   return result.rows[0]
+}
+
+/**
+ * Record which reservation a settled (non-hold) payment proof paid for.
+ *
+ * A proof authorizes at most one reservation: binding is a one-time write, and
+ * an attempt to bind the same proof to a second reservation is a conflict.
+ */
+export async function bindSettlementToReservation(
+  idempotencyKey: string,
+  reservationId: string
+): Promise<void> {
+  const updated = await db.query(
+    `UPDATE safetrust.x402_settlements
+        SET reservation_id = $2, updated_at = NOW()
+      WHERE idempotency_key = $1
+        AND status = 'settled'
+        AND reservation_id IS NULL`,
+    [idempotencyKey, reservationId]
+  )
+
+  if ((updated.rowCount ?? 0) > 0) return
+
+  const current = await findSettlement(idempotencyKey)
+  if (current?.reservation_id && current.reservation_id !== reservationId) {
+    throw new ConflictError(
+      'Payment proof was already used for a different reservation',
+      { code: 'settlement_reservation_mismatch' }
+    )
+  }
 }
 
 function isFreshPending(row: SettlementRow | undefined): boolean {
@@ -80,10 +116,18 @@ function isFreshPending(row: SettlementRow | undefined): boolean {
 
 /**
  * A payment proof is bound to the hold it paid for. Reusing it for another
- * hold — or for a hold when it settled a different purpose — is a conflict.
+ * hold — or for a hold-less booking when it already bought a hold — is a
+ * conflict.
  */
 function assertHoldBinding(row: SettlementRow, holdId: string | null | undefined): void {
-  if (!holdId) return
+  if (!holdId) {
+    if (row.hold_id) {
+      throw new ConflictError('Payment proof was already used for a hold', {
+        code: 'settlement_hold_mismatch',
+      })
+    }
+    return
+  }
   if (row.hold_id !== holdId) {
     throw new ConflictError('Payment proof was already used for a different hold', {
       code: 'settlement_hold_mismatch',
@@ -129,6 +173,7 @@ export async function settleBookingFee(
       idempotencyKey,
       transactionHash: existing.tx_hash,
       reused: true,
+      reservationId: existing.reservation_id,
     }
   }
 
@@ -168,7 +213,12 @@ export async function settleBookingFee(
       if (current?.status === 'settled') {
         assertHoldBinding(current, holdId)
         logger.info('x402.settlement_reused', { idempotencyKey, purpose })
-        return { idempotencyKey, transactionHash: current.tx_hash, reused: true }
+        return {
+          idempotencyKey,
+          transactionHash: current.tx_hash,
+          reused: true,
+          reservationId: current.reservation_id,
+        }
       }
       throw new ConflictError('Payment settlement is already in progress', {
         code: 'settlement_pending',
@@ -194,7 +244,12 @@ export async function settleBookingFee(
       const concurrent = await findSettlement(idempotencyKey)
       if (concurrent?.status === 'settled') {
         assertHoldBinding(concurrent, holdId)
-        return { idempotencyKey, transactionHash: concurrent.tx_hash, reused: true }
+        return {
+          idempotencyKey,
+          transactionHash: concurrent.tx_hash,
+          reused: true,
+          reservationId: concurrent.reservation_id,
+        }
       }
       throw new ConflictError('Payment settlement is already in progress', {
         code: 'settlement_pending',
@@ -249,5 +304,5 @@ export async function settleBookingFee(
   )
 
   logger.info('x402.settled', { idempotencyKey, purpose, transactionHash })
-  return { idempotencyKey, transactionHash, reused: false }
+  return { idempotencyKey, transactionHash, reused: false, reservationId: null }
 }

@@ -1,7 +1,11 @@
 import { NextFunction, Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { createAgentBooking } from '../../../services/booking.service'
-import { settleBookingFee } from '../../../services/x402-settlement.service'
+import {
+  bindSettlementToReservation,
+  settleBookingFee,
+  settlementIdempotencyKey,
+} from '../../../services/x402-settlement.service'
 import {
   AuthError,
   ConflictError,
@@ -49,7 +53,7 @@ export async function createBookingHandler(
         if (!x402) {
           throw new PaymentRequiredError('x402 payment is required to create a booking')
         }
-        await settleBookingFee({
+        const receipt = await settleBookingFee({
           paymentHeader: x402.paymentHeader,
           amountUsdc: x402.amountUsdc,
           payer: x402.payer,
@@ -58,6 +62,19 @@ export async function createBookingHandler(
           // replayed against a different one.
           holdId: holdId ?? null,
         })
+        return {
+          reused: receipt.reused,
+          reservationId: receipt.reservationId,
+        }
+      },
+      // A direct (hold-less) proof may authorize only one reservation: record
+      // the one it paid for so a replay returns it instead of charging again.
+      bindBookingFeeReservation: async (reservationId: string) => {
+        if (!x402) return
+        await bindSettlementToReservation(
+          settlementIdempotencyKey(x402.paymentHeader, x402.amountUsdc),
+          reservationId
+        )
       },
     })
 

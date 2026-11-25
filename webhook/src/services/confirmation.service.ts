@@ -18,6 +18,8 @@ export type LifecycleStage =
   | 'ledger_confirmed'
   | 'tw_indexed'
   | 'confirmed'
+  /** Terminal failure: the transaction can never confirm, so retries stop. */
+  | 'dead_letter'
 
 export type EscrowAction = 'deploy' | 'fund'
 export type SubmissionPath = 'helper' | 'external'
@@ -558,6 +560,25 @@ export async function processHelperSubmission(params: {
   const ledgerRes = await verifyStellarTransaction(txHash, network)
   if (!ledgerRes.verified) {
     const errorMsg = ledgerRes.error ?? 'Ledger confirmation failed'
+    // A transaction that failed on-ledger can never confirm: dead-letter the
+    // retry record and report a terminal stage, so the caller answers 400
+    // instead of promising a retry that cannot succeed. Pending/unknown
+    // transactions (404, network errors) stay retryable and keep 202.
+    if (ledgerRes.successful === false) {
+      await updateRetryRecordStatus(retryRecord.id, 'dead_letter', 1, errorMsg)
+      return {
+        success: false,
+        stage: 'dead_letter',
+        txHash,
+        escrowId,
+        action,
+        network,
+        submissionPath: 'helper',
+        retryRecordId: retryRecord.id,
+        error: errorMsg,
+      }
+    }
+
     await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
     return {
       success: false,

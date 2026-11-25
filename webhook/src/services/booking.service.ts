@@ -8,7 +8,16 @@ import { logger } from '../middleware/logger'
 
 const STELLAR_ADDR_RE = /^[GC][A-Z2-7]{55}$/
 const DEFAULT_PLATFORM_WALLET = 'GD5JPEHGGTDTK2N7OMDDCOW3DPO5KSFWACYWNYZNNOXD2UC7LQ4DHXMM'
-const DEFAULT_HOST_WALLET = 'GBHOSTDEFAULT0000000000000000000000000000000000000000000000'
+
+/**
+ * Outcome of the booking-fee settlement, returned by `chargeBookingFee`.
+ * `reservationId` is set when the settled proof is already bound to a
+ * reservation (see `bindSettlementToReservation`).
+ */
+export interface BookingFeeOutcome {
+  reused?: boolean
+  reservationId?: string | null
+}
 
 export interface CreateBookingParams {
   userId: string
@@ -23,7 +32,13 @@ export interface CreateBookingParams {
    * Settles the booking fee. Invoked only when a new reservation is about to
    * be created, so retries of an already-converted hold are never charged.
    */
-  chargeBookingFee?: () => Promise<void>
+  chargeBookingFee?: () => Promise<BookingFeeOutcome | void>
+  /**
+   * Records which reservation a settled direct (hold-less) payment proof paid
+   * for, so one proof can never authorize a second reservation. Optional only
+   * when no fee is charged.
+   */
+  bindBookingFeeReservation?: (reservationId: string) => Promise<void>
 }
 
 export interface CreateBookingResult {
@@ -51,6 +66,47 @@ export interface SubmitBookingResult {
   stage?: string
   error?: string
   retryRecordId?: string
+}
+
+interface BookingWallets {
+  agentWallet: string
+  hostWallet: string
+  platformWallet: string
+}
+
+interface HoldRow {
+  id: string
+  tenant_id: string
+  apartment_id: string
+  user_id: string
+  check_in: Date | string
+  check_out: Date | string
+  guests: number
+  status: string
+  expires_at: Date
+  is_expired: boolean
+  reservation_id: string | null
+  contract_id: string | null
+  unsigned_xdr: string | null
+  quote_deposit: string | null
+  asset_code: string | null
+}
+
+interface ReservationAttemptRow {
+  id: string
+  apartment_id: string
+  guest_id: string
+  check_in_date: Date | string
+  check_out_date: Date | string
+  contract_id: string | null
+  unsigned_xdr: string | null
+}
+
+/** Normalise a DATE/TIMESTAMPTZ value to a YYYY-MM-DD booking date. */
+function toDateOnly(value: Date | string): string {
+  return value instanceof Date
+    ? value.toISOString().slice(0, 10)
+    : String(value).slice(0, 10)
 }
 
 /**
@@ -110,6 +166,23 @@ export async function resolveOwnerStellarWallet(ownerId: string | undefined): Pr
   }
 
   throw new ValidationError('Property owner does not have a valid Stellar wallet')
+}
+
+/**
+ * Resolve every escrow role up front. Running this before the fee is settled
+ * means a guest without a wallet, or a property whose owner has none, fails
+ * before any charge or database write.
+ */
+async function resolveBookingWallets(params: {
+  userId: string
+  payerWallet?: string | null
+  ownerId: string | undefined
+}): Promise<BookingWallets> {
+  const agentWallet = await resolveUserStellarWallet(params.userId, params.payerWallet)
+  const hostWallet = await resolveOwnerStellarWallet(params.ownerId)
+  const platformWallet =
+    process.env.SAFETRUST_PLATFORM_WALLET?.trim() || DEFAULT_PLATFORM_WALLET
+  return { agentWallet, hostWallet, platformWallet }
 }
 
 /**
@@ -175,9 +248,226 @@ async function assertBookingEligible(params: {
   }
 }
 
+/** Load the hold plus its conversion artefacts, if any. */
+async function loadHold(holdId: string, tenantId: string): Promise<HoldRow | undefined> {
+  const holdQuery = await db.query<HoldRow>(
+    `
+    SELECT h.id, h.tenant_id, h.apartment_id, h.user_id,
+           h.check_in, h.check_out, h.guests, h.status, h.expires_at,
+           h.expires_at <= NOW() AS is_expired,
+           r.id AS reservation_id,
+           e.contract_id AS contract_id,
+           tx.unsigned_xdr AS unsigned_xdr,
+           h.quote_deposit,
+           h.asset_code
+    FROM safetrust.booking_holds h
+    LEFT JOIN safetrust.reservations r
+      ON r.booking_hold_id = h.id
+    LEFT JOIN safetrust.trustless_work_escrows e
+      ON e.id = r.escrow_id
+    LEFT JOIN safetrust.escrow_transactions tx
+      ON tx.contract_id = e.contract_id
+    WHERE h.id = $1 AND h.tenant_id = $2
+    `,
+    [holdId, tenantId]
+  )
+  return holdQuery.rows[0]
+}
+
+/**
+ * Load what a booking attempt already produced: its reservation and, when the
+ * attempt got that far, the deployed escrow and funding XDR.
+ */
+async function loadReservationAttempt(
+  reservationId: string,
+  tenantId: string
+): Promise<ReservationAttemptRow | undefined> {
+  const result = await db.query<ReservationAttemptRow>(
+    `
+    SELECT r.id, r.apartment_id, r.guest_id, r.check_in_date, r.check_out_date,
+           e.contract_id AS contract_id,
+           tx.unsigned_xdr AS unsigned_xdr
+    FROM safetrust.reservations r
+    LEFT JOIN safetrust.trustless_work_escrows e
+      ON e.id = r.escrow_id
+    LEFT JOIN safetrust.escrow_transactions tx
+      ON tx.contract_id = e.contract_id
+    WHERE r.id = $1 AND r.tenant_id = $2
+    `,
+    [reservationId, tenantId]
+  )
+  return result.rows[0]
+}
+
+/**
+ * Deploy the Trustless Work escrow for a reservation and link it. The contract
+ * ID returned by Trustless Work is the only one ever stored: if deployment is
+ * not confirmed the call throws, the reservation keeps `escrow_id = NULL`, and
+ * the attempt can be resumed without charging the fee again.
+ */
+async function deployEscrowForReservation(params: {
+  reservationId: string
+  propertyId: string
+  userId: string
+  tenantId: string
+  depositAmount: string | number
+  wallets: BookingWallets
+}): Promise<string> {
+  const { reservationId, propertyId, userId, tenantId, depositAmount, wallets } = params
+
+  const { escrowDbId, contractId } = await deployBookingEscrow({
+    apartmentId: propertyId,
+    guestId: userId,
+    agentWallet: wallets.agentWallet,
+    hostWallet: wallets.hostWallet,
+    platformWallet: wallets.platformWallet,
+    depositAmount,
+    tenantId,
+  })
+
+  await db.query(
+    `
+    UPDATE safetrust.reservations
+    SET escrow_id = $1, updated_at = NOW()
+    WHERE id = $2
+    `,
+    [escrowDbId, reservationId]
+  )
+
+  return contractId
+}
+
+/**
+ * Finish a freshly created reservation: deploy its escrow and issue the
+ * unsigned fund_escrow XDR the agent has to sign.
+ */
+async function finishNewBooking(params: {
+  reservationId: string
+  propertyId: string
+  userId: string
+  tenantId: string
+  depositAmount: string | number
+  asset: string
+  wallets: BookingWallets
+}): Promise<CreateBookingResult> {
+  const { reservationId, propertyId, userId, tenantId, depositAmount, asset, wallets } = params
+
+  const contractId = await deployEscrowForReservation({
+    reservationId,
+    propertyId,
+    userId,
+    tenantId,
+    depositAmount,
+    wallets,
+  })
+
+  const unsignedXdr = await generateFundEscrowXdr({
+    contractId,
+    agentWallet: wallets.agentWallet,
+    hostWallet: wallets.hostWallet,
+    propertyId,
+    depositAmount,
+    tenantId,
+  })
+
+  logger.info('agent_booking.created', {
+    reservationId,
+    contractId,
+    deposit: depositAmount,
+    agentWallet: wallets.agentWallet,
+  })
+
+  return {
+    reservation_id: reservationId,
+    contract_id: contractId,
+    deposit: Number(depositAmount).toFixed(2),
+    asset,
+    unsigned_xdr: unsignedXdr,
+  }
+}
+
+/**
+ * Resume a booking attempt whose fee was settled and whose reservation exists,
+ * but whose escrow deployment or funding XDR was interrupted (for example
+ * Trustless Work being unavailable, or an init transaction that still needs
+ * signing). Nothing is charged again: only the missing steps run.
+ */
+async function resumeBookingAttempt(params: {
+  reservationId: string
+  propertyId: string
+  checkIn: string
+  checkOut: string
+  guests?: number
+  userId: string
+  tenantId: string
+  payerWallet?: string | null
+}): Promise<CreateBookingResult> {
+  const { reservationId, propertyId, checkIn, checkOut, guests, userId, tenantId, payerWallet } =
+    params
+
+  const attempt = await loadReservationAttempt(reservationId, tenantId)
+  if (!attempt) {
+    throw new ConflictError('Booking attempt not found', { code: 'booking_attempt_missing' })
+  }
+
+  const quote = await getQuoteForProperty(propertyId, checkIn, checkOut, guests)
+  const wallets = await resolveBookingWallets({ userId, payerWallet, ownerId: quote.ownerId })
+  const depositAmount = quote.deposit
+
+  let contractId = attempt.contract_id
+  let unsignedXdr = attempt.unsigned_xdr
+
+  if (!contractId) {
+    contractId = await deployEscrowForReservation({
+      reservationId,
+      propertyId,
+      userId,
+      tenantId,
+      depositAmount,
+      wallets,
+    })
+  }
+
+  if (!unsignedXdr) {
+    unsignedXdr = await generateFundEscrowXdr({
+      contractId,
+      agentWallet: wallets.agentWallet,
+      hostWallet: wallets.hostWallet,
+      propertyId,
+      depositAmount,
+      tenantId,
+    })
+  }
+
+  logger.info('agent_booking.resumed', { reservationId, contractId })
+
+  return {
+    reservation_id: reservationId,
+    contract_id: contractId,
+    deposit: Number(depositAmount).toFixed(2),
+    asset: quote.asset,
+    unsigned_xdr: unsignedXdr,
+    is_existing: true,
+  }
+}
+
 /**
  * Create a booking reservation with backend-deployed Trustless Work escrow
  * and server-calculated deposit amount.
+ *
+ * Fee/booking ordering, in both flows:
+ *
+ *  1. Read-only eligibility and wallet checks run first, so an unbookable
+ *     request or a missing owner wallet fails before payment.
+ *  2. For a hold, the conversion is claimed by locking the hold row and the
+ *     fee is settled while that lock is held. Concurrent requests for the same
+ *     hold block on the lock instead of settling twice, and the hold's expiry
+ *     is re-checked under the lock immediately before the charge, so an
+ *     expired hold can never take the fee without producing a reservation.
+ *  3. The settlement receipt is durable. If anything after the charge fails,
+ *     the hold stays active (the transaction rolled back) or the reservation
+ *     stays without an escrow (converted hold), and a retry of the same
+ *     request reuses the settled receipt instead of charging again.
  */
 export async function createAgentBooking(
   params: CreateBookingParams
@@ -192,57 +482,12 @@ export async function createAgentBooking(
     guests: directGuests,
     payerWallet,
     chargeBookingFee,
+    bindBookingFeeReservation,
   } = params
-
-  let reservationId: string
-  let propertyId: string
-  let checkIn: string
-  let checkOut: string
-  let guests: number | undefined
-  let quote: QuoteResult
 
   // ── 1. Hold-based flow (Preferred) ─────────────────────────────────────────
   if (holdId) {
-    // Check hold existence and state
-    const holdQuery = await db.query<{
-      id: string
-      tenant_id: string
-      apartment_id: string
-      user_id: string
-      check_in: Date | string
-      check_out: Date | string
-      guests: number
-      status: string
-      expires_at: Date
-      is_expired: boolean
-      reservation_id: string | null
-      contract_id: string | null
-      unsigned_xdr: string | null
-      quote_deposit: string | null
-      asset_code: string | null
-    }>(
-      `
-      SELECT h.id, h.tenant_id, h.apartment_id, h.user_id,
-             h.check_in, h.check_out, h.guests, h.status, h.expires_at,
-             h.expires_at <= NOW() AS is_expired,
-             r.id AS reservation_id,
-             e.contract_id AS contract_id,
-             tx.unsigned_xdr AS unsigned_xdr,
-             h.quote_deposit,
-             h.asset_code
-      FROM safetrust.booking_holds h
-      LEFT JOIN safetrust.reservations r
-        ON r.booking_hold_id = h.id
-      LEFT JOIN safetrust.trustless_work_escrows e
-        ON e.id = r.escrow_id
-      LEFT JOIN safetrust.escrow_transactions tx
-        ON tx.contract_id = e.contract_id
-      WHERE h.id = $1 AND h.tenant_id = $2
-      `,
-      [holdId, tenantId]
-    )
-
-    const hold = holdQuery.rows[0]
+    const hold = await loadHold(holdId, tenantId)
 
     // Requirement: verify hold is active, unexpired, and owned by the caller (return 409 otherwise)
     if (!hold) {
@@ -265,6 +510,24 @@ export async function createAgentBooking(
           is_existing: true,
         }
       }
+
+      // Converted, but escrow deployment or XDR issuance did not complete.
+      // Resume that attempt; the fee was settled once and is not charged here.
+      if (!hold.reservation_id) {
+        throw new ConflictError('Hold is converted but has no reservation', {
+          code: 'hold_conversion_incomplete',
+        })
+      }
+      return resumeBookingAttempt({
+        reservationId: hold.reservation_id,
+        propertyId: hold.apartment_id,
+        checkIn: toDateOnly(hold.check_in),
+        checkOut: toDateOnly(hold.check_out),
+        guests: hold.guests,
+        userId,
+        tenantId,
+        payerWallet,
+      })
     }
 
     if (hold.status !== 'active') {
@@ -275,13 +538,13 @@ export async function createAgentBooking(
       throw new ConflictError('Hold has expired', { code: 'hold_expired' })
     }
 
-    propertyId = hold.apartment_id
-    checkIn = hold.check_in instanceof Date ? hold.check_in.toISOString().slice(0, 10) : String(hold.check_in).slice(0, 10)
-    checkOut = hold.check_out instanceof Date ? hold.check_out.toISOString().slice(0, 10) : String(hold.check_out).slice(0, 10)
-    guests = hold.guests
+    const propertyId = hold.apartment_id
+    const checkIn = toDateOnly(hold.check_in)
+    const checkOut = toDateOnly(hold.check_out)
+    const guests = hold.guests
 
     // Recompute quote strictly on the server (never trusting client amounts)
-    quote = await getQuoteForProperty(propertyId, checkIn, checkOut, guests)
+    const quote = await getQuoteForProperty(propertyId, checkIn, checkOut, guests)
 
     // The hold is active and unexpired: re-check that the dates are still
     // bookable, then settle the fee. The converted-hold path above returned
@@ -293,17 +556,22 @@ export async function createAgentBooking(
       checkOut,
       excludeHoldId: holdId,
     })
-    if (chargeBookingFee) {
-      await chargeBookingFee()
-    }
 
-    // Execute atomic DB transaction: hold -> converted, reservation -> escrow_created
-    reservationId = await withTransaction(async (client: PoolClient) => {
+    // Escrow roles resolve before the charge: a missing owner wallet must fail
+    // before the guest's non-refundable fee is settled.
+    const wallets = await resolveBookingWallets({
+      userId,
+      payerWallet,
+      ownerId: quote.ownerId,
+    })
+
+    const reservationId = await withTransaction(async (client: PoolClient) => {
       if (Number(quote.deposit) <= 0) {
         throw new ValidationError('Deposit amount must be positive')
       }
 
-      // Re-lock hold with FOR UPDATE to prevent concurrency races
+      // Claim this hold's conversion by locking its row. Concurrent requests
+      // for the same hold wait here rather than settling the fee twice.
       const locked = await client.query<{ id: string; status: string; expires_at: Date; is_expired: boolean }>(
         `SELECT id, status, expires_at, (expires_at <= clock_timestamp()) AS is_expired
            FROM safetrust.booking_holds
@@ -314,14 +582,23 @@ export async function createAgentBooking(
       if (!locked.rows[0]) {
         throw new ConflictError('Hold not found', { code: 'hold_not_found' })
       }
+      if (locked.rows[0].status !== 'active') {
+        throw new ConflictError('Hold state changed concurrently', { code: 'hold_conflict' })
+      }
       const lockExpired =
         Boolean(locked.rows[0].is_expired) ||
         (locked.rows[0].expires_at != null && new Date(locked.rows[0].expires_at).getTime() <= Date.now())
+      // Checked under the lock, immediately before payment: an expired hold is
+      // rejected while nothing has been charged, so it can never leave a
+      // settled fee without a reservation.
       if (lockExpired) {
         throw new ConflictError('Hold has expired', { code: 'hold_expired' })
       }
-      if (locked.rows[0].status !== 'active') {
-        throw new ConflictError('Hold state changed concurrently', { code: 'hold_conflict' })
+
+      // Settle while holding the lock. A failure rolls the transaction back,
+      // leaving the hold active so the retry can reuse the receipt/charge.
+      if (chargeBookingFee) {
+        await chargeBookingFee()
       }
 
       // 1. Transition hold to converted
@@ -365,172 +642,191 @@ export async function createAgentBooking(
 
       return resInsert.rows[0].id
     })
-  } else {
-    // ── 2. Direct booking flow without hold ───────────────────────────────────
-    if (!directPropertyId || !directCheckIn || !directCheckOut) {
-      throw new ValidationError('Either hold_id or property_id, check_in, and check_out are required')
+
+    return finishNewBooking({
+      reservationId,
+      propertyId,
+      userId,
+      tenantId,
+      depositAmount: quote.deposit,
+      asset: quote.asset,
+      wallets,
+    })
+  }
+
+  // ── 2. Direct booking flow without hold ─────────────────────────────────────
+  if (!directPropertyId || !directCheckIn || !directCheckOut) {
+    throw new ValidationError('Either hold_id or property_id, check_in, and check_out are required')
+  }
+
+  const propertyId = directPropertyId
+  const checkIn = directCheckIn
+  const checkOut = directCheckOut
+  const guests = directGuests
+
+  const quote = await getQuoteForProperty(propertyId, checkIn, checkOut, guests)
+
+  // Reject unavailable properties and overlapping dates before charging, so
+  // a 409 never costs the guest the non-refundable fee.
+  await assertBookingEligible({ tenantId, propertyId, checkIn, checkOut })
+
+  const wallets = await resolveBookingWallets({
+    userId,
+    payerWallet,
+    ownerId: quote.ownerId,
+  })
+
+  // Settle the booking fee before creating the reservation.
+  const fee = chargeBookingFee ? await chargeBookingFee() : undefined
+
+  // One settled proof authorizes at most one reservation. If this proof
+  // already paid for a reservation, return it when it is the same booking and
+  // reject a different request instead of creating a second reservation.
+  if (fee?.reservationId) {
+    const attempt = await loadReservationAttempt(fee.reservationId, tenantId)
+    const sameBooking =
+      attempt !== undefined &&
+      attempt.guest_id === userId &&
+      attempt.apartment_id === propertyId &&
+      toDateOnly(attempt.check_in_date) === checkIn &&
+      toDateOnly(attempt.check_out_date) === checkOut
+
+    if (!sameBooking) {
+      throw new ConflictError('Payment proof was already used for a different reservation', {
+        code: 'settlement_reservation_mismatch',
+      })
     }
 
-    propertyId = directPropertyId
-    checkIn = directCheckIn
-    checkOut = directCheckOut
-    guests = directGuests
-
-    quote = await getQuoteForProperty(propertyId, checkIn, checkOut, guests)
-
-    // Reject unavailable properties and overlapping dates before charging, so
-    // a 409 never costs the guest the non-refundable fee.
-    await assertBookingEligible({ tenantId, propertyId, checkIn, checkOut })
-
-    // Settle the booking fee before creating the reservation.
-    if (chargeBookingFee) {
-      await chargeBookingFee()
+    if (attempt.contract_id && attempt.unsigned_xdr) {
+      return {
+        reservation_id: attempt.id,
+        contract_id: attempt.contract_id,
+        deposit: Number(quote.deposit).toFixed(2),
+        asset: quote.asset,
+        unsigned_xdr: attempt.unsigned_xdr,
+        is_existing: true,
+      }
     }
 
-    // Atomic insert with overlap check
-    reservationId = await withTransaction(async (client: PoolClient) => {
-      // Check for overlapping active holds
-      const overlappingHold = await client.query(
+    return resumeBookingAttempt({
+      reservationId: attempt.id,
+      propertyId,
+      checkIn,
+      checkOut,
+      guests,
+      userId,
+      tenantId,
+      payerWallet,
+    })
+  }
+
+  // Atomic insert with overlap check
+  const reservationId = await withTransaction(async (client: PoolClient) => {
+    // Check for overlapping active holds
+    const overlappingHold = await client.query(
+      `
+      SELECT 1 FROM safetrust.booking_holds
+      WHERE apartment_id = $1
+        AND tenant_id = $2
+        AND status IN ('active', 'pending_payment')
+        AND expires_at > NOW()
+        AND check_in < $4 AND check_out > $3
+      LIMIT 1
+      `,
+      [propertyId, tenantId, checkIn, checkOut]
+    )
+
+    if (overlappingHold.rows.length > 0) {
+      throw new ConflictError('Requested dates overlap with an active booking hold', {
+        code: 'dates_unavailable',
+      })
+    }
+
+    if (Number(quote.deposit) <= 0) {
+      throw new ValidationError('Deposit amount must be positive')
+    }
+
+    const aptAvailability = await client.query<{ is_available: boolean | null }>(
+      `SELECT is_available FROM safetrust.apartments WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      [propertyId]
+    )
+    if (aptAvailability.rows[0]?.is_available === false) {
+      throw new ConflictError('Property is not available', { code: 'not_available' })
+    }
+
+    // Check for overlapping pending or active reservations
+    const overlappingRes = await client.query(
+      `
+      SELECT 1 FROM safetrust.reservations
+      WHERE apartment_id = $1
+        AND tenant_id = $2
+        AND status IN ('pending', 'escrow_created', 'funded', 'checked_in', 'checked_out')
+        AND check_in_date < $4 AND check_out_date > $3
+      LIMIT 1
+      `,
+      [propertyId, tenantId, checkIn, checkOut]
+    )
+
+    if (overlappingRes.rows.length > 0) {
+      throw new ConflictError('Requested dates are already booked', {
+        code: 'dates_unavailable',
+      })
+    }
+
+    let resInsert
+    try {
+      resInsert = await client.query<{ id: string }>(
         `
-        SELECT 1 FROM safetrust.booking_holds
-        WHERE apartment_id = $1
-          AND tenant_id = $2
-          AND status IN ('active', 'pending_payment')
-          AND expires_at > NOW()
-          AND check_in < $4 AND check_out > $3
-        LIMIT 1
+        INSERT INTO safetrust.reservations (
+          apartment_id,
+          guest_id,
+          check_in_date,
+          check_out_date,
+          total_amount,
+          asset_code,
+          status,
+          tenant_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, 'escrow_created', $7)
+        RETURNING id
         `,
-        [propertyId, tenantId, checkIn, checkOut]
+        [
+          propertyId,
+          userId,
+          checkIn,
+          checkOut,
+          Number(quote.total),
+          quote.asset,
+          tenantId,
+        ]
       )
-
-      if (overlappingHold.rows.length > 0) {
-        throw new ConflictError('Requested dates overlap with an active booking hold', {
-          code: 'dates_unavailable',
-        })
-      }
-
-      if (Number(quote.deposit) <= 0) {
-        throw new ValidationError('Deposit amount must be positive')
-      }
-
-      const aptAvailability = await client.query<{ is_available: boolean | null }>(
-        `SELECT is_available FROM safetrust.apartments WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
-        [propertyId]
-      )
-      if (aptAvailability.rows[0]?.is_available === false) {
-        throw new ConflictError('Property is not available', { code: 'not_available' })
-      }
-
-      // Check for overlapping pending or active reservations
-      const overlappingRes = await client.query(
-        `
-        SELECT 1 FROM safetrust.reservations
-        WHERE apartment_id = $1
-          AND tenant_id = $2
-          AND status IN ('pending', 'escrow_created', 'funded', 'checked_in', 'checked_out')
-          AND check_in_date < $4 AND check_out_date > $3
-        LIMIT 1
-        `,
-        [propertyId, tenantId, checkIn, checkOut]
-      )
-
-      if (overlappingRes.rows.length > 0) {
+    } catch (error) {
+      if ((error as { code?: string }).code === '23P01') {
         throw new ConflictError('Requested dates are already booked', {
           code: 'dates_unavailable',
         })
       }
+      throw error
+    }
 
-      let resInsert
-      try {
-        resInsert = await client.query<{ id: string }>(
-          `
-          INSERT INTO safetrust.reservations (
-            apartment_id,
-            guest_id,
-            check_in_date,
-            check_out_date,
-            total_amount,
-            asset_code,
-            status,
-            tenant_id
-          ) VALUES ($1, $2, $3, $4, $5, $6, 'escrow_created', $7)
-          RETURNING id
-          `,
-          [
-            propertyId,
-            userId,
-            checkIn,
-            checkOut,
-            Number(quote.total),
-            quote.asset,
-            tenantId,
-          ]
-        )
-      } catch (error) {
-        if ((error as { code?: string }).code === '23P01') {
-          throw new ConflictError('Requested dates are already booked', {
-            code: 'dates_unavailable',
-          })
-        }
-        throw error
-      }
+    return resInsert.rows[0].id
+  })
 
-      return resInsert.rows[0].id
-    })
+  // Bind the settled proof to the reservation it produced. Done after the
+  // insert commits: the reservation row must be visible for the foreign key.
+  if (bindBookingFeeReservation) {
+    await bindBookingFeeReservation(reservationId)
   }
 
-  // ── 3. Resolve Wallets & Escrow Roles ───────────────────────────────────────
-  const agentWallet = await resolveUserStellarWallet(userId, payerWallet)
-  const hostWallet = await resolveOwnerStellarWallet(quote.ownerId)
-  const platformWallet = process.env.SAFETRUST_PLATFORM_WALLET?.trim() || DEFAULT_PLATFORM_WALLET
-
-  // ── 4. Deploy Trustless Work Escrow for Deposit ─────────────────────────────
-  // Deployed and signed by the backend for the server-calculated deposit amount
-  const { escrowDbId, contractId } = await deployBookingEscrow({
-    apartmentId: propertyId,
-    guestId: userId,
-    agentWallet,
-    hostWallet,
-    platformWallet,
-    depositAmount: quote.deposit,
-    tenantId,
-  })
-
-  // Link reservation to the created escrow
-  await db.query(
-    `
-    UPDATE safetrust.reservations
-    SET escrow_id = $1, updated_at = NOW()
-    WHERE id = $2
-    `,
-    [escrowDbId, reservationId]
-  )
-
-  // ── 5. Generate Unsigned fund_escrow XDR ────────────────────────────────────
-  // The agent's wallet is the signer for depositing its own security deposit
-  const unsignedXdr = await generateFundEscrowXdr({
-    contractId,
-    agentWallet,
-    hostWallet,
-    propertyId,
-    depositAmount: quote.deposit,
-    tenantId,
-  })
-
-  logger.info('agent_booking.created', {
+  // ── 3. Deploy escrow & issue funding XDR ───────────────────────────────────
+  return finishNewBooking({
     reservationId,
-    contractId,
-    deposit: quote.deposit,
-    agentWallet,
-  })
-
-  return {
-    reservation_id: reservationId,
-    contract_id: contractId,
-    deposit: quote.deposit,
+    propertyId,
+    userId,
+    tenantId,
+    depositAmount: quote.deposit,
     asset: quote.asset,
-    unsigned_xdr: unsignedXdr,
-  }
+    wallets,
+  })
 }
 
 /**

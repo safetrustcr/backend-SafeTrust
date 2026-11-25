@@ -10,19 +10,26 @@ jest.mock('../db', () => ({
 
 const mockSettleX402Payment = jest.fn()
 
-import { settleBookingFee, settlementIdempotencyKey } from '../x402-settlement.service'
+import {
+  bindSettlementToReservation,
+  settleBookingFee,
+  settlementIdempotencyKey,
+} from '../x402-settlement.service'
 import { setX402Addon } from '../../middleware/x402-payment.middleware'
 
 const HOLD_ID = '22222222-2222-4222-8222-222222222222'
 const OTHER_HOLD_ID = '33333333-3333-4333-8333-333333333333'
+const RES_ID = '44444444-4444-4444-8444-444444444444'
+const OTHER_RES_ID = '55555555-5555-4555-8555-555555555555'
 const PROOF = 'x402-signed-proof'
 const AMOUNT = 0.1
 
-function settledRow(holdId: string | null) {
+function settledRow(holdId: string | null, reservationId: string | null = null) {
   return {
     status: 'settled',
     tx_hash: 'settled-tx-hash',
     hold_id: holdId,
+    reservation_id: reservationId,
     updated_at: new Date(),
   }
 }
@@ -56,8 +63,46 @@ describe('x402 settlement service', () => {
       idempotencyKey: settlementIdempotencyKey(PROOF, AMOUNT),
       transactionHash: 'settled-tx-hash',
       reused: true,
+      reservationId: null,
     })
     expect(mockSettleX402Payment).not.toHaveBeenCalled()
+  })
+
+  it('reports the reservation a settled direct-booking proof is bound to', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [settledRow(null, RES_ID)] })
+
+    const receipt = await settleBookingFee({ paymentHeader: PROOF, amountUsdc: AMOUNT })
+
+    expect(receipt.reused).toBe(true)
+    expect(receipt.reservationId).toBe(RES_ID)
+    expect(mockSettleX402Payment).not.toHaveBeenCalled()
+  })
+
+  it('rejects a hold-bound proof replayed for a hold-less booking', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [settledRow(HOLD_ID)] })
+
+    await expect(
+      settleBookingFee({ paymentHeader: PROOF, amountUsdc: AMOUNT })
+    ).rejects.toThrow('Payment proof was already used for a hold')
+
+    expect(mockSettleX402Payment).not.toHaveBeenCalled()
+  })
+
+  it('binds a settled proof to only one reservation', async () => {
+    const key = settlementIdempotencyKey(PROOF, AMOUNT)
+
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] })
+    await bindSettlementToReservation(key, RES_ID)
+    expect(mockQuery.mock.calls[0][0]).toContain("status = 'settled'")
+    expect(mockQuery.mock.calls[0][0]).toContain('reservation_id IS NULL')
+
+    // The second binding is refused: the proof already paid for RES_ID.
+    mockQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] })
+    mockQuery.mockResolvedValueOnce({ rows: [settledRow(null, RES_ID)] })
+
+    await expect(bindSettlementToReservation(key, OTHER_RES_ID)).rejects.toThrow(
+      'Payment proof was already used for a different reservation'
+    )
   })
 
   it('rejects a settled proof reused for a different booking hold', async () => {

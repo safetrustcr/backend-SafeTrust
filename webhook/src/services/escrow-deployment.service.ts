@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import db from './db'
 import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
 import { logger } from '../middleware/logger'
+import { ServiceUnavailableError } from '../utils/errors'
 
 export interface DeployEscrowParams {
   apartmentId: string
@@ -28,8 +29,8 @@ export interface FundXdrParams {
 }
 
 /**
- * Generate a synthetic but valid-looking Soroban contract ID for tests or fallback.
- * Soroban contract IDs on Stellar start with 'C' followed by 55 base32/alphanumeric characters.
+ * Generate a synthetic but valid-looking Soroban contract ID. Only used in
+ * tests: a real booking must never link an ID Trustless Work did not deploy.
  */
 export function generateSyntheticContractId(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
@@ -42,7 +43,8 @@ export function generateSyntheticContractId(): string {
 }
 
 /**
- * Generate a synthetic unsigned Stellar transaction XDR for tests or fallback.
+ * Generate a synthetic unsigned Stellar transaction XDR. Tests only, for the
+ * same reason as generateSyntheticContractId.
  */
 export function generateSyntheticFundXdr(contractId: string, signer: string, amount: number | string): string {
   const payload = JSON.stringify({
@@ -55,9 +57,30 @@ export function generateSyntheticFundXdr(contractId: string, signer: string, amo
   return Buffer.from(payload).toString('base64')
 }
 
+function isTestEnv(): boolean {
+  return process.env.NODE_ENV === 'test'
+}
+
+/**
+ * Trustless Work is only used when a real (non-local) base URL is configured.
+ */
+function trustedWorkConfig(): { baseUrl: string | null; apiKey: string | null } {
+  const baseUrl = getTrustlessWorkApiUrl()
+  const usable =
+    Boolean(baseUrl) &&
+    !baseUrl.includes('localhost') &&
+    !baseUrl.includes('127.0.0.1')
+  return { baseUrl: usable ? baseUrl : null, apiKey: getTrustlessWorkApiKey() }
+}
+
 /**
  * Deploys a Trustless Work escrow contract for the security deposit.
  * Deployed and signed by the backend (not the agent).
+ *
+ * A contract ID is only returned once Trustless Work confirms the deployment.
+ * When the API answers with an unsigned init transaction instead of a contract
+ * ID, the backend cannot sign and submit it here, so the call fails with a
+ * retryable error rather than linking an ID that does not exist on-chain.
  */
 export async function deployBookingEscrow(
   params: DeployEscrowParams
@@ -72,49 +95,76 @@ export async function deployBookingEscrow(
     tenantId,
   } = params
 
+  const { baseUrl, apiKey } = trustedWorkConfig()
   let contractId: string | null = null
 
-  // If Trustless Work API is configured and accessible, attempt deployment via HTTP
-  const twBaseUrl = getTrustlessWorkApiUrl()
-  const twApiKey = getTrustlessWorkApiKey()
-
-  if (process.env.NODE_ENV !== 'test' && twBaseUrl && !twBaseUrl.includes('localhost') && !twBaseUrl.includes('127.0.0.1')) {
+  if (isTestEnv() || !baseUrl) {
+    if (!isTestEnv()) {
+      throw new ServiceUnavailableError(
+        'Trustless Work escrow deployment is not configured'
+      )
+    }
+    // Synthetic IDs are confined to tests, where no on-chain contract exists.
+    contractId = generateSyntheticContractId()
+  } else {
+    let response: Response
     try {
-      const response = await fetch(`${twBaseUrl}/escrow/single-release/deploy`, {
+      response = await fetch(`${baseUrl}/escrow/single-release/deploy`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
+          ...(apiKey ? { 'x-api-key': apiKey } : {}),
         },
         body: JSON.stringify({
           signer: platformWallet,
           roles: {
             approver: agentWallet,
+            // The owner receives the released deposit.
+            receiver: hostWallet,
             serviceProvider: hostWallet,
             platformAddress: platformWallet,
             releaseSigner: platformWallet,
             disputeResolver: platformWallet,
-            receiver: hostWallet,
           },
           amount: String(depositAmount),
           milestones: [{ description: 'Security Deposit' }],
         }),
       })
-
-      if (response.ok) {
-        const data = (await response.json()) as { contractId?: string; contract_id?: string }
-        contractId = data.contractId || data.contract_id || null
-      }
     } catch (err) {
-      logger.warn('tw.deploy_escrow_network_fallback', {
+      logger.warn('tw.deploy_escrow_network_error', {
         error: (err as Error).message,
       })
+      throw new ServiceUnavailableError(
+        'Trustless Work escrow deployment is unavailable'
+      )
     }
-  }
 
-  // Fallback to generated contract ID if external deployment is unavailable or in test
-  if (!contractId) {
-    contractId = generateSyntheticContractId()
+    if (!response.ok) {
+      logger.warn('tw.deploy_escrow_rejected', { status: response.status })
+      throw new ServiceUnavailableError(
+        `Trustless Work escrow deployment failed (status ${response.status})`
+      )
+    }
+
+    const data = (await response.json()) as {
+      contractId?: string
+      contract_id?: string
+      unsignedTransaction?: string
+      unsignedXdr?: string
+    }
+    contractId = data.contractId ?? data.contract_id ?? null
+
+    if (!contractId) {
+      // Deployment answered with an init transaction that still has to be
+      // signed and submitted. Nothing is on-chain yet, so no contract ID may
+      // be linked; the caller retries later without charging again.
+      logger.warn('tw.deploy_escrow_unconfirmed', {
+        hasInitTransaction: Boolean(data.unsignedTransaction ?? data.unsignedXdr),
+      })
+      throw new ServiceUnavailableError(
+        'Trustless Work did not confirm escrow deployment'
+      )
+    }
   }
 
   // Persist the deployed escrow in safetrust.trustless_work_escrows
@@ -158,6 +208,10 @@ export async function deployBookingEscrow(
 
 /**
  * Generate unsigned fund_escrow XDR with the agent's wallet as the signer.
+ *
+ * The funding XDR is the Trustless Work response's `unsignedTransaction`. When
+ * the API does not return one, the call fails with a retryable error: handing
+ * back synthetic bytes would tell the client a 201 it cannot sign.
  */
 export async function generateFundEscrowXdr(
   params: FundXdrParams
@@ -172,17 +226,23 @@ export async function generateFundEscrowXdr(
   } = params
 
   let unsignedXdr: string | null = null
+  const { baseUrl, apiKey } = trustedWorkConfig()
 
-  const twBaseUrl = getTrustlessWorkApiUrl()
-  const twApiKey = getTrustlessWorkApiKey()
-
-  if (process.env.NODE_ENV !== 'test' && twBaseUrl && !twBaseUrl.includes('localhost') && !twBaseUrl.includes('127.0.0.1')) {
+  if (isTestEnv() || !baseUrl) {
+    if (!isTestEnv()) {
+      throw new ServiceUnavailableError(
+        'Trustless Work funding transaction is not configured'
+      )
+    }
+    unsignedXdr = generateSyntheticFundXdr(contractId, agentWallet, depositAmount)
+  } else {
+    let response: Response
     try {
-      const response = await fetch(`${twBaseUrl}/escrow/single-release/fund-escrow`, {
+      response = await fetch(`${baseUrl}/escrow/single-release/fund-escrow`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
+          ...(apiKey ? { 'x-api-key': apiKey } : {}),
         },
         body: JSON.stringify({
           contractId,
@@ -190,20 +250,37 @@ export async function generateFundEscrowXdr(
           amount: Number(depositAmount),
         }),
       })
-
-      if (response.ok) {
-        const data = (await response.json()) as { unsignedXdr?: string; unsigned_xdr?: string; xdr?: string }
-        unsignedXdr = data.unsignedXdr || data.unsigned_xdr || data.xdr || null
-      }
     } catch (err) {
-      logger.warn('tw.fund_escrow_xdr_network_fallback', {
+      logger.warn('tw.fund_escrow_xdr_network_error', {
         error: (err as Error).message,
       })
+      throw new ServiceUnavailableError(
+        'Trustless Work funding transaction is unavailable'
+      )
     }
-  }
 
-  if (!unsignedXdr) {
-    unsignedXdr = generateSyntheticFundXdr(contractId, agentWallet, depositAmount)
+    if (!response.ok) {
+      logger.warn('tw.fund_escrow_xdr_rejected', { status: response.status })
+      throw new ServiceUnavailableError(
+        `Trustless Work funding transaction failed (status ${response.status})`
+      )
+    }
+
+    const data = (await response.json()) as {
+      unsignedTransaction?: string
+      unsignedXdr?: string
+      unsigned_xdr?: string
+      xdr?: string
+    }
+    unsignedXdr =
+      data.unsignedTransaction ?? data.unsignedXdr ?? data.unsigned_xdr ?? data.xdr ?? null
+
+    if (!unsignedXdr) {
+      logger.warn('tw.fund_escrow_xdr_missing')
+      throw new ServiceUnavailableError(
+        'Trustless Work did not return a funding transaction'
+      )
+    }
   }
 
   // Persist into safetrust.escrow_transactions for auditing and client retrieval

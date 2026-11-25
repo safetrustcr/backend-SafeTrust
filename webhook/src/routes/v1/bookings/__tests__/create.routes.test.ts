@@ -4,9 +4,13 @@ import request from 'supertest'
 const mockQuery = jest.fn()
 const mockWithTransaction = jest.fn()
 const mockSettleBookingFee = jest.fn()
+const mockBindSettlementToReservation = jest.fn()
 
 jest.mock('../../../../services/x402-settlement.service', () => ({
   settleBookingFee: (...args: unknown[]) => mockSettleBookingFee(...args),
+  settlementIdempotencyKey: () => 'payment-key',
+  bindSettlementToReservation: (...args: unknown[]) =>
+    mockBindSettlementToReservation(...args),
 }))
 
 jest.mock('../../../../services/db', () => ({
@@ -49,7 +53,9 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
       idempotencyKey: 'payment-key',
       transactionHash: 'settlement-tx-hash',
       reused: false,
+      reservationId: null,
     })
+    mockBindSettlementToReservation.mockResolvedValue(undefined)
     process.env.X402_ENABLED = 'true'
     process.env.SAFETRUST_PLATFORM_WALLET = 'GD5JPEHGGTDTK2N7OMDDCOW3DPO5KSFWACYWNYZNNOXD2UC7LQ4DHXMM'
     setX402Addon({
@@ -218,7 +224,28 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] })
     mockQuery.mockResolvedValueOnce({ rows: [] })
 
-    // 3. withTransaction executing atomic hold conversion and reservation creation in escrow_created status
+    // 3. resolveUserStellarWallet query (resolved before the fee is settled)
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          wallet_address: 'GB7TAYRUZTW6PC7L2L5Q2K4M6N8P2Q4R6S8T2U4V6W8X2Y4Z6A2B4C6D',
+          is_primary: true,
+        },
+      ],
+    })
+
+    // 4. resolveOwnerStellarWallet query (resolved before the fee is settled)
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          wallet_address: 'GD5JPEHGGTDTK2N7OMDDCOW3DPO5KSFWACYWNYZNNOXD2UC7LQ4DHXMM',
+          is_primary: true,
+        },
+      ],
+    })
+
+    // 5. withTransaction: lock the hold, settle the fee under the lock, then
+    // convert the hold and create the reservation in escrow_created status.
     mockWithTransaction.mockImplementationOnce(async (cb) => {
       const mockClient = {
         query: jest.fn(async (sql: string) => {
@@ -242,26 +269,6 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
         }),
       }
       return cb(mockClient)
-    })
-
-    // 4. resolveUserStellarWallet query
-    mockQuery.mockResolvedValueOnce({
-      rows: [
-        {
-          wallet_address: 'GB7TAYRUZTW6PC7L2L5Q2K4M6N8P2Q4R6S8T2U4V6W8X2Y4Z6A2B4C6D',
-          is_primary: true,
-        },
-      ],
-    })
-
-    // 5. resolveOwnerStellarWallet query
-    mockQuery.mockResolvedValueOnce({
-      rows: [
-        {
-          wallet_address: 'GD5JPEHGGTDTK2N7OMDDCOW3DPO5KSFWACYWNYZNNOXD2UC7LQ4DHXMM',
-          is_primary: true,
-        },
-      ],
     })
 
     // 6. deployBookingEscrow insert into trustless_work_escrows
@@ -338,6 +345,47 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ is_available: true }] })
     mockQuery.mockResolvedValueOnce({ rows: [] })
     mockQuery.mockResolvedValueOnce({ rows: [] })
+
+    // 3. wallets resolve before the charge
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          wallet_address: 'GB7TAYRUZTW6PC7L2L5Q2K4M6N8P2Q4R6S8T2U4V6W8X2Y4Z6A2B4C6D',
+          is_primary: true,
+        },
+      ],
+    })
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          wallet_address: 'GD5JPEHGGTDTK2N7OMDDCOW3DPO5KSFWACYWNYZNNOXD2UC7LQ4DHXMM',
+          is_primary: true,
+        },
+      ],
+    })
+
+    // 4. The hold is locked, then settlement fails before anything is written.
+    mockWithTransaction.mockImplementationOnce(async (cb) => {
+      const mockClient = {
+        query: jest.fn(async (sql: string) => {
+          const lower = String(sql).toLowerCase()
+          if (lower.includes('select id, status') && lower.includes('for update')) {
+            return {
+              rows: [
+                {
+                  id: HOLD_ID,
+                  status: 'active',
+                  expires_at: new Date(Date.now() + 600000),
+                  is_expired: false,
+                },
+              ],
+            }
+          }
+          return { rows: [], rowCount: 1 }
+        }),
+      }
+      return cb(mockClient)
+    })
     mockSettleBookingFee.mockRejectedValueOnce(
       new PaymentRequiredError('Facilitator declined settlement', {
         code: 'settlement_failed',
@@ -351,7 +399,8 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
 
     expect(res.status).toBe(402)
     expect(res.body.code).toBe('settlement_failed')
-    expect(mockWithTransaction).not.toHaveBeenCalled()
+    // The conversion transaction rolled back: no hold conversion, no reservation.
+    expect(mockWithTransaction).toHaveBeenCalledTimes(1)
   })
 
   it('rejects an unavailable property with 409 without settling the $0.10 fee', async () => {
@@ -419,5 +468,115 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
 
     expect(res.status).toBe(400)
     expect(res.body.error).toContain('Either hold_id or property_id')
+  })
+
+  function mockDirectFlow() {
+    // Quote
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: APT_ID,
+          name: 'Modern Apartment',
+          price: '100.00',
+          warranty_deposit: '50.00',
+          owner_id: 'host-1',
+          is_available: true,
+          bedrooms: 1,
+        },
+      ],
+    })
+    // Eligibility: apartment available, no overlapping hold or reservation
+    mockQuery.mockResolvedValueOnce({ rows: [{ is_available: true }] })
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    // Wallets resolve before the fee is settled
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          wallet_address: 'GB7TAYRUZTW6PC7L2L5Q2K4M6N8P2Q4R6S8T2U4V6W8X2Y4Z6A2B4C6D',
+          is_primary: true,
+        },
+      ],
+    })
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          wallet_address: 'GD5JPEHGGTDTK2N7OMDDCOW3DPO5KSFWACYWNYZNNOXD2UC7LQ4DHXMM',
+          is_primary: true,
+        },
+      ],
+    })
+  }
+
+  it('returns the reservation a settled direct-booking proof already paid for', async () => {
+    mockDirectFlow()
+    mockSettleBookingFee.mockResolvedValueOnce({
+      idempotencyKey: 'payment-key',
+      transactionHash: 'settlement-tx-hash',
+      reused: true,
+      reservationId: 'res-bound-1',
+    })
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'res-bound-1',
+          apartment_id: APT_ID,
+          guest_id: 'agent-1',
+          check_in_date: '2026-12-15',
+          check_out_date: '2026-12-20',
+          contract_id: 'CAATN5DBOUND000000000000000000000000000000000000000001',
+          unsigned_xdr: 'AAAA_BOUND_XDR',
+        },
+      ],
+    })
+
+    const res = await request(app('agent-1'))
+      .post('/api/v1/bookings')
+      .set('x-payment', 'valid-x402-proof')
+      .send({ property_id: APT_ID, check_in: '2026-12-15', check_out: '2026-12-20', guests: 2 })
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({
+      reservation_id: 'res-bound-1',
+      contract_id: 'CAATN5DBOUND000000000000000000000000000000000000000001',
+      deposit: '50.00',
+      asset: 'USDC',
+      unsigned_xdr: 'AAAA_BOUND_XDR',
+    })
+    // The proof is not settled twice and no second reservation is created.
+    expect(mockSettleBookingFee).toHaveBeenCalledTimes(1)
+    expect(mockWithTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects a settled direct-booking proof replayed for a different booking', async () => {
+    mockDirectFlow()
+    mockSettleBookingFee.mockResolvedValueOnce({
+      idempotencyKey: 'payment-key',
+      transactionHash: 'settlement-tx-hash',
+      reused: true,
+      reservationId: 'res-bound-1',
+    })
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'res-bound-1',
+          apartment_id: APT_ID,
+          guest_id: 'agent-1',
+          check_in_date: '2027-01-15',
+          check_out_date: '2027-01-20',
+          contract_id: 'CAATN5DBOUND000000000000000000000000000000000000000001',
+          unsigned_xdr: 'AAAA_BOUND_XDR',
+        },
+      ],
+    })
+
+    const res = await request(app('agent-1'))
+      .post('/api/v1/bookings')
+      .set('x-payment', 'valid-x402-proof')
+      .send({ property_id: APT_ID, check_in: '2026-12-15', check_out: '2026-12-20', guests: 2 })
+
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('settlement_reservation_mismatch')
+    expect(mockWithTransaction).not.toHaveBeenCalled()
   })
 })
