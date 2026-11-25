@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Compile Karate's TypeScript configuration to the JavaScript consumed by Graal.
-FROM node:24-bookworm-slim AS karate-config
+FROM node:25-bookworm-slim AS karate-config
 WORKDIR /app
 COPY webhook/package*.json ./webhook/
 RUN cd webhook && npm ci --ignore-scripts
