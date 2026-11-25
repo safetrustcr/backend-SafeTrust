@@ -127,9 +127,11 @@ jest.mock('../../src/services/db', () => ({
         return { rowCount: 1, rows: [] }
       }
 
-      // 8. General reservation status update
-      if (lower.includes('update safetrust.reservations') && params) {
-        return { rowCount: 1, rows: [] }
+      // 8. Unexpected reservation update — fail fast so new writes must be handled explicitly
+      if (lower.includes('update safetrust.reservations')) {
+        throw new Error(
+          `Unexpected safetrust.reservations update in e2e mock: ${sql} | params=${JSON.stringify(params)}`,
+        )
       }
 
       return { rows: [] }
