@@ -22,6 +22,7 @@ Scenario: Creator becomes owner and another user cannot update the hotel
   And match response.data.insert_hotel_industry_hotels_one.members == [{ user_id: '#(ownerId)', role: 'OWNER' }]
   * def hotelId = response.data.insert_hotel_industry_hotels_one.id
 
+  * header x-hasura-role = 'user'
   * header x-hasura-user-id = otherUserId
   * def updateQuery = 'mutation UpdateHotel($id: uuid!) { update_hotel_industry_hotels_by_pk(pk_columns: {id: $id}, _set: {name: "Unauthorized update"}) { id } }'
   Given request { query: '#(updateQuery)', variables: { id: '#(hotelId)' } }
@@ -34,6 +35,8 @@ Scenario: Creator becomes owner and another user cannot update the hotel
 
   * def ownerlessHotelId = UUID.randomUUID().toString()
   * db.execute("INSERT INTO hotel_industry.hotels (id, name, address_line) VALUES ('" + ownerlessHotelId + "', 'Legacy hotel', 'Test address')")
+  * header x-hasura-role = 'user'
+  * header x-hasura-user-id = otherUserId
   * def claimQuery = 'mutation ClaimOwner($object: hotel_industry_hotel_members_insert_input!) { insert_hotel_industry_hotel_members_one(object: $object) { hotel_id user_id role } }'
   * def claimVariables = { object: { hotel_id: '#(ownerlessHotelId)', user_id: '#(otherUserId)', role: 'OWNER' } }
   Given request { query: '#(claimQuery)', variables: '#(claimVariables)' }
