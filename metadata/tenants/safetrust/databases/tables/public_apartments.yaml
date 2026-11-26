@@ -14,7 +14,6 @@ select_permissions:
         - coordinates
         - bedrooms
         - bathrooms
-        - capacity
         - max_guests
         - floor_area
         - furnished
@@ -42,7 +41,6 @@ select_permissions:
         - coordinates
         - bedrooms
         - bathrooms
-        - capacity
         - max_guests
         - floor_area
         - furnished
@@ -83,7 +81,6 @@ insert_permissions:
         - coordinates
         - bedrooms
         - bathrooms
-        - capacity
         - max_guests
         - floor_area
         - furnished
@@ -112,7 +109,6 @@ update_permissions:
         - coordinates
         - bedrooms
         - bathrooms
-        - capacity
         - max_guests
         - floor_area
         - furnished

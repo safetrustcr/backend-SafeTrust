@@ -79,7 +79,14 @@ export async function createHoldHandler(
       throw error
     }
 
-    const activated = await activateHold(hold.id)
+    let activated: boolean
+    try {
+      activated = await activateHold(hold.id)
+    } catch (activationError) {
+      // Free the pending hold so a retry is not blocked; keep the original error.
+      await releasePendingHold(hold.id).catch(() => undefined)
+      throw activationError
+    }
     if (!activated) {
       throw new ValidationError('Hold expired before payment was confirmed')
     }
