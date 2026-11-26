@@ -131,7 +131,7 @@ validated read adapter:
 
 For the full decision record, gap analysis between Trustless Work API and direct
 Stellar RPC reads, and adapter validation boundary diagrams, see
-[Escrow State Source](../stellar/escrow-state-source.md).
+[Reconciliation and Indexer Sync](../stellar/reconciliation.md).
 
 
 ---

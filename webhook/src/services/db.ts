@@ -17,6 +17,8 @@ function positiveIntegerFromEnv(name: string, defaultValue: number): number {
 
 // Fail fast — never use hardcoded credentials in production
 const requiredEnvVars = ['POSTGRES_HOST', 'POSTGRES_USER', 'POSTGRES_PASSWORD']
+// Fail fast - never use hardcoded credentials in production
+const requiredEnvVars = ['POSTGRES_HOST', 'POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD']
 for (const key of requiredEnvVars) {
   if (!process.env[key] && process.env.NODE_ENV === 'production') {
     throw new Error(`Missing required environment variable: ${key}`)
@@ -56,6 +58,13 @@ pool.on('error', (err: Error) => {
 hotelPool.on('error', (err: Error) => {
   console.error('[db] Unexpected error on idle hotel_industry database client:', err)
 })
+
+export interface Queryable {
+  query<T extends QueryResultRow = Record<string, unknown>>(
+    text: string,
+    params?: unknown[]
+  ): Promise<QueryResult<T>>
+}
 
 export async function query<T extends QueryResultRow = Record<string, unknown>>(
   text: string,
