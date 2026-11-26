@@ -28,12 +28,7 @@ stopwords = [
   "testsecret",
 ]
 
-[[allowlist.rules]]
-id = "allow-x402-doc-placeholders"
-description = "Documented x402 configuration variable names and placeholders in docs/stellar/x402-protocol.md"
+[[allowlists]]
+description = "Allow documented x402 configuration placeholders in historical commit 75221de"
+commits = ["75221de2c5d804d1e81caa74a755a5b5e0403b5b"]
 paths = ['''^docs/stellar/x402-protocol\.md$''']
-stopwords = [
-  "x402_facilitator_url",
-  "your_api_key_if_required",
-  "optional_api_key",
-]
