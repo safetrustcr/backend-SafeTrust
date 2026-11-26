@@ -135,7 +135,7 @@ The current flow is:
   reconciles indexed escrow state into Postgres; there are no inbound
   webhooks from Trustless Work any more.
 
-See [`sync-escrows`](../webhook/src/routes/sync-escrows) for the polling
+See [`sync-escrows`](../../webhook/src/routes/reconciliation) for the polling
 implementation.
 
 ## Repository structure

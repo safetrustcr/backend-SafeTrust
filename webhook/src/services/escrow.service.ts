@@ -364,8 +364,10 @@ export async function linkReservationToEscrow(
 ): Promise<void> {
   await linkEscrowToReservation(reservationId, escrowId, tenantId);
 
+  const safeReservationId = String(reservationId).replace(/[\r\n\t]/g, '');
+  const safeEscrowId = String(escrowId).replace(/[\r\n\t]/g, '');
   console.log(
-    `[escrow.service] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrowId}`
+    `[escrow.service] Reservation linked — reservationId: ${safeReservationId}, escrowId: ${safeEscrowId}`
   );
 }
 
@@ -393,6 +395,10 @@ export async function initializeEscrow(
   }
 
   const reservationId = payload.reservation_id ?? payload.booking_metadata?.reservation_id;
+  if (context?.callerUserId && !context.isServerAgent && !reservationId) {
+    throw new EscrowValidationError('reservation_id is required for guest escrow initialization');
+  }
+
   const escrowTenantId = reservationId
     ? await resolveReservationTenant(reservationId, tenantId)
     : tenantId;
@@ -411,11 +417,21 @@ export async function initializeEscrow(
     const reservationData = await getReservationVerificationData(reservationId);
     if (reservationData) {
       const meta = (escrow.escrowMetadata ?? payload.raw ?? {}) as Record<string, unknown>;
-      const authoritativeEngagementId =
-        (meta.engagementId as string | undefined) ??
-        (meta.engagement_id as string | undefined) ??
-        (meta.reservation_id as string | undefined) ??
-        null;
+      const bookingMeta = (meta.booking_metadata as Record<string, unknown> | undefined) ?? {};
+      const metaEngagementId = typeof meta.engagementId === 'string' ? meta.engagementId.trim() : '';
+      const metaEngagement_id = typeof meta.engagement_id === 'string' ? meta.engagement_id.trim() : '';
+      const metaReservationId = typeof meta.reservation_id === 'string' ? meta.reservation_id.trim() : '';
+      const bookingResId = typeof bookingMeta.reservation_id === 'string' ? bookingMeta.reservation_id.trim() : '';
+
+      const identifiers = [metaEngagementId, metaEngagement_id, metaReservationId, bookingResId].filter(
+        (id) => Boolean(id)
+      );
+
+      if (new Set(identifiers).size > 1) {
+        throw new EscrowValidationError('Conflicting engagement identifiers in metadata');
+      }
+
+      const authoritativeEngagementId = identifiers[0] || null;
 
       // Verify the persisted escrow record before linking to reservation
       const verification = verifyEscrowForReservation(
@@ -426,7 +442,7 @@ export async function initializeEscrow(
           marker: escrow.marker ?? payload.marker,
           approver: escrow.approver ?? payload.approver,
           releaser: escrow.releaser ?? payload.releaser,
-          resolver: escrow.resolver ?? payload.resolver,
+          resolver: escrow.resolver ?? null,
           asset_code: escrow.assetCode ?? payload.asset_code,
           asset_issuer: escrow.assetIssuer ?? payload.asset_issuer,
           token_contract_id:
@@ -473,6 +489,8 @@ export async function initializeEscrow(
           `Escrow verification failed for reservation ${reservationId}: ${verification.mismatches.join('; ')}`
         );
       }
+    } else if (context?.callerUserId && !context.isServerAgent) {
+      throw new ReservationNotFoundError(reservationId);
     }
 
     if (reservationData?.status !== 'escrow_created' || reservationData?.escrow_id !== escrow.id) {

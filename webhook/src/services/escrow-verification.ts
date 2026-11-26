@@ -360,15 +360,15 @@ export async function recordEscrowVerificationEvent(
     params.tenantId ?? 'safetrust',
   ]
 
-  try {
-    if (client) {
-      await client.query(sql, values)
-    } else {
+  if (client) {
+    await client.query(sql, values)
+  } else {
+    try {
       await query(sql, values)
+    } catch (err) {
+      // If table doesn't exist yet (e.g. before migration), log error but don't break flow
+      console.error('[escrow-verification] Failed to record verification audit event:', err)
     }
-  } catch (err) {
-    // If table doesn't exist yet (e.g. before migration), log error but don't break flow
-    console.error('[escrow-verification] Failed to record verification audit event:', err)
   }
 }
 

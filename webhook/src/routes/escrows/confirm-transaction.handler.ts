@@ -15,6 +15,7 @@ import {
   SubmissionPath,
 } from '../../services/confirmation.service'
 import { assertSignedXdrCannotAdvanceStatus, isEscrowParty } from '../../services/escrow.service'
+import { getStellarNetwork } from '../../config/stellar'
 
 export interface ConfirmTransactionPayload {
   submissionPath?: SubmissionPath

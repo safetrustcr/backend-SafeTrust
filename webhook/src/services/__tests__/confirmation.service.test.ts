@@ -155,7 +155,7 @@ describe('Confirmation Service - Issue #660', () => {
         expect.stringContaining('/helper/send-transaction'),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ signedXdr: 'VALID_SIGNED_XDR' }),
+          body: JSON.stringify({ signedXdr: validTestXdr }),
         })
       )
 

@@ -9,6 +9,8 @@
 import db, { withTransaction } from './db'
 import { hasuraRequest } from './hasura'
 import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
+import { TransactionBuilder, Networks, StrKey, Keypair, Address } from '@stellar/stellar-sdk'
+import { getStellarConfig } from '../config/stellar'
 import {
   upsertRetryRecord,
   updateRetryRecordStatus,
@@ -280,9 +282,9 @@ export async function promoteEscrowStatus(
   action: EscrowAction,
   txHash: string,
   network: StellarNetwork
-): Promise<void> {
+): Promise<boolean> {
   const runner = db.withTransaction ?? withTransaction
-  await runner(async (client) => {
+  return await runner(async (client) => {
     let updateResult: { rows: any[] }
     if (action === 'deploy') {
       updateResult = await client.query(
@@ -294,6 +296,7 @@ export async function promoteEscrowStatus(
           network = $2,
           updated_at = NOW()
         WHERE contract_id = $3
+          AND status != 'untrusted'
         RETURNING id, tenant_id, contract_id, amount, marker, approver
         `,
         [txHash, network, escrowId]
@@ -309,6 +312,7 @@ export async function promoteEscrowStatus(
           network = $2,
           updated_at = NOW()
         WHERE contract_id = $3
+          AND status != 'untrusted'
         RETURNING id, tenant_id, contract_id, amount, marker, approver
         `,
         [txHash, network, escrowId]
@@ -320,6 +324,19 @@ export async function promoteEscrowStatus(
     const escrowRow = updateResult?.rows?.[0]
     const internalEscrowId = escrowRow?.id
     const tenantId = escrowRow?.tenant_id ?? 'safetrust'
+
+    if (!internalEscrowId) {
+      const checkRow = await client.query(
+        `SELECT id, status FROM safetrust.trustless_work_escrows WHERE contract_id = $1`,
+        [escrowId]
+      )
+      if (checkRow?.rows?.[0]?.status === 'untrusted') {
+        console.warn(
+          `[promoteEscrowStatus] Escrow ${escrowId} is quarantined as untrusted; status update blocked.`
+        )
+        return false
+      }
+    }
 
     if (internalEscrowId) {
       const updateTx = await client.query(
@@ -408,6 +425,7 @@ export async function promoteEscrowStatus(
         [txHash, escrowId, action]
       )
     }
+    return Boolean(internalEscrowId)
   })
 }
 

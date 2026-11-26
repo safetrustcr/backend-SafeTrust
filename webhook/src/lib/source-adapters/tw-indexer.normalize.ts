@@ -53,6 +53,7 @@ import { amountToStroops } from '../stellar-amounts'
 
 export type DerivedEscrowStatus =
   | 'created'
+  | 'partially_funded'
   | 'pending_funding'
   | 'funded'
   | 'milestone_approved'
@@ -60,6 +61,7 @@ export type DerivedEscrowStatus =
   | 'completed'
   | 'resolved'
   | 'cancelled'
+  | 'untrusted'
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
