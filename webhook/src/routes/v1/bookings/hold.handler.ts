@@ -115,6 +115,15 @@ export async function createHoldHandler(
           })
         }
 
+        // A lapsed hold cannot be resumed or re-activated, even when its fee
+        // was settled: the dates it blocked are free again for other guests.
+        if (
+          existing.status === 'expired' ||
+          new Date(existing.expires_at).getTime() <= Date.now()
+        ) {
+          throw new ConflictError('Hold has expired', { code: 'hold_expired' })
+        }
+
         if (existing.status === 'pending_payment') {
           if (!(await activateHold(existing.id))) {
             logger.error('booking.hold_activation_pending', { holdId: existing.id })

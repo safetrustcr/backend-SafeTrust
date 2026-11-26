@@ -142,6 +142,67 @@ describe('v1 booking holds routes', () => {
     expect(mockSettleBookingFee).not.toHaveBeenCalled()
   })
 
+  it('rejects a retry of an expired paid hold with 409 hold_expired', async () => {
+    mockFindSettledHoldFee.mockResolvedValueOnce({ idempotencyKey: 'k', holdId: 'h1' })
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'h1',
+          tenant_id: 'safetrust',
+          apartment_id: APT,
+          user_id: 'u1',
+          check_in: new Date('2026-12-15T00:00:00Z'),
+          check_out: new Date('2026-12-20T00:00:00Z'),
+          guests: 4,
+          status: 'active',
+          quote_total: '150.00',
+          quote_deposit: '45',
+          asset_code: 'USDC',
+          payer_address: 'GPAYER',
+          expires_at: new Date('2026-01-01T00:00:00Z'),
+        },
+      ],
+    })
+
+    const res = await request(app('u1')).post('/api/v1/bookings/hold').set('x-payment', 'abc').send(body)
+
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('hold_expired')
+    // The settled fee is not charged again and no second hold is created.
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(mockSettleBookingFee).not.toHaveBeenCalled()
+  })
+
+  it('rejects a retry of a hold already marked expired with 409 hold_expired', async () => {
+    mockFindSettledHoldFee.mockResolvedValueOnce({ idempotencyKey: 'k', holdId: 'h1' })
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'h1',
+          tenant_id: 'safetrust',
+          apartment_id: APT,
+          user_id: 'u1',
+          check_in: new Date('2026-12-15T00:00:00Z'),
+          check_out: new Date('2026-12-20T00:00:00Z'),
+          guests: 4,
+          status: 'expired',
+          quote_total: '150.00',
+          quote_deposit: '45',
+          asset_code: 'USDC',
+          payer_address: 'GPAYER',
+          expires_at: new Date('2026-12-01T14:32:00Z'),
+        },
+      ],
+    })
+
+    const res = await request(app('u1')).post('/api/v1/bookings/hold').set('x-payment', 'abc').send(body)
+
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('hold_expired')
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(mockSettleBookingFee).not.toHaveBeenCalled()
+  })
+
   it('rejects bad input with 400 after payment verification', async () => {
     const res = await request(app('u1')).post('/api/v1/bookings/hold').set('x-payment', 'abc').send({ ...body, check_out: '2026-12-10' })
     expect(res.status).toBe(400)
