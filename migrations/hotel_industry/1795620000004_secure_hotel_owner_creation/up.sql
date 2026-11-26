@@ -9,7 +9,13 @@ LANGUAGE plpgsql
 SET search_path = hotel_industry, pg_temp
 AS $$
 BEGIN
-    IF NEW.created_by_user_id IS NOT NULL THEN
+    IF NEW.created_by_user_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1
+        FROM hotel_industry.hotel_members
+        WHERE hotel_id = NEW.id
+          AND user_id = NEW.created_by_user_id
+          AND role = 'OWNER'
+    ) THEN
         INSERT INTO hotel_industry.hotel_members (hotel_id, user_id, role)
         VALUES (NEW.id, NEW.created_by_user_id, 'OWNER');
     END IF;
@@ -18,7 +24,8 @@ BEGIN
 END;
 $$;
 
-CREATE TRIGGER hotels_create_owner_membership
+CREATE CONSTRAINT TRIGGER hotels_create_owner_membership
 AFTER INSERT ON hotel_industry.hotels
+DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 EXECUTE FUNCTION hotel_industry.create_hotel_owner_membership();
