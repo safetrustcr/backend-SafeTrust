@@ -1,5 +1,6 @@
 import express from 'express'
 import request from 'supertest'
+import { publicRateLimit } from '../rate-limit'
 import { setX402Addon } from '../x402-payment.middleware'
 import { x402UnlessAuthenticated } from '../x402-unless-authenticated'
 import { authMiddleware } from '../auth.middleware'
@@ -12,7 +13,7 @@ const mockAuthMiddleware = authMiddleware as jest.Mock
 
 function createApp() {
   const app = express()
-  app.get('/properties', x402UnlessAuthenticated(0.001), (_req, res) => {
+  app.get('/properties', publicRateLimit, x402UnlessAuthenticated(0.001), (_req, res) => {
     res.status(200).json({ ok: true })
   })
   return app

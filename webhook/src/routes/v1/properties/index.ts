@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { publicRateLimit } from '../../../middleware/rate-limit'
 import { validate } from '../../../middleware/validate'
 import { x402UnlessAuthenticated } from '../../../middleware/x402-unless-authenticated'
 import {
@@ -12,6 +13,8 @@ import { searchProperties } from './search.handler'
 export const PROPERTY_SEARCH_PRICE_USDC = 0.001
 
 const router: Router = Router()
+
+router.use(publicRateLimit)
 
 router.get(
   '/search',

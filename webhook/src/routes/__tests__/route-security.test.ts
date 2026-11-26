@@ -33,6 +33,7 @@ jest.mock('../../middleware/rate-limit', () => {
     apiRateLimit: passThrough,
     authIpRateLimit: passThrough,
     authRateLimit: passThrough,
+    publicRateLimit: passThrough,
   }
 })
 
