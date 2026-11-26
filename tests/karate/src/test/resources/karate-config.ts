@@ -19,48 +19,47 @@ function fn() {
   };
 
 
-  // DB helper
-  var db = {
-    query: function(sql: string | JavaString | JavaBytes) {
-      if (typeof sql !== 'string') sql = new java.lang.String(sql).toString();
+  // DB helper factory: one database per tenant, so each helper targets its own database.
+  function makeDb(database: string) {
+    var url = 'jdbc:postgresql://postgres_test:5432/' + database;
+    function connect() {
       var DriverManager = Java.type('java.sql.DriverManager');
-      var conn = DriverManager.getConnection(
-        'jdbc:postgresql://postgres_test:5432/safetrust',
-        'postgres',
-        'postgrespassword'
-      );
-      var stmt = conn.createStatement();
-      var rs = stmt.executeQuery(sql);
-      var meta = rs.getMetaData();
-      var cols = meta.getColumnCount();
-      var list = [];
-      while (rs.next()) {
-        var map: Record<string, string | null> = {};
-        for (var i = 1; i <= cols; i++) {
-          var name = meta.getColumnName(i);
-          map[name] = rs.getString(i);
-        }
-        list.push(map);
-      }
-      rs.close();
-      stmt.close();
-      conn.close();
-      return list;
-    },
-    execute: function(sql: string | JavaString | JavaBytes) {
-      if (typeof sql !== 'string') sql = new java.lang.String(sql).toString();
-      var DriverManager = Java.type('java.sql.DriverManager');
-      var conn = DriverManager.getConnection(
-        'jdbc:postgresql://postgres_test:5432/safetrust',
-        'postgres',
-        'postgrespassword'
-      );
-      var stmt = conn.createStatement();
-      stmt.execute(sql);
-      stmt.close();
-      conn.close();
+      return DriverManager.getConnection(url, 'postgres', 'postgrespassword');
     }
-  };
+    return {
+      query: function(sql: string | JavaString | JavaBytes) {
+        if (typeof sql !== 'string') sql = new java.lang.String(sql).toString();
+        var conn = connect();
+        var stmt = conn.createStatement();
+        var rs = stmt.executeQuery(sql);
+        var meta = rs.getMetaData();
+        var cols = meta.getColumnCount();
+        var list = [];
+        while (rs.next()) {
+          var map: Record<string, string | null> = {};
+          for (var i = 1; i <= cols; i++) {
+            var name = meta.getColumnName(i);
+            map[name] = rs.getString(i);
+          }
+          list.push(map);
+        }
+        rs.close();
+        stmt.close();
+        conn.close();
+        return list;
+      },
+      execute: function(sql: string | JavaString | JavaBytes) {
+        if (typeof sql !== 'string') sql = new java.lang.String(sql).toString();
+        var conn = connect();
+        var stmt = conn.createStatement();
+        stmt.execute(sql);
+        stmt.close();
+        conn.close();
+      }
+    };
+  }
+  var db = makeDb('safetrust');
+  var hotelDb = makeDb('hotel_industry');
 
   function bytes(value: string): JavaBytes {
     return new java.lang.String(value).getBytes("UTF-8");
@@ -89,7 +88,7 @@ function fn() {
     return "Bearer " + signingInput + "." + sig;
   };
 
-  var config = { ...endpoints, db, restToken };
+  var config = { ...endpoints, db, hotelDb, restToken };
 
   karate.configure('headers', function() {
     return {
