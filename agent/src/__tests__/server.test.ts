@@ -1136,143 +1136,164 @@ describe('MCP Booking Agent Server', () => {
     const contractId = StrKey.encodeContract(Buffer.alloc(32, 47));
     let fundPostCalls = 0;
 
-    const baseFetch: typeof globalThis.fetch = async (input) => {
-      const url = typeof input === 'string' ? input : (input as Request).url;
-      if (url.endsWith('/api/auth/wallet-challenge/challenge')) {
-        return new Response(
-          JSON.stringify({
-            challengeId: 'c1',
-            challenge: 'sign-me',
-            expiresAt: new Date(Date.now() + 60_000).toISOString(),
-          }),
-          { status: 200 }
-        );
-      }
-      if (url.endsWith('/api/auth/wallet-challenge/verify')) {
-        return new Response(
-          JSON.stringify({ success: true, token: 'tok_1' }),
-          { status: 200 }
-        );
-      }
-      if (url.includes('/fund')) {
-        fundPostCalls += 1;
-        return new Response(
-          JSON.stringify({ status: 'funded', contract_id: contractId }),
-          { status: 200 }
-        );
-      }
-      return new Response(JSON.stringify({ error: 'unexpected' }), { status: 404 });
-    };
+    let currentNow = 1_700_000_000_000;
+    const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => currentNow);
 
-    const { server, api } = createBookingAgentServer({
-      secretKey,
-      apiBaseUrl: 'https://testnet.safetrust.local',
-      baseFetch,
-      confirmationTtlMs: 30,
-      verifyHumanApproval: async () => {
-        // Delay past confirmationTtlMs so confirmation expires during approval await
-        await new Promise((r) => setTimeout(r, 60));
-        return true;
-      },
-      spendingConfig: {
-        maxFeePerCallUsdc: 0.1,
-        feeBudgetUsdc: 0.5,
-        maxDepositUsdc: 50,
+    try {
+      const baseFetch: typeof globalThis.fetch = async (input) => {
+        const url = typeof input === 'string' ? input : (input as Request).url;
+        if (url.endsWith('/api/auth/wallet-challenge/challenge')) {
+          return new Response(
+            JSON.stringify({
+              challengeId: 'c1',
+              challenge: 'sign-me',
+              expiresAt: new Date(currentNow + 60_000).toISOString(),
+            }),
+            { status: 200 }
+          );
+        }
+        if (url.endsWith('/api/auth/wallet-challenge/verify')) {
+          return new Response(
+            JSON.stringify({ success: true, token: 'tok_1' }),
+            { status: 200 }
+          );
+        }
+        if (url.includes('/fund')) {
+          fundPostCalls += 1;
+          return new Response(
+            JSON.stringify({ status: 'funded', contract_id: contractId }),
+            { status: 200 }
+          );
+        }
+        return new Response(JSON.stringify({ error: 'unexpected' }), { status: 404 });
+      };
+
+      let advanceClockOnApproval = false;
+      const { server, api } = createBookingAgentServer({
+        secretKey,
+        apiBaseUrl: 'https://testnet.safetrust.local',
+        baseFetch,
+        confirmationTtlMs: 60_000,
+        verifyHumanApproval: async () => {
+          if (advanceClockOnApproval) {
+            // Deterministically advance past confirmationTtlMs inside the approval callback
+            currentNow += 120_000;
+          }
+          return true;
+        },
+        spendingConfig: {
+          maxFeePerCallUsdc: 0.1,
+          feeBudgetUsdc: 0.5,
+          maxDepositUsdc: 50,
+          network: 'testnet',
+          expectedPayTo: PLATFORM_WALLET,
+          expectedAssetContract: TESTNET_USDC,
+        },
+      });
+
+      const unsignedXdr = buildUnsignedFundEscrowXdr({
+        contractId,
+        signerPublicKey: kp.publicKey(),
+        amountUsdc: 45,
         network: 'testnet',
-        expectedPayTo: PLATFORM_WALLET,
-        expectedAssetContract: TESTNET_USDC,
-      },
-    });
+      });
 
-    const unsignedXdr = buildUnsignedFundEscrowXdr({
-      contractId,
-      signerPublicKey: kp.publicKey(),
-      amountUsdc: 45,
-      network: 'testnet',
-    });
+      api.registerBooking({
+        bookingId: 'b_exp',
+        propertyId: 'p1',
+        propertyName: 'Villa Expiry',
+        contractId,
+        checkIn: '2026-12-15',
+        checkOut: '2026-12-20',
+        totalUsdc: 150,
+        depositUsdc: 45,
+        assetCode: 'USDC',
+        assetContract: TESTNET_USDC,
+        unsignedXdr,
+        status: 'escrow_created',
+        feePaidUsdc: 0.1,
+      });
 
-    api.registerBooking({
-      bookingId: 'b_exp',
-      propertyId: 'p1',
-      propertyName: 'Villa Expiry',
-      contractId,
-      checkIn: '2026-12-15',
-      checkOut: '2026-12-20',
-      totalUsdc: 150,
-      depositUsdc: 45,
-      assetCode: 'USDC',
-      assetContract: TESTNET_USDC,
-      unsignedXdr,
-      status: 'escrow_created',
-      feePaidUsdc: 0.1,
-    });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      const client = new Client(
+        { name: 'expiry-client', version: '1.0.0' },
+        { capabilities: {} }
+      );
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
 
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const client = new Client(
-      { name: 'expiry-client', version: '1.0.0' },
-      { capabilities: {} }
-    );
-    await Promise.all([
-      server.connect(serverTransport),
-      client.connect(clientTransport),
-    ]);
+      // 1. Confirmation expiring during verifyHumanApproval await is rejected before signing
+      const prepExp = JSON.parse(
+        getToolText(
+          await client.callTool({
+            name: 'prepare_deposit',
+            arguments: { booking_id: 'b_exp' },
+          })
+        )
+      );
+      advanceClockOnApproval = true;
+      const expOut = await client.callTool({
+        name: 'confirm_deposit',
+        arguments: {
+          confirmation_id: prepExp.confirmation_id,
+          human_confirmed: true,
+        },
+      });
+      expect(expOut.isError).toBe(true);
+      expect(getToolText(expOut)).toContain('expired before signing');
+      expect(fundPostCalls).toBe(0);
 
-    // 1. Confirmation expiring during verifyHumanApproval await is rejected before signing
-    const prepExp = JSON.parse(
-      getToolText(
-        await client.callTool({
-          name: 'prepare_deposit',
-          arguments: { booking_id: 'b_exp' },
-        })
-      )
-    );
-    const expOut = await client.callTool({
-      name: 'confirm_deposit',
-      arguments: {
-        confirmation_id: prepExp.confirmation_id,
-        human_confirmed: true,
-      },
-    });
-    expect(expOut.isError).toBe(true);
-    expect(getToolText(expOut)).toContain('expired before signing');
-    expect(fundPostCalls).toBe(0);
+      // 2. Nonrepresentable quote change (45 -> 45.00000001) is rejected before deadline
+      advanceClockOnApproval = false;
+      const prepSub = JSON.parse(
+        getToolText(
+          await client.callTool({
+            name: 'prepare_deposit',
+            arguments: { booking_id: 'b_exp' },
+          })
+        )
+      );
+      api.registerBooking({
+        bookingId: 'b_exp',
+        propertyId: 'p1',
+        propertyName: 'Villa Expiry',
+        contractId,
+        checkIn: '2026-12-15',
+        checkOut: '2026-12-20',
+        totalUsdc: 150,
+        depositUsdc: 45.00000001,
+        assetCode: 'USDC',
+        assetContract: TESTNET_USDC,
+        unsignedXdr,
+        status: 'escrow_created',
+        feePaidUsdc: 0.1,
+      });
+      const subOut = await client.callTool({
+        name: 'confirm_deposit',
+        arguments: {
+          confirmation_id: prepSub.confirmation_id,
+          human_confirmed: true,
+        },
+      });
+      expect(subOut.isError).toBe(true);
+      expect(getToolText(subOut)).toContain('terms changed');
 
-    // 2. Nonrepresentable quote change (45 -> 45.00000001) is rejected even though toFixed(7) would round both to 45
-    const prepSub = JSON.parse(
-      getToolText(
-        await client.callTool({
-          name: 'prepare_deposit',
-          arguments: { booking_id: 'b_exp' },
-        })
-      )
-    );
-    api.registerBooking({
-      bookingId: 'b_exp',
-      propertyId: 'p1',
-      propertyName: 'Villa Expiry',
-      contractId,
-      checkIn: '2026-12-15',
-      checkOut: '2026-12-20',
-      totalUsdc: 150,
-      depositUsdc: 45.00000001,
-      assetCode: 'USDC',
-      assetContract: TESTNET_USDC,
-      unsignedXdr,
-      status: 'escrow_created',
-      feePaidUsdc: 0.1,
-    });
-    const subOut = await client.callTool({
-      name: 'confirm_deposit',
-      arguments: {
-        confirmation_id: prepSub.confirmation_id,
-        human_confirmed: true,
-      },
-    });
-    expect(subOut.isError).toBe(true);
-    expect(getToolText(subOut)).toContain('terms changed');
-    expect(fundPostCalls).toBe(0);
+      // 3. Nonrepresentable quote is rejected BEFORE issuing a confirmation ID
+      const prepUnrep = await client.callTool({
+        name: 'prepare_deposit',
+        arguments: { booking_id: 'b_exp' },
+      });
+      expect(prepUnrep.isError).toBe(true);
+      expect(getToolText(prepUnrep)).toContain('AMOUNT_MISMATCH');
+      expect(getToolText(prepUnrep)).not.toContain('conf_');
+      expect(fundPostCalls).toBe(0);
 
-    await client.close();
+      await client.close();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('redacts secret key in elicitation prompts, compares exact atomic amounts, and re-checks booking terms before signing', async () => {

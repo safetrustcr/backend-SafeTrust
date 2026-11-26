@@ -396,6 +396,18 @@ export function createBookingAgentServer(
     }
   };
 
+  const assertExactDepositAmount = (
+    bookingId: string,
+    amountUsdc: number
+  ): void => {
+    if (!isExact7DecimalAmount(amountUsdc)) {
+      throw new DepositVerificationError(
+        'AMOUNT_MISMATCH',
+        `Refusing deposit for booking "${bookingId}": quoted amount ${amountUsdc} USDC is not representable as an exact 7-decimal Stellar stroop amount.`
+      );
+    }
+  };
+
   // Helper to resolve a booking and issue a two-step confirmation ID
   const createConfirmationRequest = (
     booking: BookingRecord,
@@ -403,6 +415,7 @@ export function createBookingAgentServer(
   ): PendingDepositConfirmation => {
     assertFallbackApprovalAvailable();
     assertBookingAssetMatchesConfig(booking);
+    assertExactDepositAmount(booking.bookingId, amountUsdc);
     ledger.verifyDepositLimit(amountUsdc);
     const confirmationId = `conf_${randomBytes(6).toString('hex')}`;
     const now = Date.now();
@@ -800,8 +813,10 @@ export function createBookingAgentServer(
           );
         }
 
-        // Enforce configured USDC contract & AGENT_MAX_DEPOSIT before asking human or decoding XDR
+        // Enforce configured USDC contract, exact 7-decimal stroop representability,
+        // and AGENT_MAX_DEPOSIT before asking human or decoding XDR.
         assertBookingAssetMatchesConfig(booking);
+        assertExactDepositAmount(booking.bookingId, booking.depositUsdc);
         ledger.verifyDepositLimit(booking.depositUsdc);
 
         let humanConfirmed = false;

@@ -4,9 +4,11 @@ import {
   SpendingLimitError,
   createPaymentFetch,
   getPaymentRecordForResponse,
+  isExact7DecimalAmount,
   type FeeReservation,
   type FeeSettlementResolver,
   type FeeSettlementStatus,
+  type PaymentFetchInit,
   type ReconcileFeeReservationResult,
   type StellarNetworkName,
 } from './payments';
@@ -161,7 +163,7 @@ export interface SafeTrustApiClientOptions {
   /** Optional custom fetch function (for testing or mock transport) */
   baseFetch?: typeof globalThis.fetch;
   /** Optional custom payment-wrapped fetch override */
-  paymentFetch?: (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => Promise<Response>;
+  paymentFetch?: (input: Parameters<typeof globalThis.fetch>[0], init?: PaymentFetchInit) => Promise<Response>;
   /** Optional pre-existing bearer token */
   sessionToken?: string;
   /** Optional custom settlement query callback for reconciling pending x402 fee reservations */
@@ -200,7 +202,7 @@ export class SafeTrustApiClient {
   private readonly ledger: SpendingLedger;
   private readonly keypair: Keypair;
   private readonly baseFetch: typeof globalThis.fetch;
-  private readonly payFetch: (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => Promise<Response>;
+  private readonly payFetch: (input: Parameters<typeof globalThis.fetch>[0], init?: PaymentFetchInit) => Promise<Response>;
   private sessionToken: string | null = null;
   private sessionAuthenticated = false;
 
@@ -620,28 +622,28 @@ export class SafeTrustApiClient {
       params.checkOut,
       params.guests
     );
-    let cachedQuote = this.availabilityByStay.get(stayKey);
-    const rawCachedHold = params.holdId
-      ? this.holdsById.get(params.holdId)
-      : undefined;
-    const cachedHold =
-      rawCachedHold &&
-      rawCachedHold.propertyId === params.propertyId &&
-      rawCachedHold.checkIn === params.checkIn &&
-      rawCachedHold.checkOut === params.checkOut &&
-      rawCachedHold.guests === params.guests
-        ? rawCachedHold
+    const getMatchingHold = (): HoldRecord | undefined => {
+      const raw = params.holdId ? this.holdsById.get(params.holdId) : undefined;
+      return raw &&
+        raw.propertyId === params.propertyId &&
+        raw.checkIn === params.checkIn &&
+        raw.checkOut === params.checkOut &&
+        raw.guests === params.guests
+        ? raw
         : undefined;
+    };
 
-    let depositUsdc =
-      params.depositUsdc ??
-      cachedHold?.depositUsdc ??
-      cachedQuote?.depositUsdc ??
-      undefined;
+    let cachedQuote = this.availabilityByStay.get(stayKey);
+    let cachedHold = getMatchingHold();
 
-    // If no deposit quote is known yet (even when a prior availability check omitted it),
-    // attempt to establish it via free checkAvailability before paying the x402 booking fee.
-    if (depositUsdc === undefined) {
+    // Always prefer authoritative backend hold/availability quotes over a caller-supplied
+    // deposit estimate so a lower caller estimate cannot bypass a known cap violation.
+    let authoritativeDeposit =
+      cachedHold?.depositUsdc ?? (cachedQuote?.depositUsdc ?? undefined);
+
+    // If no authoritative backend deposit quote is known yet, attempt to establish it
+    // via free checkAvailability before paying the x402 booking fee.
+    if (authoritativeDeposit === undefined) {
       try {
         cachedQuote = await this.checkAvailability({
           propertyId: params.propertyId,
@@ -650,7 +652,7 @@ export class SafeTrustApiClient {
           guests: params.guests,
         });
         if (cachedQuote.depositUsdc !== null) {
-          depositUsdc = cachedQuote.depositUsdc;
+          authoritativeDeposit = cachedQuote.depositUsdc;
         }
       } catch {
         // Proceed when the backend does not expose availability for this flow;
@@ -659,12 +661,30 @@ export class SafeTrustApiClient {
       }
     }
 
-    // Check AGENT_MAX_DEPOSIT before paying the x402 booking fee when the deposit quote is known
-    if (depositUsdc !== undefined) {
-      this.ledger.verifyDepositLimit(depositUsdc);
-    }
+    const resolveEffectiveDeposit = (): number | undefined => {
+      const latestQuote = this.availabilityByStay.get(stayKey);
+      const latestHold = getMatchingHold();
+      const latestAuthoritative =
+        latestHold?.depositUsdc ?? (latestQuote?.depositUsdc ?? undefined);
+      return latestAuthoritative ?? params.depositUsdc;
+    };
+
+    const verifyLatestDepositCap = (): void => {
+      const latestDeposit = resolveEffectiveDeposit();
+      if (latestDeposit !== undefined) {
+        this.ledger.verifyDepositLimit(latestDeposit);
+      }
+    };
+
+    // Check AGENT_MAX_DEPOSIT before authenticating or paying
+    verifyLatestDepositCap();
 
     const headers = await this.getSessionHeaders();
+
+    // Re-check after session header await and again inside payFetch immediately
+    // before x402 payment creation so a newer cached quote cannot bypass the cap.
+    verifyLatestDepositCap();
+    const depositUsdc = resolveEffectiveDeposit();
 
     const response = await this.payFetch(`${this.baseUrl}/api/v1/bookings`, {
       method: 'POST',
@@ -677,6 +697,7 @@ export class SafeTrustApiClient {
         hold_id: params.holdId,
         wallet_address: this.keypair.publicKey(),
       }),
+      onBeforePayment: () => verifyLatestDepositCap(),
     });
 
     if (!response.ok) {
@@ -687,13 +708,29 @@ export class SafeTrustApiClient {
     const data = (await response.json()) as Record<string, unknown>;
     const feePaidUsdc = getPaymentRecordForResponse(response)?.amountUsdc ?? 0;
 
+    // Validate the raw backend-returned deposit value BEFORE Number() conversion so
+    // over-precision strings (e.g. "45.99999999999999999") cannot silently round.
+    const rawReturnedDeposit =
+      data.deposit_usdc ?? data.depositUsdc ?? data.amount;
+    if (rawReturnedDeposit !== undefined && rawReturnedDeposit !== null) {
+      if (
+        (typeof rawReturnedDeposit !== 'string' &&
+          typeof rawReturnedDeposit !== 'number') ||
+        !isExact7DecimalAmount(rawReturnedDeposit)
+      ) {
+        throw new SpendingLimitError(
+          'INVALID_REQUIREMENT',
+          `Booking deposit "${String(rawReturnedDeposit)}" is not an exact 7-decimal USDC amount`
+        );
+      }
+    }
+
     const resolvedDepositUsdc = Number(
-      data.deposit_usdc ??
-        data.depositUsdc ??
-        data.amount ??
-        depositUsdc ??
-        0
+      rawReturnedDeposit ?? depositUsdc ?? 0
     );
+
+    cachedHold = getMatchingHold();
+    cachedQuote = this.availabilityByStay.get(stayKey);
 
     const resolvedTotalUsdc = Number(
       data.total_usdc ??

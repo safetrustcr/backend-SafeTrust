@@ -285,18 +285,24 @@ export function decimalCapToMaxAtomic(amount: number | string): bigint {
 }
 
 /**
- * Return true if `amount` has no non-zero fractional digits beyond 7 decimal places.
+ * Return true if `amount` (number or decimal string) has no non-zero fractional
+ * digits beyond 7 decimal places. When passed a string, checks the raw decimal
+ * text directly without a Number() round-trip.
  */
-export function isExact7DecimalAmount(amount: number): boolean {
-  if (!Number.isFinite(amount) || amount <= 0) {
+export function isExact7DecimalAmount(amount: number | string): boolean {
+  if (typeof amount === 'number' && (!Number.isFinite(amount) || amount <= 0)) {
     return false;
   }
-  const decStr = decimalInputToExactString(amount);
-  const [, fracPart = ''] = decStr.split('.');
-  if (fracPart.length <= USDC_DECIMALS) {
-    return true;
+  try {
+    const decStr = decimalInputToExactString(amount);
+    const [, fracPart = ''] = decStr.split('.');
+    if (fracPart.length <= USDC_DECIMALS) {
+      return true;
+    }
+    return /^0*$/.test(fracPart.slice(USDC_DECIMALS));
+  } catch {
+    return false;
   }
-  return /^0*$/.test(fracPart.slice(USDC_DECIMALS));
 }
 
 /**
@@ -578,12 +584,23 @@ export class SpendingLedger {
     if (!Number.isFinite(maxTxFeeXlm) || maxTxFeeXlm <= 0) {
       throw new Error('SpendingLedger requires a positive finite maxTxFeeXlm');
     }
-    const maxDepositAtomic =
-      config.maxDepositAtomic !== undefined
-        ? /^\d+$/.test(config.maxDepositAtomic.trim())
-          ? BigInt(config.maxDepositAtomic.trim())
-          : decimalCapToMaxAtomic(config.maxDepositAtomic)
-        : decimalCapToMaxAtomic(config.maxDepositUsdc);
+    let maxDepositAtomic: bigint;
+    if (config.maxDepositAtomic !== undefined) {
+      const trimmed = config.maxDepositAtomic.trim();
+      if (!/^\d+$/.test(trimmed)) {
+        throw new Error(
+          `SpendingLedger requires maxDepositAtomic to be a positive integer stroop string, got: "${config.maxDepositAtomic}"`
+        );
+      }
+      maxDepositAtomic = BigInt(trimmed);
+      if (maxDepositAtomic <= 0n) {
+        throw new Error(
+          `SpendingLedger requires maxDepositAtomic to be greater than zero, got: "${config.maxDepositAtomic}"`
+        );
+      }
+    } else {
+      maxDepositAtomic = decimalCapToMaxAtomic(config.maxDepositUsdc);
+    }
     this.maxDepositAtomic = maxDepositAtomic;
     this.config = {
       ...config,
@@ -1229,9 +1246,17 @@ function adaptSafeTrust402Response(
  */
 export type FetchInput = Parameters<typeof globalThis.fetch>[0];
 
+export interface PaymentFetchInit extends RequestInit {
+  /**
+   * Optional synchronous guard invoked immediately before reserving/creating an
+   * x402 payment payload (after any initial 402 round-trip yield).
+   */
+  onBeforePayment?: () => void;
+}
+
 export function createPaymentFetch(
   options: CreateX402FetchOptions
-): (input: FetchInput, init?: RequestInit) => Promise<Response> {
+): (input: FetchInput, init?: PaymentFetchInit) => Promise<Response> {
   const baseFetch = options.baseFetch ?? globalThis.fetch;
   const { ledger } = options;
   const config = ledger.getConfig();
@@ -1245,7 +1270,9 @@ export function createPaymentFetch(
   const schemeClient: SchemeNetworkClient =
     options.schemeClient ?? new ExactStellarScheme(signer, options.rpcConfig);
 
-  return async (input: FetchInput, init?: RequestInit): Promise<Response> => {
+  return async (input: FetchInput, init?: PaymentFetchInit): Promise<Response> => {
+    const { onBeforePayment, ...fetchInit } = init ?? {};
+    const requestInit: RequestInit | undefined = init ? fetchInit : undefined;
     const client = new x402Client();
     // Disable built-in $1 default cap so our SpendingLedger enforces the exact
     // AGENT_MAX_FEE_PER_CALL and AGENT_FEE_BUDGET with clear domain errors.
@@ -1270,9 +1297,11 @@ export function createPaymentFetch(
       }: {
         selectedRequirements: PaymentRequirements;
       }) => {
-        // Atomically verify limits and reserve budget before creating the signed payload
-        // so overlapping concurrent calls cannot both pass against the same remaining balance.
+        // Atomically verify any caller pre-payment guard and reserve budget before
+        // creating the signed payload so concurrent updates or overlapping calls
+        // cannot bypass spending limits.
         try {
+          onBeforePayment?.();
           callReservation = ledger.reserveFeePayment(
             {
               scheme: selectedRequirements.scheme,
@@ -1380,7 +1409,7 @@ export function createPaymentFetch(
 
     const wrappedFetch = wrapFetchWithPayment(transportFetch, httpClient);
     try {
-      const finalResponse = await wrappedFetch(input, init);
+      const finalResponse = await wrappedFetch(input, requestInit);
       if (callPaidRecord) {
         responsePaymentRecords.set(finalResponse, callPaidRecord);
       } else if (callReservation) {

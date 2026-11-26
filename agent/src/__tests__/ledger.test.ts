@@ -707,6 +707,14 @@ describe('createPaymentFetch (@x402/fetch integration)', () => {
     const ledgerExact = new SpendingLedger(cfgExact);
     expect(() => ledgerExact.verifyDepositLimit(45.0000001)).not.toThrow();
 
+    // Non-integer maxDepositAtomic stroop strings must be rejected rather than parsed as USDC
+    expect(
+      () =>
+        new SpendingLedger(
+          makeConfig({ maxDepositAtomic: '450000000.0' })
+        )
+    ).toThrow(/positive integer stroop string/i);
+
     // 2. Active in-flight reservation is counted against budget but excluded from external reconciliation
     const ledger = new SpendingLedger(
       makeConfig({ maxFeePerCallUsdc: 0.1, feeBudgetUsdc: 0.1 })
