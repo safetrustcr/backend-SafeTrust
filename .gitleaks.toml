@@ -3,24 +3,22 @@ title = "SafeTrust Secret Scan Config"
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "Allow documented local/test defaults, example placeholders, and public Stellar addresses"
-
 paths = [
   '''^\.env\.example$''',
   '''^webhook/\.env\.example$''',
   '''^\.gitleaks\.toml$''',
 ]
-
 regexTarget = "match"
 regexes = [
   # Public Stellar account addresses (G...) and Soroban contract IDs (C...) are public identifiers, not secrets.
   '''\b[GC][A-Z2-7]{55}\b''',
 ]
 
-[[allowlist.rules]]
-id = "allow-docker-compose-test-defaults"
+[[allowlists]]
 description = "Documented test-only fallback values in docker-compose-test.yml"
+condition = "AND"
 paths = ['''^docker-compose-test\.yml$''']
 stopwords = [
   "postgrespassword",
@@ -30,5 +28,6 @@ stopwords = [
 
 [[allowlists]]
 description = "Allow documented x402 configuration placeholders in historical commit 75221de"
+condition = "AND"
 commits = ["75221de2c5d804d1e81caa74a755a5b5e0403b5b"]
 paths = ['''^docs/stellar/x402-protocol\.md$''']
