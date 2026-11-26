@@ -1,6 +1,7 @@
 import express, { RequestHandler } from 'express'
 
 import { authMiddleware } from '../middleware/auth.middleware'
+import { apiIpRateLimit, apiRateLimit, authIpRateLimit, authRateLimit } from '../middleware/rate-limit'
 
 import { getTransitionTable } from '../lib/escrow-transitions'
 
@@ -23,15 +24,19 @@ router.use(healthRoutes)
 
 // ── 2. Escrows / x402 booking entrypoint ──────────────────────────────────────
 router.use(initializeRoute)
-router.use(confirmTransactionRoute)
 
 // ── 3. Authenticated routes (Firebase auth required) ──────────────────────────
+router.use('/api', apiIpRateLimit)
+router.use('/api/auth', authIpRateLimit)
 router.use('/api', authMiddleware as unknown as RequestHandler)
+router.use('/api', apiRateLimit)
+router.use('/api/auth', authRateLimit)
 router.use('/api/auth',         authRoutes)
 router.use('/api/apartments',   apartmentRoutes)
 router.use('/api/bid-requests', bidRequestsRoute)
 router.use('/api/reservations', reservationsRoute)
 router.use('/api/escrow-claims', escrowClaimsRoute)
 router.use('/api/v1/bookings', v1BookingsRoute)
+router.use(confirmTransactionRoute)
 
 export default router

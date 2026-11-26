@@ -7,11 +7,26 @@ import { initializeFirebaseAdmin } from './config/firebase-admin'
 import { corsOptions, describeCorsPolicy, resolveCorsPolicy } from './config/cors'
 import { bindRequestContext, logger, requestId } from './middleware/logger'
 import { errorHandler, notFoundHandler } from './middleware/error-handler'
+import { healthRateLimit, publicRateLimit } from './middleware/rate-limit'
 
 import routes from './routes'
 import reconciliationRoutes from './routes/reconciliation/sync-escrows.route'
 
 const app: Application = express()
+
+const trustProxy = process.env.TRUST_PROXY?.trim()
+app.set(
+  'trust proxy',
+  !trustProxy
+    ? false
+    : /^\d+$/.test(trustProxy)
+      ? Number(trustProxy)
+      : trustProxy === 'true'
+        ? true
+        : trustProxy === 'false'
+          ? false
+          : trustProxy.split(',').map((value) => value.trim())
+)
 
 // Ensure Firebase Admin is initialized before any auth middleware runs.
 // Throws on failure so startup cannot proceed without a valid default app.
@@ -40,15 +55,13 @@ if (corsPolicy.kind === 'none') {
 }
 app.use(cors(corsOptions(corsPolicy)))
 
+// ── Request limits ────────────────────────────────────────────────────────────
+app.use('/health', healthRateLimit)
+app.use('/api/escrows/initialize', publicRateLimit)
+app.use('/reconciliation', publicRateLimit)
+
 // ── Body parsing ──────────────────────────────────────────────────────────────
-// `verify` keeps the exact request bytes on req.rawBody for HMAC verification
-// of TrustlessWork callbacks; it runs before JSON parsing, so the signature
-// check sees the bytes as sent. Parse failures reach the error handler as 400.
-app.use(express.json({
-  verify: (req: Request & { rawBody?: Buffer }, _res, buf) => {
-    req.rawBody = buf
-  }
-}))
+app.use(express.json({ limit: '100kb' }))
 
 // Request id available to the logger in every handler and service from here.
 app.use(bindRequestContext)
