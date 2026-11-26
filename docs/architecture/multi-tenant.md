@@ -56,21 +56,36 @@ until the new databases are verified: a write made after a dump is not copied,
 and dropping the old schema would lose it.
 
 Create the databases with their extensions, then copy each schema across.
-`psql` is run with `ON_ERROR_STOP=1` so a failed restore does not go unnoticed:
+Run the block in a fail-fast shell: `set -euo pipefail` makes the loop stop if
+`pg_dump` or `psql` fails (without `pipefail`, a failed dump feeds `psql` empty
+input and the pipeline reports success), and `ON_ERROR_STOP=1` stops `psql`
+itself on the first SQL error:
 
 ```bash
+set -euo pipefail
 createdb -U postgres safetrust && createdb -U postgres hotel_industry
 for db in safetrust hotel_industry; do
-  psql -U postgres -d "$db" -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS postgis;'
+  psql -U postgres -v ON_ERROR_STOP=1 -d "$db" -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS postgis;'
   pg_dump -U postgres -n "$db" postgres | psql -U postgres -v ON_ERROR_STOP=1 -d "$db"
 done
 ```
 
+If a copy fails partway, the destination is partially restored. Before retrying,
+drop and recreate it (`dropdb -U postgres <tenant> && createdb -U postgres <tenant>`,
+then re-add the extensions), so a retry never runs on top of half-copied data.
+The old schemas in `postgres` are not touched by the copy.
+
 Hasura tracks applied migrations in its catalog state, which also lives in the
 `postgres` database. Because the schemas are copied rather than re-created,
-mark the existing migrations as applied so they are not replayed:
+mark the existing migrations as applied so they are not replayed. The CLI talks
+to a running Hasura, so start an administrative instance first: bring up only
+Postgres and Hasura (not the webhook or any client) with the new
+`SAFETRUST_DATABASE_URL` / `HOTEL_INDUSTRY_DATABASE_URL`, keep it unreachable
+from application traffic (internal network, no published public port), and
+use the admin secret. Then run
 `hasura migrate apply --skip-execution --database-name <tenant> --version <version>`
 for each version, or `hasura migrate status --database-name <tenant>` to check.
+Stop that instance's exposure only once the state matches.
 
 Then set the new env vars and restart. `bin/start` registers each source with
 `replace_configuration: true`, so sources in existing Hasura metadata are repointed from
