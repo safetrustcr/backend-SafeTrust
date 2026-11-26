@@ -1,69 +1,209 @@
 # Approve Milestone
 
-> **Status:** The milestone approval webhook/API flow is not wired up in this
-> checkout. Reconciliation polling at `POST /reconciliation/sync-escrows`
-> can derive the escrow-level `milestone_approved` status from indexed milestone
-> flags, but it does not update `escrow_milestones` rows or mirror
-> `checked_in`/`checked_out` to reservations.
+> **Status:** the TrustlessWork `approve-milestone` callback was removed.
+> Reconciliation polling at `POST /reconciliation/sync-escrows` can record the
+> escrow-level `milestone_approved` status, but it does not update
+> `escrow_milestones` rows (approved status, approver, approval timestamp) or
+> mirror `checked_in`/`checked_out` to reservations. The client-facing XDR flow
+> below is the intended post-Issue-03 integration; its SafeTrust routes are not
+> present in this checkout.
 
-## Current Behavior
+The frontend requests an unsigned milestone-approval transaction from SafeTrust.
+The authorized user signs it in their wallet, Trustless Work submits it to
+Stellar, and SafeTrust reads the resulting milestone flags through indexer
+reconciliation.
 
-The TrustlessWork indexer reconciliation flow reads escrow data through
-`GET /helper/get-escrow-by-contract-ids` and derives the local escrow status.
-The four escrow-level V1 flags take precedence over legacy milestone-based
-derivation, in this order:
+## Sequence
 
-- `isCancelled` → `cancelled`
-- `isDisputed` → `disputed`
-- `isCompleted` → `completed`
-- `isPending` → `pending_funding`
+```mermaid
+sequenceDiagram
+    participant FE as Frontend
+    participant BE as SafeTrust backend
+    participant TW as Trustless Work API
+    participant FW as Approver wallet
+    participant ST as Stellar
+    participant CR as Hasura cron
 
-When none of these flags applies, reconciliation falls back to the legacy
-milestone-based rules:
+    FE->>BE: POST /api/escrows/approve-milestone
+    BE->>TW: POST /escrow/{type}/approve-milestone
+    TW-->>BE: unsigned XDR
+    BE-->>FE: unsigned XDR
+    FE->>FW: sign unsigned XDR
+    FW-->>FE: signed XDR
+    FE->>TW: POST /helper/send-transaction
+    TW->>ST: submit signed transaction
+    ST-->>TW: transaction result
+    CR->>BE: POST /reconciliation/sync-escrows
+    BE->>TW: GET /helper/get-escrow-by-contract-ids
+    TW-->>BE: milestone flags and balance
+    BE->>BE: reconcile indexed state
+```
 
-- For single-release escrows, reconciliation checks legacy flags in
-  precedence order: `resolved`, then `released`, then `disputed`.
-  A resolved escrow derives `resolved`; otherwise, a released escrow derives
-  `completed`, even when the disputed flag is also true. A disputed escrow
-  derives `disputed` only when neither higher-priority flag applies.
-  An approved milestone derives `milestone_approved` only when higher-priority
-  conditions do not apply.
-- For multi-release escrows, reconciliation first checks whether every
-  milestone is released or resolved. When all milestones are settled, it
-  derives `completed` or `resolved`, respectively. Otherwise, an unresolved
-  disputed milestone derives `disputed` only when not all milestones are
-  settled. Only then does an approved or released milestone derive
-  `milestone_approved`.
-- Reconciliation applies only legal local-to-observed transitions and checks
-  the observed ledger sequence against the stored sequence when available.
+## Routes and state
 
-The V1 indexer snapshot is unversioned. Polling cannot safely advance an
-already funded escrow to `milestone_approved` without a version token or
-transaction confirmation.
+1. The frontend calls SafeTrust `POST /api/escrows/approve-milestone` with the
+   contract and milestone details.
+2. SafeTrust requests an unsigned XDR from Trustless Work:
+   - Single-release: `POST /escrow/single-release/approve-milestone`
+   - Multi-release: `POST /escrow/multi-release/approve-milestone`
+3. The frontend signs the XDR in the authorized user's wallet and submits it
+   through `POST /helper/send-transaction`.
+4. SafeTrust's scheduled `POST /reconciliation/sync-escrows` reads the
+   contract using `GET /helper/get-escrow-by-contract-ids`. The indexer's
+   milestone flags and balance determine the observed state.
 
-See [Trustless Work Indexer](./trustless-work-indexer.md).
+## Request
 
-## Existing Approval Logic
+| Field        | Type      | Description                                      |
+|--------------|-----------|--------------------------------------------------|
+| `contractId` | `string`  | TrustlessWork smart contract identifier          |
+| `milestoneId`| `string`  | Business milestone identifier: `"check_in"` or `"check_out"` |
+| `approver`   | `string`  | Host's Stellar public key (`G...` strkey)        |
+| `flag`       | `boolean` | Must be `true` to approve                        |
 
-The codebase retains milestone approval service and repository functions,
-including logic to:
+### Example
 
-- Mark a milestone as `approved`, recording the approver and approval time.
-- Transition the escrow to `milestone_approved` from valid prior states.
-- Mirror `check_in` to `checked_in` and other milestone IDs to
-  `checked_out` in reservations.
-- Use milestone-specific webhook idempotency keys.
+```json
+{
+  "contractId": "CAATN5DTEST00001",
+  "milestoneId": "check_in",
+  "approver": "GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z",
+  "flag": true
+}
+```
 
-The service uses the Rust escrow state machine to resolve valid prior states
-for the `milestone.approved` event. The current implementation allows
-`funded` and `active` as prior states.
+### Required Headers
 
-These functions and their unit tests remain in the repository, but the
-approval webhook/API flow is not wired up in this checkout.
+| Header                        | Description                              |
+|-------------------------------|------------------------------------------|
+| `Content-Type`                | `application/json`                       |
+| `x-trustlesswork-signature`   | HMAC-SHA256 signature of the request body |
+| `x-trustlesswork-timestamp`   | Unix epoch millisecond timestamp         |
 
-## Future Integration
+## Milestone Identifiers
 
-A future integration must implement and verify the approval route or webhook,
-transaction submission, signature verification where applicable, persistence,
-reservation updates, and idempotency before documenting it as an operational
-flow.
+The `milestoneId` is a **string business identifier** used in the API. The escrow
+contract maps these to numeric indices for on-chain tracking.
+
+| milestoneId  | Contract Index | Meaning              | Reservation Status |
+|--------------|----------------|----------------------|--------------------|
+| `"check_in"` | `0`            | Guest check-in       | `"checked_in"`     |
+| `"check_out"`| `1`            | Guest check-out      | `"checked_out"`    |
+
+The handler uses string comparison (`milestoneId === 'check_in'`) to determine the
+reservation status to mirror. Any value other than `"check_in"` results in
+`"checked_out"` being set.
+
+## State Transition
+
+```
+funded ──────────┐
+                 ├── milestone.approved ──► milestone_approved
+active ──────────┘
+```
+
+The Rust state machine enforces that only `funded` and `active` are valid prior states for
+the `milestone_approved` target via the `milestone.approved` event.
+
+## Response
+
+### Success — `200`
+
+```json
+{ "received": true }
+```
+
+The milestone is now `approved` and the escrow status is `milestone_approved`.
+
+### Success — Idempotent duplicate
+
+If the same milestone approval is retried (same `contractId` + `event_type` including
+milestone ID), the handler short-circuits:
+
+```json
+{ "received": true }
+```
+
+### Error Responses
+
+| Status | Error                                              | When                                          |
+|--------|----------------------------------------------------|-----------------------------------------------|
+| `400`  | `Missing required fields: contractId, milestoneId, approver, flag` | Any required field is missing |
+| `400`  | `flag must be true to approve a milestone`         | `flag` is `false` or not a boolean            |
+| `401`  | `Missing x-trustlesswork-signature header`         | HMAC header absent                            |
+| `401`  | `Invalid webhook signature`                        | HMAC verification failed                      |
+| `404`  | `Escrow not found`                                 | No escrow with the given `contractId`         |
+| `404`  | `Milestone not found`                              | No `escrow_milestones` row for the `milestoneId` + escrow |
+| `500`  | `Failed to update milestone approval`              | Hasura GraphQL error                          |
+
+## Side Effects
+
+1. **Milestone record updated** — `escrow_milestones` row is set to `status = "approved"`
+   with `approvedBy` (wallet address) and `approvedAt` (timestamp).
+
+2. **Escrow status advanced** — `trustless_work_escrows.status` is set to
+   `"milestone_approved"` (only if prior state is `funded` or `active`).
+
+3. **Reservation mirror** — The `reservations` table is updated:
+   - `check_in` → `status = "checked_in"`
+   - `check_out` → `status = "checked_out"`
+
+## Idempotency
+
+The idempotency key is milestone-specific: `milestone.approved:{milestoneId}`. This means
+`check_in` and `check_out` approvals are deduplicated independently — approving `check_in`
+twice is caught, but approving `check_in` then `check_out` proceeds normally.
+
+## Milestone Lifecycle
+
+In a typical hotel booking:
+
+1. Guest checks in → host approves `check_in` milestone → escrow becomes `milestone_approved`
+2. Guest checks out → host approves `check_out` milestone → escrow stays `milestone_approved`
+3. After all milestones approved → host (or platform) triggers `release-funds`
+
+Both milestones must be approved before funds can be released. The TrustlessWork contract
+enforces this on-chain.
+
+## Wallet Roles
+
+| Role        | Description                                                                                          |
+|-------------|------------------------------------------------------------------------------------------------------|
+| `approver`  | The host's Stellar wallet that approved the milestone (sent in the callback by TrustlessWork)        |
+| `marker`    | The host (hotel) wallet — stored in the escrow record and set during initialization                  |
+| `releaser`  | The SafeTrust platform wallet — releases funds after all milestones                                  |
+
+> **Note on naming:** The `approver` field in the `trustless_work_escrows` table stores
+> the *guest* wallet address (set during initialization). The `approver` parameter in
+> *this* callback is the *host* wallet that approved the milestone — these are
+> semantically different despite sharing the name. The handler stores the callback's
+> `approver` value in the `escrow_milestones.approved_by` column.
+
+## Error Handling
+
+- **Escrow not found (404):** If no escrow exists for the `contractId`, the lookup query
+  returns empty and the handler returns 404.
+
+- **Milestone not found (404):** If the escrow exists but no `escrow_milestones` row matches
+  the `milestoneId`, the milestone update returns 0 affected rows.
+
+- **Status guard failure:** If the escrow is not in `funded` or `active`, the Hasura
+  mutation returns 0 affected rows, which is treated as "Escrow not found" (404).
+
+## Test Coverage
+
+- **Unit tests (TypeScript):** `webhook/src/services/__tests__/milestone.service.test.ts`
+  - Payload validation, including missing fields and `flag: false`
+  - Escrow lookup and missing escrow handling
+  - Successful milestone approval and reservation updates
+  - Idempotency, missing milestones, and invalid escrow states
+  - Database rollback and error handling
+
+For single-release escrows, an approved milestone flag derives
+`milestone_approved`. For multi-release escrows, any approved or released
+milestone derives `milestone_approved`. Reconciliation applies only legal
+local-to-observed transitions and checks the observed ledger sequence against
+the stored one when available. The V1 indexer snapshot is unversioned, so
+polling cannot safely advance an already funded escrow to this state without a
+version token or transaction confirmation. See
+[Trustless Work Indexer](./trustless-work-indexer.md).
