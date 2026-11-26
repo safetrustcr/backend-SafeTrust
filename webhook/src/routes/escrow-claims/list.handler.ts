@@ -1,9 +1,8 @@
 'use strict'
 
 import { Response } from 'express'
-import { pool } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
-import { findParticipation, listForEscrow } from '../../repositories/escrow-claims.repository'
+import { listForParticipant } from '../../repositories/escrow-claims.repository'
 import { UUID_PATTERN } from './validation'
 import { logger } from '../../middleware/logger'
 
@@ -24,14 +23,12 @@ export const listClaimsHandler = async (
     return res.status(401).json({ error: 'UNAUTHORIZED' })
   }
 
-  const client = await pool.connect()
   try {
-    const participation = await findParticipation(client, escrowId, uid)
-    if (!participation) {
+    const rows = await listForParticipant(escrowId, uid)
+    if (!rows) {
       return res.status(404).json({ error: 'ESCROW_NOT_FOUND' })
     }
 
-    const rows = await listForEscrow(escrowId, client)
     return res.status(200).json({
       claims: rows.map((row) => ({
         id: row.id,
@@ -45,7 +42,5 @@ export const listClaimsHandler = async (
   } catch (err) {
     logger.error('escrow_claims.list.failed', { error: err })
     return res.status(500).json({ error: 'INTERNAL_ERROR' })
-  } finally {
-    client.release()
   }
 }

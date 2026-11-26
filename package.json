@@ -13,6 +13,6 @@
     "crates:clean": "node scripts/clean-crates.js"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24.0.0"
   }
 }

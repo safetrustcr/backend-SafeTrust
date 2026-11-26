@@ -1,18 +1,17 @@
 # Rust Crate Boundaries and Integration Quarantine
 
 The Cargo workspace contains six functional Rust crates and one feature-gate
-package. Four functional crates are included in the default webhook build;
-`zk-verifier` and `soroban-reconciler` are excluded until
-their prerequisites are resolved.
+package. Five functional crates are included in the default webhook build;
+`soroban-reconciler` is excluded until its prerequisites are resolved
+(`zk-verifier` was removed in #763 and `x402-processor` was removed in #754).
 
 This page records, for every crate, its responsibility, consumers, exports,
 fallback, build artifact, and disposition. It is the ownership boundary for the
 `crates/` workspace. For the high-level crate story, see
 [Rust crates in SafeTrust](./rust-crates.md).
 
-Four functional crates remain in the
-default build; the two quarantined crates remain available behind explicit,
-default-off Cargo feature gates.
+Five functional crates remain in the default build; `soroban-reconciler`
+remains available behind an explicit, default-off Cargo feature gate.
 
 ---
 
@@ -28,7 +27,6 @@ flowchart TD
         C5[pg-bulk-upsert\nordered upsert]
     end
     subgraph Quarantine and rebuild
-        C6[zk-verifier\nESC-05 prerequisite]
         C7[soroban-reconciler\nESC-02 prerequisite]
     end
 ```
@@ -39,10 +37,9 @@ flowchart TD
 
 | Crate | Responsibility | Consumers |
 |---|---|---|
-| `zk-verifier` | Verify Noir UltraHonk proof-of-funds proofs with a pinned Barretenberg build. | `webhook/src/lib/zk-verifier.ts` → `initialize.handler.ts`, `escrow.service.ts`. |
 | `stellar-utils` | Stellar strkey validation and Ed25519 signature verification. | `webhook/src/routes/auth/sync-wallet.handler.ts`. |
-| `escrow-state-machine` | Canonical escrow status enum, transition table, and `getValidPriorStates()` filters. | `dispute.handler.ts`, `resolve-dispute.handler.ts`, `fund.handler.ts`, `milestone.service.ts`, `routes/index.ts`. |
-| `webhook-verifier` | Constant-time HMAC-SHA256 verification of Trustless Work callbacks. | `webhook/src/middleware/trustlesswork-signature.middleware.ts`. |
+| `escrow-state-machine` | Canonical escrow status enum, transition table, and `getValidPriorStates()` filters. | `webhook/src/services/escrow.service.ts` (`executeEscrowLifecycleTransition`), `milestone.service.ts`, `webhook/src/lib/escrow-transitions.ts`. |
+| `webhook-verifier` | Constant-time HMAC-SHA256 verification of Trustless Work callbacks. | Retired; no runtime consumers after polling became authoritative. |
 | `chunk-processor` | Fetch Trustless Work indexer chunks concurrently on Tokio, bounded by a concurrency limit. | `webhook/src/lib/reconciliation.ts` (`syncAllChunks`), gated by `RUST_CHUNKS_ENABLED`. |
 | `pg-bulk-upsert` | Fold a chunk of escrow rows into one ordered `INSERT … ON CONFLICT … UNNEST`. | `webhook/src/lib/reconciliation.ts` (`upsertEscrowBatch`), gated by `RUST_BULK_UPSERT_ENABLED`. |
 | `soroban-reconciler` | Compare database escrow state with Soroban state and report drift. | `webhook/src/services/reconciliation.service.ts` (`validateSorobanDrift`), gated by `SOROBAN_VALIDATION_ENABLED`. |
@@ -50,7 +47,6 @@ flowchart TD
 
 | Crate | Native exports | Fallback when the addon is absent | Build script / deployment artifact |
 |---|---|---|---|
-| `zk-verifier` | `verifyProofOfFunds` | **None — fail closed.** `webhook/src/lib/zk-verifier.ts` logs the missing addon, throws `ZK_VERIFIER_UNAVAILABLE`, and the init handler returns `503`. | Excluded from the default build. Opt in with `cargo build --manifest-path crates/Cargo.toml -p safetrust-native-gates --features zk-verifier` after ESC-05; artifact is not copied into the default image. |
 | `stellar-utils` | `validateStellarAddress`, `verifyStellarEd25519` | JS regex `^G[A-Z2-7]{55}$` in `sync-wallet.handler.ts` (weaker; native path keeps CRC/version checks). | Default build + shared `scripts/copy-native.js`; artifact `crates/stellar-utils/native/index.node`. |
 | `escrow-state-machine` | `validateTransition`, `getValidPriorStates`, `getTransitionTable`, `getGraphqlFilter` | JS transition table in `crates/escrow-state-machine/index.ts` (same eight rules). | Default build + shared `scripts/copy-native.js`; artifact `crates/escrow-state-machine/index.node`. |
 | `webhook-verifier` | `verifyHmacSignature`, `validateStellarAddress` | `crates/webhook-verifier/fallback.ts` (Node `crypto`, same raw bytes, fail closed). | Default build + shared `scripts/copy-native.js`; artifact `crates/webhook-verifier/index.node`. |
@@ -74,13 +70,15 @@ members and copies only their runtime artifacts. `crates/**/*.node` and
 
 - **`stellar-utils`** — retained. It is the authoritative wallet-address check
   used during auth; the JS regex is a degraded fallback only.
-- **`escrow-state-machine`** — retained. It prevents handlers from requesting
-  an XDR for an illegal prior state and is shared by every escrow callback.
-  `disputed → cancelled` was added so the local table matches the database
-  `valid_escrow_status` constraint.
-- **`webhook-verifier`** — retained. It is the authentication boundary for all
-  Trustless Work callbacks. The native and Node paths now hash the same raw
-  bytes and return `false` on every comparison error (see §5).
+- **`escrow-state-machine`** — retained. It prevents illegal prior-state
+  transitions in the reconciliation lifecycle service and is shared by the
+  remaining escrow services. `disputed → cancelled` was added so the local
+  table matches the database `valid_escrow_status` constraint.
+- **`webhook-verifier`** — retained but retired from runtime use. The callback
+  routes and their HMAC middleware were removed after polling became
+  authoritative; the native and Node paths remain for tests and rollback. Both
+  paths hash the same raw bytes and return `false` on every comparison error
+  (see §5).
 - **`chunk-processor`** — retained. It is an opt-in performance path with
   bounded concurrency and per-chunk timeouts; the sequential loop remains the
   default and the fallback.
@@ -89,11 +87,6 @@ members and copies only their runtime artifacts. `crates/**/*.node` and
 
 ### Quarantine and rebuild
 
-- **`zk-verifier`** — excluded from the default image until ESC-05 is closed.
-  The TypeScript consumer requires `ZK_ENABLED=true`, loads the addon lazily,
-  and enforces `ZK_PROOF_OF_FUNDS_VK_SHA256` outside development and test
-  environments; the feature remains default-off pending the remaining ESC-05
-  prerequisites.
 - **`soroban-reconciler`** — quarantined. The current reader does not read
   contract storage; it fabricates state. The reader is disabled by default and
   the pure diff engine is retained (see §4). ESC-02 must establish an
@@ -132,7 +125,7 @@ validated read adapter:
 
 For the full decision record, gap analysis between Trustless Work API and direct
 Stellar RPC reads, and adapter validation boundary diagrams, see
-[Escrow State Source](../stellar/escrow-state-source.md).
+[Reconciliation and Indexer Sync](../stellar/reconciliation.md).
 
 
 ---
@@ -150,8 +143,8 @@ flowchart TD
     E -->|Yes| G[accepted]
 ```
 
-The middleware builds the canonical payload as
-`Buffer.concat([timestamp, ".", req.rawBody])`, so the digest covers the exact
+The removed callback middleware built the canonical payload as
+`Buffer.concat([timestamp, ".", req.rawBody])`, so the digest covered the exact
 request bytes. The native addon accepts a `Buffer`/`Uint8Array` (raw bytes) or a
 string (UTF-8 encoded once); the Node fallback normalizes the same union to a
 `Buffer`. This removes the previous mismatch where one path could hash a
@@ -173,22 +166,20 @@ x402 payments are managed by the official `@x402/express`, `@x402/core`, and `@x
 
 - `X402_ENABLED=false` is the default. The initialize route only evaluates
   x402 when the flag is exactly `true`.
-- With x402 disabled, a request carrying `X-Payment` or other x402 headers
-  fails closed with `503 Feature Unavailable`, and standard callbacks must pass the Trustless Work HMAC check.
-- When `X402_ENABLED=true`, unpaid requests receive `402 Payment Required`, and valid payment headers are verified and settled via the configured facilitator before the escrow is initialized.
-- The eligibility authority remains the HMAC-verified Trustless Work callback and the `zk-verifier` proof check.
+- With x402 disabled, every request on the x402-gated routes fails closed with `503 Feature Unavailable`.
+- When `X402_ENABLED=true`, unpaid requests receive `402 Payment Required`, and valid payment headers are verified and settled via the configured facilitator before the handler executes.
+- The eligibility authority remains local escrow validation; reconciliation is authoritative for externally confirmed lifecycle state.
+
+The x402 Karate suite runs with `X402_ENABLED=true` in the isolated test compose file to exercise the payment gate.
 
 ---
 
 ## 7. Circuit and prover sources
 
 Noir circuit sources, proving keys, and prover scripts do **not** belong in the
-Rust verification crate. They belong in a clearly documented circuit package
-(for example a `zk/` directory in this repository or the separate
-`safetrust-ZK` package). `crates/zk-verifier` contains only the verifier
-binding and the pinned Barretenberg integration; it consumes artifacts, it does
-not define the circuit. Keeping the two separate prevents a verifier change
-from silently changing the statement being proven.
+Rust verification crate. (`crates/zk-verifier` was removed in #753). Keeping
+any future circuit separate prevents a verifier change from silently changing
+the statement being proven.
 
 ---
 

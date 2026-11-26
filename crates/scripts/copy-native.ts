@@ -34,10 +34,6 @@ const crateConfigs: Record<string, CrateConfig> = {
     libraryName: 'soroban_reconciler',
     destination: path.join('native', 'index.node'),
   },
-  'zk-verifier': {
-    libraryName: 'zk_verifier',
-    destination: 'index.node',
-  },
 }
 
 const cratesDir = path.resolve(__dirname, '..')

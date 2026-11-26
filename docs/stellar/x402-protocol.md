@@ -110,6 +110,8 @@ To prevent transaction failure, payment requirements specify the exact SEP-41 St
 
 ## 5. Escrow Initialization Idempotency & Retried Payments
 
+With `X402_ENABLED=false`, the x402 middleware fails closed with `503 Feature Unavailable` on the escrow initialization route. When `X402_ENABLED=true`, every request must present a valid `PAYMENT-SIGNATURE` header; without one the route returns `402 Payment Required`. The Trustless Work HMAC bypass that used to short-circuit this check has been removed — callbacks from Trustless Work are no longer accepted and the backend learns escrow state by polling instead. Firebase authentication does not create an exemption on this route either.
+
 SafeTrust enforces strict idempotency at the database boundary via the `safetrust.trustless_work_webhook_events` table:
 
 1. When a client agent retries an initialization request with the same `contract_id` and payload:
@@ -125,7 +127,7 @@ SafeTrust enforces strict idempotency at the database boundary via the `safetrus
 
 | Variable | Status | Default | Description |
 |---|---|---|---|
-| `X402_ENABLED` | **Kept** | `false` | Master safety switch. When `false`, x402 payment headers fail closed with HTTP 503 (`Feature Unavailable`), and Trustless Work callbacks require HMAC signatures. Operators set to `true` once configuration is complete. |
+| `X402_ENABLED` | **Kept** | `false` | Master safety switch. When `false`, x402-gated routes fail closed with HTTP 503 (`Feature Unavailable`). Operators set to `true` once configuration is complete. |
 | `STELLAR_NETWORK` | **Kept** | `testnet` | Target Stellar network: `testnet` (resolves to `stellar:testnet`) or `mainnet` / `pubnet` (resolves to `stellar:pubnet`). |
 | `SAFETRUST_PLATFORM_WALLET` | **Kept** | `G_YOUR_PLATFORM_WALLET_PUBLIC_KEY` | Recipient wallet for $0.10 booking fees. Must be a valid Stellar public key (`G...`). Startup validation rejects unedited placeholders when `X402_ENABLED=true`. |
 | `X402_FACILITATOR_URL` | **Kept** | `https://x402.org/facilitator` | URL of the x402 facilitator. Testnet defaults to open endpoint; mainnet must be supplied by operator. |

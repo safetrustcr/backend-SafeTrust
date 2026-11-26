@@ -6,18 +6,15 @@ publish = false
 
 [features]
 default = []
-zk-verifier = ["dep:zk-verifier"]
 soroban-reconciler = ["dep:soroban-reconciler"]
 
 [dependencies]
-zk-verifier = { path = "zk-verifier", optional = true }
 soroban-reconciler = { path = "soroban-reconciler", optional = true }
 
 [workspace]
 resolver = "2"
 members = [
     "webhook-verifier",
-    "zk-verifier",
     "stellar-utils",
     "chunk-processor",
     "pg-bulk-upsert",

@@ -1,7 +1,6 @@
 import request from 'supertest'
 import express from 'express'
 import router, { setPaymentMiddleware } from '../initialize.route'
-import signatureMiddleware from '../../../middleware/trustlesswork-signature.middleware'
 import { setX402ResourceServer, buildX402ResourceServer } from '../../../config/x402'
 import { FacilitatorClient } from '@x402/core/server'
 
@@ -19,11 +18,6 @@ jest.mock('../../../services/escrow.service', () => ({
     eventId: 'event-1',
     escrow: { id: 'escrow-1' },
   }),
-}))
-
-jest.mock('../../../middleware/trustlesswork-signature.middleware', () => ({
-  __esModule: true,
-  default: jest.fn((_req: any, _res: any, next: any) => next()),
 }))
 
 const validPlatformWallet = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
@@ -94,16 +88,7 @@ describe('initialize.route with official x402 payment gate', () => {
       process.env.X402_ENABLED = 'false'
     })
 
-    it('uses TrustlessWork signature verification when a signature header is present', async () => {
-      await request(app)
-        .post('/api/escrows/initialize')
-        .set('x-trustlesswork-signature', 'test-signature')
-        .send({ contract_id: 'test-123' })
-
-      expect(signatureMiddleware).toHaveBeenCalledTimes(1)
-    })
-
-    it('returns 503 when x402 is disabled and no TrustlessWork signature is present', async () => {
+    it('returns 503 when x402 is disabled', async () => {
       const res = await request(app)
         .post('/api/escrows/initialize')
         .send({})
@@ -173,15 +158,6 @@ describe('initialize.route with official x402 payment gate', () => {
       expect(paymentRequired.accepts[0].asset).toBe(
         'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA' // Testnet USDC contract ID
       )
-    })
-
-    it('bypasses x402 payment when x-trustlesswork-signature is present and no x402 headers', async () => {
-      await request(app)
-        .post('/api/escrows/initialize')
-        .set('x-trustlesswork-signature', 'valid-tw-sig')
-        .send({ contract_id: 'test-123' })
-
-      expect(signatureMiddleware).toHaveBeenCalledTimes(1)
     })
 
     it('verifies and settles valid payment, then invokes handler and attaches PAYMENT-RESPONSE', async () => {

@@ -3,6 +3,7 @@ import { getHasuraAdminSecret } from './services/hasura'
 import { initializeFirebaseAdmin } from './config/firebase-admin'
 import { getX402Config } from './config/x402'
 import { pool } from './services/db'
+import { startHoldExpiryJob, stopHoldExpiryJob } from './services/hold-expiry.job'
 
 const rawPort = process.env.WEBHOOK_PORT ?? process.env.PORT
 const port = rawPort === undefined ? 3001 : Number(rawPort)
@@ -26,6 +27,7 @@ try {
 const server = app.listen(port, () => {
   console.log(`[api] Webhook service running at http://localhost:${port}`)
 })
+startHoldExpiryJob()
 
 const shutdownTimeoutMs = 30_000
 let shuttingDown = false
@@ -35,6 +37,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
     return
   }
   shuttingDown = true
+  stopHoldExpiryJob()
   console.log(`[api] ${signal} received; stopping server and draining requests`)
 
   const timeout = setTimeout(() => {

@@ -12,6 +12,37 @@ export const DEFAULT_TESTNET_FACILITATOR_URL = 'https://x402.org/facilitator'
 
 export type StellarPaymentNetwork = 'stellar:testnet' | 'stellar:pubnet'
 
+export interface X402Context {
+  payer?: string | null
+  amountUsdc: number
+  network: string
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      x402?: X402Context
+    }
+  }
+}
+
+const verifiedPayers = new Map<string, string | null>()
+
+export function consumeVerifiedPayer(paymentSignatureHeader: string | undefined): string | null {
+  if (!paymentSignatureHeader) return null
+  try {
+    const decoded = JSON.parse(Buffer.from(paymentSignatureHeader, 'base64').toString('utf8')) as {
+      payload?: unknown
+    }
+    const key = JSON.stringify(decoded.payload ?? null)
+    const payer = verifiedPayers.get(key) ?? null
+    verifiedPayers.delete(key)
+    return payer
+  } catch {
+    return null
+  }
+}
+
 export interface X402Config {
   enabled: boolean
   network: StellarPaymentNetwork
@@ -136,6 +167,12 @@ export function buildX402ResourceServer(
 ): x402ResourceServer {
   const server = new x402ResourceServer(facilitatorClient)
   server.register(network, new ExactStellarScheme())
+  server.onAfterVerify(async (ctx) => {
+    if (ctx.result.isValid) {
+      const key = JSON.stringify(ctx.paymentPayload.payload ?? null)
+      verifiedPayers.set(key, ctx.result.payer ?? null)
+    }
+  })
 
   // Seed default supported response so requirements can always be generated
   // even before initialize() resolves or in isolated test environments.

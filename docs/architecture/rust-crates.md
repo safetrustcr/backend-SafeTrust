@@ -32,7 +32,6 @@ flowchart LR
         chunks["chunk-processor\nTokio HTTP\nTrustlessWork chunks"]
         pg["pg-bulk-upsert\nUNNEST batch SQL\ntokio-postgres"]
         soroban["soroban-reconciler\nSoroban RPC client\ndrift detection"]
-        zk["zk-verifier\nNoir UltraHonk\nproof verification"]
         escrow["escrow-state-machine\ntransition table\nstatus enforcement"]
     end
 
@@ -42,13 +41,12 @@ flowchart LR
     ffi --> chunks
     ffi --> pg
     ffi --> soroban
-    ffi --> zk
     ffi --> escrow
 ```
 
 ## Crate responsibilities
 
-The Rust layer is organized around seven crates under the `crates/` tree. Each crate is exposed to the Node.js runtime through a Neon binding and is used only where the native implementation is materially safer or faster than a plain JavaScript version. (x402 payments are implemented via official `@x402` Stellar packages in TypeScript).
+The Rust layer is organized around six functional crates under the `crates/` tree. Each crate is exposed to the Node.js runtime through a Neon binding and is used only where the native implementation is materially safer or faster than a plain JavaScript version. (x402 payments are implemented via official `@x402` Stellar packages in TypeScript).
 
 | Crate                | Purpose                       | Key dependency                    | Env gate                     |
 | -------------------- | ----------------------------- | --------------------------------- | ---------------------------- |
@@ -57,7 +55,6 @@ The Rust layer is organized around seven crates under the `crates/` tree. Each c
 | `chunk-processor`    | Parallel TrustlessWork HTTP   | `tokio`, `reqwest`, `futures`     | `RUST_CHUNKS_ENABLED`        |
 | `pg-bulk-upsert`     | UNNEST batch upsert           | `tokio-postgres`                  | `RUST_BULK_UPSERT_ENABLED`   |
 | `soroban-reconciler` | Soroban RPC drift detection   | `ureq`, `serde`, `stellar-strkey` | `SOROBAN_VALIDATION_ENABLED` (validated read adapter; auto-correct default-off) |
-| `zk-verifier`        | Noir UltraHonk proof verify   | `barretenberg-rs`                 | always on; proof bundle optional |
 | `escrow-state-machine` | Escrow transition table    | `serde`, `neon`                   | always on                    |
 
 ## How they fit the platform
@@ -67,7 +64,6 @@ The Rust layer is organized around seven crates under the `crates/` tree. Each c
 - `chunk-processor` splits large TrustlessWork fetches into independent async tasks so Node does not stall while HTTP data is processed.
 - `pg-bulk-upsert` moves the costly, repetitive insert/update path into a bulk SQL operation that is much more efficient than row-by-row JavaScript writes.
 - `soroban-reconciler` compares on-chain state and local state with Soroban RPC data, identifying drift or missed reconciliation events.
-- `zk-verifier` validates Noir proofs using a native proving runtime so the proof check remains deterministic and safe for trust-sensitive flows.
 - `escrow-state-machine` supplies the canonical status enum and transition table, so handlers reject illegal status changes before requesting an XDR.
 
 ## Summary

@@ -17,7 +17,7 @@ select_permissions:
         - created_at
       filter:
         bid_request:
-          tenant_id:
+          bidder_id:
             _eq: X-Hasura-User-Id
       comment: "Guests can see status history for their own offers"
   - role: host

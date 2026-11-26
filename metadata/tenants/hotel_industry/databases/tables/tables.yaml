@@ -2,6 +2,7 @@
 - "!include hotel_industry_rooms.yaml"
 - "!include hotel_industry_users.yaml"
 - "!include hotel_industry_room_images.yaml"
+- "!include hotel_industry_hotel_images.yaml"
 - "!include hotel_industry_reservations.yaml"
 - "!include hotel_industry_room_types.yaml"
 - "!include hotel_industry_users_wallets.yaml"
