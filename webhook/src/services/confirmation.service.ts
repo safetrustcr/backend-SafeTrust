@@ -141,11 +141,22 @@ export async function verifyStellarTransaction(
       network?: string
     }
 
-    if (txData.successful !== true) {
+    // Only an explicit `successful: false` is terminal. Horizon omits the
+    // field for responses that do not yet report the ledger outcome, and such
+    // an incomplete 200 must stay retryable: leaving `successful` undefined
+    // keeps the caller on pending_confirmation instead of dead_letter.
+    if (txData.successful === false) {
       return {
         verified: false,
         successful: false,
         error: 'Transaction failed on-ledger',
+      }
+    }
+
+    if (txData.successful !== true) {
+      return {
+        verified: false,
+        error: `Transaction execution is not confirmed on Stellar ${expectedNetwork}`,
       }
     }
 

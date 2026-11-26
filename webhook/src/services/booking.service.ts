@@ -39,6 +39,12 @@ export interface CreateBookingParams {
    * when no fee is charged.
    */
   bindBookingFeeReservation?: (reservationId: string) => Promise<void>
+  /**
+   * Resolves, without charging, the reservation an already-settled direct
+   * (hold-less) payment proof paid for. Returns null when the proof has not
+   * settled yet. Optional only when no fee is charged.
+   */
+  resolveBookingFeeBinding?: () => Promise<string | null>
 }
 
 export interface CreateBookingResult {
@@ -452,6 +458,73 @@ async function resumeBookingAttempt(params: {
 }
 
 /**
+ * Validate that a settled (hold-less) payment proof's reservation is this exact
+ * booking, then return or resume it. A proof that paid for another property,
+ * guest or date range can never authorize this one.
+ */
+async function resumeSettledBooking(params: {
+  reservationId: string
+  propertyId: string
+  checkIn: string
+  checkOut: string
+  guests?: number
+  userId: string
+  tenantId: string
+  payerWallet?: string | null
+  deposit: string | number
+  asset: string
+}): Promise<CreateBookingResult> {
+  const {
+    reservationId,
+    propertyId,
+    checkIn,
+    checkOut,
+    guests,
+    userId,
+    tenantId,
+    payerWallet,
+    deposit,
+    asset,
+  } = params
+
+  const attempt = await loadReservationAttempt(reservationId, tenantId)
+  const sameBooking =
+    attempt !== undefined &&
+    attempt.guest_id === userId &&
+    attempt.apartment_id === propertyId &&
+    toDateOnly(attempt.check_in_date) === checkIn &&
+    toDateOnly(attempt.check_out_date) === checkOut
+
+  if (!attempt || !sameBooking) {
+    throw new ConflictError('Payment proof was already used for a different reservation', {
+      code: 'settlement_reservation_mismatch',
+    })
+  }
+
+  if (attempt.contract_id && attempt.unsigned_xdr) {
+    return {
+      reservation_id: attempt.id,
+      contract_id: attempt.contract_id,
+      deposit: Number(deposit).toFixed(2),
+      asset,
+      unsigned_xdr: attempt.unsigned_xdr,
+      is_existing: true,
+    }
+  }
+
+  return resumeBookingAttempt({
+    reservationId: attempt.id,
+    propertyId,
+    checkIn,
+    checkOut,
+    guests,
+    userId,
+    tenantId,
+    payerWallet,
+  })
+}
+
+/**
  * Create a booking reservation with backend-deployed Trustless Work escrow
  * and server-calculated deposit amount.
  *
@@ -483,6 +556,7 @@ export async function createAgentBooking(
     payerWallet,
     chargeBookingFee,
     bindBookingFeeReservation,
+    resolveBookingFeeBinding,
   } = params
 
   // ── 1. Hold-based flow (Preferred) ─────────────────────────────────────────
@@ -530,7 +604,11 @@ export async function createAgentBooking(
       })
     }
 
-    if (hold.status !== 'active') {
+    // A pending_payment hold is one whose fee settled but whose activation did
+    // not complete. It stays convertible: the settlement below reuses the
+    // receipt already bound to this hold (never charging twice) and the
+    // conversion claims the row under lock.
+    if (hold.status !== 'active' && hold.status !== 'pending_payment') {
       throw new ConflictError(`Hold is ${hold.status}`, { code: 'hold_not_active' })
     }
 
@@ -576,13 +654,16 @@ export async function createAgentBooking(
         `SELECT id, status, expires_at, (expires_at <= clock_timestamp()) AS is_expired
            FROM safetrust.booking_holds
           WHERE id = $1 AND tenant_id = $2
-          FOR UPDATE`,
+          FOR NO KEY UPDATE`,
         [holdId, tenantId]
       )
       if (!locked.rows[0]) {
         throw new ConflictError('Hold not found', { code: 'hold_not_found' })
       }
-      if (locked.rows[0].status !== 'active') {
+      if (
+        locked.rows[0].status !== 'active' &&
+        locked.rows[0].status !== 'pending_payment'
+      ) {
         throw new ConflictError('Hold state changed concurrently', { code: 'hold_conflict' })
       }
       const lockExpired =
@@ -601,11 +682,12 @@ export async function createAgentBooking(
         await chargeBookingFee()
       }
 
-      // 1. Transition hold to converted
+      // 1. Transition hold to converted (from active, or from a paid but
+      // never-activated pending_payment hold).
       const holdUpdate = await client.query(
         `UPDATE safetrust.booking_holds
          SET status = 'converted', updated_at = NOW()
-         WHERE id = $1 AND status = 'active'`,
+         WHERE id = $1 AND status IN ('active', 'pending_payment')`,
         [holdId]
       )
       if (holdUpdate.rowCount !== 1) {
@@ -666,6 +748,29 @@ export async function createAgentBooking(
 
   const quote = await getQuoteForProperty(propertyId, checkIn, checkOut, guests)
 
+  // A settled proof may already have produced this reservation: its escrow
+  // deployment or XDR issuance can have been interrupted. Resolve that binding
+  // before the eligibility gate, because the attempt's own `escrow_created`
+  // row overlaps the dates it is retried with and the gate would otherwise
+  // reject the retry as dates_unavailable. Nothing is charged again.
+  const settledReservationId = resolveBookingFeeBinding
+    ? await resolveBookingFeeBinding()
+    : null
+  if (settledReservationId) {
+    return resumeSettledBooking({
+      reservationId: settledReservationId,
+      propertyId,
+      checkIn,
+      checkOut,
+      guests,
+      userId,
+      tenantId,
+      payerWallet,
+      deposit: quote.deposit,
+      asset: quote.asset,
+    })
+  }
+
   // Reject unavailable properties and overlapping dates before charging, so
   // a 409 never costs the guest the non-refundable fee.
   await assertBookingEligible({ tenantId, propertyId, checkIn, checkOut })
@@ -679,37 +784,12 @@ export async function createAgentBooking(
   // Settle the booking fee before creating the reservation.
   const fee = chargeBookingFee ? await chargeBookingFee() : undefined
 
-  // One settled proof authorizes at most one reservation. If this proof
-  // already paid for a reservation, return it when it is the same booking and
-  // reject a different request instead of creating a second reservation.
+  // One settled proof authorizes at most one reservation. A settlement that
+  // landed concurrently may already be bound to a reservation; return or resume
+  // it instead of creating a second one.
   if (fee?.reservationId) {
-    const attempt = await loadReservationAttempt(fee.reservationId, tenantId)
-    const sameBooking =
-      attempt !== undefined &&
-      attempt.guest_id === userId &&
-      attempt.apartment_id === propertyId &&
-      toDateOnly(attempt.check_in_date) === checkIn &&
-      toDateOnly(attempt.check_out_date) === checkOut
-
-    if (!sameBooking) {
-      throw new ConflictError('Payment proof was already used for a different reservation', {
-        code: 'settlement_reservation_mismatch',
-      })
-    }
-
-    if (attempt.contract_id && attempt.unsigned_xdr) {
-      return {
-        reservation_id: attempt.id,
-        contract_id: attempt.contract_id,
-        deposit: Number(quote.deposit).toFixed(2),
-        asset: quote.asset,
-        unsigned_xdr: attempt.unsigned_xdr,
-        is_existing: true,
-      }
-    }
-
-    return resumeBookingAttempt({
-      reservationId: attempt.id,
+    return resumeSettledBooking({
+      reservationId: fee.reservationId,
       propertyId,
       checkIn,
       checkOut,
@@ -717,6 +797,8 @@ export async function createAgentBooking(
       userId,
       tenantId,
       payerWallet,
+      deposit: quote.deposit,
+      asset: quote.asset,
     })
   }
 

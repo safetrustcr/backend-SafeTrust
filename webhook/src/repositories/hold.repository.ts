@@ -168,6 +168,21 @@ export async function activateHold(holdId: string): Promise<boolean> {
   return (result.rowCount ?? 0) > 0
 }
 
+/** Load a hold for a tenant, with the fields a paid retry validates. */
+export async function findHoldById(
+  holdId: string,
+  tenantId: string
+): Promise<HoldRow | undefined> {
+  const found = await query<HoldRow>(
+    `SELECT id, tenant_id, apartment_id, user_id, check_in, check_out, guests, status,
+            quote_total, quote_deposit, asset_code, payer_address, expires_at
+       FROM safetrust.booking_holds
+      WHERE id = $1 AND tenant_id = $2`,
+    [holdId, tenantId]
+  )
+  return found.rows[0]
+}
+
 /** Release a hold whose payment failed. The fee, if any, is not refunded. */
 export async function releasePendingHold(holdId: string): Promise<void> {
   await query(

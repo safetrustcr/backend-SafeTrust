@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { createAgentBooking } from '../../../services/booking.service'
 import {
   bindSettlementToReservation,
+  findSettledBookingFee,
   settleBookingFee,
   settlementIdempotencyKey,
 } from '../../../services/x402-settlement.service'
@@ -48,6 +49,14 @@ export async function createBookingHandler(
       checkOut,
       guests,
       payerWallet: x402?.payer ?? null,
+      // A proof that already settled is resolved before the eligibility gate,
+      // so retrying this booking resumes its own reservation instead of
+      // failing on the dates that reservation itself holds.
+      resolveBookingFeeBinding: async () => {
+        if (!x402 || holdId) return null
+        const settled = await findSettledBookingFee(x402.paymentHeader, x402.amountUsdc)
+        return settled?.reservationId ?? null
+      },
       // Settlement is durably recorded, so retries reuse the confirmed receipt.
       chargeBookingFee: async () => {
         if (!x402) {

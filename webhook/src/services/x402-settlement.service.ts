@@ -78,6 +78,55 @@ async function findSettlement(idempotencyKey: string): Promise<SettlementRow | u
   return result.rows[0]
 }
 
+export interface SettledBookingFeeBinding {
+  idempotencyKey: string
+  reservationId: string
+}
+
+export interface SettledHoldFeeBinding {
+  idempotencyKey: string
+  holdId: string
+}
+
+/**
+ * Resolve a direct (hold-less) payment proof that already settled, without
+ * charging again.
+ *
+ * Callers check this before the eligibility gate: a retry of a booking whose
+ * escrow deployment or XDR issuance was interrupted must resume its own
+ * reservation, whose `escrow_created` row overlaps the dates being retried,
+ * instead of being rejected as `dates_unavailable`.
+ *
+ * Returns undefined when the proof has not settled, or when it settled a hold:
+ * hold bindings are owned by `settleBookingFee`, which reports them as
+ * `settlement_hold_mismatch`.
+ */
+export async function findSettledBookingFee(
+  paymentHeader: string,
+  amountUsdc: number
+): Promise<SettledBookingFeeBinding | undefined> {
+  const idempotencyKey = settlementIdempotencyKey(paymentHeader, amountUsdc)
+  const row = await findSettlement(idempotencyKey)
+  if (row?.status !== 'settled' || row.hold_id || !row.reservation_id) return undefined
+  return { idempotencyKey, reservationId: row.reservation_id }
+}
+
+/**
+ * Resolve a hold fee that already settled for this proof, without charging
+ * again. Lets a retried hold request resume the paid hold whose activation did
+ * not complete, instead of creating a second hold that settlement itself would
+ * reject as `settlement_hold_mismatch`.
+ */
+export async function findSettledHoldFee(
+  paymentHeader: string,
+  amountUsdc: number
+): Promise<SettledHoldFeeBinding | undefined> {
+  const idempotencyKey = settlementIdempotencyKey(paymentHeader, amountUsdc)
+  const row = await findSettlement(idempotencyKey)
+  if (row?.status !== 'settled' || !row.hold_id) return undefined
+  return { idempotencyKey, holdId: row.hold_id }
+}
+
 /**
  * Record which reservation a settled (non-hold) payment proof paid for.
  *
