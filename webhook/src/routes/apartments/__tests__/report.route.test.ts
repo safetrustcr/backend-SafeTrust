@@ -18,6 +18,10 @@ jest.mock('../report.handler', () => ({
 describe('apartment report route rate limiting', () => {
   const app = express()
   app.use(express.json())
+  app.use((req, _res, next) => {
+    req.context = { uid: 'report-user', tenantId: 'safetrust', roles: ['guest'] }
+    next()
+  })
   app.use(reportRouter)
 
   it('rejects report requests after the per-IP limit', async () => {

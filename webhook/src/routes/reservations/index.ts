@@ -9,13 +9,14 @@ import {
   createReservationSchema,
   reservationListQuerySchema,
 } from '../../validation'
+import { requireRole } from '../../middleware/require-role'
 
 const router: Router = Router()
 
 // All routes under /api/reservations are authenticated upstream at the /api boundary
-router.post('/', validate(createReservationSchema), createReservationHandler)
+router.post('/', requireRole(['guest', 'host']), validate(createReservationSchema), createReservationHandler)
 router.get('/', validate(reservationListQuerySchema, 'query'), listReservationsHandler)
 router.get('/:id', getReservationHandler)
-router.post('/:id/cancel', validate(cancelReservationSchema), cancelReservationHandler)
+router.post('/:id/cancel', requireRole(['guest', 'host']), validate(cancelReservationSchema), cancelReservationHandler)
 
 export default router

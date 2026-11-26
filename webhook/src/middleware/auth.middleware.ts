@@ -90,7 +90,7 @@ export async function authMiddleware(
     };
   } else {
     try {
-      decodedToken = await getAuth().verifyIdToken(idToken);
+      decodedToken = await getAuth().verifyIdToken(idToken, true);
     } catch (error) {
       // Distinguish a missing Firebase app (server misconfiguration) from an invalid token.
       if (error instanceof Error && /no default app/i.test(error.message)) {

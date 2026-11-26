@@ -11,12 +11,13 @@ graph LR
   A[request] --> B["requestId<br/>X-Request-Id, access log"]
   B --> C[helmet]
   C --> D["cors<br/>explicit origin policy"]
-  D --> E["express.json<br/>raw body kept on req.rawBody"]
-  E --> F["bindRequestContext<br/>request id for the logger"]
-  F --> G[routes]
-  G --> H[notFoundHandler]
-  E -. parse error .-> I
-  G -. thrown error .-> I["errorHandler<br/>typed mapping, sanitized body"]
+  D --> E["rate limits<br/>API, public and health"]
+  E --> F["express.json<br/>100 KB limit"]
+  F --> G["bindRequestContext<br/>request id for the logger"]
+  G --> H[routes]
+  H --> I[notFoundHandler]
+  F -. parse error .-> J
+  H -. thrown error .-> J["errorHandler<br/>typed mapping, sanitized body"]
 ```
 
 | File | Responsibility |
@@ -137,14 +138,11 @@ Authenticated user requests take their tenant from the verified session at
 tenant. Reconciliation and other jobs without a user session pass
 `getPlatformTenantId()` explicitly through the service and repository calls.
 
-## Raw body for signed webhooks
+## Request-body handling
 
-TrustlessWork callbacks are verified with an HMAC over
-`timestamp + '.' + rawBody`. `express.json({ verify })` stores the exact
-request bytes on `req.rawBody` before parsing, and the error-handling change
-leaves that path as it was. `src/__tests__/app.errors.test.ts` checks it end to
-end: a signature over the bytes sent is accepted, and a signature over the
-re-serialized JSON is rejected.
+The JSON parser enforces a 100 KB request limit and does not retain a second raw
+copy of request bodies. The old Trustless Work callback HMAC path was retired
+with its callback routes; no active webhook route needs raw request bytes.
 
 ## CORS origin policy
 

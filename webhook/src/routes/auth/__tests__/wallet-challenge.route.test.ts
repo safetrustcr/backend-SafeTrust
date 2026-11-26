@@ -12,6 +12,10 @@ jest.mock('../wallet-challenge.handler', () => ({
 describe('wallet challenge route rate limiting', () => {
   const app = express()
   app.use(express.json())
+  app.use((req, _res, next) => {
+    req.context = { uid: 'wallet-user', tenantId: 'safetrust', roles: ['guest'] }
+    next()
+  })
   app.use(walletChallengeRouter)
 
   it('shares the limit between challenge and verification requests', async () => {

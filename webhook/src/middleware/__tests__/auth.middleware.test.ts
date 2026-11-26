@@ -54,6 +54,20 @@ describe('authMiddleware', () => {
     expect(next).not.toHaveBeenCalled()
   })
 
+  it('should return 401 when Firebase reports a revoked ID token', async () => {
+    req.headers['authorization'] = 'Bearer revoked-token'
+    const verifyIdToken = jest.fn().mockRejectedValue(
+      Object.assign(new Error('Token has been revoked'), { code: 'auth/id-token-revoked' })
+    )
+    ;(getAuth as jest.Mock).mockReturnValue({ verifyIdToken })
+
+    await authMiddleware(req, res, next)
+
+    expect(verifyIdToken).toHaveBeenCalledWith('revoked-token', true)
+    expect(res.status).toHaveBeenCalledWith(401)
+    expect(next).not.toHaveBeenCalled()
+  })
+
   it('should call next() and attach user with roles from user_roles if token is valid', async () => {
     const mockUser = { uid: '123', email: 'test@example.com', name: 'Test User' }
     req.headers['authorization'] = 'Bearer valid-token'

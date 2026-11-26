@@ -1,6 +1,6 @@
 import { Router, RequestHandler } from 'express'
 import { rateLimit } from 'express-rate-limit'
-import { authMiddleware } from '../../middleware/auth.middleware'
+import { requireRole } from '../../middleware/require-role'
 import { createReportHandler } from './report.handler'
 import { validate } from '../../middleware/validate'
 import { createListingReportSchema } from '../../validation'
@@ -17,7 +17,7 @@ const reportRateLimit = rateLimit({
 router.post(
   '/:id/reports',
   reportRateLimit,
-  authMiddleware,
+  requireRole(['guest', 'host']),
   validate(createListingReportSchema),
   createReportHandler as unknown as RequestHandler
 )
