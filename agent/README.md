@@ -125,4 +125,5 @@ claude mcp add safetrust-booking \
 - `create_booking` — Create booking and deploy escrow contract (paid via x402)
 - `fund_deposit` — Verify XDR, confirm with human, sign, and submit deposit
 - `prepare_deposit` / `confirm_deposit` — Two-step confirmation fallback for clients without elicitation
-- `spending_summary` — View session x402 fees spent, remaining budget, and locked deposits
+- `spending_summary` — View session x402 fees spent, remaining budget, pending fee reservations, and locked deposits
+- `reconcile_fee_reservation` — Query settlement status for a pending x402 fee reservation after an ambiguous paid retry (commits if settled, releases if definitively not settled, keeps pending if unknown)

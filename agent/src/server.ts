@@ -12,10 +12,13 @@ import {
   verifyAndSignDeposit,
 } from './deposit';
 import {
+  PendingPaymentSettlementError,
   SpendingLedger,
   SpendingLimitError,
   loadSpendingConfigFromEnv,
+  usdcToAtomic,
   type AgentSpendingConfig,
+  type FeeSettlementResolver,
 } from './payments';
 
 export interface PendingDepositConfirmation {
@@ -60,6 +63,10 @@ export interface CreateBookingAgentServerOptions {
    * Defaults to `process.env.AGENT_ALLOW_HOST_FALLBACK_CONFIRMATION === 'true'` (false by default).
    */
   allowFallbackConfirmation?: boolean;
+  /**
+   * Optional custom settlement query callback for reconciling pending x402 fee reservations.
+   */
+  queryFeeSettlement?: FeeSettlementResolver;
 }
 
 export interface BookingAgentContext {
@@ -94,18 +101,24 @@ function formatToolError(err: unknown, secretKey: string) {
   const rawMessage = err instanceof Error ? err.message : String(err);
   const safeMessage = redactSecret(rawMessage, secretKey);
   const code =
-    err instanceof SpendingLimitError || err instanceof DepositVerificationError
+    err instanceof SpendingLimitError ||
+    err instanceof DepositVerificationError ||
+    err instanceof PendingPaymentSettlementError
       ? err.code
       : 'AGENT_ERROR';
 
-  return formatToolResult(
-    {
-      error: safeMessage,
-      code,
-    },
-    secretKey,
-    true
-  );
+  const payload: Record<string, unknown> = {
+    error: safeMessage,
+    code,
+  };
+  if (err instanceof PendingPaymentSettlementError) {
+    payload.reservation_id = err.reservationId;
+    if (err.settlementRef) {
+      payload.settlement_ref = err.settlementRef;
+    }
+  }
+
+  return formatToolResult(payload, secretKey, true);
 }
 
 /**
@@ -135,6 +148,7 @@ export function createBookingAgentServer(
       secretKey,
       baseFetch: options.baseFetch,
       sessionToken: options.sessionToken,
+      queryFeeSettlement: options.queryFeeSettlement,
     });
 
   const confirmationTtlMs = options.confirmationTtlMs ?? 5 * 60 * 1000;
@@ -430,22 +444,58 @@ export function createBookingAgentServer(
     }
   };
 
-  // Helper to execute XDR verification, signing, and submission once humanConfirmed === true.
-  // Enforces single-flight per booking, rejects already-funded bookings, reconciles uncertain
-  // submissions by transaction hash before retrying, and records locked funds in SpendingLedger
-  // only after confirmed funding.
-  const executeSignedDeposit = async (params: {
-    booking: BookingRecord;
-    unsignedXdr: string;
+  interface ApprovedBookingTerms {
+    contractId: string;
+    assetContract: string;
     amountUsdc: number;
+  }
+
+  const hasSameBookingTerms = (
+    booking: BookingRecord,
+    approved: ApprovedBookingTerms
+  ): boolean => {
+    if (
+      booking.contractId !== approved.contractId ||
+      booking.assetContract !== approved.assetContract
+    ) {
+      return false;
+    }
+    try {
+      return usdcToAtomic(booking.depositUsdc) === usdcToAtomic(approved.amountUsdc);
+    } catch {
+      return false;
+    }
+  };
+
+  // Helper to execute XDR verification, signing, and submission once humanConfirmed === true.
+  // Re-reads the booking immediately before signing to ensure terms did not change during
+  // confirmation, enforces single-flight per booking, rejects already-funded bookings,
+  // reconciles uncertain submissions by transaction hash before retrying, and records locked
+  // funds in SpendingLedger only after confirmed funding.
+  const executeSignedDeposit = async (params: {
+    bookingId: string;
+    approvedTerms: ApprovedBookingTerms;
+    unsignedXdrOverride?: string;
     humanConfirmed: boolean;
   }) => {
-    const { booking } = params;
-    const bookingId = booking.bookingId;
-    const expectedAssetContract = assertBookingAssetMatchesConfig(booking);
+    const { bookingId, approvedTerms } = params;
+
+    const assertCurrentBookingMatchesApproved = (): BookingRecord => {
+      const latest = api.getBooking(bookingId);
+      if (!latest || !hasSameBookingTerms(latest, approvedTerms)) {
+        throw new DepositVerificationError(
+          'HUMAN_CONFIRMATION_REQUIRED',
+          `Booking "${bookingId}" terms changed after confirmation. Request a new confirmation for the current terms before signing.`
+        );
+      }
+      return latest;
+    };
+
+    const initialBooking = assertCurrentBookingMatchesApproved();
+    const expectedAssetContract = assertBookingAssetMatchesConfig(initialBooking);
 
     const currentState = bookingFundingState.get(bookingId);
-    if (booking.status === 'funded' || currentState?.status === 'funded') {
+    if (initialBooking.status === 'funded' || currentState?.status === 'funded') {
       throw new DepositVerificationError(
         'ALREADY_FUNDED',
         `Booking "${bookingId}" is already funded. Refusing duplicate deposit signing.`
@@ -475,7 +525,10 @@ export function createBookingAgentServer(
           assetContract: currentState.assetContract,
           txHash: currentState.txHash,
         });
-        booking.status = 'funded';
+        const latestFunded = api.getBooking(bookingId);
+        if (latestFunded) {
+          latestFunded.status = 'funded';
+        }
         bookingFundingState.set(bookingId, {
           status: 'funded',
           txHash: currentState.txHash,
@@ -495,25 +548,30 @@ export function createBookingAgentServer(
       // reconciled === 'not_funded' -> safe to proceed with a new attempt
     }
 
-    // Claim booking synchronously before signing or awaiting network calls
+    // Claim booking synchronously before re-checking terms and signing
     bookingFundingState.set(bookingId, { status: 'in_flight' });
 
     let signed: ReturnType<typeof verifyAndSignDeposit>;
     try {
+      // Re-read booking immediately before signing (covers any change during confirmation or reconciliation awaits)
+      const latestBooking = assertCurrentBookingMatchesApproved();
+      const latestAssetContract = assertBookingAssetMatchesConfig(latestBooking);
+      const unsignedXdr = params.unsignedXdrOverride ?? latestBooking.unsignedXdr;
+
       signed = verifyAndSignDeposit({
         bookingId,
-        unsignedXdr: params.unsignedXdr,
-        expectedContractId: booking.contractId,
-        expectedAmountUsdc: params.amountUsdc,
+        unsignedXdr,
+        expectedContractId: latestBooking.contractId,
+        expectedAmountUsdc: approvedTerms.amountUsdc,
         network: ledger.getConfig().network,
-        expectedAssetContract,
+        expectedAssetContract: latestAssetContract,
         expectedSigner: api.getWalletPublicKey(),
         secretKey,
         ledger,
         humanConfirmed: params.humanConfirmed,
       });
     } catch (err) {
-      // Signing/verification failed before submission; release claim so recovery is possible
+      // Verification/signing failed before submission; release claim so recovery is possible
       bookingFundingState.delete(bookingId);
       throw err;
     }
@@ -643,11 +701,7 @@ export function createBookingAgentServer(
         if (!booking) {
           throw new Error(`Booking "${pending.bookingId}" not found.`);
         }
-        if (
-          booking.contractId !== pending.contractId ||
-          booking.assetContract !== pending.assetContract ||
-          Math.abs(booking.depositUsdc - pending.amountUsdc) > 1e-7
-        ) {
+        if (!hasSameBookingTerms(booking, pending)) {
           pendingConfirmations.delete(args.confirmation_id);
           throw new DepositVerificationError(
             'HUMAN_CONFIRMATION_REQUIRED',
@@ -669,11 +723,14 @@ export function createBookingAgentServer(
           throw err;
         }
 
-        const unsignedXdr = args.unsigned_xdr ?? booking.unsignedXdr;
         const result = await executeSignedDeposit({
-          booking,
-          unsignedXdr,
-          amountUsdc: pending.amountUsdc,
+          bookingId: pending.bookingId,
+          approvedTerms: {
+            contractId: pending.contractId,
+            assetContract: pending.assetContract,
+            amountUsdc: pending.amountUsdc,
+          },
+          unsignedXdrOverride: args.unsigned_xdr,
           humanConfirmed: true,
         });
 
@@ -721,6 +778,11 @@ export function createBookingAgentServer(
         ledger.verifyDepositLimit(booking.depositUsdc);
 
         let humanConfirmed = false;
+        let approvedTerms: ApprovedBookingTerms = {
+          contractId: booking.contractId,
+          assetContract: booking.assetContract,
+          amountUsdc: booking.depositUsdc,
+        };
 
         // Path A: Two-step confirmation_id provided
         if (args.confirmation_id) {
@@ -735,11 +797,7 @@ export function createBookingAgentServer(
               `Invalid or expired confirmation_id "${args.confirmation_id}" for booking "${booking.bookingId}".`
             );
           }
-          if (
-            booking.contractId !== pending.contractId ||
-            booking.assetContract !== pending.assetContract ||
-            Math.abs(booking.depositUsdc - pending.amountUsdc) > 1e-7
-          ) {
+          if (!hasSameBookingTerms(booking, pending)) {
             pendingConfirmations.delete(args.confirmation_id);
             throw new DepositVerificationError(
               'HUMAN_CONFIRMATION_REQUIRED',
@@ -756,6 +814,11 @@ export function createBookingAgentServer(
             }
             throw err;
           }
+          approvedTerms = {
+            contractId: pending.contractId,
+            assetContract: pending.assetContract,
+            amountUsdc: pending.amountUsdc,
+          };
           humanConfirmed = true;
         } else {
           // Path B: Use MCP form elicitation if the connected client supports it
@@ -771,14 +834,20 @@ export function createBookingAgentServer(
             const exactAmount = formatExactUsdc(booking.depositUsdc);
             const elicitResult = await server.server.elicitInput({
               mode: 'form',
-              message: `Book ${booking.propertyName ?? booking.propertyId} and lock ${exactAmount} USDC in escrow (${booking.contractId})?`,
+              message: redactSecret(
+                `Book ${booking.propertyName ?? booking.propertyId} and lock ${exactAmount} USDC in escrow (${booking.contractId})?`,
+                secretKey
+              ),
               requestedSchema: {
                 type: 'object',
                 properties: {
                   confirm: {
                     type: 'boolean',
                     title: 'Confirm escrow deposit',
-                    description: `Sign and lock ${exactAmount} USDC into ${booking.contractId}`,
+                    description: redactSecret(
+                      `Sign and lock ${exactAmount} USDC into ${booking.contractId}`,
+                      secretKey
+                    ),
                     default: false,
                   },
                 },
@@ -817,11 +886,10 @@ export function createBookingAgentServer(
           }
         }
 
-        const unsignedXdr = args.unsigned_xdr ?? booking.unsignedXdr;
         const result = await executeSignedDeposit({
-          booking,
-          unsignedXdr,
-          amountUsdc: booking.depositUsdc,
+          bookingId: booking.bookingId,
+          approvedTerms,
+          unsignedXdrOverride: args.unsigned_xdr,
           humanConfirmed,
         });
 
@@ -844,6 +912,36 @@ export function createBookingAgentServer(
     async () => {
       try {
         return toolOk(ledger.getSummary());
+      } catch (err) {
+        return formatToolError(err, secretKey);
+      }
+    }
+  );
+
+  // ── 8. reconcile_fee_reservation (FREE session recovery) ───────────────────
+  registerTool(
+    'reconcile_fee_reservation',
+    {
+      title: 'Reconcile Pending x402 Fee Reservation',
+      description:
+        'Query settlement status for a pending x402 fee reservation after an ambiguous paid retry. Commits if settled, releases if definitively not settled, and keeps pending if still unknown.',
+      inputSchema: {
+        reservation_id: z
+          .string()
+          .min(1)
+          .describe('Pending fee reservation_id returned on the error or spending_summary'),
+      },
+    },
+    async (args) => {
+      try {
+        const reconciled = await api.reconcilePendingFee(args.reservation_id);
+        return toolOk({
+          reservation_id: reconciled.reservation.id,
+          status: reconciled.status,
+          settlement_ref: reconciled.reservation.settlementRef,
+          paid_call: reconciled.paidCall,
+          summary: ledger.getSummary().formatted,
+        });
       } catch (err) {
         return formatToolError(err, secretKey);
       }

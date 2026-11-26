@@ -87,7 +87,52 @@ export interface FeeReservation {
   endpoint: string;
   requirement: NormalizedPaymentRequirement;
   status: 'reserved' | 'settled' | 'released';
+  settlementRef?: string;
   createdAt: string;
+}
+
+export type FeeSettlementStatus = 'settled' | 'not_settled' | 'unknown';
+
+export type FeeSettlementResolver = (
+  reservation: Readonly<FeeReservation>
+) => Promise<FeeSettlementStatus> | FeeSettlementStatus;
+
+export interface ReconcileFeeReservationResult {
+  status: 'settled' | 'released' | 'pending';
+  reservation: FeeReservation;
+  paidCall?: PaidCallRecord;
+}
+
+export class PendingPaymentSettlementError extends Error {
+  public readonly code = 'PAYMENT_SETTLEMENT_PENDING' as const;
+  public readonly reservationId: string;
+  public readonly endpoint: string;
+  public readonly amountUsdc: number;
+  public readonly settlementRef?: string;
+  public readonly cause?: unknown;
+
+  constructor(params: {
+    reservation: FeeReservation;
+    cause?: unknown;
+    message?: string;
+  }) {
+    const causeMsg =
+      params.cause instanceof Error
+        ? params.cause.message
+        : params.cause !== undefined
+          ? String(params.cause)
+          : 'unknown transport failure';
+    super(
+      params.message ??
+        `Paid x402 retry failed with ambiguous settlement (${causeMsg}). Fee reservation "${params.reservation.id}" (${params.reservation.requirement.amountUsdc.toFixed(2)} USDC) remains pending until reconciled.`
+    );
+    this.name = 'PendingPaymentSettlementError';
+    this.reservationId = params.reservation.id;
+    this.endpoint = params.reservation.endpoint;
+    this.amountUsdc = params.reservation.requirement.amountUsdc;
+    this.settlementRef = params.reservation.settlementRef;
+    this.cause = params.cause;
+  }
 }
 
 export interface DepositRecord {
@@ -103,6 +148,7 @@ export interface DepositRecord {
 
 export interface SpendingSummary {
   feesSpentUsdc: number;
+  feesReservedUsdc: number;
   feeBudgetUsdc: number;
   remainingFeeBudgetUsdc: number;
   maxFeePerCallUsdc: number;
@@ -113,6 +159,7 @@ export interface SpendingSummary {
   expectedPayTo: string;
   expectedAssetContract: string;
   paidCalls: PaidCallRecord[];
+  pendingFeeReservations: FeeReservation[];
   deposits: DepositRecord[];
   formatted: string;
 }
@@ -174,6 +221,62 @@ export function isMatchingStellarNetwork(
  */
 export function getDefaultUsdcContract(network: StellarNetworkName): string {
   return network === 'mainnet' ? USDC_PUBNET_ADDRESS : USDC_TESTNET_ADDRESS;
+}
+
+/**
+ * Expand a positive finite JS number into an exact base-10 digit string without
+ * scientific notation (e.g. 1e-7 -> "0.0000001", 0.00099996 -> "0.00099996").
+ */
+function numberToExactDecimalString(value: number): string {
+  const raw = String(value).trim().toLowerCase();
+  if (!raw.includes('e')) {
+    return raw;
+  }
+  const [mantissa, expPart] = raw.split('e');
+  const exp = Number.parseInt(expPart, 10);
+  const [intDigits, fracDigits = ''] = mantissa.split('.');
+  const digits = intDigits + fracDigits;
+  const decimalPos = intDigits.length + exp;
+
+  if (decimalPos <= 0) {
+    return `0.${'0'.repeat(-decimalPos)}${digits}`;
+  }
+  if (decimalPos >= digits.length) {
+    return `${digits}${'0'.repeat(decimalPos - digits.length)}`;
+  }
+  return `${digits.slice(0, decimalPos)}.${digits.slice(decimalPos)}`;
+}
+
+/**
+ * Convert a configured decimal cap (USDC or XLM) to the largest whole 7-decimal
+ * atomic unit (stroop) that does NOT exceed the configured value (rounds down).
+ */
+export function decimalCapToMaxAtomic(amount: number): bigint {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new SpendingLimitError(
+      'INVALID_REQUIREMENT',
+      `Cap amount must be a positive finite number, got: ${amount}`
+    );
+  }
+  const decStr = numberToExactDecimalString(amount);
+  const [intPart, fracPart = ''] = decStr.split('.');
+  const truncatedFrac = fracPart.slice(0, USDC_DECIMALS).padEnd(USDC_DECIMALS, '0');
+  return BigInt(`${intPart || '0'}${truncatedFrac}`);
+}
+
+/**
+ * Return true if `amount` has no non-zero fractional digits beyond 7 decimal places.
+ */
+export function isExact7DecimalAmount(amount: number): boolean {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return false;
+  }
+  const decStr = numberToExactDecimalString(amount);
+  const [, fracPart = ''] = decStr.split('.');
+  if (fracPart.length <= USDC_DECIMALS) {
+    return true;
+  }
+  return /^0*$/.test(fracPart.slice(USDC_DECIMALS));
 }
 
 /**
@@ -631,6 +734,99 @@ export class SpendingLedger {
   }
 
   /**
+   * Retrieve a fee reservation by ID.
+   */
+  public getFeeReservation(reservationId: string): FeeReservation | undefined {
+    const reservation = this.feeReservations.get(reservationId);
+    return reservation ? { ...reservation } : undefined;
+  }
+
+  /**
+   * Return all fee reservations currently pending settlement reconciliation.
+   */
+  public getPendingFeeReservations(): FeeReservation[] {
+    return Array.from(this.feeReservations.values())
+      .filter((r) => r.status === 'reserved')
+      .map((r) => ({ ...r }));
+  }
+
+  /**
+   * Attach a settlement reference (e.g. signed payment transaction payload or ID)
+   * to a pending fee reservation so it can be reconciled later in the session.
+   */
+  public setFeeReservationSettlementRef(
+    reservationId: string,
+    settlementRef: string
+  ): void {
+    const reservation = this.feeReservations.get(reservationId);
+    if (reservation && reservation.status === 'reserved' && settlementRef.trim()) {
+      reservation.settlementRef = settlementRef.trim();
+    }
+  }
+
+  /**
+   * Reconcile a pending fee reservation within the session by querying settlement status.
+   * Commits the reservation if definitively settled, releases it if definitively not settled,
+   * and preserves pending status if the outcome remains unknown or the query fails.
+   */
+  public async reconcileFeeReservation(
+    reservationId: string,
+    querySettlement: FeeSettlementResolver
+  ): Promise<ReconcileFeeReservationResult> {
+    const reservation = this.feeReservations.get(reservationId);
+    if (!reservation) {
+      throw new SpendingLimitError(
+        'INVALID_REQUIREMENT',
+        `Unknown fee reservation "${reservationId}"`
+      );
+    }
+
+    if (reservation.status === 'settled') {
+      return {
+        status: 'settled',
+        reservation: { ...reservation },
+        paidCall: this.paidCallsByReservationId.get(reservationId),
+      };
+    }
+
+    if (reservation.status === 'released') {
+      return {
+        status: 'released',
+        reservation: { ...reservation },
+      };
+    }
+
+    let settlementStatus: FeeSettlementStatus = 'unknown';
+    try {
+      settlementStatus = await querySettlement({ ...reservation });
+    } catch {
+      settlementStatus = 'unknown';
+    }
+
+    if (settlementStatus === 'settled') {
+      const paidCall = this.commitFeeReservation(reservationId);
+      return {
+        status: 'settled',
+        reservation: { ...reservation },
+        paidCall,
+      };
+    }
+
+    if (settlementStatus === 'not_settled') {
+      this.releaseFeeReservation(reservationId);
+      return {
+        status: 'released',
+        reservation: { ...reservation },
+      };
+    }
+
+    return {
+      status: 'pending',
+      reservation: { ...reservation },
+    };
+  }
+
+  /**
    * Record a verified x402 fee payment in the session ledger.
    */
   public recordFeePayment(
@@ -657,6 +853,8 @@ export class SpendingLedger {
 
   /**
    * Check whether an escrow deposit amount is within the configured AGENT_MAX_DEPOSIT limit.
+   * Compares exact 7-decimal atomic units against the floored cap so rounding can never
+   * allow a signed deposit above AGENT_MAX_DEPOSIT.
    * Throws SpendingLimitError if the deposit exceeds the limit.
    */
   public verifyDepositLimit(amountUsdc: number): void {
@@ -666,7 +864,9 @@ export class SpendingLedger {
         `Deposit amount must be a positive number, got: ${amountUsdc}`
       );
     }
-    if (amountUsdc > this.config.maxDepositUsdc + 1e-9) {
+    const maxDepositAtomic = decimalCapToMaxAtomic(this.config.maxDepositUsdc);
+    const amountAtomic = BigInt(usdcToAtomic(amountUsdc));
+    if (amountAtomic > maxDepositAtomic) {
       throw new SpendingLimitError(
         'DEPOSIT_LIMIT_EXCEEDED',
         `Booking refused: deposit ${amountUsdc.toFixed(2)} USDC exceeds AGENT_MAX_DEPOSIT (${this.config.maxDepositUsdc.toFixed(2)} USDC)`
@@ -714,11 +914,13 @@ export class SpendingLedger {
    */
   public getSummary(): SpendingSummary {
     const feesSpent = this.getFeesSpentUsdc();
+    const feesReserved = this.getFeesReservedUsdc();
     const depositsLocked = this.getDepositsLockedUsdc();
     const formatted = `Fees ${feesSpent.toFixed(2)} / ${this.config.feeBudgetUsdc.toFixed(2)} USDC · Deposit ${depositsLocked.toFixed(2)} / ${this.config.maxDepositUsdc.toFixed(2)} USDC`;
 
     return {
       feesSpentUsdc: feesSpent,
+      feesReservedUsdc: feesReserved,
       feeBudgetUsdc: this.config.feeBudgetUsdc,
       remainingFeeBudgetUsdc: this.getRemainingFeeBudgetUsdc(),
       maxFeePerCallUsdc: this.config.maxFeePerCallUsdc,
@@ -729,6 +931,7 @@ export class SpendingLedger {
       expectedPayTo: this.config.expectedPayTo,
       expectedAssetContract: this.config.expectedAssetContract,
       paidCalls: [...this.paidCalls],
+      pendingFeeReservations: this.getPendingFeeReservations(),
       deposits: [...this.deposits],
       formatted,
     };
@@ -752,6 +955,7 @@ export interface CreateX402FetchOptions {
 }
 
 const responsePaymentRecords = new WeakMap<Response, PaidCallRecord>();
+const responsePendingReservations = new WeakMap<Response, FeeReservation>();
 
 /**
  * Retrieve the exact PaidCallRecord settled for a specific fetch Response,
@@ -764,18 +968,75 @@ export function getPaymentRecordForResponse(
 }
 
 /**
+ * Retrieve a pending FeeReservation associated with a non-ok ambiguous Response
+ * (e.g. 5xx or malformed settlement header) so callers can reconcile it in-session.
+ */
+export function getPendingReservationForResponse(
+  response: Response
+): FeeReservation | undefined {
+  return responsePendingReservations.get(response);
+}
+
+/**
+ * Parse a base64-encoded x402 v2 `PAYMENT-RESPONSE` / `X-PAYMENT-RESPONSE` header.
+ * Returns null if missing or malformed.
+ */
+function parseSettlementResponseHeader(
+  rawHeader: string | null
+): Record<string, unknown> | null {
+  if (!rawHeader || !rawHeader.trim()) {
+    return null;
+  }
+  try {
+    const decoded = Buffer.from(rawHeader.trim(), 'base64').toString('utf8');
+    const parsed = JSON.parse(decoded) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Determine whether a non-2xx response to a paid retry represents a definitive
  * settlement rejection (safe to release the fee reservation) vs. an uncertain
  * server/transport failure (must keep the reservation pending).
+ *
+ * - When `PAYMENT-RESPONSE` or `X-PAYMENT-RESPONSE` is present: parse it and
+ *   release ONLY when it definitively confirms no settlement (`success === false`
+ *   and no transaction hash). Malformed headers or unknown outcomes keep the
+ *   reservation pending.
+ * - When neither header is present: preserve the legacy headerless rejection
+ *   path (4xx guarantees no settlement).
  */
 function isDefinitivePaymentRejection(response: Response): boolean {
-  if (
-    response.headers.has('PAYMENT-RESPONSE') ||
-    response.headers.has('X-PAYMENT-RESPONSE')
-  ) {
+  if (response.status < 400 || response.status >= 500) {
     return false;
   }
-  return response.status >= 400 && response.status < 500;
+
+  const rawHeader =
+    response.headers.get('PAYMENT-RESPONSE') ??
+    response.headers.get('X-PAYMENT-RESPONSE');
+
+  if (rawHeader !== null) {
+    const parsed = parseSettlementResponseHeader(rawHeader);
+    if (!parsed) {
+      return false;
+    }
+    if (parsed.success !== false) {
+      return false;
+    }
+    const tx = parsed.transaction;
+    const hasTransaction =
+      typeof tx === 'string'
+        ? tx.trim().length > 0
+        : tx !== undefined && tx !== null;
+    return !hasTransaction;
+  }
+
+  return true;
 }
 
 /**
@@ -939,6 +1200,7 @@ export function createPaymentFetch(
     let callEndpoint = '';
     let callReservation: FeeReservation | null = null;
     let callPaidRecord: PaidCallRecord | null = null;
+    let callSpendingLimitError: SpendingLimitError | null = null;
     let paidRetrySent = false;
 
     client.onBeforePaymentCreation(
@@ -949,17 +1211,24 @@ export function createPaymentFetch(
       }) => {
         // Atomically verify limits and reserve budget before creating the signed payload
         // so overlapping concurrent calls cannot both pass against the same remaining balance.
-        callReservation = ledger.reserveFeePayment(
-          {
-            scheme: selectedRequirements.scheme,
-            network: selectedRequirements.network,
-            amount: selectedRequirements.amount,
-            asset: selectedRequirements.asset,
-            payTo: selectedRequirements.payTo,
-            facilitatorUrl: callFacilitatorUrl,
-          },
-          callEndpoint
-        );
+        try {
+          callReservation = ledger.reserveFeePayment(
+            {
+              scheme: selectedRequirements.scheme,
+              network: selectedRequirements.network,
+              amount: selectedRequirements.amount,
+              asset: selectedRequirements.asset,
+              payTo: selectedRequirements.payTo,
+              facilitatorUrl: callFacilitatorUrl,
+            },
+            callEndpoint
+          );
+        } catch (err) {
+          if (err instanceof SpendingLimitError) {
+            callSpendingLimitError = err;
+          }
+          throw err;
+        }
       }
     );
 
@@ -988,6 +1257,9 @@ export function createPaymentFetch(
             typeof decoded.payload === 'object' && decoded.payload !== null
               ? (decoded.payload.transaction ?? JSON.stringify(decoded.payload))
               : String(decoded.payload ?? '');
+          if (callReservation && txPayload) {
+            ledger.setFeeReservationSettlementRef(callReservation.id, txPayload);
+          }
           const atomicStr = decoded.accepted?.amount ?? '0';
           const amountUsdc = /^\d+$/.test(atomicStr)
             ? atomicToUsdc(atomicStr)
@@ -1021,8 +1293,14 @@ export function createPaymentFetch(
           callPaidRecord = ledger.commitFeeReservation(callReservation.id);
         } else if (isDefinitivePaymentRejection(response)) {
           ledger.releaseFeeReservation(callReservation.id);
+        } else {
+          // On 5xx or ambiguous settlement response, leave the reservation pending
+          // and expose it on the Response for in-session reconciliation.
+          const latest = ledger.getFeeReservation(callReservation.id);
+          if (latest) {
+            responsePendingReservations.set(response, latest);
+          }
         }
-        // On 5xx or ambiguous status, leave the reservation pending because settlement is unknown.
         return response;
       }
 
@@ -1046,14 +1324,36 @@ export function createPaymentFetch(
       const finalResponse = await wrappedFetch(input, init);
       if (callPaidRecord) {
         responsePaymentRecords.set(finalResponse, callPaidRecord);
+      } else if (callReservation) {
+        const latest = ledger.getFeeReservation(
+          (callReservation as FeeReservation).id
+        );
+        if (latest && latest.status === 'reserved') {
+          responsePendingReservations.set(finalResponse, latest);
+        }
       }
       return finalResponse;
     } catch (err) {
       // Release reservation only if signing/setup failed before the paid retry was sent.
       // If the paid retry was sent and failed due to network/timeout, keep the reservation
-      // pending because settlement status is unknown.
-      if (callReservation && !paidRetrySent) {
-        ledger.releaseFeeReservation((callReservation as FeeReservation).id);
+      // pending and surface the reservation ID / settlement reference on the error so the
+      // caller can reconcile it within the session.
+      if (callReservation) {
+        const res = callReservation as FeeReservation;
+        if (!paidRetrySent) {
+          ledger.releaseFeeReservation(res.id);
+        } else {
+          const latest = ledger.getFeeReservation(res.id) ?? res;
+          if (latest.status === 'reserved') {
+            throw new PendingPaymentSettlementError({
+              reservation: latest,
+              cause: err,
+            });
+          }
+        }
+      }
+      if (callSpendingLimitError) {
+        throw callSpendingLimitError;
       }
       throw err;
     }

@@ -386,6 +386,7 @@ describe('MCP Booking Agent Server', () => {
     const { server, api, ledger } = createBookingAgentServer({
       secretKey,
       apiBaseUrl: 'https://testnet.safetrust.local',
+      allowFallbackConfirmation: false,
       spendingConfig: {
         maxFeePerCallUsdc: 0.1,
         feeBudgetUsdc: 0.5,
@@ -648,10 +649,12 @@ describe('MCP Booking Agent Server', () => {
     });
 
     let fundBehavior: 'reject400' | 'fail500' | 'slow200' = 'reject400';
-    let reconcileStatus: 'funded' | 'escrow_created' = 'escrow_created';
+    let reconcileStatus: 'funded' | 'escrow_created' = 'funded';
     let fundCalls = 0;
+    let reconcileFundCalls = 0;
+    let reconciledTxHash: string | null = null;
 
-    const baseFetch: typeof globalThis.fetch = async (input) => {
+    const baseFetch: typeof globalThis.fetch = async (input, init) => {
       const url = typeof input === 'string' ? input : (input as Request).url;
       if (url.endsWith('/api/auth/wallet-challenge/challenge')) {
         return new Response(
@@ -685,7 +688,30 @@ describe('MCP Booking Agent Server', () => {
           { status: 200 }
         );
       }
+      if (url.includes('/api/v1/bookings/b_reconcile/fund')) {
+        reconcileFundCalls += 1;
+        const bodyRaw =
+          typeof init?.body === 'string'
+            ? init.body
+            : input instanceof Request
+              ? await input.clone().text()
+              : '{}';
+        const parsedBody = JSON.parse(bodyRaw) as { tx_hash?: string };
+        if (parsedBody.tx_hash && !reconciledTxHash) {
+          reconciledTxHash = parsedBody.tx_hash;
+        }
+        return new Response(JSON.stringify({ error: 'gateway timeout' }), {
+          status: 504,
+        });
+      }
       if (url.includes('/api/v1/bookings/b_lock?tx_hash=')) {
+        return new Response(JSON.stringify({ status: reconcileStatus }), {
+          status: 200,
+        });
+      }
+      if (url.includes('/api/v1/bookings/b_reconcile?tx_hash=')) {
+        const parsedUrl = new URL(url);
+        expect(parsedUrl.searchParams.get('tx_hash')).toBe(reconciledTxHash);
         return new Response(JSON.stringify({ status: reconcileStatus }), {
           status: 200,
         });
@@ -806,7 +832,7 @@ describe('MCP Booking Agent Server', () => {
     expect(getToolText(dupOut)).toContain('ALREADY_FUNDED');
     expect(ledger.getDepositsLockedUsdc()).toBe(45);
 
-    // 4. Uncertain 504 outcome reconciles as funded without re-signing
+    // 4. Uncertain 504 outcome reconciles by original txHash as funded without sending a second funding POST
     const booking2Id = 'b_reconcile';
     api.registerBooking({
       bookingId: booking2Id,
@@ -828,7 +854,48 @@ describe('MCP Booking Agent Server', () => {
       status: 'escrow_created',
       feePaidUsdc: 0.1,
     });
-    // Override baseFetch indirectly isn't needed if we test on a fresh server with fail500
+
+    const prep4 = JSON.parse(
+      getToolText(
+        await client.callTool({
+          name: 'prepare_deposit',
+          arguments: { booking_id: booking2Id },
+        })
+      )
+    );
+    const fail504 = await client.callTool({
+      name: 'confirm_deposit',
+      arguments: {
+        confirmation_id: prep4.confirmation_id,
+        human_confirmed: true,
+      },
+    });
+    expect(fail504.isError).toBe(true);
+    expect(reconcileFundCalls).toBe(1);
+    expect(reconciledTxHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(ledger.getDepositsLockedUsdc()).toBe(45);
+
+    // Retry triggers reconciliation using original txHash, records deposit once, and sends no second POST
+    const prep5 = JSON.parse(
+      getToolText(
+        await client.callTool({
+          name: 'prepare_deposit',
+          arguments: { booking_id: booking2Id },
+        })
+      )
+    );
+    const reconciledOut = await client.callTool({
+      name: 'confirm_deposit',
+      arguments: {
+        confirmation_id: prep5.confirmation_id,
+        human_confirmed: true,
+      },
+    });
+    expect(reconciledOut.isError).toBe(true);
+    expect(getToolText(reconciledOut)).toContain('ALREADY_FUNDED');
+    expect(reconcileFundCalls).toBe(1);
+    expect(ledger.getDepositsLockedUsdc()).toBe(85);
+
     await client.close();
   });
 
@@ -923,7 +990,8 @@ describe('MCP Booking Agent Server', () => {
     expect(api.getBooking('book_over_cap_1')?.bookingId).toBe('book_over_cap_1');
   });
 
-  it('produces the expected end-to-end testnet transcript', async () => {
+  it('produces the expected end-to-end testnet transcript (including custom USDC contract)', async () => {
+    const customUsdc = StrKey.encodeContract(Buffer.alloc(32, 42));
     const lines = await runTestnetTranscript({
       secretKey: Keypair.random().secret(),
       spendingConfig: {
@@ -932,7 +1000,7 @@ describe('MCP Booking Agent Server', () => {
         maxDepositUsdc: 50,
         network: 'testnet',
         expectedPayTo: PLATFORM_WALLET,
-        expectedAssetContract: TESTNET_USDC,
+        expectedAssetContract: customUsdc,
       },
     });
     expect(lines[0]).toContain('search_properties   FREE (session)  2 found');
@@ -942,5 +1010,392 @@ describe('MCP Booking Agent Server', () => {
     expect(lines[4]).toContain('create_booking      0.10 USDC x402  escrow created');
     expect(lines[5]).toContain('fund_deposit        45.00 USDC     signed by your wallet -> escrow contract');
     expect(lines[6]).toBe('Fees 0.11 / 0.50 USDC · Deposit 45.00 / 50.00 USDC');
+  });
+
+  it('requires hold guest count to match, preserves unknown cached deposits, and defaults omitted booking asset to configured USDC contract', async () => {
+    const kp = Keypair.random();
+    const customUsdc = StrKey.encodeContract(Buffer.alloc(32, 43));
+    const contractId = StrKey.encodeContract(Buffer.alloc(32, 44));
+    const ledger = new SpendingLedger({
+      maxFeePerCallUsdc: 0.1,
+      feeBudgetUsdc: 0.5,
+      maxDepositUsdc: 50,
+      network: 'testnet',
+      expectedPayTo: PLATFORM_WALLET,
+      expectedAssetContract: customUsdc,
+    });
+
+    let bookingCalls = 0;
+    const baseFetch: typeof globalThis.fetch = async (input) => {
+      const url = typeof input === 'string' ? input : (input as Request).url;
+      if (url.endsWith('/api/auth/wallet-challenge/challenge')) {
+        return new Response(
+          JSON.stringify({
+            challengeId: 'c1',
+            challenge: 'sign-me',
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.endsWith('/api/auth/wallet-challenge/verify')) {
+        return new Response(
+          JSON.stringify({ success: true, token: 'tok_1' }),
+          { status: 200 }
+        );
+      }
+      if (url.includes('/availability')) {
+        if (url.includes('guests=4')) {
+          return new Response(
+            JSON.stringify({
+              property_id: 'p1',
+              property_name: 'Villa Guest',
+              available: true,
+              nights: 3,
+              total_usdc: 120,
+              deposit_usdc: 45,
+            }),
+            { status: 200 }
+          );
+        }
+        // Omitted deposit quote for p_omitted
+        return new Response(
+          JSON.stringify({
+            property_id: 'p_omitted',
+            property_name: 'Villa Omitted',
+            available: true,
+            nights: 2,
+            total_usdc: 90,
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.endsWith('/api/v1/holds')) {
+        return new Response(
+          JSON.stringify({
+            hold_id: 'h_2guests',
+            deposit_usdc: 60,
+            total_usdc: 180,
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.endsWith('/api/v1/bookings')) {
+        bookingCalls += 1;
+        return new Response(
+          JSON.stringify({
+            booking_id: `book_ok_${bookingCalls}`,
+            contract_id: contractId,
+            deposit_usdc: 45,
+            total_usdc: 120,
+            unsigned_xdr: buildUnsignedFundEscrowXdr({
+              contractId,
+              signerPublicKey: kp.publicKey(),
+              amountUsdc: 45,
+              network: 'testnet',
+              assetContract: customUsdc,
+            }),
+          }),
+          { status: 201 }
+        );
+      }
+      return new Response(JSON.stringify({ error: 'unexpected' }), { status: 404 });
+    };
+
+    const api = new SafeTrustApiClient({
+      baseUrl: 'https://testnet.safetrust.local',
+      ledger,
+      secretKey: kp.secret(),
+      baseFetch,
+      paymentFetch: baseFetch,
+    });
+
+    // 1. A 2-guest hold (60 USDC) must NOT override a 4-guest availability quote (45 USDC)
+    await api.holdDates({
+      propertyId: 'p1',
+      checkIn: '2026-12-15',
+      checkOut: '2026-12-18',
+      guests: 2,
+    });
+    await api.checkAvailability({
+      propertyId: 'p1',
+      checkIn: '2026-12-15',
+      checkOut: '2026-12-18',
+      guests: 4,
+    });
+    const b1 = await api.createBooking({
+      propertyId: 'p1',
+      checkIn: '2026-12-15',
+      checkOut: '2026-12-18',
+      guests: 4,
+      holdId: 'h_2guests',
+    });
+    expect(b1.bookingId).toBe('book_ok_1');
+    // Omitted asset_contract defaults to configured SAFETRUST_USDC_CONTRACT
+    expect(b1.assetContract).toBe(customUsdc);
+
+    // 2. Omitted deposit in checkAvailability stays unknown in cache and does not fail preflight with 0
+    await api.checkAvailability({
+      propertyId: 'p_omitted',
+      checkIn: '2026-12-20',
+      checkOut: '2026-12-22',
+    });
+    const b2 = await api.createBooking({
+      propertyId: 'p_omitted',
+      checkIn: '2026-12-20',
+      checkOut: '2026-12-22',
+    });
+    expect(b2.bookingId).toBe('book_ok_2');
+  });
+
+  it('redacts secret key in elicitation prompts, compares exact atomic amounts, and re-checks booking terms before signing', async () => {
+    const kp = Keypair.random();
+    const secretKey = kp.secret();
+    const contractId = StrKey.encodeContract(Buffer.alloc(32, 45));
+    const otherContractId = StrKey.encodeContract(Buffer.alloc(32, 46));
+    let fundPostCalls = 0;
+
+    const baseFetch: typeof globalThis.fetch = async (input) => {
+      const url = typeof input === 'string' ? input : (input as Request).url;
+      if (url.endsWith('/api/auth/wallet-challenge/challenge')) {
+        return new Response(
+          JSON.stringify({
+            challengeId: 'c1',
+            challenge: 'sign-me',
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.endsWith('/api/auth/wallet-challenge/verify')) {
+        return new Response(
+          JSON.stringify({ success: true, token: 'tok_1' }),
+          { status: 200 }
+        );
+      }
+      if (url.includes('/fund')) {
+        fundPostCalls += 1;
+        return new Response(
+          JSON.stringify({ status: 'funded', contract_id: contractId }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ error: 'unexpected' }), { status: 404 });
+    };
+
+    let mutateDuringApproval = false;
+    const { server, api } = createBookingAgentServer({
+      secretKey,
+      apiBaseUrl: 'https://testnet.safetrust.local',
+      baseFetch,
+      verifyHumanApproval: async (pending) => {
+        if (mutateDuringApproval) {
+          api.registerBooking({
+            bookingId: pending.bookingId,
+            propertyId: 'p1',
+            propertyName: 'Villa Mutated',
+            contractId: otherContractId,
+            checkIn: '2026-12-15',
+            checkOut: '2026-12-20',
+            totalUsdc: 150,
+            depositUsdc: pending.amountUsdc,
+            assetCode: 'USDC',
+            assetContract: TESTNET_USDC,
+            unsignedXdr: buildUnsignedFundEscrowXdr({
+              contractId: otherContractId,
+              signerPublicKey: kp.publicKey(),
+              amountUsdc: pending.amountUsdc,
+              network: 'testnet',
+            }),
+            status: 'escrow_created',
+            feePaidUsdc: 0.1,
+          });
+        }
+        return true;
+      },
+      spendingConfig: {
+        maxFeePerCallUsdc: 0.1,
+        feeBudgetUsdc: 0.5,
+        maxDepositUsdc: 50,
+        network: 'testnet',
+        expectedPayTo: PLATFORM_WALLET,
+        expectedAssetContract: TESTNET_USDC,
+      },
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client(
+      { name: 'elicit-security-client', version: '1.0.0' },
+      { capabilities: { elicitation: { form: {} } } }
+    );
+
+    let capturedElicitMessage = '';
+    let mutateDuringElicit = false;
+    client.setRequestHandler(ElicitRequestSchema, async (req) => {
+      capturedElicitMessage = req.params.message;
+      if (mutateDuringElicit) {
+        api.registerBooking({
+          bookingId: 'b_elicit',
+          propertyId: 'p1',
+          propertyName: 'Villa Changed During Elicit',
+          contractId: otherContractId,
+          checkIn: '2026-12-15',
+          checkOut: '2026-12-20',
+          totalUsdc: 150,
+          depositUsdc: 10,
+          assetCode: 'USDC',
+          assetContract: TESTNET_USDC,
+          unsignedXdr: buildUnsignedFundEscrowXdr({
+            contractId: otherContractId,
+            signerPublicKey: kp.publicKey(),
+            amountUsdc: 10,
+            network: 'testnet',
+          }),
+          status: 'escrow_created',
+          feePaidUsdc: 0.1,
+        });
+      }
+      return { action: 'accept', content: { confirm: true } };
+    });
+
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    // 1. Elicitation prompt redacts secretKey from propertyName AND rejects if terms mutate during prompt
+    api.registerBooking({
+      bookingId: 'b_elicit',
+      propertyId: 'p1',
+      propertyName: `Villa Leak ${secretKey} Resort`,
+      contractId,
+      checkIn: '2026-12-15',
+      checkOut: '2026-12-20',
+      totalUsdc: 150,
+      depositUsdc: 10,
+      assetCode: 'USDC',
+      assetContract: TESTNET_USDC,
+      unsignedXdr: buildUnsignedFundEscrowXdr({
+        contractId,
+        signerPublicKey: kp.publicKey(),
+        amountUsdc: 10,
+        network: 'testnet',
+      }),
+      status: 'escrow_created',
+      feePaidUsdc: 0.1,
+    });
+    mutateDuringElicit = true;
+    const elicitMutatedOut = await client.callTool({
+      name: 'fund_deposit',
+      arguments: { booking_id: 'b_elicit' },
+    });
+    expect(capturedElicitMessage).not.toContain(secretKey);
+    expect(capturedElicitMessage).toContain('[REDACTED_SECRET_KEY]');
+    expect(elicitMutatedOut.isError).toBe(true);
+    expect(getToolText(elicitMutatedOut)).toContain('HUMAN_CONFIRMATION_REQUIRED');
+    expect(fundPostCalls).toBe(0);
+
+    // 2. Exact atomic amount check rejects a 1-stroop (0.0000001 USDC) change on both fallback paths
+    api.registerBooking({
+      bookingId: 'b_atomic',
+      propertyId: 'p1',
+      propertyName: 'Villa Atomic',
+      contractId,
+      checkIn: '2026-12-15',
+      checkOut: '2026-12-20',
+      totalUsdc: 1,
+      depositUsdc: 0.1,
+      assetCode: 'USDC',
+      assetContract: TESTNET_USDC,
+      unsignedXdr: buildUnsignedFundEscrowXdr({
+        contractId,
+        signerPublicKey: kp.publicKey(),
+        amountUsdc: 0.1,
+        network: 'testnet',
+      }),
+      status: 'escrow_created',
+      feePaidUsdc: 0.1,
+    });
+    const prepAtomic1 = JSON.parse(
+      getToolText(
+        await client.callTool({
+          name: 'prepare_deposit',
+          arguments: { booking_id: 'b_atomic' },
+        })
+      )
+    );
+    const prepAtomic2 = JSON.parse(
+      getToolText(
+        await client.callTool({
+          name: 'prepare_deposit',
+          arguments: { booking_id: 'b_atomic' },
+        })
+      )
+    );
+    // Bump by 1 stroop (0.1 -> 0.1000001)
+    api.registerBooking({
+      bookingId: 'b_atomic',
+      propertyId: 'p1',
+      propertyName: 'Villa Atomic',
+      contractId,
+      checkIn: '2026-12-15',
+      checkOut: '2026-12-20',
+      totalUsdc: 1,
+      depositUsdc: 0.1000001,
+      assetCode: 'USDC',
+      assetContract: TESTNET_USDC,
+      unsignedXdr: buildUnsignedFundEscrowXdr({
+        contractId,
+        signerPublicKey: kp.publicKey(),
+        amountUsdc: 0.1000001,
+        network: 'testnet',
+      }),
+      status: 'escrow_created',
+      feePaidUsdc: 0.1,
+    });
+    const confirmAtomicOut = await client.callTool({
+      name: 'confirm_deposit',
+      arguments: {
+        confirmation_id: prepAtomic1.confirmation_id,
+        human_confirmed: true,
+      },
+    });
+    expect(confirmAtomicOut.isError).toBe(true);
+    expect(getToolText(confirmAtomicOut)).toContain('terms changed');
+
+    const fundAtomicOut = await client.callTool({
+      name: 'fund_deposit',
+      arguments: {
+        booking_id: 'b_atomic',
+        confirmation_id: prepAtomic2.confirmation_id,
+        human_confirmed: true,
+      },
+    });
+    expect(fundAtomicOut.isError).toBe(true);
+    expect(getToolText(fundAtomicOut)).toContain('terms changed');
+
+    // 3. Re-checks booking terms AFTER verifyHumanApproval await on confirmation_id path
+    const prepMutate = JSON.parse(
+      getToolText(
+        await client.callTool({
+          name: 'prepare_deposit',
+          arguments: { booking_id: 'b_atomic' },
+        })
+      )
+    );
+    mutateDuringApproval = true;
+    const mutatedAfterApprovalOut = await client.callTool({
+      name: 'fund_deposit',
+      arguments: {
+        booking_id: 'b_atomic',
+        confirmation_id: prepMutate.confirmation_id,
+        human_confirmed: true,
+      },
+    });
+    expect(mutatedAfterApprovalOut.isError).toBe(true);
+    expect(getToolText(mutatedAfterApprovalOut)).toContain('HUMAN_CONFIRMATION_REQUIRED');
+    expect(fundPostCalls).toBe(0);
+
+    await client.close();
   });
 });

@@ -50,6 +50,7 @@ export async function runTestnetTranscript(
     signerPublicKey: kp.publicKey(),
     amountUsdc: depositUsdc,
     network: 'testnet',
+    assetContract: config.expectedAssetContract,
   });
 
   let holdPaid = false;

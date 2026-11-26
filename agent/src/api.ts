@@ -3,8 +3,11 @@ import {
   SpendingLedger,
   SpendingLimitError,
   createPaymentFetch,
-  getDefaultUsdcContract,
   getPaymentRecordForResponse,
+  type FeeReservation,
+  type FeeSettlementResolver,
+  type FeeSettlementStatus,
+  type ReconcileFeeReservationResult,
   type StellarNetworkName,
 } from './payments';
 
@@ -88,6 +91,7 @@ export interface HoldRecord {
   propertyName?: string;
   checkIn: string;
   checkOut: string;
+  guests?: number;
   expiresAt: string;
   heldUntilFormatted: string;
   totalUsdc?: number;
@@ -160,6 +164,8 @@ export interface SafeTrustApiClientOptions {
   paymentFetch?: (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => Promise<Response>;
   /** Optional pre-existing bearer token */
   sessionToken?: string;
+  /** Optional custom settlement query callback for reconciling pending x402 fee reservations */
+  queryFeeSettlement?: FeeSettlementResolver;
 }
 
 function calculateNights(checkIn: string, checkOut: string): number {
@@ -200,7 +206,11 @@ export class SafeTrustApiClient {
 
   private readonly bookingsById = new Map<string, BookingRecord>();
   private readonly holdsById = new Map<string, HoldRecord>();
-  private readonly availabilityByStay = new Map<string, AvailabilityQuote>();
+  private readonly availabilityByStay = new Map<
+    string,
+    { quote: AvailabilityQuote; knownDepositUsdc?: number }
+  >();
+  private readonly queryFeeSettlement?: FeeSettlementResolver;
 
   private makeStayQuoteKey(
     propertyId: string,
@@ -221,6 +231,7 @@ export class SafeTrustApiClient {
     this.keypair = Keypair.fromSecret(options.secretKey.trim());
     this.baseFetch = options.baseFetch ?? globalThis.fetch;
     this.sessionToken = options.sessionToken ?? process.env.SAFETRUST_API_TOKEN ?? null;
+    this.queryFeeSettlement = options.queryFeeSettlement;
 
     this.payFetch =
       options.paymentFetch ??
@@ -462,13 +473,16 @@ export class SafeTrustApiClient {
     const totalUsdc = Number(
       data.total_usdc ?? data.totalUsdc ?? data.total_amount ?? data.total ?? 0
     );
-    const depositUsdc = Number(
+    const rawDeposit =
       data.deposit_usdc ??
-        data.depositUsdc ??
-        data.warranty_deposit ??
-        data.deposit ??
-        0
-    );
+      data.depositUsdc ??
+      data.warranty_deposit ??
+      data.deposit;
+    const knownDepositUsdc =
+      rawDeposit !== undefined && rawDeposit !== null && rawDeposit !== ''
+        ? Number(rawDeposit)
+        : undefined;
+    const depositUsdc = knownDepositUsdc ?? 0;
     const propertyName = String(
       data.property_name ?? data.propertyName ?? data.name ?? params.propertyId
     );
@@ -492,7 +506,7 @@ export class SafeTrustApiClient {
       params.checkOut,
       params.guests
     );
-    this.availabilityByStay.set(stayKey, quote);
+    this.availabilityByStay.set(stayKey, { quote, knownDepositUsdc });
     return quote;
   }
 
@@ -539,7 +553,8 @@ export class SafeTrustApiClient {
       params.checkOut,
       params.guests
     );
-    const cachedQuote = this.availabilityByStay.get(stayKey);
+    const cachedEntry = this.availabilityByStay.get(stayKey);
+    const cachedQuote = cachedEntry?.quote;
     const hold: HoldRecord = {
       holdId: String(data.hold_id ?? data.holdId ?? data.id),
       propertyId: params.propertyId,
@@ -549,6 +564,7 @@ export class SafeTrustApiClient {
           : cachedQuote?.propertyName,
       checkIn: params.checkIn,
       checkOut: params.checkOut,
+      guests: params.guests,
       expiresAt,
       heldUntilFormatted,
       totalUsdc:
@@ -558,7 +574,7 @@ export class SafeTrustApiClient {
       depositUsdc:
         data.deposit_usdc !== undefined
           ? Number(data.deposit_usdc)
-          : cachedQuote?.depositUsdc,
+          : cachedEntry?.knownDepositUsdc,
       feePaidUsdc,
     };
 
@@ -609,7 +625,8 @@ export class SafeTrustApiClient {
       params.checkOut,
       params.guests
     );
-    let cachedQuote = this.availabilityByStay.get(stayKey);
+    let cachedEntry = this.availabilityByStay.get(stayKey);
+    let cachedQuote = cachedEntry?.quote;
     const rawCachedHold = params.holdId
       ? this.holdsById.get(params.holdId)
       : undefined;
@@ -617,18 +634,19 @@ export class SafeTrustApiClient {
       rawCachedHold &&
       rawCachedHold.propertyId === params.propertyId &&
       rawCachedHold.checkIn === params.checkIn &&
-      rawCachedHold.checkOut === params.checkOut
+      rawCachedHold.checkOut === params.checkOut &&
+      rawCachedHold.guests === params.guests
         ? rawCachedHold
         : undefined;
 
     let depositUsdc =
       params.depositUsdc ??
       cachedHold?.depositUsdc ??
-      cachedQuote?.depositUsdc;
+      cachedEntry?.knownDepositUsdc;
 
     // If no deposit quote is known yet, attempt to establish it via free checkAvailability
     // before paying the x402 booking fee.
-    if (depositUsdc === undefined) {
+    if (depositUsdc === undefined && cachedEntry === undefined) {
       try {
         cachedQuote = await this.checkAvailability({
           propertyId: params.propertyId,
@@ -636,8 +654,9 @@ export class SafeTrustApiClient {
           checkOut: params.checkOut,
           guests: params.guests,
         });
-        if (cachedQuote.depositUsdc > 0) {
-          depositUsdc = cachedQuote.depositUsdc;
+        cachedEntry = this.availabilityByStay.get(stayKey);
+        if (cachedEntry?.knownDepositUsdc !== undefined) {
+          depositUsdc = cachedEntry.knownDepositUsdc;
         }
       } catch {
         // Proceed when the backend does not expose availability for this flow;
@@ -714,9 +733,9 @@ export class SafeTrustApiClient {
       depositUsdc: resolvedDepositUsdc,
       assetCode: 'USDC',
       assetContract:
-        typeof data.asset_contract === 'string'
-          ? data.asset_contract
-          : getDefaultUsdcContract(this.getNetwork()),
+        typeof data.asset_contract === 'string' && data.asset_contract.trim() !== ''
+          ? data.asset_contract.trim()
+          : this.ledger.getConfig().expectedAssetContract,
       unsignedXdr,
       status: 'escrow_created',
       feePaidUsdc,
@@ -741,6 +760,67 @@ export class SafeTrustApiClient {
     }
 
     return booking;
+  }
+
+  /**
+   * Reconcile a pending x402 fee reservation within the session by querying
+   * settlement status from the configured resolver or SafeTrust backend
+   * (`/api/v1/payments/status`). Commits the reservation if definitively settled,
+   * releases it if definitively not settled, and keeps it pending if unknown.
+   */
+  public async reconcilePendingFee(
+    reservationId: string
+  ): Promise<ReconcileFeeReservationResult> {
+    const resolver: FeeSettlementResolver =
+      this.queryFeeSettlement ??
+      (async (reservation: Readonly<FeeReservation>): Promise<FeeSettlementStatus> => {
+        try {
+          const headers = await this.getSessionHeaders();
+          const qs = new URLSearchParams();
+          qs.set('reservation_id', reservation.id);
+          if (reservation.settlementRef) {
+            qs.set('settlement_ref', reservation.settlementRef);
+          }
+          const response = await this.baseFetch(
+            `${this.baseUrl}/api/v1/payments/status?${qs.toString()}`,
+            {
+              method: 'GET',
+              headers,
+            }
+          );
+          if (!response.ok) {
+            return 'unknown';
+          }
+          const data = (await response.json()) as Record<string, unknown>;
+          const rawStatus = String(
+            data.status ?? data.settlement_status ?? ''
+          )
+            .trim()
+            .toLowerCase();
+          if (
+            data.settled === true ||
+            rawStatus === 'settled' ||
+            rawStatus === 'confirmed' ||
+            rawStatus === 'paid'
+          ) {
+            return 'settled';
+          }
+          if (
+            data.settled === false ||
+            rawStatus === 'not_settled' ||
+            rawStatus === 'rejected' ||
+            rawStatus === 'failed' ||
+            rawStatus === 'not_found'
+          ) {
+            return 'not_settled';
+          }
+          return 'unknown';
+        } catch {
+          return 'unknown';
+        }
+      });
+
+    return this.ledger.reconcileFeeReservation(reservationId, resolver);
   }
 
   /**

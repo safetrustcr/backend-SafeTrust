@@ -1,10 +1,12 @@
 import { Keypair } from '@stellar/stellar-sdk';
 import {
+  PendingPaymentSettlementError,
   SpendingLedger,
   SpendingLimitError,
   createPaymentFetch,
   getDefaultUsdcContract,
   getPaymentRecordForResponse,
+  getPendingReservationForResponse,
   loadSpendingConfigFromEnv,
   type AgentSpendingConfig,
 } from '../payments';
@@ -390,25 +392,20 @@ describe('createPaymentFetch (@x402/fetch integration)', () => {
     expect(ledger.getFeesSpentUsdc()).toBe(0.01);
   });
 
-  it('enforces budget and isolates state across concurrent paid calls', async () => {
+  it('enforces budget across overlapping paid calls and only sends one paid retry', async () => {
     const ledger = new SpendingLedger(
       makeConfig({ maxFeePerCallUsdc: 0.1, feeBudgetUsdc: 0.12 })
     );
     const kp = Keypair.random();
+    let paidRetryCount = 0;
 
     const baseFetch: typeof globalThis.fetch = jest.fn(async (input) => {
       const req = input as Request;
       const isCallA = req.url.includes('/call-a');
       if (req.headers.has('PAYMENT-SIGNATURE')) {
+        paidRetryCount += 1;
         // Delay call A so call B overlaps
         await new Promise((r) => setTimeout(r, isCallA ? 30 : 5));
-        const xPay = req.headers.get('X-Payment')!;
-        const decoded = JSON.parse(
-          Buffer.from(xPay.slice('x402 '.length), 'base64').toString('utf8')
-        ) as { facilitatorUrl: string };
-        expect(decoded.facilitatorUrl).toBe(
-          isCallA ? 'https://fac.a.local' : 'https://fac.b.local'
-        );
         return new Response(JSON.stringify({ call: isCallA ? 'a' : 'b' }), {
           status: 200,
         });
@@ -452,11 +449,227 @@ describe('createPaymentFetch (@x402/fetch integration)', () => {
     ]);
 
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
-    const rejected = results.filter((r) => r.status === 'rejected');
+    const rejected = results.filter(
+      (r): r is PromiseRejectedResult => r.status === 'rejected'
+    );
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toBeInstanceOf(SpendingLimitError);
+    expect((rejected[0].reason as SpendingLimitError).code).toBe(
+      'FEE_BUDGET_EXCEEDED'
+    );
+    expect(paidRetryCount).toBe(1);
     expect(ledger.getFeesSpentUsdc()).toBe(0.08);
     expect(ledger.getFeesReservedUsdc()).toBe(0);
+  });
+
+  it('isolates facilitator URLs and per-response payment records across concurrent paid calls', async () => {
+    const ledger = new SpendingLedger(
+      makeConfig({ maxFeePerCallUsdc: 0.1, feeBudgetUsdc: 0.25 })
+    );
+    const kp = Keypair.random();
+    const seenFacilitators = new Map<string, string>();
+
+    const baseFetch: typeof globalThis.fetch = jest.fn(async (input) => {
+      const req = input as Request;
+      const isCallA = req.url.includes('/call-a');
+      if (req.headers.has('PAYMENT-SIGNATURE')) {
+        await new Promise((r) => setTimeout(r, isCallA ? 30 : 5));
+        const xPay = req.headers.get('X-Payment')!;
+        const decoded = JSON.parse(
+          Buffer.from(xPay.slice('x402 '.length), 'base64').toString('utf8')
+        ) as { facilitatorUrl: string };
+        seenFacilitators.set(isCallA ? 'a' : 'b', decoded.facilitatorUrl);
+        return new Response(JSON.stringify({ call: isCallA ? 'a' : 'b' }), {
+          status: 200,
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            {
+              scheme: 'exact',
+              network: 'stellar:testnet',
+              max_amount_usdc: isCallA ? 0.08 : 0.05,
+              asset: { code: 'USDC', contract: TESTNET_USDC },
+              pay_to: PLATFORM_WALLET,
+              facilitator_url: isCallA
+                ? 'https://fac.a.local'
+                : 'https://fac.b.local',
+            },
+          ],
+        }),
+        { status: 402 }
+      );
+    });
+
+    const payFetch = createPaymentFetch({
+      baseFetch,
+      ledger,
+      signerOrSecret: kp.secret(),
+      schemeClient: {
+        scheme: 'exact',
+        createPaymentPayload: async (x402Version: number) => ({
+          x402Version,
+          payload: { transaction: 'signed_tx' },
+        }),
+      },
+    });
+
+    const [resA, resB] = await Promise.all([
+      payFetch('https://api.safetrust.local/call-a', { method: 'POST' }),
+      payFetch('https://api.safetrust.local/call-b', { method: 'POST' }),
+    ]);
+
+    expect(resA.status).toBe(200);
+    expect(resB.status).toBe(200);
+    expect(seenFacilitators.get('a')).toBe('https://fac.a.local');
+    expect(seenFacilitators.get('b')).toBe('https://fac.b.local');
+    expect(getPaymentRecordForResponse(resA)?.amountUsdc).toBe(0.08);
+    expect(getPaymentRecordForResponse(resB)?.amountUsdc).toBe(0.05);
+    expect(ledger.getFeesSpentUsdc()).toBe(0.13);
+    expect(ledger.getFeesReservedUsdc()).toBe(0);
+  });
+
+  it('parses PAYMENT-RESPONSE on 402 rejections and reconciles pending reservations in-session', async () => {
+    const ledger = new SpendingLedger(
+      makeConfig({ maxFeePerCallUsdc: 0.1, feeBudgetUsdc: 0.1 })
+    );
+    const kp = Keypair.random();
+    let mode:
+      | 'v2RejectNoTx'
+      | 'v2MalformedHeader'
+      | 'v2RejectWithTx'
+      | 'networkFail'
+      | 'succeed' = 'v2RejectNoTx';
+
+    const baseFetch: typeof globalThis.fetch = jest.fn(async (input) => {
+      const req = input as Request;
+      if (req.headers.has('PAYMENT-SIGNATURE')) {
+        if (mode === 'v2RejectNoTx') {
+          const header = Buffer.from(
+            JSON.stringify({
+              success: false,
+              errorReason: 'insufficient_funds',
+            }),
+            'utf8'
+          ).toString('base64');
+          return new Response(JSON.stringify({ error: 'Insufficient funds' }), {
+            status: 402,
+            headers: { 'PAYMENT-RESPONSE': header },
+          });
+        }
+        if (mode === 'v2MalformedHeader') {
+          return new Response(JSON.stringify({ error: 'Malformed' }), {
+            status: 402,
+            headers: { 'PAYMENT-RESPONSE': 'not-valid-base64-json!!!' },
+          });
+        }
+        if (mode === 'v2RejectWithTx') {
+          const header = Buffer.from(
+            JSON.stringify({
+              success: false,
+              transaction: 'tx_ambiguous_123',
+            }),
+            'utf8'
+          ).toString('base64');
+          return new Response(JSON.stringify({ error: 'Ambiguous' }), {
+            status: 402,
+            headers: { 'PAYMENT-RESPONSE': header },
+          });
+        }
+        if (mode === 'networkFail') {
+          throw new Error('socket hang up');
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            {
+              scheme: 'exact',
+              network: 'stellar:testnet',
+              max_amount_usdc: 0.1,
+              asset: { code: 'USDC', contract: TESTNET_USDC },
+              pay_to: PLATFORM_WALLET,
+            },
+          ],
+        }),
+        { status: 402 }
+      );
+    });
+
+    const payFetch = createPaymentFetch({
+      baseFetch,
+      ledger,
+      signerOrSecret: kp.secret(),
+      schemeClient: {
+        scheme: 'exact',
+        createPaymentPayload: async (x402Version: number) => ({
+          x402Version,
+          payload: { transaction: 'signed_x402_ref_abc' },
+        }),
+      },
+    });
+
+    // 1. x402 v2 confirmed no-settlement (success: false, no transaction) -> released immediately
+    const res1 = await payFetch('https://api.safetrust.local/api/v1/holds', {
+      method: 'POST',
+    });
+    expect(res1.status).toBe(402);
+    expect(ledger.getFeesReservedUsdc()).toBe(0);
+    expect(ledger.getRemainingFeeBudgetUsdc()).toBe(0.1);
+
+    // 2. Malformed PAYMENT-RESPONSE -> kept pending, exposed on Response, can reconcile to released
+    mode = 'v2MalformedHeader';
+    const res2 = await payFetch('https://api.safetrust.local/api/v1/holds', {
+      method: 'POST',
+    });
+    expect(res2.status).toBe(402);
+    expect(ledger.getFeesReservedUsdc()).toBe(0.1);
+    const pendingRes2 = getPendingReservationForResponse(res2);
+    expect(pendingRes2?.id).toBeTruthy();
+    const recUnknown = await ledger.reconcileFeeReservation(
+      pendingRes2!.id,
+      async () => 'unknown' as const
+    );
+    expect(recUnknown.status).toBe('pending');
+    expect(ledger.getFeesReservedUsdc()).toBe(0.1);
+
+    const recReleased = await ledger.reconcileFeeReservation(
+      pendingRes2!.id,
+      async () => 'not_settled' as const
+    );
+    expect(recReleased.status).toBe('released');
+    expect(ledger.getFeesReservedUsdc()).toBe(0);
+    expect(ledger.getRemainingFeeBudgetUsdc()).toBe(0.1);
+
+    // 3. Transport failure after retry sent -> throws PendingPaymentSettlementError with reservationId + settlementRef
+    mode = 'networkFail';
+    let caughtErr: unknown;
+    try {
+      await payFetch('https://api.safetrust.local/api/v1/holds', {
+        method: 'POST',
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+    expect(caughtErr).toBeInstanceOf(PendingPaymentSettlementError);
+    const pendingErr = caughtErr as PendingPaymentSettlementError;
+    expect(pendingErr.reservationId).toBeTruthy();
+    expect(pendingErr.settlementRef).toBe('signed_x402_ref_abc');
+    expect(ledger.getFeesReservedUsdc()).toBe(0.1);
+
+    // Reconcile as settled -> commits reservation into feesSpentUsdc
+    const recSettled = await ledger.reconcileFeeReservation(
+      pendingErr.reservationId,
+      async () => 'settled' as const
+    );
+    expect(recSettled.status).toBe('settled');
+    expect(ledger.getFeesReservedUsdc()).toBe(0);
+    expect(ledger.getFeesSpentUsdc()).toBe(0.1);
   });
 
   it('releases fee reservation on definitive 402 rejection and preserves it on transport failure', async () => {

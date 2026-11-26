@@ -14,7 +14,10 @@ import {
 } from '@stellar/stellar-sdk';
 import {
   SpendingLimitError,
+  atomicToUsdc,
+  decimalCapToMaxAtomic,
   getDefaultUsdcContract,
+  isExact7DecimalAmount,
   usdcToAtomic,
   type SpendingLedger,
   type StellarNetworkName,
@@ -170,6 +173,13 @@ export function verifyFundEscrowXdr(
     );
   }
 
+  if (!isExact7DecimalAmount(expectedAmountUsdc)) {
+    throw new DepositVerificationError(
+      'AMOUNT_MISMATCH',
+      `Aborting deposit: quoted amount ${expectedAmountUsdc} USDC exceeds 7-decimal Stellar stroop precision and cannot be represented exactly.`
+    );
+  }
+
   const expectedAtomicStr = usdcToAtomic(expectedAmountUsdc);
   const expectedAtomicBigInt = BigInt(expectedAtomicStr);
   const expectedAsset = (
@@ -214,7 +224,13 @@ export function verifyFundEscrowXdr(
       `Invalid maxTxFeeXlm configuration: ${maxTxFeeXlm}`
     );
   }
-  const maxTxFeeStroops = BigInt(usdcToAtomic(maxTxFeeXlm));
+  const maxTxFeeStroops = decimalCapToMaxAtomic(maxTxFeeXlm);
+  if (maxTxFeeStroops <= 0n) {
+    throw new DepositVerificationError(
+      'TX_FEE_EXCEEDED',
+      `Configured maxTxFeeXlm (${maxTxFeeXlm} XLM) is below 1 stroop`
+    );
+  }
   if (!/^\d+$/.test(String(tx.fee))) {
     throw new DepositVerificationError(
       'INVALID_XDR',
@@ -445,8 +461,11 @@ export function verifyAndSignDeposit(
     );
   }
 
-  // 1. Enforce AGENT_MAX_DEPOSIT in the spending ledger before decoding/signing
-  params.ledger.verifyDepositLimit(params.expectedAmountUsdc);
+  // 1. Enforce AGENT_MAX_DEPOSIT on the exact 7-decimal amount that will be signed and recorded
+  const canonicalExpectedAmountUsdc = atomicToUsdc(
+    usdcToAtomic(params.expectedAmountUsdc)
+  );
+  params.ledger.verifyDepositLimit(canonicalExpectedAmountUsdc);
 
   const keypair = Keypair.fromSecret(params.secretKey.trim());
   const signerPublicKey = keypair.publicKey();
@@ -462,7 +481,10 @@ export function verifyAndSignDeposit(
     maxTxFeeXlm: params.maxTxFeeXlm ?? params.ledger.getConfig().maxTxFeeXlm,
   });
 
-  // 3. Sign the verified transaction (do NOT record as locked until funding is confirmed)
+  // 3. Re-verify deposit cap against the exact 7-decimal verified amount immediately before signing
+  params.ledger.verifyDepositLimit(verified.amountUsdc);
+
+  // 4. Sign the verified transaction (do NOT record as locked until funding is confirmed)
   verified.transaction.sign(keypair);
   const signedXdr = verified.transaction.toXDR();
   const txHash = Buffer.from(verified.transaction.hash()).toString('hex');

@@ -315,6 +315,102 @@ describe('XDR verification & deposit signing', () => {
     expect(formatExactUsdc(45.1234567)).toBe('45.1234567');
   });
 
+  it('floors configured XLM fee cap to whole stroops without rounding up', () => {
+    const xdr10000 = buildUnsignedFundEscrowXdr({
+      contractId,
+      signerPublicKey: kp.publicKey(),
+      amountUsdc: 45.0,
+      network: 'testnet',
+      feeStroops: '10000',
+    });
+
+    // 0.00099996 XLM floors to 9999 stroops, so 10000 stroops must be rejected
+    try {
+      verifyFundEscrowXdr({
+        unsignedXdr: xdr10000,
+        expectedContractId: contractId,
+        expectedAmountUsdc: 45.0,
+        network: 'testnet',
+        expectedSigner: kp.publicKey(),
+        maxTxFeeXlm: 0.00099996,
+      });
+      fail('Expected TX_FEE_EXCEEDED');
+    } catch (err) {
+      expect(err).toBeInstanceOf(DepositVerificationError);
+      expect((err as DepositVerificationError).code).toBe('TX_FEE_EXCEEDED');
+    }
+
+    // 9999 stroops is within 0.00099996 XLM and must pass
+    const xdr9999 = buildUnsignedFundEscrowXdr({
+      contractId,
+      signerPublicKey: kp.publicKey(),
+      amountUsdc: 45.0,
+      network: 'testnet',
+      feeStroops: '9999',
+    });
+    const verified = verifyFundEscrowXdr({
+      unsignedXdr: xdr9999,
+      expectedContractId: contractId,
+      expectedAmountUsdc: 45.0,
+      network: 'testnet',
+      expectedSigner: kp.publicKey(),
+      maxTxFeeXlm: 0.00099996,
+    });
+    expect(verified.feeStroops).toBe('9999');
+  });
+
+  it('enforces deposit cap on the exact 7-decimal signed amount and rejects sub-stroop rounding above cap', () => {
+    const cap = 45.00000006;
+    const ledger = makeLedger(cap);
+    const xdr = buildUnsignedFundEscrowXdr({
+      contractId,
+      signerPublicKey: kp.publicKey(),
+      amountUsdc: 45.0000001,
+      network: 'testnet',
+    });
+
+    // Quote 45.00000006 would round to 45.0000001 (> cap 45.00000006); must reject BEFORE signing
+    expect(() =>
+      verifyAndSignDeposit({
+        bookingId: 'book_round_cap',
+        unsignedXdr: xdr,
+        expectedContractId: contractId,
+        expectedAmountUsdc: cap,
+        network: 'testnet',
+        secretKey: kp.secret(),
+        ledger,
+        humanConfirmed: true,
+      })
+    ).toThrow(/AGENT_MAX_DEPOSIT/);
+    expect(ledger.getDepositsLockedUsdc()).toBe(0);
+
+    // Exact 45.00 USDC deposit still signs and records normally under the same cap
+    const exactXdr = buildUnsignedFundEscrowXdr({
+      contractId,
+      signerPublicKey: kp.publicKey(),
+      amountUsdc: 45.0,
+      network: 'testnet',
+    });
+    const signed = verifyAndSignDeposit({
+      bookingId: 'book_exact_45',
+      unsignedXdr: exactXdr,
+      expectedContractId: contractId,
+      expectedAmountUsdc: 45.0,
+      network: 'testnet',
+      secretKey: kp.secret(),
+      ledger,
+      humanConfirmed: true,
+    });
+    expect(signed.amountUsdc).toBe(45.0);
+    ledger.recordDeposit({
+      bookingId: signed.bookingId,
+      contractId: signed.contractId,
+      amountUsdc: signed.amountUsdc,
+      txHash: signed.txHash,
+    });
+    expect(ledger.getDepositsLockedUsdc()).toBe(45.0);
+  });
+
   it('signs valid XDR with humanConfirmed === true without prematurely locking ledger funds', () => {
     const ledger = makeLedger();
     const xdr = buildUnsignedFundEscrowXdr({
