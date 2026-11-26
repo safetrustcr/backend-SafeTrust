@@ -33,6 +33,11 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Escrow State Source & Reconciliation](stellar/reconciliation.md) | Polling architecture, Trustless Work V1 indexer endpoint, status derivation, field mapping, and Soroban adapter validation |
 | [x402 Protocol](stellar/x402-protocol.md) | Agentic payments on Stellar using Soroban authorization entries and USDC SEP-41 |
 
+### 🤖 Agents & API Clients
+| Document | Description |
+|---|---|
+| [Agent Bookings API](api/agents/bookings.md) | x402 booking-fee settlement, Trustless Work deposit escrows, unsigned XDR signing, and idempotency for agent bookings |
+
 ### 📊 Analytics
 | Document | Description |
 |---|---|
