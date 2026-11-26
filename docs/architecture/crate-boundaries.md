@@ -167,7 +167,7 @@ x402 payments are managed by the official `@x402/express`, `@x402/core`, and `@x
 - `X402_ENABLED=false` is the default. The initialize route only evaluates
   x402 when the flag is exactly `true`.
 - With x402 disabled, every request on the x402-gated routes fails closed with `503 Feature Unavailable`.
-- When `X402_ENABLED=true`, unpaid requests receive `402 Payment Required`, and valid payment headers are verified and settled via the configured facilitator before the handler executes.
+- When `X402_ENABLED=true`, unpaid requests receive `402 Payment Required`. Valid payment headers are verified by the configured facilitator before the handler executes. The handler runs before settlement, and a settlement failure after `initializeEscrowHandler` persists the escrow can leave it persisted without a settled payment.
 - The eligibility authority remains local escrow validation; reconciliation is authoritative for externally confirmed lifecycle state.
 
 The x402 Karate suite runs with `X402_ENABLED=true` in the isolated test compose file to exercise the payment gate.

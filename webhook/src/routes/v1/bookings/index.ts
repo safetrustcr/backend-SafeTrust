@@ -6,7 +6,9 @@ import {
   getX402Config,
 } from '../../../config/x402'
 import { createHoldHandler, releaseHoldHandler } from './hold.handler'
+import { releaseHold } from '../../../repositories/hold.repository'
 import { requireRole } from '../../../middleware/require-role'
+import { logger } from '../../../middleware/logger'
 
 /** Price of a hold in USDC, charged through x402. Not refunded. */
 export const HOLD_PRICE_USDC = 0.01
@@ -83,6 +85,25 @@ function requireHoldX402Payment(req: Request, res: Response, next: NextFunction)
   }
 
   delete req.headers['x-payment']
+
+  res.on('finish', () => {
+    const sig = req.headers['payment-signature']
+    if (typeof sig === 'string') {
+      consumeVerifiedPayer(sig)
+    }
+    const activatedHold = res.locals.activatedHold as
+      | { id: string; userId: string; tenantId: string }
+      | undefined
+    if (activatedHold && res.statusCode >= 400) {
+      releaseHold(activatedHold.id, activatedHold.userId, activatedHold.tenantId).catch((err) => {
+        logger.error('bookings.hold.settlement_failure_release_failed', {
+          holdId: activatedHold.id,
+          error: err instanceof Error ? err : new Error(String(err)),
+        })
+      })
+    }
+  })
+
   const config = getX402Config()
   const mw = getHoldPaymentMiddleware()
   mw(req, res, (err?: unknown) => {

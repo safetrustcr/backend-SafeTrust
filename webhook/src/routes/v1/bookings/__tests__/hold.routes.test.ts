@@ -8,9 +8,11 @@ jest.mock('../../../../services/db', () => ({
   withTransaction: jest.fn(),
 }))
 const mockCreate = jest.fn()
+const mockReleaseHold = jest.fn()
 jest.mock('../../../../repositories/hold.repository', () => ({
   ...jest.requireActual('../../../../repositories/hold.repository'),
   createHold: (...a: unknown[]) => mockCreate(...a),
+  releaseHold: (...a: unknown[]) => mockReleaseHold(...a),
 }))
 
 import bookingsRouter, { setHoldPaymentMiddleware } from '../index'
@@ -145,16 +147,47 @@ describe('v1 booking holds routes', () => {
     expect(res.status).toBe(400)
   })
 
+  it('releases an activated hold if x402 settlement fails after handler succeeds', async () => {
+    const failingSettleClient = createMockFacilitatorClient()
+    ;(failingSettleClient.settle as jest.Mock).mockResolvedValueOnce({
+      success: false,
+      errorReason: 'Insufficient balance at settlement',
+    })
+    const server = buildX402ResourceServer(failingSettleClient, 'stellar:testnet')
+    await server.initialize()
+    setX402ResourceServer(server)
+
+    mockCreate.mockResolvedValue({
+      id: 'h-settle-fail',
+      expires_at: new Date('2026-12-01T14:32:00Z'),
+      quote_deposit: '45',
+      asset_code: 'USDC',
+      price_total: '150.00',
+    })
+    mockQuery.mockResolvedValue({ rowCount: 1, rows: [] })
+    mockReleaseHold.mockResolvedValue(undefined)
+
+    const testApp = app('u1')
+    const sig = await createPaymentSignature(testApp)
+    const res = await request(testApp)
+      .post('/api/v1/bookings/hold')
+      .set('payment-signature', sig)
+      .send(body)
+
+    expect(res.status).not.toBe(201)
+    expect(mockReleaseHold).toHaveBeenCalledWith('h-settle-fail', 'u1', 'safetrust')
+  })
+
   it("returns 403 when releasing someone else's hold", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'other', status: 'active' }] })
+    mockReleaseHold.mockRejectedValueOnce(
+      Object.assign(new Error('Forbidden'), { statusCode: 403, code: 'forbidden' })
+    )
     const res = await request(app('u1')).delete('/api/v1/bookings/hold/22222222-2222-4222-8222-222222222222')
     expect(res.status).toBe(403)
   })
 
   it("releases the caller's own hold", async () => {
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ user_id: 'u1', status: 'active' }] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+    mockReleaseHold.mockResolvedValueOnce(undefined)
     const res = await request(app('u1')).delete('/api/v1/bookings/hold/22222222-2222-4222-8222-222222222222')
     expect(res.status).toBe(204)
   })

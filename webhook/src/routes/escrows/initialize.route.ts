@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction, RequestHandler } from 'express
 import { paymentMiddleware } from '@x402/express'
 import { initializeEscrowHandler } from './initialize.handler'
 import {
+  consumeVerifiedPayer,
   getX402Config,
   getActiveX402ResourceServer,
 } from '../../config/x402'
@@ -88,41 +89,17 @@ router.post(
       return
     }
 
-    const xPayment = req.headers['x-payment']
-    if (typeof xPayment === 'string' && !req.headers['payment-signature']) {
-      if (!xPayment.startsWith('x402 ')) {
-        const config = getX402Config()
-        const requirements = {
-          x402Version: 2,
-          error: 'Invalid x402 payment',
-          accepts: [
-            {
-              scheme: 'exact',
-              network: config.network,
-              asset:
-                config.network === 'stellar:pubnet'
-                  ? 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'
-                  : 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
-              payTo: config.payTo,
-            },
-          ],
-        }
-        res.setHeader(
-          'payment-required',
-          Buffer.from(JSON.stringify(requirements)).toString('base64')
-        )
-        res.status(402).json({
-          error: 'Invalid x402 payment',
-          invalid_reason: `Invalid X-Payment header format — must start with 'x402 ', got: '${xPayment}'`,
-          x402Version: 2,
-        })
-        return
-      }
-    }
-
     // The paid path trusts only PAYMENT-SIGNATURE (x402 v2).
     // Discard legacy x-payment so it cannot satisfy the payment gate.
     delete req.headers['x-payment']
+
+    res.on('finish', () => {
+      const sig = req.headers['payment-signature']
+      if (typeof sig === 'string') {
+        consumeVerifiedPayer(sig)
+      }
+    })
+
     return getPaymentMiddleware()(req, res, next)
   },
   initializeEscrowHandler

@@ -27,3 +27,12 @@ stopwords = [
   "dev-secret",
   "testsecret",
 ]
+
+[[allowlist.rules]]
+id = "allow-x402-doc-placeholders"
+description = "Documented x402 configuration variable names and placeholders in docs/stellar/x402-protocol.md"
+paths = ['''^docs/stellar/x402-protocol\.md$''']
+stopwords = [
+  "X402_FACILITATOR_URL",
+  "YOUR_API_KEY_IF_REQUIRED",
+]
