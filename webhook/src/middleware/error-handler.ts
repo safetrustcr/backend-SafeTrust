@@ -1,13 +1,18 @@
 'use strict'
 
 import { NextFunction, Request, Response } from 'express'
-import { classifyError } from '../utils/errors'
-import { sendError, notFound } from '../utils/response'
-import { logger, requestPath } from './logger'
+import { AppError, classifyError, NotFoundError } from '../utils/errors'
+import { getRequestId, logger, requestPath } from './logger'
+import { ApiError } from '../types/response.types'
 
 /** JSON 404 for unmatched routes, instead of Express's HTML page. */
-export function notFoundHandler(req: Request, res: Response): void {
-  notFound(res, { error: 'Route not found', code: 'route_not_found' })
+export function notFoundHandler(req: Request, res: Response, next?: NextFunction): void {
+  const err = new NotFoundError('Route not found', { code: 'route_not_found' })
+  if (typeof next === 'function') {
+    next(err)
+  } else {
+    errorHandler(err, req, res, () => {})
+  }
 }
 
 /**
@@ -16,7 +21,7 @@ export function notFoundHandler(req: Request, res: Response): void {
  * error for diagnosis; the client only sees the generic message and the
  * request id to quote when reporting the problem.
  */
-export function errorHandler(err: unknown, req: Request, res: Response, next: NextFunction): void {
+export function errorHandler(err: unknown, req: Request, res: Response, next?: NextFunction): void {
   if (res.headersSent) {
     // Too late to send an error body; Express closes the connection.
     logger.error('http.error_after_headers_sent', {
@@ -25,11 +30,19 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
       path: requestPath(req),
       error: err,
     })
-    next(err)
+    if (typeof next === 'function') {
+      next(err)
+    }
     return
   }
 
-  const { status, code } = classifyError(err)
+  if (err instanceof AppError && err.headers) {
+    for (const [key, value] of Object.entries(err.headers)) {
+      res.set(key, value)
+    }
+  }
+
+  const { status, code, message } = classifyError(err)
   const fields = {
     requestId: req.requestId,
     method: req.method,
@@ -44,5 +57,13 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
     logger.warn('http.request_rejected', fields)
   }
 
-  sendError(res, err)
+  const requestId = req.requestId ?? res.req?.requestId ?? getRequestId()
+  const body: ApiError = {
+    success: false,
+    error: message,
+    ...(code ? { code } : {}),
+    ...(requestId ? { requestId } : {}),
+  }
+
+  res.status(status).json(body)
 }

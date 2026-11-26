@@ -4,6 +4,12 @@ import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { logger } from '../../middleware/logger'
 import { createWalletChallenge } from '../../repositories/wallet.repository'
 import { verifyWalletChallenge } from '../../services/wallet.service'
+import {
+  AuthError,
+  ConflictError,
+  ServiceUnavailableError,
+  ValidationError,
+} from '../../utils/errors'
 
 const TENANT_ID = 'safetrust'
 const CHALLENGE_TTL_MS = 5 * 60 * 1000
@@ -81,24 +87,25 @@ export async function createWalletChallengeHandler(
   const { uid } = req.user!
   const address = req.body.wallet_address
   if (typeof address === 'string' && address.startsWith('C')) {
-    return res.status(400).json({ error: 'UNSUPPORTED_STELLAR_ACCOUNT_TYPE' })
+    throw new ValidationError('UNSUPPORTED_STELLAR_ACCOUNT_TYPE', { code: 'unsupported_stellar_account_type' })
   }
   if (!isStellarAccount(address)) {
-    return res.status(400).json({ error: 'INVALID_STELLAR_ACCOUNT' })
+    throw new ValidationError('INVALID_STELLAR_ACCOUNT', { code: 'invalid_stellar_account' })
   }
   const config = getWalletConfig()
-  if (!config) return res.status(503).json({ error: 'WALLET_CHALLENGE_NOT_CONFIGURED' })
+  if (!config) throw new ServiceUnavailableError('WALLET_CHALLENGE_NOT_CONFIGURED', { code: 'wallet_challenge_not_configured' })
   if (!stellarUtils?.verifyStellarEd25519) {
-    return res.status(503).json({ error: 'WALLET_SIGNATURE_VERIFIER_UNAVAILABLE' })
+    throw new ServiceUnavailableError('WALLET_SIGNATURE_VERIFIER_UNAVAILABLE', { code: 'wallet_signature_verifier_unavailable' })
   }
 
   try {
     if (!await isSingleSignerAccount(address, config.network)) {
-      return res.status(400).json({ error: 'UNSUPPORTED_STELLAR_ACCOUNT_TYPE' })
+      throw new ValidationError('UNSUPPORTED_STELLAR_ACCOUNT_TYPE', { code: 'unsupported_stellar_account_type' })
     }
-  } catch {
+  } catch (err) {
+    if (err instanceof ValidationError) throw err
     logger.error('auth.wallet_challenge.account_lookup_failed')
-    return res.status(503).json({ error: 'STELLAR_ACCOUNT_LOOKUP_FAILED' })
+    throw new ServiceUnavailableError('STELLAR_ACCOUNT_LOOKUP_FAILED', { code: 'stellar_account_lookup_failed' })
   }
 
   const challengeId = randomUUID()
@@ -114,24 +121,19 @@ export async function createWalletChallengeHandler(
     expiresAt,
   })
 
-  try {
-    // Expired rows are removed whenever a challenge is issued; the expires_at
-    // index keeps this opportunistic TTL cleanup bounded as the table grows.
-    await createWalletChallenge({
-      challengeId,
-      uid,
-      address,
-      tenantId: TENANT_ID,
-      domain: config.domain,
-      network: config.network,
-      nonce,
-      expiresAt,
-    })
-    return res.status(200).json({ challengeId, challenge: message, expiresAt })
-  } catch (error: unknown) {
-    logger.error('auth.wallet_challenge.failed', { error })
-    return res.status(500).json({ error: 'WALLET_CHALLENGE_FAILED' })
-  }
+  // Expired rows are removed whenever a challenge is issued; the expires_at
+  // index keeps this opportunistic TTL cleanup bounded as the table grows.
+  await createWalletChallenge({
+    challengeId,
+    uid,
+    address,
+    tenantId: TENANT_ID,
+    domain: config.domain,
+    network: config.network,
+    nonce,
+    expiresAt,
+  })
+  return res.status(200).json({ challengeId, challenge: message, expiresAt })
 }
 
 export async function verifyWalletChallengeHandler(
@@ -141,13 +143,13 @@ export async function verifyWalletChallengeHandler(
   const { uid } = req.user!
   const { challengeId, signature, is_primary = false } = req.body
   if (typeof challengeId !== 'string' || !challengeId || typeof signature !== 'string' || !/^[a-fA-F0-9]{128}$/.test(signature)) {
-    return res.status(400).json({ error: 'INVALID_WALLET_CHALLENGE_REQUEST' })
+    throw new ValidationError('INVALID_WALLET_CHALLENGE_REQUEST', { code: 'invalid_wallet_challenge_request' })
   }
-  if (typeof is_primary !== 'boolean') return res.status(400).json({ error: 'INVALID_IS_PRIMARY' })
-  if (!stellarUtils?.verifyStellarEd25519) return res.status(503).json({ error: 'WALLET_SIGNATURE_VERIFIER_UNAVAILABLE' })
+  if (typeof is_primary !== 'boolean') throw new ValidationError('INVALID_IS_PRIMARY', { code: 'invalid_is_primary' })
+  if (!stellarUtils?.verifyStellarEd25519) throw new ServiceUnavailableError('WALLET_SIGNATURE_VERIFIER_UNAVAILABLE', { code: 'wallet_signature_verifier_unavailable' })
   const verifySignature = stellarUtils.verifyStellarEd25519.bind(stellarUtils)
   const config = getWalletConfig()
-  if (!config) return res.status(503).json({ error: 'WALLET_CHALLENGE_NOT_CONFIGURED' })
+  if (!config) throw new ServiceUnavailableError('WALLET_CHALLENGE_NOT_CONFIGURED', { code: 'wallet_challenge_not_configured' })
 
   try {
     const result = await verifyWalletChallenge({
@@ -161,24 +163,23 @@ export async function verifyWalletChallengeHandler(
     })
     switch (result.kind) {
       case 'unknown':
-        return res.status(409).json({ error: 'WALLET_CHALLENGE_ALREADY_USED_OR_UNKNOWN' })
+        throw new ConflictError('WALLET_CHALLENGE_ALREADY_USED_OR_UNKNOWN', { code: 'wallet_challenge_already_used_or_unknown' })
       case 'user-mismatch':
-        return res.status(401).json({ error: 'WALLET_CHALLENGE_USER_MISMATCH' })
+        throw new AuthError('WALLET_CHALLENGE_USER_MISMATCH', { code: 'wallet_challenge_user_mismatch' })
       case 'expired':
-        return res.status(401).json({ error: 'WALLET_CHALLENGE_EXPIRED' })
+        throw new AuthError('WALLET_CHALLENGE_EXPIRED', { code: 'wallet_challenge_expired' })
       case 'context-mismatch':
-        return res.status(401).json({ error: 'WALLET_CHALLENGE_CONTEXT_MISMATCH' })
+        throw new AuthError('WALLET_CHALLENGE_CONTEXT_MISMATCH', { code: 'wallet_challenge_context_mismatch' })
       case 'invalid-signature':
-        return res.status(401).json({ error: 'INVALID_WALLET_SIGNATURE' })
+        throw new AuthError('INVALID_WALLET_SIGNATURE', { code: 'invalid_wallet_signature' })
       case 'already-registered':
-        return res.status(409).json({ error: 'WALLET_ALREADY_REGISTERED' })
+        throw new ConflictError('WALLET_ALREADY_REGISTERED', { code: 'wallet_already_registered' })
       case 'verified':
         return res.status(200).json({ success: true, wallet_address: result.address })
     }
   } catch (error: unknown) {
     const code = (error as { code?: string }).code
-    if (code === '23505') return res.status(409).json({ error: 'WALLET_ALREADY_REGISTERED' })
-    logger.error('auth.wallet_verify.failed', { error })
-    return res.status(500).json({ error: 'WALLET_VERIFICATION_FAILED' })
+    if (code === '23505') throw new ConflictError('WALLET_ALREADY_REGISTERED', { code: 'wallet_already_registered' })
+    throw error
   }
 }

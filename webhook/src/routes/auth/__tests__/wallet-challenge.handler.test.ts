@@ -1,6 +1,7 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { createWalletChallengeHandler, verifyWalletChallengeHandler } from '../wallet-challenge.handler'
+import { runHandler } from '../../__tests__/run-handler'
 import { createWalletChallenge } from '../../../repositories/wallet.repository'
 import { verifyWalletChallenge } from '../../../services/wallet.service'
 
@@ -52,7 +53,7 @@ describe('wallet ownership challenge handlers', () => {
   it('creates a challenge bound to the authenticated user, tenant, domain, network and address', async () => {
     const res = makeResponse()
 
-    await createWalletChallengeHandler(makeRequest({ wallet_address: ADDRESS }) as never, res)
+    await runHandler(createWalletChallengeHandler, makeRequest({ wallet_address: ADDRESS }) as never, res)
 
     expect(res.status).toHaveBeenCalledWith(200)
     const payload = (res.json as jest.Mock).mock.calls[0][0]
@@ -74,7 +75,7 @@ describe('wallet ownership challenge handlers', () => {
     ;(verifyWalletChallenge as jest.Mock).mockResolvedValue({ kind: 'verified', address: ADDRESS })
     const res = makeResponse()
 
-    await verifyWalletChallengeHandler(makeRequest({ challengeId: 'challenge-1', signature: 'a'.repeat(128) }) as never, res)
+    await runHandler(verifyWalletChallengeHandler, makeRequest({ challengeId: 'challenge-1', signature: 'a'.repeat(128) }) as never, res)
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({ success: true, wallet_address: ADDRESS })
@@ -90,9 +91,9 @@ describe('wallet ownership challenge handlers', () => {
     ;(verifyWalletChallenge as jest.Mock).mockResolvedValue({ kind: 'already-registered' })
     const res = makeResponse()
 
-    await verifyWalletChallengeHandler(makeRequest({ challengeId: 'challenge-1', signature: 'a'.repeat(128) }, 'user-2') as never, res)
+    await runHandler(verifyWalletChallengeHandler, makeRequest({ challengeId: 'challenge-1', signature: 'a'.repeat(128) }, 'user-2') as never, res)
 
     expect(res.status).toHaveBeenCalledWith(409)
-    expect(res.json).toHaveBeenCalledWith({ error: 'WALLET_ALREADY_REGISTERED' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'WALLET_ALREADY_REGISTERED' }))
   })
 })

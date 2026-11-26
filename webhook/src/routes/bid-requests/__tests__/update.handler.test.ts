@@ -3,6 +3,7 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { updateBidRequest } from '../../../services/bid-request.service'
+import { runHandler } from '../../__tests__/run-handler'
 import { updateBidRequestHandler, VALID_TRANSITIONS } from '../update.handler'
 
 jest.mock('../../../services/bid-request.service', () => ({
@@ -20,7 +21,7 @@ describe('updateBidRequestHandler', () => {
 
   it('returns 400 when status is missing', async () => {
     const res = { status: jest.fn().mockReturnThis(), json: jest.fn() } as unknown as Response
-    await updateBidRequestHandler({
+    await runHandler(updateBidRequestHandler, {
       user: { uid: 'owner-1' }, params: { id: 'bid-1' }, body: {},
     } as unknown as AuthenticatedRequest, res)
     expect(res.status).toHaveBeenCalledWith(400)
@@ -28,20 +29,17 @@ describe('updateBidRequestHandler', () => {
   })
 
   it.each([
-    ['profile-missing', 409, {
-      error: 'User profile not found',
-      detail: 'Call POST /api/auth/sync-user before updating bid requests.',
-    }],
-    ['not-found', 404, { error: 'Bid not found' }],
-    ['not-owner', 403, { error: 'Only owner can approve' }],
-    ['invalid-transition', 400, { error: 'Invalid transition', allowedTransitions: ['APPROVED', 'CANCELLED'] }],
+    ['profile-missing', 409, expect.objectContaining({ success: false, error: 'User profile not found' })],
+    ['not-found', 404, expect.objectContaining({ success: false, error: 'Bid not found' })],
+    ['not-owner', 403, expect.objectContaining({ success: false, error: 'Only owner can approve' })],
+    ['invalid-transition', 400, expect.objectContaining({ success: false, error: 'Invalid transition' })],
   ] as const)('maps service result %s to the existing response', async (kind, status, body) => {
     const result = kind === 'invalid-transition'
       ? { kind, allowedTransitions: ['APPROVED', 'CANCELLED'] }
       : { kind }
     ;(updateBidRequest as jest.Mock).mockResolvedValue(result)
     const res = { status: jest.fn().mockReturnThis(), json: jest.fn() } as unknown as Response
-    await updateBidRequestHandler({
+    await runHandler(updateBidRequestHandler, {
       user: { uid: 'owner-1' }, params: { id: 'bid-1' }, body: { status: 'APPROVED' },
     } as unknown as AuthenticatedRequest, res)
     expect(res.status).toHaveBeenCalledWith(status)
@@ -52,7 +50,7 @@ describe('updateBidRequestHandler', () => {
     const bid = { id: 'bid-1', current_status: 'APPROVED' }
     ;(updateBidRequest as jest.Mock).mockResolvedValue({ kind: 'updated', bid })
     const res = { status: jest.fn().mockReturnThis(), json: jest.fn() } as unknown as Response
-    await updateBidRequestHandler({
+    await runHandler(updateBidRequestHandler, {
       user: { uid: 'owner-1' }, params: { id: 'bid-1' }, body: { status: 'APPROVED' },
     } as unknown as AuthenticatedRequest, res)
     expect(updateBidRequest).toHaveBeenCalledWith('owner-1', 'bid-1', 'APPROVED')

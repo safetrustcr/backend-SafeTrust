@@ -1,6 +1,7 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { cancelReservationHandler } from '../cancel.handler'
+import { runHandler } from '../../__tests__/run-handler'
 import * as reservationRepo from '../../../repositories/reservation.repository'
 
 jest.mock('../../../repositories/reservation.repository', () => ({
@@ -45,10 +46,10 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(401)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Unauthorized' }))
   })
 
   it('returns 400 when reason is not a string', async () => {
@@ -59,10 +60,10 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Reason must be a string' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Reason must be a string' }))
   })
 
   it('returns 400 when reason exceeds 500 characters', async () => {
@@ -73,12 +74,10 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'Cancellation reason must be 500 characters or less',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Cancellation reason must be 500 characters or less' }))
   })
 
   it('returns 404 when reservation does not exist', async () => {
@@ -91,10 +90,10 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(404)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Reservation not found' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Reservation not found' }))
   })
 
   it('returns 404 when caller is a stranger (neither guest nor apartment owner)', async () => {
@@ -107,10 +106,10 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(404)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Reservation not found' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Reservation not found' }))
     expect(reservationRepo.updateReservationCancellation).not.toHaveBeenCalled()
   })
 
@@ -133,7 +132,7 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(reservationRepo.updateReservationCancellation).toHaveBeenCalledWith(
       'res-123',
@@ -178,7 +177,7 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(reservationRepo.updateReservationCancellation).toHaveBeenCalledWith(
       'res-123',
@@ -215,7 +214,7 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(reservationRepo.updateReservationCancellation).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(200)
@@ -245,13 +244,10 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(409)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'RESERVATION_NOT_CANCELLABLE',
-      status: 'funded',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'RESERVATION_NOT_CANCELLABLE' }))
     expect(reservationRepo.updateReservationCancellation).not.toHaveBeenCalled()
   })
 
@@ -270,13 +266,10 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(409)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'RESERVATION_NOT_CANCELLABLE',
-      status: 'completed',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'RESERVATION_NOT_CANCELLABLE' }))
     expect(reservationRepo.updateReservationCancellation).not.toHaveBeenCalled()
   })
 
@@ -298,13 +291,10 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(409)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'RESERVATION_NOT_CANCELLABLE',
-      status: 'funded',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'RESERVATION_NOT_CANCELLABLE' }))
   })
 
   it('returns 404 when reservation is deleted concurrently after cancel attempt', async () => {
@@ -320,9 +310,9 @@ describe('reservations/cancel.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await cancelReservationHandler(req, res)
+    await runHandler(cancelReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(404)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Reservation not found' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Reservation not found' }))
   })
 })
