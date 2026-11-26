@@ -1,20 +1,20 @@
 # Hotel Conversation Notifications
 
 When a `hotel_industry` escrow is funded or its funds are released, the
-TrustlessWork callback handlers post an automated message into the
-reservation's host–guest conversation. This document describes how that
-message is delivered and the guarantees it does and does not give.
+reconciliation poller posts an automated message into the reservation's
+host–guest conversation. This document describes how that message is delivered
+and the guarantees it does and does not give.
 
 ## Delivery path
 
 ```mermaid
 graph LR
-  A["fund / release-funds handler<br/>escrow transaction COMMIT"] --> B["notifyHotelEscrowConversation<br/>3 s time budget, never throws"]
+  A["reconciliation transition<br/>escrow transaction COMMIT"] --> B["notifyHotelEscrowConversation<br/>3 s time budget, never throws"]
   B --> C["resolveHotelEscrowParties<br/>reservation, host, guest"]
   C --> D["sendHotelConversationMessage<br/>one DB transaction"]
   D --> E["upsert conversation<br/>ON CONFLICT unique_hotel_conversation"]
   E --> F["insert message"]
-  B -. "failure or timeout: logged only" .-> G["HTTP 200 to TrustlessWork<br/>escrow state unchanged"]
+  B -. "failure or timeout: logged only" .-> G["polling summary unchanged<br/>escrow state already committed"]
 ```
 
 | File | Responsibility |
@@ -23,17 +23,17 @@ graph LR
 | `webhook/src/services/hotel-conversation.service.ts` | Shared, in-process conversation write; reuse it from any future internal caller |
 | `webhook/src/repositories/hotel-conversation.repository.ts` | Idempotent conversation upsert and message insert |
 
-The handlers call the notifier only after the escrow transaction has
-committed. A failure or timeout is logged and the handler still returns
-`200`, so the lifecycle response never depends on messaging. The tests in
-`webhook/tests/notifications/` cover this for both handlers.
+Reconciliation calls the notifier only after the escrow transaction has
+committed and does not await it. A failure or timeout is logged and the
+polling summary is unaffected, so reconciliation never depends on messaging.
+The tests in `webhook/tests/reconciliation/transitions.test.ts` cover this.
 
 ## Time budget
 
-`NOTIFICATION_TIMEOUT_MS` (3 seconds) caps how long a handler waits for the
-notification. The budget limits only the wait. It does not cancel the write,
-whose transaction commits or rolls back on its own, so a slow write can still
-land after the response is sent.
+`NOTIFICATION_TIMEOUT_MS` (3 seconds) caps how long the notifier waits for the
+message write. Reconciliation does not await that wait, so the budget limits
+only the background delivery. It does not cancel the write, whose transaction
+commits or rolls back on its own, so a slow write can still land later.
 
 ## Idempotent conversation creation
 
@@ -52,22 +52,6 @@ RETURNING id`, not a find-then-create in application code:
 
 The conversation upsert and the message insert run in one transaction, so a
 message is never written without its conversation.
-
-## Removed: internal self-HTTP endpoint and `INTERNAL_SERVICE_SECRET`
-
-Lifecycle notifications used to `fetch` the webhook's own
-`POST /api/hotel/conversations/send` endpoint, authenticated with the
-`x-internal-secret` header and `INTERNAL_SERVICE_SECRET`. That call had no
-timeout, and `docker-compose.yml` never passed the secret to the container,
-so under Compose no notification was sent.
-
-Now that the shared service is called in-process, the endpoint, its
-`x-internal-secret` middleware and the `INTERNAL_SERVICE_SECRET` variable have
-been removed. Deployments can delete the secret from their secret manager.
-No caller outside the notifier was found in this repository. An external
-service that relied on the endpoint now receives `401` from the Firebase-
-authenticated `/api` routes and should call the API through a user session
-instead.
 
 ## Delivery guarantee and when to strengthen it
 

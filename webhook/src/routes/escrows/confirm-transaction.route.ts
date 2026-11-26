@@ -1,7 +1,9 @@
 'use strict'
 
-import { Router } from 'express'
+import { RequestHandler, Router } from 'express'
 import { confirmTransactionHandler } from './confirm-transaction.handler'
+import { authMiddleware } from '../../middleware/auth.middleware'
+import { requireRole } from '../../middleware/require-role'
 
 const router = Router()
 
@@ -11,6 +13,11 @@ const router = Router()
  *  - Helper submission (Path A)
  *  - External submission & TW indexer sync (Path B)
  */
-router.post('/api/escrows/confirm-transaction', confirmTransactionHandler)
+router.post(
+  '/api/escrows/confirm-transaction',
+  authMiddleware as unknown as RequestHandler,
+  requireRole(['guest', 'host', 'admin']),
+  confirmTransactionHandler
+)
 
 export default router
