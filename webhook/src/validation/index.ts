@@ -53,6 +53,73 @@ const apartmentListQuerySchema = z.object({
 export { apartmentListQuerySchema }
 export type ApartmentListQuery = z.infer<typeof apartmentListQuerySchema>
 
+const futureDateQuery = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const [year, month, day] = value.split('-').map(Number)
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  const validCalendarDate = parsed.getUTCFullYear() === year
+    && parsed.getUTCMonth() === month - 1
+    && parsed.getUTCDate() === day
+  return validCalendarDate && value > new Date().toISOString().slice(0, 10)
+}, 'Must be a valid future date')
+
+const positiveIntegerQuery = z.union([
+  z.string().regex(/^[1-9]\d*$/).transform(Number),
+  z.number().int().positive(),
+])
+  .refine(Number.isSafeInteger, 'Must be a safe integer')
+
+function validatePropertyDateRange(
+  checkIn: string,
+  checkOut: string,
+  context: z.RefinementCtx
+): void {
+  if (checkOut <= checkIn) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['check_out'],
+      message: 'Must be after check_in',
+    })
+  }
+}
+
+export const propertySearchQuerySchema = z.object({
+  guests: positiveIntegerQuery,
+  location: z.string().trim().min(1).optional(),
+  min_bedrooms: z.union([
+    z.string().regex(/^[1-9]\d*$/).transform(Number),
+    z.number().int().positive(),
+  ]).refine(Number.isSafeInteger, 'Must be a safe integer').optional(),
+  max_price: z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/).optional(),
+  page: positiveIntegerQuery.default(1),
+  limit: positiveIntegerQuery.refine((value) => value <= 50, 'Must be 50 or less').default(20),
+  check_in: futureDateQuery,
+  check_out: futureDateQuery,
+}).superRefine((query, context) => {
+  validatePropertyDateRange(query.check_in, query.check_out, context)
+  const offset = (query.page - 1) * query.limit
+  if (!Number.isSafeInteger(offset) || offset + query.limit + 1 > 2147483647) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['page'],
+      message: 'Requested page is too large',
+    })
+  }
+})
+export type PropertySearchQuery = z.infer<typeof propertySearchQuerySchema>
+
+export const propertyAvailabilityQuerySchema = z.object({
+  guests: positiveIntegerQuery,
+  check_in: futureDateQuery,
+  check_out: futureDateQuery,
+}).superRefine((query, context) => {
+  validatePropertyDateRange(query.check_in, query.check_out, context)
+})
+export type PropertyAvailabilityQuery = z.infer<typeof propertyAvailabilityQuerySchema>
+
+export const propertyAvailabilityParamsSchema = z.object({
+  id: databaseUuid,
+})
+
 export const createApartmentSchema = z.object({
   name: nonEmptyString,
   location: nonEmptyString,

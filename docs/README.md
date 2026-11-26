@@ -22,6 +22,7 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Escrow Claims API](architecture/escrow-claims-api.md) | Request and response contract, error codes, idempotency and rate limit for claims on released escrows |
 | [Reservations API](architecture/reservations-api.md) | Lifecycle, allowed actions computation, read endpoints, and safe cancellation protocol |
 | [Wallet Registry API](architecture/wallets-api.md) | Verified wallet management lifecycle (list, unlink, and atomic set-primary endpoints) |
+| [Agent Property Discovery API](api/agents/discovery.md) | Session-or-x402 property search, date availability, and exact-string booking quotes |
 | [Hotel Conversation Notifications](architecture/hotel-conversation-notifications.md) | In-process lifecycle notifications, time budget, and idempotent conversation creation |
 | [Webhook API Security](architecture/api-security.md) | Firebase revocation, route roles, rate limits, proxy trust, public routes, and request-body limits |
 | [Error Handling, Logging and CORS](architecture/error-handling-and-logging.md) | Typed `AppError` mapping, sanitized 5xx bodies, structured logs with `requestId`, and the CORS origin policy |

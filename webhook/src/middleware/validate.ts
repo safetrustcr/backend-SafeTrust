@@ -3,7 +3,7 @@
 import { NextFunction, Request, RequestHandler, Response } from 'express'
 import { z } from 'zod'
 
-export type RequestDataSource = 'body' | 'query'
+export type RequestDataSource = 'body' | 'query' | 'params'
 
 export function validate<TSchema extends z.ZodType>(
   schema: TSchema,

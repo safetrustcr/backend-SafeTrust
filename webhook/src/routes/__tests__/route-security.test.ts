@@ -95,6 +95,7 @@ const routes: RouteCase[] = [
   { method: 'POST', path: '/api/auth/sync-user', roles: ['guest', 'host', 'admin'] },
   { method: 'GET', path: '/api/auth/me' },
   { method: 'GET', path: '/api/apartments' },
+  { method: 'GET', path: '/api/v1/properties/search?check_in=2099-12-15&check_out=2099-12-20&guests=4', public: true },
   { method: 'POST', path: '/api/apartments', roles: ['host', 'admin'] },
   { method: 'GET', path: '/api/apartments/apartment-id' },
   { method: 'POST', path: `/api/apartments/${TEST_UUID}/reports`, roles: ['guest', 'host'] },
@@ -314,7 +315,7 @@ describe('public route boundary', () => {
     )]
       .filter((match) => match.index! < authBoundary)
       .map((match) => match[3])
-    expect(preAuthMounts).toEqual([])
+    expect(preAuthMounts).toEqual(['v1PropertiesRoute'])
     expect(routesIndex.indexOf('router.use(confirmTransactionRoute)')).toBeGreaterThan(authBoundary)
 
     const directRouterRoutes = [...routesIndex.matchAll(
