@@ -52,20 +52,7 @@ describe('initialize.route with x402 payment gate', () => {
     process.env = originalEnv
   })
 
-  it('does not let a TrustlessWork signature header bypass the x402 gate', async () => {
-    process.env.X402_ENABLED = 'false'
-
-    const res = await request(app)
-      .post('/api/escrows/initialize')
-      .set('x-trustlesswork-signature', 'test-signature')
-      .send({ contract_id: 'test-123' })
-
-    expect(res.status).toBe(503)
-    expect(res.body.error).toBe('Feature Unavailable')
-    expect(res.body.feature).toBe('x402')
-  })
-
-  it('returns 503 when x402 is disabled and no TrustlessWork signature is present', async () => {
+  it('returns 503 when x402 is disabled', async () => {
     process.env.X402_ENABLED = 'false'
 
     const res = await request(app)

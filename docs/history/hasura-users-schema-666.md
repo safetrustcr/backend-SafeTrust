@@ -1,5 +1,7 @@
 # Investigation: missing `users` GraphQL operations (issue #666)
 
+> **Historical note:** This is a historical investigation record from issue #666 kept for reference; current documentation under `docs/` describes the system as implemented today.
+
 No secrets, connection strings or user data belong in this file, the issue or any linked PR.
 
 ## What the Schema Registry snapshot is (and is not)
@@ -12,14 +14,14 @@ No secrets, connection strings or user data belong in this file, the issue or an
 
 Migration `1779300000001_migrate_to_safetrust_schema` moves `public.users` (and the other tables) into the `safetrust` schema, and `metadata/tenants/safetrust/databases/tables/public_users.yaml` tracks it as `safetrust.users` — the table definition itself is correct (the `public_` filename prefix is only a historical naming convention).
 
-What was missing is the **GraphQL name**. Hasura exposes a table outside the `public` schema as `<schema>_<table>` unless the table has `configuration.custom_name`. `public_users.yaml` had no `configuration` block, so after the schema move `users`, `users_by_pk`, `users_aggregate`, `insert_users`, `update_users`, … became `safetrust_users`, `safetrust_users_by_pk`, … — i.e. every client that still uses the original names loses all users operations. That matches the registry diff (users query/mutation/subscription fields and their types removed). `docs/migrations/safetrust-schema-migration.md` claimed "GraphQL field names: unchanged", which is only true for tables that set a `custom_name` (`roles`, `escrow_milestones`, `trustless_work_escrows`).
+What was missing is the **GraphQL name**. Hasura exposes a table outside the `public` schema as `<schema>_<table>` unless the table has `configuration.custom_name`. `public_users.yaml` had no `configuration` block, so after the schema move `users`, `users_by_pk`, `users_aggregate`, `insert_users`, `update_users`, … became `safetrust_users`, `safetrust_users_by_pk`, … — i.e. every client that still uses the original names loses all users operations. That matches the registry diff (users query/mutation/subscription fields and their types removed). `docs/history/safetrust-schema-migration.md` claimed "GraphQL field names: unchanged", which is only true for tables that set a `custom_name` (`roles`, `escrow_milestones`, `trustless_work_escrows`).
 
 `deploy-tenant.sh` passes each YAML's `configuration` straight into `pg_track_tables`, so adding the block is enough; no table, column, row or permission is touched.
 
 ## Repair in this PR (narrow)
 
 - `public_users.yaml`: add `configuration.custom_name: users`. Original root fields and type names are restored. Select/update permissions are unchanged.
-- `docs/migrations/safetrust-schema-migration.md`: corrected the "GraphQL field names" row.
+- `docs/history/safetrust-schema-migration.md`: corrected the "GraphQL field names" row.
 - `tests/karate/features/users/users-operations.feature`: pins `users`, `users_by_pk`, `users_aggregate` in `query_root`, the absence of `safetrust_users`, and the users mutations. (The old `query.feature` only asked for `__typename`, which is why nothing caught this.)
 
 ### Same defect, deliberately not changed here
