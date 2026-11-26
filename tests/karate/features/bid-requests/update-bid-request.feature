@@ -6,6 +6,8 @@ Feature: PATCH /api/bid-requests/:id
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-users.sql'))
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-apartments.sql'))
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-bids.sql'))
+    * db.execute("INSERT INTO safetrust.user_roles (user_id, role_id) SELECT 'owner-123', id FROM safetrust.roles WHERE name = 'host' ON CONFLICT DO NOTHING")
+    * db.execute("INSERT INTO safetrust.user_roles (user_id, role_id) SELECT 'other-user', id FROM safetrust.roles WHERE name = 'host' ON CONFLICT DO NOTHING")
 
   Scenario: Owner approves PENDING bid → 200, status = APPROVED
     Given path '/api/bid-requests/11111111-1111-1111-1111-111111111111'

@@ -39,6 +39,14 @@ function createLimiter(windowEnv: string, limitEnv: string, defaultLimit: number
 // Applied before authentication to bound invalid-token and anonymous traffic.
 export const apiIpRateLimit = createLimiter('API_RATE_LIMIT_WINDOW_MS', 'API_IP_RATE_LIMIT_MAX', 300)
 
+// The app-level limiter covers malformed JSON before parsing. This limiter
+// covers valid API routes.
+export const apiRouteIpRateLimit = createLimiter(
+  'API_RATE_LIMIT_WINDOW_MS',
+  'API_IP_RATE_LIMIT_MAX',
+  300
+)
+
 // Applied after authentication, so valid API traffic is isolated by user ID.
 export const apiRateLimit = rateLimit({
   windowMs: positiveWindowEnv('API_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),

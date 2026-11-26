@@ -307,7 +307,7 @@ describe('public route boundary', () => {
       .sort()
     expect(rootMounts).toEqual(['confirmTransactionRoute', 'healthRoutes', 'initializeRoute'])
 
-    const authBoundary = routesIndex.indexOf("router.use('/api', authMiddleware")
+    const authBoundary = routesIndex.indexOf("router.use('/api', apiRouteIpRateLimit, authMiddleware")
     const preAuthMounts = [...routesIndex.matchAll(
       /router\.use\(\s*(['"])([^'"]+)\1\s*,\s*([A-Za-z_$][\w$]*)/g
     )]
@@ -331,8 +331,8 @@ describe('public route boundary', () => {
     expect(mounts).toEqual([
       '/:routes',
       '/api/auth:authIpRateLimit',
-      '/api:apiIpRateLimit',
       '/api/escrows/initialize:publicRateLimit',
+      '/api:apiIpRateLimit',
       '/health:healthRateLimit',
       '/reconciliation:publicRateLimit',
       '/reconciliation:reconciliationRoutes',

@@ -1,7 +1,7 @@
 import express, { RequestHandler } from 'express'
 
 import { authMiddleware } from '../middleware/auth.middleware'
-import { apiRateLimit, authRateLimit } from '../middleware/rate-limit'
+import { apiRateLimit, apiRouteIpRateLimit, authRateLimit } from '../middleware/rate-limit'
 
 import { getTransitionTable } from '../lib/escrow-transitions'
 
@@ -26,7 +26,7 @@ router.use(healthRoutes)
 router.use(initializeRoute)
 
 // ── 3. Authenticated routes (Firebase auth required) ──────────────────────────
-router.use('/api', authMiddleware as unknown as RequestHandler, apiRateLimit)
+router.use('/api', apiRouteIpRateLimit, authMiddleware as unknown as RequestHandler, apiRateLimit)
 router.use('/api/auth', authRateLimit)
 router.use('/api/auth',         authRoutes)
 router.use('/api/apartments',   apartmentRoutes)
