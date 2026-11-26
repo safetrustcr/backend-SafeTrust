@@ -9,8 +9,17 @@
 ## Current Behavior
 
 The TrustlessWork indexer reconciliation flow reads escrow data through
-`GET /helper/get-escrow-by-contract-ids` and derives the local escrow status
-from the observed milestone flags.
+`GET /helper/get-escrow-by-contract-ids` and derives the local escrow status.
+The four escrow-level V1 flags take precedence over legacy milestone-based
+derivation, in this order:
+
+- `isCancelled` → `cancelled`
+- `isDisputed` → `disputed`
+- `isCompleted` → `completed`
+- `isPending` → `pending_funding`
+
+When none of these flags applies, reconciliation falls back to the legacy
+milestone-based rules:
 
 - For single-release escrows, an approved milestone derives
   `milestone_approved` only when higher-priority conditions do not apply.
