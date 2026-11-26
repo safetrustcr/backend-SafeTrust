@@ -20,7 +20,7 @@
     "@stellar/stellar-sdk": "^17.4.0",
     "@x402/fetch": "^2.32.0",
     "@x402/stellar": "^2.32.0",
-    "zod": "^3.25.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
