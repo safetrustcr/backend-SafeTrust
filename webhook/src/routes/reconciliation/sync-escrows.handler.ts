@@ -65,7 +65,14 @@ export const syncEscrowsHandler = async (
       skipStatusCorrectionFor: sync.transitions?.failedContractIds,
     })
     const stale = await detectStaleEscrows(STALE_ESCROW_DAYS, tenantId)
-    const summary = formatReconciliationSummary(sync, drift, stale, Date.now() - startTime)
+    const summary = formatReconciliationSummary(
+      sync,
+      drift,
+      stale,
+      Date.now() - startTime,
+      undefined,
+      sync.transitions
+    )
 
     const level = summary.errors > 0 ? 'warn' : 'info'
     logger[level]('reconciliation.sync.completed', {

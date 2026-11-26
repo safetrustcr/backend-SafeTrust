@@ -21,13 +21,18 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe('reservation.service createReservation', () => {
+  const originalLogLevel = process.env.LOG_LEVEL
+
   beforeEach(() => {
+    process.env.LOG_LEVEL = 'info'
     jest.clearAllMocks()
     jest.spyOn(console, 'log').mockImplementation(() => undefined)
   })
 
   afterEach(() => {
     jest.restoreAllMocks()
+    if (originalLogLevel === undefined) delete process.env.LOG_LEVEL
+    else process.env.LOG_LEVEL = originalLogLevel
   })
 
   it('writes the session tenant into the insert payload', async () => {

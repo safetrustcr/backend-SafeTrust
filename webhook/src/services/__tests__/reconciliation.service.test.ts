@@ -664,6 +664,7 @@ describe('reconciliation.service', () => {
       const response = formatReconciliationSummary(syncWithTransitions, driftSample, [], 250)
 
       expect(response.errors).toBe(3)
+      expect(response.transitions).toEqual(syncWithTransitions.transitions)
     })
 
     it('adds message "No escrows to sync" when totalEscrows is 0', () => {

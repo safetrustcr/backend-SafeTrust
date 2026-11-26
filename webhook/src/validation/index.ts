@@ -8,6 +8,19 @@ const positiveNumber = z.union([z.number(), z.string()]).refine((value) => {
 }, 'Must be a positive number')
 const uuid = z.string().uuid()
 const databaseUuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+const MAX_SAFE_OFFSET = Number.MAX_SAFE_INTEGER
+const MAX_RESERVATION_LIMIT = 100
+
+function isValidCalendarDate(value: string): boolean {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  return month >= 1 && month <= 12 &&
+    day >= 1 &&
+    day <= new Date(Date.UTC(year, month, 0)).getUTCDate()
+}
 
 export const emptyBodySchema = z.object({}).passthrough().optional()
 
@@ -48,12 +61,26 @@ const apartmentListQuerySchema = z.object({
   message: 'Must be 100 or less',
 })
 .refine(
+  (query) => query.checkIn === undefined || isValidCalendarDate(query.checkIn),
+  {
+    path: ['checkIn'],
+    message: 'Must be a valid calendar date',
+  }
+)
+.refine(
+  (query) => query.checkOut === undefined || isValidCalendarDate(query.checkOut),
+  {
+    path: ['checkOut'],
+    message: 'Must be a valid calendar date',
+  }
+)
+.refine(
   (query) =>
     (query.checkIn === undefined && query.checkOut === undefined) ||
     (query.checkIn !== undefined &&
       query.checkOut !== undefined &&
-      /^\d{4}-\d{2}-\d{2}$/.test(query.checkIn) &&
-      /^\d{4}-\d{2}-\d{2}$/.test(query.checkOut) &&
+      isValidCalendarDate(query.checkIn) &&
+      isValidCalendarDate(query.checkOut) &&
       query.checkOut > query.checkIn),
   {
     path: ['checkIn'],
@@ -83,7 +110,7 @@ export type CreateApartmentBody = z.infer<typeof createApartmentSchema>
 export const createListingReportSchema = z.object({
   category: z.enum(['inaccurate', 'scam_or_fraud', 'offensive', 'safety', 'duplicate', 'other']),
   details: z.string().trim().max(1000).optional().nullable(),
-  clientOpId: uuid,
+  clientOpId: databaseUuid,
 }).passthrough().superRefine((value, context) => {
   if (value.category === 'other' && (value.details ?? '').trim().length < 10) {
     context.addIssue({
@@ -155,6 +182,32 @@ export const reservationListQuerySchema = z.object({
   limit: z.string().regex(/^[1-9]\d*$/).optional(),
   offset: z.string().regex(/^\d+$/).optional(),
   page: z.string().regex(/^[1-9]\d*$/).optional(),
+}).superRefine((query, context) => {
+  if (query.offset !== undefined) {
+    const parsedOffset = Number(query.offset)
+    if (!Number.isSafeInteger(parsedOffset) || parsedOffset > MAX_SAFE_OFFSET) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['offset'],
+        message: 'Must be a non-negative safe integer',
+      })
+    }
+  }
+
+  if (query.page !== undefined && query.offset === undefined) {
+    const parsedPage = Number(query.page)
+    const requestedLimit = query.limit === undefined
+      ? 50
+      : Math.min(Number(query.limit), MAX_RESERVATION_LIMIT)
+    const derivedOffset = (parsedPage - 1) * requestedLimit
+    if (!Number.isSafeInteger(derivedOffset) || derivedOffset > MAX_SAFE_OFFSET) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['page'],
+        message: 'Derived offset must be a non-negative safe integer',
+      })
+    }
+  }
 })
 export type ReservationListQuery = z.infer<typeof reservationListQuerySchema>
 

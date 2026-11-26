@@ -4,13 +4,13 @@ import { z } from 'zod'
 import { validate, type RequestDataSource } from '../validate'
 import {
   apartmentListQuerySchema,
+  createListingReportSchema,
   approveMilestoneSchema,
   cancelReservationSchema,
   confirmTransactionSchema,
   createApartmentSchema,
   createBidRequestSchema,
   createEscrowClaimSchema,
-  createListingReportSchema,
   createReservationSchema,
   createWalletChallengeSchema,
   disputeEscrowSchema,
@@ -126,6 +126,37 @@ describe('request validation middleware', () => {
 
     expect(bodyResponse.body).toMatchObject({ is_primary: false })
     expect(queryResponse.body).toEqual({ page: '2', limit: '10' })
+  })
+
+  it('rejects impossible apartment calendar dates before the handler', () => {
+    const result = apartmentListQuerySchema.safeParse({
+      checkIn: '2026-02-30',
+      checkOut: '2026-03-02',
+    })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('bounds reservation offsets and derived page offsets', () => {
+    expect(reservationListQuerySchema.safeParse({
+      offset: '9007199254740992',
+    }).success).toBe(false)
+    expect(reservationListQuerySchema.safeParse({
+      page: '9007199254740992',
+    }).success).toBe(false)
+    expect(reservationListQuerySchema.safeParse({
+      offset: '50',
+      page: '2',
+    }).success).toBe(true)
+  })
+
+  it('accepts database-style listing report client operation IDs', () => {
+    const result = createListingReportSchema.safeParse({
+      category: 'inaccurate',
+      clientOpId: '00000000-0000-0000-0000-000000000001',
+    })
+
+    expect(result.success).toBe(true)
   })
 
   it('mounts reservation creation validation before the handler', async () => {

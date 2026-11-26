@@ -892,7 +892,7 @@ export function formatReconciliationSummary(
     sorobanUnresolved: drift.unresolved ?? 0,
     durationMs: elapsed,
     ...(retries ? { confirmationRetries: retries } : {}),
-    ...(transitions ? { transitions } : {}),
+    ...(effectiveTransitions ? { transitions: effectiveTransitions } : {}),
   }
 
   if (isNoEscrows) {
