@@ -7,7 +7,12 @@ import { initializeFirebaseAdmin } from './config/firebase-admin'
 import { corsOptions, describeCorsPolicy, resolveCorsPolicy } from './config/cors'
 import { bindRequestContext, logger, requestId } from './middleware/logger'
 import { errorHandler, notFoundHandler } from './middleware/error-handler'
-import { healthRateLimit, publicRateLimit } from './middleware/rate-limit'
+import {
+  apiIpRateLimit,
+  authIpRateLimit,
+  healthRateLimit,
+  publicRateLimit,
+} from './middleware/rate-limit'
 
 import routes from './routes'
 import reconciliationRoutes from './routes/reconciliation/sync-escrows.route'
@@ -59,6 +64,8 @@ app.use(cors(corsOptions(corsPolicy)))
 app.use('/health', healthRateLimit)
 app.use('/api/escrows/initialize', publicRateLimit)
 app.use('/reconciliation', publicRateLimit)
+app.use('/api', apiIpRateLimit)
+app.use('/api/auth', authIpRateLimit)
 
 // ── Body parsing ──────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '100kb' }))

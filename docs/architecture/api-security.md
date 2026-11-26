@@ -58,7 +58,8 @@ after it succeeds. Public routes use the source IP. A 429 response includes
 | `API_RATE_LIMIT_MAX` | `100` | Requests per user per API window |
 | `API_IP_RATE_LIMIT_MAX` | `300` | Requests per IP at the API boundary |
 | `AUTH_RATE_LIMIT_WINDOW_MS` | `900000` | Auth endpoint window |
-| `AUTH_RATE_LIMIT_MAX` | `10` | Requests per IP before auth and per user after auth |
+| `AUTH_RATE_LIMIT_MAX` | `10` | Requests per authenticated user per auth window |
+| `AUTH_IP_RATE_LIMIT_MAX` | `300` | Requests per IP before authentication |
 | `PUBLIC_RATE_LIMIT_WINDOW_MS` | `900000` | Public business-route window |
 | `PUBLIC_RATE_LIMIT_MAX` | `60` | Requests per IP per public window |
 | `HEALTH_RATE_LIMIT_WINDOW_MS` | `900000` | Health endpoint window |

@@ -6,6 +6,10 @@ import router from '../index'
 import * as bidRequestService from '../../services/bid-request.service'
 import * as reservationRepository from '../../repositories/reservation.repository'
 import * as walletService from '../../services/wallet.service'
+import * as apartmentRepository from '../../repositories/apartment.repository'
+import * as reservationService from '../../services/reservation.service'
+import * as escrowClaimsService from '../../services/escrow-claims.service'
+import * as listingReportService from '../../services/listing-report.service'
 
 jest.mock('../../middleware/auth.middleware', () => ({
   authMiddleware: jest.fn((req, res, next) => {
@@ -32,16 +36,37 @@ jest.mock('../../middleware/rate-limit', () => {
 })
 
 jest.mock('../../services/bid-request.service', () => ({
+  createBidRequest: jest.fn(),
   updateBidRequest: jest.fn(),
   VALID_TRANSITIONS: {},
 }))
 
+jest.mock('../../repositories/apartment.repository', () => ({
+  createApartmentRecord: jest.fn(),
+  findApartmentById: jest.fn(),
+  listApartments: jest.fn(),
+}))
+
 jest.mock('../../repositories/reservation.repository', () => ({
   findReservationById: jest.fn(),
+  updateReservationCancellation: jest.fn(),
 }))
 
 jest.mock('../../services/wallet.service', () => ({
   unlinkUserWallet: jest.fn(),
+}))
+
+jest.mock('../../services/reservation.service', () => ({
+  createReservation: jest.fn(),
+  TenantMismatchError: class TenantMismatchError extends Error {},
+}))
+
+jest.mock('../../services/escrow-claims.service', () => ({
+  createEscrowClaim: jest.fn(),
+}))
+
+jest.mock('../../services/listing-report.service', () => ({
+  createListingReport: jest.fn(),
 }))
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE'
@@ -51,6 +76,8 @@ type RouteCase = {
   roles?: string[]
   public?: boolean
 }
+
+const TEST_UUID = '00000000-0000-4000-8000-000000000001'
 
 const routes: RouteCase[] = [
   { method: 'GET', path: '/health/ready', public: true },
@@ -69,20 +96,34 @@ const routes: RouteCase[] = [
   { method: 'GET', path: '/api/apartments' },
   { method: 'POST', path: '/api/apartments', roles: ['host', 'admin'] },
   { method: 'GET', path: '/api/apartments/apartment-id' },
-  { method: 'POST', path: '/api/apartments/apartment-id/reports', roles: ['guest', 'host'] },
+  { method: 'POST', path: `/api/apartments/${TEST_UUID}/reports`, roles: ['guest', 'host'] },
   { method: 'POST', path: '/api/bid-requests', roles: ['guest', 'host'] },
   { method: 'PATCH', path: '/api/bid-requests/bid-id', roles: ['host', 'admin'] },
   { method: 'POST', path: '/api/reservations', roles: ['guest', 'host'] },
   { method: 'GET', path: '/api/reservations' },
   { method: 'GET', path: '/api/reservations/reservation-id' },
   { method: 'POST', path: '/api/reservations/reservation-id/cancel', roles: ['guest', 'host'] },
-  { method: 'POST', path: '/api/escrow-claims/escrow-id', roles: ['guest', 'host'] },
+  { method: 'POST', path: `/api/escrow-claims/${TEST_UUID}`, roles: ['guest', 'host'] },
   { method: 'GET', path: '/api/escrow-claims/escrow-id' },
   { method: 'POST', path: '/api/v1/bookings/hold', roles: ['guest'] },
   { method: 'DELETE', path: '/api/v1/bookings/hold/hold-id', roles: ['guest'] },
 ]
 
 const app = express().use(express.json()).use(router)
+
+const rolePolicyRouteKeys = new Set([
+  'POST /api/apartments',
+  'PATCH /api/bid-requests/bid-id',
+  'POST /api/bid-requests',
+  'POST /api/reservations',
+  'POST /api/reservations/reservation-id/cancel',
+  `POST /api/escrow-claims/${TEST_UUID}`,
+  `POST /api/apartments/${TEST_UUID}/reports`,
+])
+
+const allowedRoleCases = routes
+  .filter(({ method, path }) => rolePolicyRouteKeys.has(`${method} ${path}`))
+  .flatMap((route) => route.roles?.map((role) => ({ ...route, role })) ?? [])
 
 function routeSourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -124,6 +165,88 @@ describe('route security', () => {
         .set('x-test-role', disallowedRole(roles))
 
       expect(response.status).toBe(403)
+    }
+  )
+
+  it.each(allowedRoleCases)(
+    '$method $path accepts the $role role',
+    async ({ method, path, role }) => {
+      const requestKey = `${method} ${path}`
+      const requestBodies: Record<string, object> = {
+        'POST /api/apartments': {
+          name: 'Test apartment',
+          location: 'Test city',
+          pricePerMonth: 1000,
+        },
+        'PATCH /api/bid-requests/bid-id': { status: 'approved' },
+        'POST /api/bid-requests': {
+          apartmentId: TEST_UUID,
+          proposedPrice: 100,
+          desiredMoveIn: '2026-12-01',
+        },
+        'POST /api/reservations': {
+          apartment_id: TEST_UUID,
+          check_in_date: '2026-12-01',
+          check_out_date: '2026-12-03',
+          total_amount: 100,
+        },
+        'POST /api/reservations/reservation-id/cancel': {},
+        [`POST /api/escrow-claims/${TEST_UUID}`]: {
+          body: 'A valid claim body',
+          clientOpId: TEST_UUID,
+        },
+        [`POST /api/apartments/${TEST_UUID}/reports`]: {
+          category: 'inaccurate',
+          clientOpId: TEST_UUID,
+        },
+      }
+
+      if (requestKey === 'POST /api/apartments') {
+        ;(apartmentRepository.createApartmentRecord as jest.Mock).mockResolvedValue({
+          id: 'apartment-id',
+          price: 1000,
+        })
+      } else if (requestKey === 'PATCH /api/bid-requests/bid-id') {
+        ;(bidRequestService.updateBidRequest as jest.Mock).mockResolvedValue({
+          kind: 'updated',
+          bid: { id: 'bid-id' },
+        })
+      } else if (requestKey === 'POST /api/bid-requests') {
+        ;(bidRequestService.createBidRequest as jest.Mock).mockResolvedValue({
+          kind: 'created',
+          bid: { id: 'bid-id' },
+        })
+      } else if (requestKey === 'POST /api/reservations') {
+        ;(reservationService.createReservation as jest.Mock).mockResolvedValue({
+          id: 'reservation-id',
+        })
+      } else if (requestKey === 'POST /api/reservations/reservation-id/cancel') {
+        ;(reservationRepository.findReservationById as jest.Mock).mockResolvedValue(null)
+      } else if (requestKey === `POST /api/escrow-claims/${TEST_UUID}`) {
+        ;(escrowClaimsService.createEscrowClaim as jest.Mock).mockResolvedValue({
+          kind: 'not-participant',
+        })
+      } else if (requestKey === `POST /api/apartments/${TEST_UUID}/reports`) {
+        ;(listingReportService.createListingReport as jest.Mock).mockResolvedValue({
+          kind: 'not-found',
+        })
+      }
+
+      const response = await callRoute(method, path)
+        .set('Authorization', 'Bearer test-token')
+        .set('x-test-role', role)
+        .send(requestBodies[requestKey])
+
+      const expectedStatus: Record<string, number> = {
+        'POST /api/apartments': 201,
+        'PATCH /api/bid-requests/bid-id': 200,
+        'POST /api/bid-requests': 201,
+        'POST /api/reservations': 201,
+        'POST /api/reservations/reservation-id/cancel': 404,
+        [`POST /api/escrow-claims/${TEST_UUID}`]: 404,
+        [`POST /api/apartments/${TEST_UUID}/reports`]: 404,
+      }
+      expect(response.status).toBe(expectedStatus[requestKey])
     }
   )
 
@@ -190,7 +313,7 @@ describe('public route boundary', () => {
     )]
       .filter((match) => match.index! < authBoundary)
       .map((match) => match[3])
-    expect(preAuthMounts).toEqual(['apiIpRateLimit', 'authIpRateLimit'])
+    expect(preAuthMounts).toEqual([])
     expect(routesIndex.indexOf('router.use(confirmTransactionRoute)')).toBeGreaterThan(authBoundary)
 
     const directRouterRoutes = [...routesIndex.matchAll(
@@ -200,16 +323,32 @@ describe('public route boundary', () => {
   })
 
   it('allows only documented non-/api application mounts', () => {
-    const mounts = [...appSource.matchAll(/app\.use\(\s*(['"])([^'"]*)\1/g)]
-      .map((match) => match[2])
-    expect(mounts).toEqual(expect.arrayContaining([
-      '/',
-      '/health',
-      '/api/escrows/initialize',
-      '/reconciliation',
-    ]))
-    expect(mounts.filter((path) => path !== '/' && !path.startsWith('/api') && path !== '/health' && path !== '/reconciliation'))
-      .toEqual([])
+    const mounts = [...appSource.matchAll(
+      /app\.use\(\s*(['"])([^'"]*)\1\s*,\s*([A-Za-z_$][\w$]*)/g
+    )]
+      .map((match) => `${match[2]}:${match[3]}`)
+      .sort()
+    expect(mounts).toEqual([
+      '/:routes',
+      '/api:apiIpRateLimit',
+      '/api/auth:authIpRateLimit',
+      '/api/escrows/initialize:publicRateLimit',
+      '/health:healthRateLimit',
+      '/reconciliation:publicRateLimit',
+      '/reconciliation:reconciliationRoutes',
+    ])
+
+    const bareUses = [...appSource.matchAll(/app\.use\(\s*([A-Za-z_$][\w$]*)\s*\)/g)]
+      .map((match) => match[1])
+      .sort()
+    expect(bareUses).toEqual(['bindRequestContext', 'errorHandler', 'notFoundHandler', 'requestId'])
+
+    const bodyParser = appSource.indexOf("app.use(express.json")
+    for (const limiter of ['apiIpRateLimit', 'authIpRateLimit']) {
+      const mountIndex = appSource.indexOf(`app.use('${limiter === 'apiIpRateLimit' ? '/api' : '/api/auth'}', ${limiter})`)
+      expect(mountIndex).toBeGreaterThanOrEqual(0)
+      expect(mountIndex).toBeLessThan(bodyParser)
+    }
 
     const directRoutes = [...appSource.matchAll(
       /app\.(get|post|put|patch|delete|options|all)\(\s*(['"])([^'"]+)\2/gi

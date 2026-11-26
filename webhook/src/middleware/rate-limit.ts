@@ -13,6 +13,14 @@ function positiveIntegerEnv(name: string, fallback: number): number {
   return parsed
 }
 
+function positiveWindowEnv(name: string, fallback: number): number {
+  const parsed = positiveIntegerEnv(name, fallback)
+  if (parsed > 2_147_483_647) {
+    throw new Error(`${name} must not exceed 2147483647 milliseconds`)
+  }
+  return parsed
+}
+
 function userOrIpKey(req: Request): string {
   const uid = (req as AuthenticatedRequest).context?.uid
   return uid ? `user:${uid}` : ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown')
@@ -20,7 +28,7 @@ function userOrIpKey(req: Request): string {
 
 function createLimiter(windowEnv: string, limitEnv: string, defaultLimit: number) {
   return rateLimit({
-    windowMs: positiveIntegerEnv(windowEnv, 15 * 60 * 1000),
+    windowMs: positiveWindowEnv(windowEnv, 15 * 60 * 1000),
     limit: positiveIntegerEnv(limitEnv, defaultLimit),
     standardHeaders: true,
     legacyHeaders: false,
@@ -33,7 +41,7 @@ export const apiIpRateLimit = createLimiter('API_RATE_LIMIT_WINDOW_MS', 'API_IP_
 
 // Applied after authentication, so valid API traffic is isolated by user ID.
 export const apiRateLimit = rateLimit({
-  windowMs: positiveIntegerEnv('API_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+  windowMs: positiveWindowEnv('API_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
   limit: positiveIntegerEnv('API_RATE_LIMIT_MAX', 100),
   standardHeaders: true,
   legacyHeaders: false,
@@ -42,7 +50,7 @@ export const apiRateLimit = rateLimit({
 })
 
 export const authRateLimit = rateLimit({
-  windowMs: positiveIntegerEnv('AUTH_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+  windowMs: positiveWindowEnv('AUTH_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
   limit: positiveIntegerEnv('AUTH_RATE_LIMIT_MAX', 10),
   standardHeaders: true,
   legacyHeaders: false,
@@ -53,8 +61,8 @@ export const authRateLimit = rateLimit({
 // Unauthenticated auth-endpoint traffic is keyed by IP before token verification.
 export const authIpRateLimit = createLimiter(
   'AUTH_RATE_LIMIT_WINDOW_MS',
-  'AUTH_RATE_LIMIT_MAX',
-  10
+  'AUTH_IP_RATE_LIMIT_MAX',
+  300
 )
 
 export const publicRateLimit = createLimiter(
