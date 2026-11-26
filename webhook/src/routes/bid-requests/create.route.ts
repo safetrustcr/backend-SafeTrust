@@ -2,6 +2,7 @@
 
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
 import { createBidRequestHandler, isValidCalendarDate } from './create.handler'
+import { requireRole } from '../../middleware/require-role'
 
 const router = Router()
 
@@ -43,6 +44,6 @@ export function validateCreateBidRequest(req: Request, res: Response, next: Next
   next()
 }
 
-router.post('/', validateCreateBidRequest, createBidRequestHandler as unknown as RequestHandler)
+router.post('/', requireRole(['guest', 'host']), validateCreateBidRequest, createBidRequestHandler as unknown as RequestHandler)
 
 export default router
