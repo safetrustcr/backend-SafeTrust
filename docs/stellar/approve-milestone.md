@@ -21,14 +21,18 @@ derivation, in this order:
 When none of these flags applies, reconciliation falls back to the legacy
 milestone-based rules:
 
-- For single-release escrows, an approved milestone derives
-  `milestone_approved` only when higher-priority conditions do not apply.
-  A resolved escrow derives `resolved`, while a released escrow derives
-  `completed` and a disputed escrow derives `disputed`.
-- For multi-release escrows, settled and disputed conditions take precedence.
-  When all milestones are settled, reconciliation derives `completed` or
-  `resolved`; an unresolved disputed milestone derives `disputed`.
-  Only then does an approved or released milestone derive
+- For single-release escrows, reconciliation checks legacy flags in
+  precedence order: `resolved`, then `released`, then `disputed`.
+  A resolved escrow derives `resolved`; otherwise, a released escrow derives
+  `completed`, even when the disputed flag is also true. A disputed escrow
+  derives `disputed` only when neither higher-priority flag applies.
+  An approved milestone derives `milestone_approved` only when higher-priority
+  conditions do not apply.
+- For multi-release escrows, reconciliation first checks whether every
+  milestone is released or resolved. When all milestones are settled, it
+  derives `completed` or `resolved`, respectively. Otherwise, an unresolved
+  disputed milestone derives `disputed` only when not all milestones are
+  settled. Only then does an approved or released milestone derive
   `milestone_approved`.
 - Reconciliation applies only legal local-to-observed transitions and checks
   the observed ledger sequence against the stored sequence when available.
