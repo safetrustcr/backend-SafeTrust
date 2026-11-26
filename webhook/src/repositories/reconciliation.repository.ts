@@ -146,10 +146,21 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     updated_at = NOW()
   WHERE safetrust.trustless_work_escrows.tenant_id = EXCLUDED.tenant_id
     AND (
-    safetrust.trustless_work_escrows.status NOT IN ('completed', 'resolved', 'cancelled')
+      safetrust.trustless_work_escrows.status NOT IN ('completed', 'resolved', 'cancelled')
+      OR (
+        EXCLUDED.ledger_seq = safetrust.trustless_work_escrows.ledger_seq
+        AND safetrust.trustless_work_escrows.status = EXCLUDED.status
+        AND safetrust.trustless_work_escrows.balance = EXCLUDED.balance
+      )
+    )
     AND (
       safetrust.trustless_work_escrows.ledger_seq IS NULL
       OR EXCLUDED.ledger_seq > safetrust.trustless_work_escrows.ledger_seq
+      OR (
+        EXCLUDED.ledger_seq = safetrust.trustless_work_escrows.ledger_seq
+        AND safetrust.trustless_work_escrows.status = EXCLUDED.status
+        AND safetrust.trustless_work_escrows.balance = EXCLUDED.balance
+      )
     )
     AND (
       safetrust.trustless_work_escrows.status = EXCLUDED.status
@@ -205,6 +216,28 @@ export async function fetchSorobanEscrowRows(
     [tenantId]
   )
   return rows
+}
+
+export interface ReconciliationTransitionStateRow {
+  contract_id: string
+  id: string
+  status: string
+  balance: string | null
+}
+
+export async function fetchEscrowTransitionStates(
+  contractIds: string[],
+  tenantId: string = getPlatformTenantId()
+): Promise<ReconciliationTransitionStateRow[]> {
+  if (contractIds.length === 0) return []
+  const result = await db.query<ReconciliationTransitionStateRow>(
+    `SELECT contract_id, id::text AS id, status, balance::text AS balance
+       FROM safetrust.trustless_work_escrows
+      WHERE tenant_id = $1
+        AND contract_id = ANY($2::text[])`,
+    [tenantId, contractIds]
+  )
+  return result?.rows ?? []
 }
 
 export async function upsertEscrows(

@@ -4,6 +4,7 @@ Feature: POST /api/apartments
     * url webhookUrl
     * def validToken = karate.call('classpath:helpers/get-firebase-token.js')
     * db.execute(karate.read('file:tests/karate/fixtures/seed-test-users.sql'))
+    * db.execute("INSERT INTO safetrust.user_roles (user_id, role_id) SELECT 'owner-123', id FROM safetrust.roles WHERE name = 'host' ON CONFLICT DO NOTHING")
 
   Scenario: Valid body → 201, apartment in DB
     Given path '/api/apartments'
@@ -32,6 +33,7 @@ Feature: POST /api/apartments
   Scenario: Missing name → 400
     Given path '/api/apartments'
     And header Authorization = 'Bearer ' + validToken
+    And header x-test-uid = 'owner-123'
     And request { "price": 1000 }
     When method POST
     Then status 400
@@ -41,11 +43,20 @@ Feature: POST /api/apartments
   Scenario: Missing pricePerMonth → 400
     Given path '/api/apartments'
     And header Authorization = 'Bearer ' + validToken
+    And header x-test-uid = 'owner-123'
     And request { "name": "No Price" }
     When method POST
     Then status 400
     And match response.error == 'validation_failed'
     And match response.fields == '#object'
+
+  Scenario: Guest cannot create an apartment
+    Given path '/api/apartments'
+    And header Authorization = 'Bearer ' + validToken
+    And header x-test-uid = 'tenant-456'
+    And request { "name": "Guest Listing", "location": "San José", "pricePerMonth": 1000 }
+    When method POST
+    Then status 403
 
   Scenario: No token → 401
     Given path '/api/apartments'

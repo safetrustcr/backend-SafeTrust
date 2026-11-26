@@ -61,7 +61,7 @@ describe('createBidRequestHandler', () => {
       bid: {
         id: 'bid-new-1',
         apartment_id: '123e4567-e89b-12d3-a456-426614174000',
-        tenant_id: 'tenant-123',
+        bidder_id: 'tenant-123',
         proposed_price: 1000,
         desired_move_in: '2026-09-01T00:00:00.000Z',
         current_status: 'PENDING',

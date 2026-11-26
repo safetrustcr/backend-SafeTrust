@@ -12,6 +12,7 @@ import {
   processExternalSubmission,
   type StellarNetwork,
 } from '../../services/confirmation.service'
+import { isEscrowParty } from '../../services/escrow.service'
 import type { ConfirmTransactionBody } from '../../validation'
 
 export type ConfirmTransactionPayload = ConfirmTransactionBody
@@ -36,6 +37,18 @@ export async function confirmTransactionHandler(
   const tenantId = req.context?.tenantId
   if (!tenantId) {
     return res.status(401).json({ error: 'Unauthorized' })
+  }
+
+  const uid = req.context?.uid || req.user?.uid
+  if (!uid) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+
+  if (!(await isEscrowParty(uid, escrowId, tenantId))) {
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'Caller is not a recognized party on this escrow',
+    })
   }
 
   // Dispatch according to the validated submission path.
@@ -77,6 +90,8 @@ export async function confirmTransactionHandler(
       return res.status(400).json({ error: 'txHash is required for external submission' })
     }
 
+    // update-from-txHash only updates Trustless Work's Firebase index; it does
+    // not write SafeTrust PostgreSQL. Local promotion is handled separately.
     const result = await processExternalSubmission({
       txHash,
       escrowId,

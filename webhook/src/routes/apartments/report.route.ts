@@ -1,5 +1,5 @@
 import { Router, RequestHandler } from 'express'
-import { authMiddleware } from '../../middleware/auth.middleware'
+import { requireRole } from '../../middleware/require-role'
 import { createReportHandler } from './report.handler'
 import { validate } from '../../middleware/validate'
 import { createListingReportSchema } from '../../validation'
@@ -8,7 +8,7 @@ const router = Router()
 
 router.post(
   '/:id/reports',
-  authMiddleware,
+  requireRole(['guest', 'host']),
   validate(createListingReportSchema),
   createReportHandler as unknown as RequestHandler
 )

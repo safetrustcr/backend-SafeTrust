@@ -65,7 +65,6 @@ insert_permissions:
         - user_tier
         - min_transaction_amount
         - max_transaction_amount
-        - user_id_list
       comment: "Admins can create pricing overrides"
 update_permissions:
   - role: admin
@@ -81,7 +80,6 @@ update_permissions:
         - user_tier
         - min_transaction_amount
         - max_transaction_amount
-        - user_id_list
       filter: {}
       check: {}
       comment: "Admins can update pricing overrides"

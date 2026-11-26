@@ -131,6 +131,11 @@ describe('request validation middleware', () => {
   it('mounts reservation creation validation before the handler', async () => {
     const app = express()
     app.use(express.json())
+    app.use((req, _res, next) => {
+      req.context = { uid: 'validation-test-user', tenantId: 'safetrust', roles: ['guest'] }
+      req.user = { uid: 'validation-test-user', role: 'guest', roles: ['guest'] }
+      next()
+    })
     app.use('/api/reservations', reservationsRouter)
 
     const response = await request(app).post('/api/reservations').send({})

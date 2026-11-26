@@ -37,6 +37,8 @@ const apartmentListQuerySchema = z.object({
   bedrooms: z.string().regex(/^\d+$/).optional(),
   petFriendly: z.enum(['true', 'false', '1', '0', 'yes', 'no']).optional(),
   category: z.string().optional(),
+  checkIn: z.string().optional(),
+  checkOut: z.string().optional(),
   page: z.string().regex(/^[1-9]\d*$/).optional(),
   limit: z.string().regex(/^[1-9]\d*$/).optional(),
   sort: z.enum(['price_asc', 'price_desc', 'created_at']).optional(),
@@ -45,6 +47,19 @@ const apartmentListQuerySchema = z.object({
   path: ['limit'],
   message: 'Must be 100 or less',
 })
+.refine(
+  (query) =>
+    (query.checkIn === undefined && query.checkOut === undefined) ||
+    (query.checkIn !== undefined &&
+      query.checkOut !== undefined &&
+      /^\d{4}-\d{2}-\d{2}$/.test(query.checkIn) &&
+      /^\d{4}-\d{2}-\d{2}$/.test(query.checkOut) &&
+      query.checkOut > query.checkIn),
+  {
+    path: ['checkIn'],
+    message: 'Both dates must use YYYY-MM-DD and checkOut must be after checkIn',
+  }
+)
 export { apartmentListQuerySchema }
 export type ApartmentListQuery = z.infer<typeof apartmentListQuerySchema>
 
