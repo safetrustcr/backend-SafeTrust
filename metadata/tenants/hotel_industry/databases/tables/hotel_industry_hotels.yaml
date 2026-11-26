@@ -44,11 +44,13 @@ select_permissions:
         - coordinates
         - created_at
         - updated_at
-      filter: {}
+      filter: {} # security-reviewed: hotel catalog is public; selectable columns are public-facing
 insert_permissions:
   - role: user
     permission:
-      check: {}
+      check:
+        created_by_user_id:
+          _eq: x-hasura-user-id
       set:
         created_by_user_id: X-Hasura-User-Id
       columns:

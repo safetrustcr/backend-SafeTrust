@@ -114,6 +114,7 @@ const UPSERT_ESCROW_SQL = `
     COALESCE(NULLIF(EXCLUDED.approver, ''), safetrust.trustless_work_escrows.approver),
     COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser)
     )
+  )
   RETURNING contract_id, (xmax = 0) AS inserted
 `
 

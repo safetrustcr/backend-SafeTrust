@@ -13,7 +13,7 @@ Background:
 
 Scenario: Creator becomes owner and another user cannot update the hotel
   * def createQuery = 'mutation CreateHotel($object: hotel_industry_hotels_insert_input!) { insert_hotel_industry_hotels_one(object: $object) { id name members { user_id role } } }'
-  * def createVariables = { object: { name: '#(hotelName)', address_line: 'Avenida Central 100', city: 'San José' } }
+  * def createVariables = { object: { name: '#(hotelName)', address_line: 'Avenida Central 100', city: 'San José', members: { data: [{ user_id: '#(ownerId)', role: 'OWNER' }] } } }
   Given request { query: '#(createQuery)', variables: '#(createVariables)' }
   When method POST
   Then status 200

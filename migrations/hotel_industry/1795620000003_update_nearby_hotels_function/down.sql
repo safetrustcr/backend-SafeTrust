@@ -57,31 +57,3 @@ BEGIN
     LIMIT 5;
 END;
 $$ LANGUAGE plpgsql STABLE;
-
-CREATE FUNCTION hotel_industry.find_nearby_hotels(
-    search_location POINT,
-    radius_meters FLOAT,
-    location_area VARCHAR DEFAULT NULL
-)
-RETURNS SETOF hotel_industry.find_nearby_hotels_result AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        h.id,
-        ST_Distance(h.coordinates::geometry, search_location::geometry),
-        h.name,
-        h.description,
-        h.address,
-        h.location_area,
-        h.coordinates
-    FROM hotel_industry.hotels AS h
-    WHERE h.coordinates IS NOT NULL
-      AND ST_DWithin(
-          h.coordinates::geometry,
-          search_location::geometry,
-          radius_meters
-      )
-      AND (location_area IS NULL OR h.location_area = location_area)
-    ORDER BY 2;
-END;
-$$ LANGUAGE plpgsql STABLE;

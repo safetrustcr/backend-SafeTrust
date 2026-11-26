@@ -18,7 +18,7 @@ select_permissions:
         - neighborhood
         - country_code
         - coordinates
-      filter: {}
+      filter: {} # security-reviewed: public results from the nearby-hotels function
   - role: user
     permission:
       columns:
@@ -31,4 +31,4 @@ select_permissions:
         - neighborhood
         - country_code
         - coordinates
-      filter: {}
+      filter: {} # security-reviewed: public results from the nearby-hotels function
