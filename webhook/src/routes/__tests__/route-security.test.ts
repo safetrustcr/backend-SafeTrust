@@ -330,8 +330,8 @@ describe('public route boundary', () => {
       .sort()
     expect(mounts).toEqual([
       '/:routes',
-      '/api:apiIpRateLimit',
       '/api/auth:authIpRateLimit',
+      '/api:apiIpRateLimit',
       '/api/escrows/initialize:publicRateLimit',
       '/health:healthRateLimit',
       '/reconciliation:publicRateLimit',

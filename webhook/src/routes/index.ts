@@ -26,8 +26,7 @@ router.use(healthRoutes)
 router.use(initializeRoute)
 
 // ── 3. Authenticated routes (Firebase auth required) ──────────────────────────
-router.use('/api', authMiddleware as unknown as RequestHandler)
-router.use('/api', apiRateLimit)
+router.use('/api', authMiddleware as unknown as RequestHandler, apiRateLimit)
 router.use('/api/auth', authRateLimit)
 router.use('/api/auth',         authRoutes)
 router.use('/api/apartments',   apartmentRoutes)
