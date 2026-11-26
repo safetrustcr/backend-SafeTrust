@@ -290,6 +290,18 @@ export interface UnfundedReservationCandidate {
   escrow_status: string | null
 }
 
+interface LockedReservation {
+  reservation_id: string
+  reservation_status: string
+  escrow_id: string | null
+}
+
+interface LockedEscrow {
+  contract_id: string | null
+  network: string | null
+  status: string | null
+}
+
 /**
  * Cancel reservations created from a hold whose deposit escrow was never
  * funded, as soon as the hold deadline passes.
@@ -302,6 +314,13 @@ export interface UnfundedReservationCandidate {
  * (or completed) in the database, when the on-chain balance is non-zero, or
  * when the live check cannot establish the state (RPC/network error). Funded
  * deposits are therefore never cancelled or double-booked by the sweep.
+ *
+ * Each candidate is cancelled in its own transaction that holds
+ * `FOR NO KEY UPDATE` locks on the reservation and its escrow, re-checks both
+ * statuses under the lock, and then re-confirms the on-chain state. A funding
+ * update that commits before those locks are taken is therefore observed and
+ * wins; one that arrives later waits for the sweep to commit and then sees the
+ * cancelled reservation.
  */
 export async function cancelUnfundedReservationsForExpiredHolds(): Promise<number> {
   const candidates = await query<UnfundedReservationCandidate>(
@@ -316,47 +335,91 @@ export async function cancelUnfundedReservationsForExpiredHolds(): Promise<numbe
         AND h.expires_at <= NOW()`
   )
 
-  const toCancel: string[] = []
+  let cancelled = 0
   for (const candidate of candidates.rows) {
-    // Database said funded or completed: never touch it.
+    // Cheap early exit; the authoritative check happens again under the lock.
     if (candidate.escrow_status === 'funded' || candidate.escrow_status === 'completed') {
       continue
     }
 
-    let fundingState: EscrowFundingState
-    try {
-      fundingState = await escrowFundingChecker({
-        contractId: candidate.contract_id,
-        network: candidate.network,
-      })
-    } catch (error) {
-      // A transient check failure must not free dates a deposit may hold.
-      logger.warn('hold.onchain_funding_check_threw', {
-        contractId: candidate.contract_id,
-        reservationId: candidate.reservation_id,
-        error: (error as Error).message,
-      })
-      fundingState = 'unknown'
-    }
+    const didCancel = await withTransaction(async (client: PoolClient) => {
+      // Lock the reservation row before its escrow row: any concurrent escrow
+      // funding update either landed before this lock or waits for the commit.
+      const lockedReservation = await client.query<LockedReservation>(
+        `SELECT r.id::text AS reservation_id,
+                r.status AS reservation_status,
+                r.escrow_id::text AS escrow_id
+           FROM safetrust.reservations r
+          WHERE r.id = $1
+            AND r.status = 'escrow_created'
+            AND EXISTS (
+              SELECT 1
+                FROM safetrust.booking_holds h
+               WHERE h.id = r.booking_hold_id
+                 AND h.expires_at <= NOW()
+            )
+          FOR NO KEY UPDATE OF r`,
+        [candidate.reservation_id]
+      )
+      const reservation = lockedReservation.rows[0]
+      if (!reservation || reservation.reservation_status !== 'escrow_created') {
+        return false
+      }
 
-    if (fundingState !== 'unfunded') continue
-    toCancel.push(candidate.reservation_id)
+      let escrow: LockedEscrow | undefined
+      if (reservation.escrow_id) {
+        const lockedEscrow = await client.query<LockedEscrow>(
+          `SELECT contract_id, network, status
+             FROM safetrust.trustless_work_escrows
+            WHERE id = $1
+            FOR NO KEY UPDATE`,
+          [reservation.escrow_id]
+        )
+        escrow = lockedEscrow.rows[0]
+      }
+
+      // An escrow funded or completed while this candidate waited for the lock
+      // must win over the sweep.
+      if (escrow?.status === 'funded' || escrow?.status === 'completed') {
+        return false
+      }
+
+      let fundingState: EscrowFundingState
+      try {
+        fundingState = await escrowFundingChecker({
+          contractId: escrow?.contract_id ?? candidate.contract_id,
+          network: escrow?.network ?? candidate.network,
+        })
+      } catch (error) {
+        // A transient check failure must not free dates a deposit may hold.
+        logger.warn('hold.onchain_funding_check_threw', {
+          contractId: candidate.contract_id,
+          reservationId: candidate.reservation_id,
+          error: (error as Error).message,
+        })
+        fundingState = 'unknown'
+      }
+
+      if (fundingState !== 'unfunded') return false
+
+      const updated = await client.query(
+        `UPDATE safetrust.reservations
+            SET status = 'cancelled',
+                cancelled_at = NOW(),
+                cancelled_by = NULL,
+                cancel_reason = 'hold_expired',
+                updated_at = NOW()
+          WHERE id = $1
+            AND status = 'escrow_created'`,
+        [reservation.reservation_id]
+      )
+      return (updated.rowCount ?? 0) > 0
+    })
+
+    if (didCancel) cancelled += 1
   }
 
-  if (toCancel.length === 0) return 0
-
-  const result = await query(
-    `UPDATE safetrust.reservations
-        SET status = 'cancelled',
-            cancelled_at = NOW(),
-            cancelled_by = NULL,
-            cancel_reason = 'hold_expired',
-            updated_at = NOW()
-      WHERE id = ANY($1::uuid[])
-        AND status = 'escrow_created'`,
-    [toCancel]
-  )
-  return result.rowCount ?? 0
+  return cancelled
 }
 
 /**

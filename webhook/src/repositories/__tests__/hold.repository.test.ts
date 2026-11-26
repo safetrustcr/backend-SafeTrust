@@ -169,10 +169,31 @@ describe('hold.repository - cancelUnfundedReservationsForExpiredHolds', () => {
     escrow_status: 'created',
   }
 
+  const lockedReservationRow = {
+    reservation_id: 'reservation-1',
+    reservation_status: 'escrow_created',
+    escrow_id: 'escrow-1',
+  }
+
+  const lockedEscrowRow = {
+    contract_id: escrowCreatedCandidate.contract_id,
+    network: 'testnet',
+    status: 'created',
+  }
+
   let querySpy: jest.Mock
+  let connectSpy: jest.Mock
+  let client: { query: jest.Mock; release: jest.Mock }
 
   beforeEach(() => {
     querySpy = jest.spyOn(pool, 'query') as unknown as jest.Mock
+    querySpy.mockResolvedValue({ rowCount: 1, rows: [escrowCreatedCandidate] })
+
+    client = { query: jest.fn(), release: jest.fn() }
+    connectSpy = jest.spyOn(pool, 'connect') as unknown as jest.Mock
+    connectSpy.mockImplementation(() =>
+      Promise.resolve(client as unknown as PoolClient)
+    )
   })
 
   afterEach(() => {
@@ -180,12 +201,35 @@ describe('hold.repository - cancelUnfundedReservationsForExpiredHolds', () => {
     jest.restoreAllMocks()
   })
 
+  /** No cancellation UPDATE was issued on the locked transaction. */
+  function noCancelUpdate(target: { query: jest.Mock }): boolean {
+    return !target.query.mock.calls.some(([sql]) =>
+      String(sql).includes("SET status = 'cancelled'")
+    )
+  }
+
+  /** Queue the locked-transaction answers in call order. */
+  function queueLockedPath({
+    reservationRows = [lockedReservationRow],
+    escrowRows = [lockedEscrowRow],
+    updatedRowCount = 1,
+  }: {
+    reservationRows?: unknown[]
+    escrowRows?: unknown[]
+    updatedRowCount?: number
+  } = {}) {
+    client.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: reservationRows }) // lock reservation
+      .mockResolvedValueOnce({ rows: escrowRows }) // lock escrow
+      .mockResolvedValueOnce({ rowCount: updatedRowCount, rows: [] }) // UPDATE
+      .mockResolvedValueOnce({}) // COMMIT
+  }
+
   it('cancels an unfunded escrow_created reservation as soon as its hold expires', async () => {
     const checker = jest.fn().mockResolvedValue('unfunded')
     setEscrowFundingChecker(checker)
-    querySpy
-      .mockResolvedValueOnce({ rowCount: 1, rows: [escrowCreatedCandidate] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+    queueLockedPath()
 
     const cancelled = await cancelUnfundedReservationsForExpiredHolds()
 
@@ -201,39 +245,51 @@ describe('hold.repository - cancelUnfundedReservationsForExpiredHolds', () => {
     // No grace delay: an expired hold's unfunded reservation is cancelled at once.
     expect(candidateSql).not.toContain('NOW() - (')
 
-    const [updateSql, params] = querySpy.mock.calls[1] as [string, unknown[]]
-    expect(updateSql).toContain("SET status = 'cancelled'")
-    expect(updateSql).toContain("cancel_reason = 'hold_expired'")
-    expect(params).toEqual([['reservation-1']])
+    expect(client.query).toHaveBeenCalledWith('BEGIN')
+    expect(client.query).toHaveBeenCalledWith('COMMIT')
+
+    const lockCalls = client.query.mock.calls.filter(([sql]) =>
+      String(sql).includes('FOR NO KEY UPDATE')
+    )
+    expect(lockCalls).toHaveLength(2)
+    expect(lockCalls[0][0]).toContain('safetrust.reservations')
+    expect(lockCalls[0][0]).toContain('FOR NO KEY UPDATE OF r')
+    expect(lockCalls[0][1]).toEqual(['reservation-1'])
+    expect(lockCalls[1][0]).toContain('safetrust.trustless_work_escrows')
+    expect(lockCalls[1][1]).toEqual(['escrow-1'])
+
+    const updateCall = client.query.mock.calls.find(([sql]) =>
+      String(sql).includes("SET status = 'cancelled'")
+    )
+    expect(updateCall?.[0]).toContain("cancel_reason = 'hold_expired'")
+    expect(updateCall?.[0]).toContain("AND status = 'escrow_created'")
+    expect(updateCall?.[1]).toEqual(['reservation-1'])
+    expect(client.release).toHaveBeenCalledTimes(1)
   })
 
   it('preserves a reservation that is funded on-chain but not yet polled', async () => {
     const checker = jest.fn().mockResolvedValue('funded')
     setEscrowFundingChecker(checker)
-    querySpy.mockResolvedValueOnce({
-      rowCount: 1,
-      rows: [escrowCreatedCandidate],
-    })
+    queueLockedPath()
 
     const cancelled = await cancelUnfundedReservationsForExpiredHolds()
 
     expect(cancelled).toBe(0)
     expect(checker).toHaveBeenCalledTimes(1)
-    expect(querySpy).toHaveBeenCalledTimes(1)
+    expect(noCancelUpdate(client)).toBe(true)
+    expect(client.query).toHaveBeenCalledWith('COMMIT')
   })
 
   it('preserves the reservation when the live on-chain check fails transiently', async () => {
     const checker = jest.fn().mockRejectedValue(new Error('soroban RPC timeout'))
     setEscrowFundingChecker(checker)
-    querySpy.mockResolvedValueOnce({
-      rowCount: 1,
-      rows: [escrowCreatedCandidate],
-    })
+    queueLockedPath()
 
     const cancelled = await cancelUnfundedReservationsForExpiredHolds()
 
     expect(cancelled).toBe(0)
-    expect(querySpy).toHaveBeenCalledTimes(1)
+    expect(noCancelUpdate(client)).toBe(true)
+    expect(client.query).toHaveBeenCalledWith('COMMIT')
   })
 
   it('never cancels a reservation whose database escrow is already funded', async () => {
@@ -248,6 +304,37 @@ describe('hold.repository - cancelUnfundedReservationsForExpiredHolds', () => {
 
     expect(cancelled).toBe(0)
     expect(checker).not.toHaveBeenCalled()
+    expect(connectSpy).not.toHaveBeenCalled()
     expect(querySpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips cancellation when the locked escrow transitions to funded before commit', async () => {
+    const checker = jest.fn().mockResolvedValue('unfunded')
+    setEscrowFundingChecker(checker)
+    // The candidate scan saw 'created'; the locked row is already funded.
+    queueLockedPath({
+      escrowRows: [{ ...lockedEscrowRow, status: 'funded' }],
+      updatedRowCount: 0,
+    })
+
+    const cancelled = await cancelUnfundedReservationsForExpiredHolds()
+
+    expect(cancelled).toBe(0)
+    expect(checker).not.toHaveBeenCalled()
+    expect(noCancelUpdate(client)).toBe(true)
+    expect(client.query).toHaveBeenCalledWith('COMMIT')
+  })
+
+  it('skips cancellation when the locked reservation is no longer escrow_created', async () => {
+    const checker = jest.fn().mockResolvedValue('unfunded')
+    setEscrowFundingChecker(checker)
+    queueLockedPath({ reservationRows: [] })
+
+    const cancelled = await cancelUnfundedReservationsForExpiredHolds()
+
+    expect(cancelled).toBe(0)
+    expect(checker).not.toHaveBeenCalled()
+    expect(noCancelUpdate(client)).toBe(true)
+    expect(client.query).toHaveBeenCalledWith('COMMIT')
   })
 })
