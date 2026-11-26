@@ -63,15 +63,16 @@ Trustless Work smart contracts enforce multi-party governance on the Stellar net
 ### 4. What Happens if the Agent Never Submits the Signed XDR
 - When the reservation and escrow are generated, the reservation enters **`escrow_created`** status with an on-chain balance of `0`.
 - The originating booking hold transitions to `converted`.
-- If the agent crashes, abandons the flow, or never submits the signed XDR, the escrow remains unfunded (`balance: 0`), and the reservation is cancelled once the converted hold's deadline (plus a short grace period) passes, releasing the dates.
+- If the agent crashes, abandons the flow, or never submits the signed XDR, the escrow remains unfunded (`balance: 0`), and the reservation is cancelled as soon as the converted hold's deadline passes, releasing the dates.
 
 #### Unfunded Reservation Cleanup
 
 Unfunded `escrow_created` reservations are cancelled automatically, freeing the dates:
 
-- Every 30 seconds the hold expiry job runs `expireHolds`, which also cancels `escrow_created` reservations created from a hold whose `expires_at` has passed.
-- A 15-minute grace period after the hold deadline lets a `fund_escrow` transaction submitted just before the deadline be observed by the poller before the sweep runs.
-- The sweep never touches a reservation whose escrow is already `funded` or `completed`, so an on-chain deposit can never be cancelled by it.
+- Every 30 seconds the hold expiry job runs `expireHolds`, which also cancels `escrow_created` reservations created from a hold whose `expires_at` has passed. There is **no grace delay**: an unfunded reservation is cancelled immediately when its hold expires.
+- Before cancelling, the sweep verifies the escrow's **live on-chain funding state** through the same Soroban reconciler used by the reconciliation poller, not just the local `trustless_work_escrows` row. A reservation whose escrow holds funds on-chain is preserved even if the poller has not yet written `funded` to the database.
+- If the live on-chain check cannot establish the state (Soroban RPC or network error, reconciler unavailable), the reservation is **preserved** on that sweep and retried on the next one. Funded deposits are therefore never cancelled or double-booked.
+- The sweep never touches a reservation whose escrow is already `funded` or `completed` in the database.
 - The reservation is written as `cancelled` with `cancel_reason = 'hold_expired'`; retrying the booking with the same `hold_id` then answers `409` (`code: hold_expired`) because the hold can no longer produce a booking.
 
 ### 5. Escrow Locks Only the Quoted Deposit (Not the Full Stay)

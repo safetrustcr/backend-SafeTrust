@@ -2,17 +2,13 @@ import type { PoolClient } from 'pg'
 import { query, withTransaction } from '../services/db'
 import { ConflictError, NotFoundError, ForbiddenError, ValidationError } from '../utils/errors'
 import { calculateQuote } from '../services/quote'
+import { hasSorobanReconciler, querySorobanEscrow } from '../lib/source-adapters/soroban.adapter'
+import { logger } from '../middleware/logger'
 
 export const HOLD_DURATION_MS = 10 * 60 * 1000
 export const MAX_ACTIVE_HOLDS_PER_USER = 3
 /** pending_payment holds older than this never got their payment confirmed. */
 export const PENDING_PAYMENT_TIMEOUT_MS = 2 * 60 * 1000
-/**
- * Grace period after a hold's deadline before its unfunded reservation is
- * cancelled. The agent may have submitted its signed fund transaction just
- * before the deadline and the poller may not have observed the balance yet.
- */
-export const UNFUNDED_RESERVATION_GRACE_MS = 15 * 60 * 1000
 
 const EXCLUSION_VIOLATION = '23P01'
 
@@ -222,35 +218,143 @@ export async function releaseHold(holdId: string, userId: string, tenantId: stri
   }
 }
 
+export type EscrowFundingState = 'funded' | 'unfunded' | 'unknown'
+
+export interface EscrowFundingTarget {
+  contractId: string | null
+  network: string | null
+}
+
+/** Live on-chain funding check used before an unfunded reservation is cancelled. */
+export type EscrowFundingChecker = (
+  target: EscrowFundingTarget
+) => Promise<EscrowFundingState>
+
+const DEFAULT_STELLAR_NETWORK = 'testnet'
+
 /**
- * Cancel reservations that were created from a hold but whose deposit escrow
- * was never funded before the hold deadline (plus a short grace period, so a
- * transaction submitted just before the deadline can still be observed).
+ * Default on-chain funding check, backed by the same soroban-reconciler native
+ * addon the reconciliation service uses (`querySorobanEscrow`).
+ *
+ * Returns `unknown` whenever the live state cannot be read (addon missing, RPC
+ * or network error, malformed payload) so the caller treats it as unverifiable
+ * and preserves the reservation instead of risking a funded deposit.
+ */
+export const checkEscrowFundingOnChain: EscrowFundingChecker = async ({
+  contractId,
+  network,
+}) => {
+  // No contract was ever linked, so there is nothing on-chain to protect.
+  if (!contractId) return 'unfunded'
+
+  if (!hasSorobanReconciler()) {
+    logger.warn('hold.onchain_funding_check_unavailable', { contractId })
+    return 'unknown'
+  }
+
+  try {
+    const raw = querySorobanEscrow(contractId, network || DEFAULT_STELLAR_NETWORK)
+    const onChain = JSON.parse(raw) as {
+      status?: string
+      balance?: number | string | null
+    }
+    const balance = Number(onChain?.balance ?? 0)
+    if (
+      onChain?.status === 'funded' ||
+      onChain?.status === 'completed' ||
+      (Number.isFinite(balance) && balance > 0)
+    ) {
+      return 'funded'
+    }
+    return 'unfunded'
+  } catch (error) {
+    logger.warn('hold.onchain_funding_check_failed', {
+      contractId,
+      error: (error as Error).message,
+    })
+    return 'unknown'
+  }
+}
+
+let escrowFundingChecker: EscrowFundingChecker = checkEscrowFundingOnChain
+
+/** Test seam: install a checker, or pass null to restore the on-chain default. */
+export function setEscrowFundingChecker(checker: EscrowFundingChecker | null): void {
+  escrowFundingChecker = checker ?? checkEscrowFundingOnChain
+}
+
+export interface UnfundedReservationCandidate {
+  reservation_id: string
+  contract_id: string | null
+  network: string | null
+  escrow_status: string | null
+}
+
+/**
+ * Cancel reservations created from a hold whose deposit escrow was never
+ * funded, as soon as the hold deadline passes.
  *
  * The reservation stays `escrow_created` while the agent signs and submits the
  * fund transaction; if it never does, cancelling frees the dates for others.
- * Funded (or completed) escrows are never touched, so an on-chain deposit can
- * never be cancelled by the sweep.
+ *
+ * Before cancelling, the escrow's live on-chain funding state is verified with
+ * `escrowFundingChecker`. A reservation is preserved when its escrow is funded
+ * (or completed) in the database, when the on-chain balance is non-zero, or
+ * when the live check cannot establish the state (RPC/network error). Funded
+ * deposits are therefore never cancelled or double-booked by the sweep.
  */
 export async function cancelUnfundedReservationsForExpiredHolds(): Promise<number> {
+  const candidates = await query<UnfundedReservationCandidate>(
+    `SELECT r.id::text AS reservation_id,
+            e.contract_id,
+            e.network,
+            e.status AS escrow_status
+       FROM safetrust.reservations r
+       JOIN safetrust.booking_holds h ON h.id = r.booking_hold_id
+       LEFT JOIN safetrust.trustless_work_escrows e ON e.id = r.escrow_id
+      WHERE r.status = 'escrow_created'
+        AND h.expires_at <= NOW()`
+  )
+
+  const toCancel: string[] = []
+  for (const candidate of candidates.rows) {
+    // Database said funded or completed: never touch it.
+    if (candidate.escrow_status === 'funded' || candidate.escrow_status === 'completed') {
+      continue
+    }
+
+    let fundingState: EscrowFundingState
+    try {
+      fundingState = await escrowFundingChecker({
+        contractId: candidate.contract_id,
+        network: candidate.network,
+      })
+    } catch (error) {
+      // A transient check failure must not free dates a deposit may hold.
+      logger.warn('hold.onchain_funding_check_threw', {
+        contractId: candidate.contract_id,
+        reservationId: candidate.reservation_id,
+        error: (error as Error).message,
+      })
+      fundingState = 'unknown'
+    }
+
+    if (fundingState !== 'unfunded') continue
+    toCancel.push(candidate.reservation_id)
+  }
+
+  if (toCancel.length === 0) return 0
+
   const result = await query(
-    `UPDATE safetrust.reservations r
+    `UPDATE safetrust.reservations
         SET status = 'cancelled',
             cancelled_at = NOW(),
             cancelled_by = NULL,
             cancel_reason = 'hold_expired',
             updated_at = NOW()
-       FROM safetrust.booking_holds h
-      WHERE r.booking_hold_id = h.id
-        AND r.status = 'escrow_created'
-        AND h.expires_at <= NOW() - ($1 || ' milliseconds')::interval
-        AND NOT EXISTS (
-          SELECT 1
-            FROM safetrust.trustless_work_escrows e
-           WHERE e.id = r.escrow_id
-             AND e.status IN ('funded', 'completed')
-        )`,
-    [String(UNFUNDED_RESERVATION_GRACE_MS)]
+      WHERE id = ANY($1::uuid[])
+        AND status = 'escrow_created'`,
+    [toCancel]
   )
   return result.rowCount ?? 0
 }

@@ -3,7 +3,7 @@ import { pool } from '../../services/db'
 import {
   cancelUnfundedReservationsForExpiredHolds,
   convertHoldToReservation,
-  UNFUNDED_RESERVATION_GRACE_MS,
+  setEscrowFundingChecker,
 } from '../hold.repository'
 
 describe('hold.repository - convertHoldToReservation', () => {
@@ -162,23 +162,92 @@ describe('hold.repository - convertHoldToReservation', () => {
 })
 
 describe('hold.repository - cancelUnfundedReservationsForExpiredHolds', () => {
+  const escrowCreatedCandidate = {
+    reservation_id: 'reservation-1',
+    contract_id: 'CTESTCONTRACT0000000000000000000000000000000000000000001',
+    network: 'testnet',
+    escrow_status: 'created',
+  }
+
+  let querySpy: jest.Mock
+
+  beforeEach(() => {
+    querySpy = jest.spyOn(pool, 'query') as unknown as jest.Mock
+  })
+
   afterEach(() => {
+    setEscrowFundingChecker(null)
     jest.restoreAllMocks()
   })
 
-  it('cancels only unfunded escrow_created reservations past the grace period', async () => {
-    const querySpy = jest.spyOn(pool, 'query') as unknown as jest.Mock
-    querySpy.mockResolvedValueOnce({ rowCount: 2, rows: [] })
+  it('cancels an unfunded escrow_created reservation as soon as its hold expires', async () => {
+    const checker = jest.fn().mockResolvedValue('unfunded')
+    setEscrowFundingChecker(checker)
+    querySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [escrowCreatedCandidate] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
 
     const cancelled = await cancelUnfundedReservationsForExpiredHolds()
 
-    expect(cancelled).toBe(2)
-    const [sql, params] = querySpy.mock.calls[0] as [string, unknown[]]
-    expect(sql).toContain("SET status = 'cancelled'")
-    expect(sql).toContain("r.status = 'escrow_created'")
-    expect(sql).toContain("cancel_reason = 'hold_expired'")
-    // Funded escrows are excluded, so an on-chain deposit is never cancelled.
-    expect(sql).toContain("e.status IN ('funded', 'completed')")
-    expect(params).toEqual([String(UNFUNDED_RESERVATION_GRACE_MS)])
+    expect(cancelled).toBe(1)
+    expect(checker).toHaveBeenCalledWith({
+      contractId: escrowCreatedCandidate.contract_id,
+      network: 'testnet',
+    })
+
+    const [candidateSql] = querySpy.mock.calls[0] as [string, unknown[]]
+    expect(candidateSql).toContain("r.status = 'escrow_created'")
+    expect(candidateSql).toContain('h.expires_at <= NOW()')
+    // No grace delay: an expired hold's unfunded reservation is cancelled at once.
+    expect(candidateSql).not.toContain('NOW() - (')
+
+    const [updateSql, params] = querySpy.mock.calls[1] as [string, unknown[]]
+    expect(updateSql).toContain("SET status = 'cancelled'")
+    expect(updateSql).toContain("cancel_reason = 'hold_expired'")
+    expect(params).toEqual([['reservation-1']])
+  })
+
+  it('preserves a reservation that is funded on-chain but not yet polled', async () => {
+    const checker = jest.fn().mockResolvedValue('funded')
+    setEscrowFundingChecker(checker)
+    querySpy.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [escrowCreatedCandidate],
+    })
+
+    const cancelled = await cancelUnfundedReservationsForExpiredHolds()
+
+    expect(cancelled).toBe(0)
+    expect(checker).toHaveBeenCalledTimes(1)
+    expect(querySpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves the reservation when the live on-chain check fails transiently', async () => {
+    const checker = jest.fn().mockRejectedValue(new Error('soroban RPC timeout'))
+    setEscrowFundingChecker(checker)
+    querySpy.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [escrowCreatedCandidate],
+    })
+
+    const cancelled = await cancelUnfundedReservationsForExpiredHolds()
+
+    expect(cancelled).toBe(0)
+    expect(querySpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('never cancels a reservation whose database escrow is already funded', async () => {
+    const checker = jest.fn().mockResolvedValue('unfunded')
+    setEscrowFundingChecker(checker)
+    querySpy.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ ...escrowCreatedCandidate, escrow_status: 'funded' }],
+    })
+
+    const cancelled = await cancelUnfundedReservationsForExpiredHolds()
+
+    expect(cancelled).toBe(0)
+    expect(checker).not.toHaveBeenCalled()
+    expect(querySpy).toHaveBeenCalledTimes(1)
   })
 })
