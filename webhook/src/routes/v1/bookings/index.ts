@@ -1,9 +1,9 @@
 import { RequestHandler, Router } from 'express'
 import { requireX402Payment } from '../../../middleware/x402-payment.middleware'
-import { createHoldHandler, releaseHoldHandler } from './hold.handler' feat/agent-bookings
+import { createHoldHandler, releaseHoldHandler } from './hold.handler'
 import { createBookingHandler } from './create.handler'
 import { submitBookingHandler } from './submit.handler'
-import { requireRole } from '../../../middleware/require-role' main
+import { requireRole } from '../../../middleware/require-role'
 
 /** Price of a hold in USDC, charged through x402. Not refunded. */
 export const HOLD_PRICE_USDC = 0.01
@@ -28,6 +28,7 @@ router.delete('/hold/:id', requireRole(['guest']), releaseHoldHandler as unknown
 // 2. Create booking endpoint (Issue #778)
 router.post(
   '/',
+  requireRole(['guest']),
   requireX402Payment(BOOKING_FEE_USDC),
   createBookingHandler as unknown as RequestHandler
 )
@@ -35,6 +36,7 @@ router.post(
 // 3. Submit booking signed XDR (Issue #778)
 router.post(
   '/:id/submit',
+  requireRole(['guest']),
   submitBookingHandler as unknown as RequestHandler
 )
 
