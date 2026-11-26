@@ -646,7 +646,23 @@ describe('createPaymentFetch (@x402/fetch integration)', () => {
     expect(ledger.getFeesReservedUsdc()).toBe(0);
     expect(ledger.getRemainingFeeBudgetUsdc()).toBe(0.1);
 
-    // 3. Transport failure after retry sent -> throws PendingPaymentSettlementError with reservationId + settlementRef
+    // 2b. PAYMENT-RESPONSE with success: false AND a nonempty transaction -> kept pending & exposes reservation ID
+    mode = 'v2RejectWithTx';
+    const res2b = await payFetch('https://api.safetrust.local/api/v1/holds', {
+      method: 'POST',
+    });
+    expect(res2b.status).toBe(402);
+    expect(ledger.getFeesReservedUsdc()).toBe(0.1);
+    const pendingRes2b = getPendingReservationForResponse(res2b);
+    expect(pendingRes2b?.id).toBeTruthy();
+    const rec2bReleased = await ledger.reconcileFeeReservation(
+      pendingRes2b!.id,
+      async () => 'not_settled' as const
+    );
+    expect(rec2bReleased.status).toBe('released');
+    expect(ledger.getFeesReservedUsdc()).toBe(0);
+
+    // 3. Transport failure after retry sent -> throws PendingPaymentSettlementError with reservationId only (no signed payload leak)
     mode = 'networkFail';
     let caughtErr: unknown;
     try {
@@ -659,7 +675,7 @@ describe('createPaymentFetch (@x402/fetch integration)', () => {
     expect(caughtErr).toBeInstanceOf(PendingPaymentSettlementError);
     const pendingErr = caughtErr as PendingPaymentSettlementError;
     expect(pendingErr.reservationId).toBeTruthy();
-    expect(pendingErr.settlementRef).toBe('signed_x402_ref_abc');
+    expect(pendingErr.message).not.toContain('signed_x402_ref_abc');
     expect(ledger.getFeesReservedUsdc()).toBe(0.1);
 
     // Reconcile as settled -> commits reservation into feesSpentUsdc
@@ -670,6 +686,58 @@ describe('createPaymentFetch (@x402/fetch integration)', () => {
     expect(recSettled.status).toBe('settled');
     expect(ledger.getFeesReservedUsdc()).toBe(0);
     expect(ledger.getFeesSpentUsdc()).toBe(0.1);
+  });
+
+  it('excludes active in-flight reservations from recovery, handles concurrent reconciliation, and parses exact decimal deposit cap strings', async () => {
+    // 1. Exact decimal string cap parsing without Number() round-trip
+    const cfgTrunc = loadSpendingConfigFromEnv({
+      STELLAR_NETWORK: 'testnet',
+      AGENT_MAX_DEPOSIT: '45.000000099999999',
+    });
+    const ledgerTrunc = new SpendingLedger(cfgTrunc);
+    expect(() => ledgerTrunc.verifyDepositLimit(45.0)).not.toThrow();
+    expect(() => ledgerTrunc.verifyDepositLimit(45.0000001)).toThrow(
+      /AGENT_MAX_DEPOSIT/
+    );
+
+    const cfgExact = loadSpendingConfigFromEnv({
+      STELLAR_NETWORK: 'testnet',
+      AGENT_MAX_DEPOSIT: '45.0000001',
+    });
+    const ledgerExact = new SpendingLedger(cfgExact);
+    expect(() => ledgerExact.verifyDepositLimit(45.0000001)).not.toThrow();
+
+    // 2. Active in-flight reservation is counted against budget but excluded from external reconciliation
+    const ledger = new SpendingLedger(
+      makeConfig({ maxFeePerCallUsdc: 0.1, feeBudgetUsdc: 0.1 })
+    );
+    const active = ledger.reserveFeePayment(
+      {
+        scheme: 'exact',
+        network: 'stellar:testnet',
+        max_amount_usdc: 0.1,
+        asset: { code: 'USDC', contract: TESTNET_USDC },
+        pay_to: PLATFORM_WALLET,
+      },
+      '/api/v1/holds'
+    );
+    expect(ledger.getFeesReservedUsdc()).toBe(0.1);
+    expect(ledger.getPendingFeeReservations()).toHaveLength(0);
+    await expect(
+      ledger.reconcileFeeReservation(active.id, async () => 'not_settled' as const)
+    ).rejects.toThrow(/active in-flight/i);
+
+    // 3. Once marked reconcilable, concurrent terminal resolution during await is returned instead of stale 'pending'
+    ledger.markFeeReservationPendingReconciliation(active.id);
+    expect(ledger.getPendingFeeReservations()).toHaveLength(1);
+    const result = await ledger.reconcileFeeReservation(active.id, async () => {
+      // Simulate another call committing the reservation while this resolver awaits
+      ledger.commitFeeReservation(active.id);
+      return 'unknown' as const;
+    });
+    expect(result.status).toBe('settled');
+    expect(result.reservation.status).toBe('settled');
+    expect(result.paidCall?.id).toBe(active.id);
   });
 
   it('releases fee reservation on definitive 402 rejection and preserves it on transport failure', async () => {

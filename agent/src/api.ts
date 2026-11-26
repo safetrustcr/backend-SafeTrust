@@ -73,7 +73,7 @@ export interface AvailabilityQuote {
   checkOut: string;
   nights: number;
   totalUsdc: number;
-  depositUsdc: number;
+  depositUsdc: number | null;
   assetCode: 'USDC';
   feePaidUsdc: number;
 }
@@ -206,10 +206,7 @@ export class SafeTrustApiClient {
 
   private readonly bookingsById = new Map<string, BookingRecord>();
   private readonly holdsById = new Map<string, HoldRecord>();
-  private readonly availabilityByStay = new Map<
-    string,
-    { quote: AvailabilityQuote; knownDepositUsdc?: number }
-  >();
+  private readonly availabilityByStay = new Map<string, AvailabilityQuote>();
   private readonly queryFeeSettlement?: FeeSettlementResolver;
 
   private makeStayQuoteKey(
@@ -478,11 +475,10 @@ export class SafeTrustApiClient {
       data.depositUsdc ??
       data.warranty_deposit ??
       data.deposit;
-    const knownDepositUsdc =
+    const depositUsdc =
       rawDeposit !== undefined && rawDeposit !== null && rawDeposit !== ''
         ? Number(rawDeposit)
-        : undefined;
-    const depositUsdc = knownDepositUsdc ?? 0;
+        : null;
     const propertyName = String(
       data.property_name ?? data.propertyName ?? data.name ?? params.propertyId
     );
@@ -506,7 +502,7 @@ export class SafeTrustApiClient {
       params.checkOut,
       params.guests
     );
-    this.availabilityByStay.set(stayKey, { quote, knownDepositUsdc });
+    this.availabilityByStay.set(stayKey, quote);
     return quote;
   }
 
@@ -553,8 +549,7 @@ export class SafeTrustApiClient {
       params.checkOut,
       params.guests
     );
-    const cachedEntry = this.availabilityByStay.get(stayKey);
-    const cachedQuote = cachedEntry?.quote;
+    const cachedQuote = this.availabilityByStay.get(stayKey);
     const hold: HoldRecord = {
       holdId: String(data.hold_id ?? data.holdId ?? data.id),
       propertyId: params.propertyId,
@@ -574,7 +569,7 @@ export class SafeTrustApiClient {
       depositUsdc:
         data.deposit_usdc !== undefined
           ? Number(data.deposit_usdc)
-          : cachedEntry?.knownDepositUsdc,
+          : cachedQuote?.depositUsdc ?? undefined,
       feePaidUsdc,
     };
 
@@ -625,8 +620,7 @@ export class SafeTrustApiClient {
       params.checkOut,
       params.guests
     );
-    let cachedEntry = this.availabilityByStay.get(stayKey);
-    let cachedQuote = cachedEntry?.quote;
+    let cachedQuote = this.availabilityByStay.get(stayKey);
     const rawCachedHold = params.holdId
       ? this.holdsById.get(params.holdId)
       : undefined;
@@ -642,11 +636,12 @@ export class SafeTrustApiClient {
     let depositUsdc =
       params.depositUsdc ??
       cachedHold?.depositUsdc ??
-      cachedEntry?.knownDepositUsdc;
+      cachedQuote?.depositUsdc ??
+      undefined;
 
-    // If no deposit quote is known yet, attempt to establish it via free checkAvailability
-    // before paying the x402 booking fee.
-    if (depositUsdc === undefined && cachedEntry === undefined) {
+    // If no deposit quote is known yet (even when a prior availability check omitted it),
+    // attempt to establish it via free checkAvailability before paying the x402 booking fee.
+    if (depositUsdc === undefined) {
       try {
         cachedQuote = await this.checkAvailability({
           propertyId: params.propertyId,
@@ -654,9 +649,8 @@ export class SafeTrustApiClient {
           checkOut: params.checkOut,
           guests: params.guests,
         });
-        cachedEntry = this.availabilityByStay.get(stayKey);
-        if (cachedEntry?.knownDepositUsdc !== undefined) {
-          depositUsdc = cachedEntry.knownDepositUsdc;
+        if (cachedQuote.depositUsdc !== null) {
+          depositUsdc = cachedQuote.depositUsdc;
         }
       } catch {
         // Proceed when the backend does not expose availability for this flow;
@@ -778,9 +772,6 @@ export class SafeTrustApiClient {
           const headers = await this.getSessionHeaders();
           const qs = new URLSearchParams();
           qs.set('reservation_id', reservation.id);
-          if (reservation.settlementRef) {
-            qs.set('settlement_ref', reservation.settlementRef);
-          }
           const response = await this.baseFetch(
             `${this.baseUrl}/api/v1/payments/status?${qs.toString()}`,
             {

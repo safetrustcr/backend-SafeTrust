@@ -27,6 +27,11 @@ export interface AgentSpendingConfig {
   feeBudgetUsdc: number;
   /** Maximum escrow deposit in USDC (default: 50.00) */
   maxDepositUsdc: number;
+  /**
+   * Optional exact 7-decimal atomic cap (stroops) parsed directly from the
+   * configured decimal text without a Number() round-trip.
+   */
+  maxDepositAtomic?: string;
   /** Maximum Stellar transaction fee in XLM for signed deposits (default: 1.0) */
   maxTxFeeXlm?: number;
   /** Stellar network name: 'testnet' (default) or 'mainnet' */
@@ -87,7 +92,8 @@ export interface FeeReservation {
   endpoint: string;
   requirement: NormalizedPaymentRequirement;
   status: 'reserved' | 'settled' | 'released';
-  settlementRef?: string;
+  /** True only after a paid retry ended with an ambiguous outcome and is eligible for external reconciliation. */
+  reconcilable: boolean;
   createdAt: string;
 }
 
@@ -108,7 +114,6 @@ export class PendingPaymentSettlementError extends Error {
   public readonly reservationId: string;
   public readonly endpoint: string;
   public readonly amountUsdc: number;
-  public readonly settlementRef?: string;
   public readonly cause?: unknown;
 
   constructor(params: {
@@ -130,7 +135,6 @@ export class PendingPaymentSettlementError extends Error {
     this.reservationId = params.reservation.id;
     this.endpoint = params.reservation.endpoint;
     this.amountUsdc = params.reservation.requirement.amountUsdc;
-    this.settlementRef = params.reservation.settlementRef;
     this.cause = params.cause;
   }
 }
@@ -224,18 +228,32 @@ export function getDefaultUsdcContract(network: StellarNetworkName): string {
 }
 
 /**
- * Expand a positive finite JS number into an exact base-10 digit string without
- * scientific notation (e.g. 1e-7 -> "0.0000001", 0.00099996 -> "0.00099996").
+ * Expand a positive decimal string or finite JS number into an exact base-10
+ * digit string without scientific notation (e.g. "1e-7" -> "0.0000001",
+ * "45.000000099999999" -> "45.000000099999999").
  */
-function numberToExactDecimalString(value: number): string {
-  const raw = String(value).trim().toLowerCase();
-  if (!raw.includes('e')) {
-    return raw;
+function decimalInputToExactString(value: number | string): string {
+  const raw =
+    typeof value === 'string'
+      ? value.trim().toLowerCase()
+      : String(value).trim().toLowerCase();
+  const match = raw.match(/^\+?(\d+(?:\.\d*)?|\.\d+)(?:e([+-]?\d+))?$/);
+  if (!match) {
+    throw new SpendingLimitError(
+      'INVALID_REQUIREMENT',
+      `Cap amount must be a positive finite decimal, got: ${value}`
+    );
   }
-  const [mantissa, expPart] = raw.split('e');
-  const exp = Number.parseInt(expPart, 10);
-  const [intDigits, fracDigits = ''] = mantissa.split('.');
+  const mantissa = match[1];
+  const exp = match[2] ? Number.parseInt(match[2], 10) : 0;
+  const [intDigits = '', fracDigits = ''] = mantissa.split('.');
   const digits = intDigits + fracDigits;
+  if (/^0*$/.test(digits)) {
+    throw new SpendingLimitError(
+      'INVALID_REQUIREMENT',
+      `Cap amount must be greater than zero, got: ${value}`
+    );
+  }
   const decimalPos = intDigits.length + exp;
 
   if (decimalPos <= 0) {
@@ -248,17 +266,19 @@ function numberToExactDecimalString(value: number): string {
 }
 
 /**
- * Convert a configured decimal cap (USDC or XLM) to the largest whole 7-decimal
- * atomic unit (stroop) that does NOT exceed the configured value (rounds down).
+ * Convert a configured decimal cap (USDC or XLM, as string or number) to the
+ * largest whole 7-decimal atomic unit (stroop) that does NOT exceed the
+ * configured value (rounds down). When passed a string, parses the original
+ * decimal text directly without a Number() round-trip.
  */
-export function decimalCapToMaxAtomic(amount: number): bigint {
-  if (!Number.isFinite(amount) || amount <= 0) {
+export function decimalCapToMaxAtomic(amount: number | string): bigint {
+  if (typeof amount === 'number' && (!Number.isFinite(amount) || amount <= 0)) {
     throw new SpendingLimitError(
       'INVALID_REQUIREMENT',
       `Cap amount must be a positive finite number, got: ${amount}`
     );
   }
-  const decStr = numberToExactDecimalString(amount);
+  const decStr = decimalInputToExactString(amount);
   const [intPart, fracPart = ''] = decStr.split('.');
   const truncatedFrac = fracPart.slice(0, USDC_DECIMALS).padEnd(USDC_DECIMALS, '0');
   return BigInt(`${intPart || '0'}${truncatedFrac}`);
@@ -271,7 +291,7 @@ export function isExact7DecimalAmount(amount: number): boolean {
   if (!Number.isFinite(amount) || amount <= 0) {
     return false;
   }
-  const decStr = numberToExactDecimalString(amount);
+  const decStr = decimalInputToExactString(amount);
   const [, fracPart = ''] = decStr.split('.');
   if (fracPart.length <= USDC_DECIMALS) {
     return true;
@@ -359,13 +379,18 @@ export function loadSpendingConfigFromEnv(
   );
   const rawMaxDeposit =
     env.AGENT_MAX_DEPOSIT !== undefined && env.AGENT_MAX_DEPOSIT.trim() !== ''
-      ? env.AGENT_MAX_DEPOSIT
-      : env.AGENT_MAX_deposit;
+      ? env.AGENT_MAX_DEPOSIT.trim()
+      : env.AGENT_MAX_deposit !== undefined && env.AGENT_MAX_deposit.trim() !== ''
+        ? env.AGENT_MAX_deposit.trim()
+        : undefined;
   const maxDepositUsdc = parsePositiveNumber(
     rawMaxDeposit,
     50.0,
     'AGENT_MAX_DEPOSIT'
   );
+  const maxDepositAtomic = decimalCapToMaxAtomic(
+    rawMaxDeposit ?? '50.0'
+  ).toString();
   const maxTxFeeXlm = parsePositiveNumber(
     env.AGENT_MAX_TX_FEE_XLM,
     1.0,
@@ -386,6 +411,7 @@ export function loadSpendingConfigFromEnv(
     maxFeePerCallUsdc,
     feeBudgetUsdc,
     maxDepositUsdc,
+    maxDepositAtomic,
     maxTxFeeXlm,
     network,
     expectedPayTo,
@@ -534,6 +560,7 @@ export function normalize402Requirement(
  */
 export class SpendingLedger {
   private readonly config: Required<AgentSpendingConfig>;
+  private readonly maxDepositAtomic: bigint;
   private readonly paidCalls: PaidCallRecord[] = [];
   private readonly deposits: DepositRecord[] = [];
   private readonly feeReservations = new Map<string, FeeReservation>();
@@ -551,8 +578,16 @@ export class SpendingLedger {
     if (!Number.isFinite(maxTxFeeXlm) || maxTxFeeXlm <= 0) {
       throw new Error('SpendingLedger requires a positive finite maxTxFeeXlm');
     }
+    const maxDepositAtomic =
+      config.maxDepositAtomic !== undefined
+        ? /^\d+$/.test(config.maxDepositAtomic.trim())
+          ? BigInt(config.maxDepositAtomic.trim())
+          : decimalCapToMaxAtomic(config.maxDepositAtomic)
+        : decimalCapToMaxAtomic(config.maxDepositUsdc);
+    this.maxDepositAtomic = maxDepositAtomic;
     this.config = {
       ...config,
+      maxDepositAtomic: maxDepositAtomic.toString(),
       maxTxFeeXlm,
       expectedPayTo: config.expectedPayTo.trim(),
       expectedAssetContract: (
@@ -662,6 +697,7 @@ export class SpendingLedger {
       endpoint,
       requirement: verified,
       status: 'reserved',
+      reconcilable: false,
       createdAt: new Date().toISOString(),
     };
     this.feesReservedUsdc = roundUsdc(
@@ -742,32 +778,32 @@ export class SpendingLedger {
   }
 
   /**
-   * Return all fee reservations currently pending settlement reconciliation.
+   * Return all fee reservations whose paid retry ended with an ambiguous outcome
+   * and are eligible for external settlement reconciliation. Active in-flight
+   * reservations remain counted against the budget but are excluded here.
    */
   public getPendingFeeReservations(): FeeReservation[] {
     return Array.from(this.feeReservations.values())
-      .filter((r) => r.status === 'reserved')
+      .filter((r) => r.status === 'reserved' && r.reconcilable)
       .map((r) => ({ ...r }));
   }
 
   /**
-   * Attach a settlement reference (e.g. signed payment transaction payload or ID)
-   * to a pending fee reservation so it can be reconciled later in the session.
+   * Mark a reserved fee payment as eligible for external reconciliation after
+   * its paid retry ended with an ambiguous outcome.
    */
-  public setFeeReservationSettlementRef(
-    reservationId: string,
-    settlementRef: string
-  ): void {
+  public markFeeReservationPendingReconciliation(reservationId: string): void {
     const reservation = this.feeReservations.get(reservationId);
-    if (reservation && reservation.status === 'reserved' && settlementRef.trim()) {
-      reservation.settlementRef = settlementRef.trim();
+    if (reservation && reservation.status === 'reserved') {
+      reservation.reconcilable = true;
     }
   }
 
   /**
-   * Reconcile a pending fee reservation within the session by querying settlement status.
-   * Commits the reservation if definitively settled, releases it if definitively not settled,
-   * and preserves pending status if the outcome remains unknown or the query fails.
+   * Reconcile an ambiguous pending fee reservation within the session by querying
+   * settlement status. Rejects active in-flight reservations, commits if
+   * definitively settled, releases if definitively not settled, and preserves
+   * pending status if the outcome remains unknown or the query fails.
    */
   public async reconcileFeeReservation(
     reservationId: string,
@@ -796,6 +832,13 @@ export class SpendingLedger {
       };
     }
 
+    if (!reservation.reconcilable) {
+      throw new SpendingLimitError(
+        'INVALID_REQUIREMENT',
+        `Fee reservation "${reservationId}" is still active in-flight and cannot be reconciled externally.`
+      );
+    }
+
     let settlementStatus: FeeSettlementStatus = 'unknown';
     try {
       settlementStatus = await querySettlement({ ...reservation });
@@ -803,26 +846,45 @@ export class SpendingLedger {
       settlementStatus = 'unknown';
     }
 
-    if (settlementStatus === 'settled') {
-      const paidCall = this.commitFeeReservation(reservationId);
+    // Re-read the stored reservation after the await in case a concurrent call resolved it
+    const latest = this.feeReservations.get(reservationId) ?? reservation;
+    if (latest.status === 'settled') {
       return {
         status: 'settled',
-        reservation: { ...reservation },
+        reservation: { ...latest },
+        paidCall: this.paidCallsByReservationId.get(reservationId),
+      };
+    }
+
+    if (latest.status === 'released') {
+      return {
+        status: 'released',
+        reservation: { ...latest },
+      };
+    }
+
+    if (settlementStatus === 'settled') {
+      const paidCall = this.commitFeeReservation(reservationId);
+      const committed = this.feeReservations.get(reservationId) ?? latest;
+      return {
+        status: 'settled',
+        reservation: { ...committed },
         paidCall,
       };
     }
 
     if (settlementStatus === 'not_settled') {
       this.releaseFeeReservation(reservationId);
+      const released = this.feeReservations.get(reservationId) ?? latest;
       return {
         status: 'released',
-        reservation: { ...reservation },
+        reservation: { ...released },
       };
     }
 
     return {
       status: 'pending',
-      reservation: { ...reservation },
+      reservation: { ...latest },
     };
   }
 
@@ -864,9 +926,8 @@ export class SpendingLedger {
         `Deposit amount must be a positive number, got: ${amountUsdc}`
       );
     }
-    const maxDepositAtomic = decimalCapToMaxAtomic(this.config.maxDepositUsdc);
     const amountAtomic = BigInt(usdcToAtomic(amountUsdc));
-    if (amountAtomic > maxDepositAtomic) {
+    if (amountAtomic > this.maxDepositAtomic) {
       throw new SpendingLimitError(
         'DEPOSIT_LIMIT_EXCEEDED',
         `Booking refused: deposit ${amountUsdc.toFixed(2)} USDC exceeds AGENT_MAX_DEPOSIT (${this.config.maxDepositUsdc.toFixed(2)} USDC)`
@@ -1257,9 +1318,6 @@ export function createPaymentFetch(
             typeof decoded.payload === 'object' && decoded.payload !== null
               ? (decoded.payload.transaction ?? JSON.stringify(decoded.payload))
               : String(decoded.payload ?? '');
-          if (callReservation && txPayload) {
-            ledger.setFeeReservationSettlementRef(callReservation.id, txPayload);
-          }
           const atomicStr = decoded.accepted?.amount ?? '0';
           const amountUsdc = /^\d+$/.test(atomicStr)
             ? atomicToUsdc(atomicStr)
@@ -1294,8 +1352,9 @@ export function createPaymentFetch(
         } else if (isDefinitivePaymentRejection(response)) {
           ledger.releaseFeeReservation(callReservation.id);
         } else {
-          // On 5xx or ambiguous settlement response, leave the reservation pending
-          // and expose it on the Response for in-session reconciliation.
+          // On 5xx or ambiguous settlement response, mark the reservation as
+          // reconcilable and expose it on the Response for in-session recovery.
+          ledger.markFeeReservationPendingReconciliation(callReservation.id);
           const latest = ledger.getFeeReservation(callReservation.id);
           if (latest) {
             responsePendingReservations.set(response, latest);
@@ -1343,6 +1402,7 @@ export function createPaymentFetch(
         if (!paidRetrySent) {
           ledger.releaseFeeReservation(res.id);
         } else {
+          ledger.markFeeReservationPendingReconciliation(res.id);
           const latest = ledger.getFeeReservation(res.id) ?? res;
           if (latest.status === 'reserved') {
             throw new PendingPaymentSettlementError({

@@ -254,7 +254,7 @@ export async function runTestnetTranscript(
     guests: 4,
   });
   lines.push(
-    `check_availability  FREE (session)  ${avail.propertyName}: ${avail.totalUsdc.toFixed(2)} total, ${avail.depositUsdc.toFixed(2)} deposit`
+    `check_availability  FREE (session)  ${avail.propertyName}: ${avail.totalUsdc.toFixed(2)} total, ${avail.depositUsdc !== null ? avail.depositUsdc.toFixed(2) : 'unknown'} deposit`
   );
 
   // Use payFetch for hold_dates & create_booking

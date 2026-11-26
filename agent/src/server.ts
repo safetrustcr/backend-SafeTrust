@@ -15,6 +15,7 @@ import {
   PendingPaymentSettlementError,
   SpendingLedger,
   SpendingLimitError,
+  isExact7DecimalAmount,
   loadSpendingConfigFromEnv,
   usdcToAtomic,
   type AgentSpendingConfig,
@@ -113,9 +114,6 @@ function formatToolError(err: unknown, secretKey: string) {
   };
   if (err instanceof PendingPaymentSettlementError) {
     payload.reservation_id = err.reservationId;
-    if (err.settlementRef) {
-      payload.settlement_ref = err.settlementRef;
-    }
   }
 
   return formatToolResult(payload, secretKey, true);
@@ -389,11 +387,21 @@ export function createBookingAgentServer(
     return expectedAssetContract;
   };
 
+  const assertFallbackApprovalAvailable = (): void => {
+    if (!verifyHumanApproval && !allowFallbackConfirmation) {
+      throw new DepositVerificationError(
+        'HUMAN_CONFIRMATION_REQUIRED',
+        'Fallback confirmation is unavailable: neither verifyHumanApproval nor AGENT_ALLOW_HOST_FALLBACK_CONFIRMATION=true is configured. Use an MCP client supporting form elicitation, configure verifyHumanApproval, or enable AGENT_ALLOW_HOST_FALLBACK_CONFIRMATION=true only with host-enforced human approval.'
+      );
+    }
+  };
+
   // Helper to resolve a booking and issue a two-step confirmation ID
   const createConfirmationRequest = (
     booking: BookingRecord,
     amountUsdc: number
   ): PendingDepositConfirmation => {
+    assertFallbackApprovalAvailable();
     assertBookingAssetMatchesConfig(booking);
     ledger.verifyDepositLimit(amountUsdc);
     const confirmationId = `conf_${randomBytes(6).toString('hex')}`;
@@ -460,6 +468,12 @@ export function createBookingAgentServer(
     ) {
       return false;
     }
+    if (
+      !isExact7DecimalAmount(booking.depositUsdc) ||
+      !isExact7DecimalAmount(approved.amountUsdc)
+    ) {
+      return false;
+    }
     try {
       return usdcToAtomic(booking.depositUsdc) === usdcToAtomic(approved.amountUsdc);
     } catch {
@@ -477,6 +491,7 @@ export function createBookingAgentServer(
     approvedTerms: ApprovedBookingTerms;
     unsignedXdrOverride?: string;
     humanConfirmed: boolean;
+    confirmationExpiresAt?: string;
   }) => {
     const { bookingId, approvedTerms } = params;
 
@@ -553,6 +568,17 @@ export function createBookingAgentServer(
 
     let signed: ReturnType<typeof verifyAndSignDeposit>;
     try {
+      // Recheck fallback confirmation expiry immediately before signing (after approval/reconciliation awaits)
+      if (
+        params.confirmationExpiresAt &&
+        Date.now() > new Date(params.confirmationExpiresAt).getTime()
+      ) {
+        throw new DepositVerificationError(
+          'HUMAN_CONFIRMATION_REQUIRED',
+          `Confirmation for booking "${bookingId}" expired before signing. Request a new confirmation.`
+        );
+      }
+
       // Re-read booking immediately before signing (covers any change during confirmation or reconciliation awaits)
       const latestBooking = assertCurrentBookingMatchesApproved();
       const latestAssetContract = assertBookingAssetMatchesConfig(latestBooking);
@@ -732,6 +758,7 @@ export function createBookingAgentServer(
           },
           unsignedXdrOverride: args.unsigned_xdr,
           humanConfirmed: true,
+          confirmationExpiresAt: pending.expiresAt,
         });
 
         return toolOk(result);
@@ -778,6 +805,7 @@ export function createBookingAgentServer(
         ledger.verifyDepositLimit(booking.depositUsdc);
 
         let humanConfirmed = false;
+        let confirmationExpiresAt: string | undefined;
         let approvedTerms: ApprovedBookingTerms = {
           contractId: booking.contractId,
           assetContract: booking.assetContract,
@@ -819,6 +847,7 @@ export function createBookingAgentServer(
             assetContract: pending.assetContract,
             amountUsdc: pending.amountUsdc,
           };
+          confirmationExpiresAt = pending.expiresAt;
           humanConfirmed = true;
         } else {
           // Path B: Use MCP form elicitation if the connected client supports it
@@ -891,6 +920,7 @@ export function createBookingAgentServer(
           approvedTerms,
           unsignedXdrOverride: args.unsigned_xdr,
           humanConfirmed,
+          confirmationExpiresAt,
         });
 
         return toolOk(result);
@@ -938,7 +968,6 @@ export function createBookingAgentServer(
         return toolOk({
           reservation_id: reconciled.reservation.id,
           status: reconciled.status,
-          settlement_ref: reconciled.reservation.settlementRef,
           paid_call: reconciled.paidCall,
           summary: ledger.getSummary().formatted,
         });
