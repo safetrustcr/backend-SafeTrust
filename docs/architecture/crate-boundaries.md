@@ -1,18 +1,18 @@
 # Rust Crate Boundaries and Integration Quarantine
 
-The Cargo workspace contains eight functional Rust crates and one feature-gate
+The Cargo workspace contains seven functional Rust crates and one feature-gate
 package. Five functional crates are included in the default webhook build;
-`zk-verifier`, `x402-processor`, and `soroban-reconciler` are excluded until
-their prerequisites are resolved.
+`x402-processor` and `soroban-reconciler` are excluded until
+their prerequisites are resolved (`zk-verifier` was removed in #753).
 
 This page records, for every crate, its responsibility, consumers, exports,
 fallback, build artifact, and disposition. It is the ownership boundary for the
 `crates/` workspace. For the high-level crate story, see
 [Rust crates in SafeTrust](./rust-crates.md).
 
-**No crate is deleted by this change.** Five functional crates remain in the
-default build; the three quarantined crates remain available behind explicit,
-default-off Cargo feature gates.
+Five functional crates remain in the default build; two quarantined crates
+remain available behind explicit, default-off Cargo feature gates (`zk-verifier`
+was removed in #753).
 
 ---
 
@@ -28,7 +28,6 @@ flowchart TD
         C5[pg-bulk-upsert\nordered upsert]
     end
     subgraph Quarantine and rebuild
-        C6[zk-verifier\nESC-05 prerequisite]
         C7[soroban-reconciler\nESC-02 prerequisite]
         C8[x402-processor\nESC-05 prerequisite]
     end
@@ -40,10 +39,9 @@ flowchart TD
 
 | Crate | Responsibility | Consumers |
 |---|---|---|
-| `zk-verifier` | Verify Noir UltraHonk proof-of-funds proofs with a pinned Barretenberg build. | `webhook/src/lib/zk-verifier.ts` → `initialize.handler.ts`, `escrow.service.ts`. |
 | `stellar-utils` | Stellar strkey validation and Ed25519 signature verification. | `webhook/src/routes/auth/sync-wallet.handler.ts`. |
-| `escrow-state-machine` | Canonical escrow status enum, transition table, and `getValidPriorStates()` filters. | `dispute.handler.ts`, `resolve-dispute.handler.ts`, `fund.handler.ts`, `milestone.service.ts`, `routes/index.ts`. |
-| `webhook-verifier` | Constant-time HMAC-SHA256 verification of Trustless Work callbacks. | `webhook/src/middleware/trustlesswork-signature.middleware.ts`. |
+| `escrow-state-machine` | Canonical escrow status enum, transition table, and `getValidPriorStates()` filters. | `webhook/src/services/escrow.service.ts` (`executeEscrowLifecycleTransition`), `milestone.service.ts`, `webhook/src/lib/escrow-transitions.ts`. |
+| `webhook-verifier` | Constant-time HMAC-SHA256 verification of Trustless Work callbacks. | Retired; no runtime consumers after polling became authoritative. |
 | `chunk-processor` | Fetch Trustless Work indexer chunks concurrently on Tokio, bounded by a concurrency limit. | `webhook/src/lib/reconciliation.ts` (`syncAllChunks`), gated by `RUST_CHUNKS_ENABLED`. |
 | `pg-bulk-upsert` | Fold a chunk of escrow rows into one ordered `INSERT … ON CONFLICT … UNNEST`. | `webhook/src/lib/reconciliation.ts` (`upsertEscrowBatch`), gated by `RUST_BULK_UPSERT_ENABLED`. |
 | `soroban-reconciler` | Compare database escrow state with Soroban state and report drift. | `webhook/src/services/reconciliation.service.ts` (`validateSorobanDrift`), gated by `SOROBAN_VALIDATION_ENABLED`. |
@@ -51,7 +49,6 @@ flowchart TD
 
 | Crate | Native exports | Fallback when the addon is absent | Build script / deployment artifact |
 |---|---|---|---|
-| `zk-verifier` | `verifyProofOfFunds` | **None — fail closed.** `webhook/src/lib/zk-verifier.ts` logs the missing addon, throws `ZK_VERIFIER_UNAVAILABLE`, and the init handler returns `503`. | Excluded from the default build. Opt in with `cargo build --manifest-path crates/Cargo.toml -p safetrust-native-gates --features zk-verifier` after ESC-05; artifact is not copied into the default image. |
 | `stellar-utils` | `validateStellarAddress`, `verifyStellarEd25519` | JS regex `^G[A-Z2-7]{55}$` in `sync-wallet.handler.ts` (weaker; native path keeps CRC/version checks). | Default build + shared `scripts/copy-native.js`; artifact `crates/stellar-utils/native/index.node`. |
 | `escrow-state-machine` | `validateTransition`, `getValidPriorStates`, `getTransitionTable`, `getGraphqlFilter` | JS transition table in `crates/escrow-state-machine/index.ts` (same eight rules). | Default build + shared `scripts/copy-native.js`; artifact `crates/escrow-state-machine/index.node`. |
 | `webhook-verifier` | `verifyHmacSignature`, `validateStellarAddress` | `crates/webhook-verifier/fallback.ts` (Node `crypto`, same raw bytes, fail closed). | Default build + shared `scripts/copy-native.js`; artifact `crates/webhook-verifier/index.node`. |
@@ -75,13 +72,15 @@ members and copies only their runtime artifacts. `crates/**/*.node` and
 
 - **`stellar-utils`** — retained. It is the authoritative wallet-address check
   used during auth; the JS regex is a degraded fallback only.
-- **`escrow-state-machine`** — retained. It prevents handlers from requesting
-  an XDR for an illegal prior state and is shared by every escrow callback.
-  `disputed → cancelled` was added so the local table matches the database
-  `valid_escrow_status` constraint.
-- **`webhook-verifier`** — retained. It is the authentication boundary for all
-  Trustless Work callbacks. The native and Node paths now hash the same raw
-  bytes and return `false` on every comparison error (see §5).
+- **`escrow-state-machine`** — retained. It prevents illegal prior-state
+  transitions in the reconciliation lifecycle service and is shared by the
+  remaining escrow services. `disputed → cancelled` was added so the local
+  table matches the database `valid_escrow_status` constraint.
+- **`webhook-verifier`** — retained but retired from runtime use. The callback
+  routes and their HMAC middleware were removed after polling became
+  authoritative; the native and Node paths remain for tests and rollback. Both
+  paths hash the same raw bytes and return `false` on every comparison error
+  (see §5).
 - **`chunk-processor`** — retained. It is an opt-in performance path with
   bounded concurrency and per-chunk timeouts; the sequential loop remains the
   default and the fallback.
@@ -90,11 +89,6 @@ members and copies only their runtime artifacts. `crates/**/*.node` and
 
 ### Quarantine and rebuild
 
-- **`zk-verifier`** — excluded from the default image until ESC-05 is closed.
-  The TypeScript consumer requires `ZK_ENABLED=true`, loads the addon lazily,
-  and enforces `ZK_PROOF_OF_FUNDS_VK_SHA256` outside development and test
-  environments; the feature remains default-off pending the remaining ESC-05
-  prerequisites.
 - **`soroban-reconciler`** — quarantined. The current reader does not read
   contract storage; it fabricates state. The reader is disabled by default and
   the pure diff engine is retained (see §4). ESC-02 must establish an
@@ -137,7 +131,7 @@ validated read adapter:
 
 For the full decision record, gap analysis between Trustless Work API and direct
 Stellar RPC reads, and adapter validation boundary diagrams, see
-[Escrow State Source](../stellar/escrow-state-source.md).
+[Reconciliation and Indexer Sync](../stellar/reconciliation.md).
 
 
 ---
@@ -155,8 +149,8 @@ flowchart TD
     E -->|Yes| G[accepted]
 ```
 
-The middleware builds the canonical payload as
-`Buffer.concat([timestamp, ".", req.rawBody])`, so the digest covers the exact
+The removed callback middleware built the canonical payload as
+`Buffer.concat([timestamp, ".", req.rawBody])`, so the digest covered the exact
 request bytes. The native addon accepts a `Buffer`/`Uint8Array` (raw bytes) or a
 string (UTF-8 encoded once); the Node fallback normalizes the same union to a
 `Buffer`. This removes the previous mismatch where one path could hash a
@@ -177,13 +171,11 @@ a `Uint8Array` view, and asserts equal accept/reject results.
 ```mermaid
 flowchart LR
     subgraph Eligibility path
-        ZK[zk-verifier]
         ES[escrow.service]
     end
     subgraph Isolated
         X4[x402-processor\nF2 F3 F8 unresolved]
     end
-    ZK --> ES
     ES -.->|must not depend on| X4
     X4 -->|disabled by default\nX402_ENABLED=false| OFF[feature flag off]
 ```
@@ -196,16 +188,16 @@ flowchart LR
   `x402-processor` module or its native addon.
 - With x402 disabled, a request carrying `X-Payment`,
   `X-Payment-Protocol`, or `X-Payment-Required` is **not** evaluated by x402;
-  it must pass the Trustless Work HMAC check like any other callback.
+  the initialize entrypoint follows its normal request path.
 - The middleware itself also fails closed with `503` if it is invoked while the
   flag is off, so a future route cannot accidentally mount it.
 - `X402_SETTLE_ENABLED=false` is the default. A successful facilitator
   `/verify` does not trigger `/settle`. The current settlement task has no
   durable retry, idempotency record, or reconciliation, so it must not run in
   production until F2/F3/F8 are closed.
-- The eligibility authority remains the HMAC-verified Trustless Work callback
-  and the `zk-verifier` proof check. `escrow.service.ts` does not import
-  `x402-processor`.
+- The eligibility authority remains local escrow validation; reconciliation is
+  authoritative for externally confirmed lifecycle state. `escrow.service.ts`
+  does not import `x402-processor`.
 
 The x402 Karate suite runs with `X402_ENABLED=true` in the isolated test
 compose file to exercise the payment gate; settlement stays disabled.
@@ -215,12 +207,9 @@ compose file to exercise the payment gate; settlement stays disabled.
 ## 7. Circuit and prover sources
 
 Noir circuit sources, proving keys, and prover scripts do **not** belong in the
-Rust verification crate. They belong in a clearly documented circuit package
-(for example a `zk/` directory in this repository or the separate
-`safetrust-ZK` package). `crates/zk-verifier` contains only the verifier
-binding and the pinned Barretenberg integration; it consumes artifacts, it does
-not define the circuit. Keeping the two separate prevents a verifier change
-from silently changing the statement being proven.
+Rust verification crate. (`crates/zk-verifier` was removed in #753). Keeping
+any future circuit separate prevents a verifier change from silently changing
+the statement being proven.
 
 ---
 

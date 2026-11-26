@@ -11,12 +11,13 @@ graph LR
   A[request] --> B["requestId<br/>X-Request-Id, access log"]
   B --> C[helmet]
   C --> D["cors<br/>explicit origin policy"]
-  D --> E["express.json<br/>raw body kept on req.rawBody"]
-  E --> F["bindRequestContext<br/>request id for the logger"]
-  F --> G[routes]
-  G --> H[notFoundHandler]
-  E -. parse error .-> I
-  G -. thrown error .-> I["errorHandler<br/>typed mapping, sanitized body"]
+  D --> E["rate limits<br/>API, public and health"]
+  E --> F["express.json<br/>100 KB limit"]
+  F --> G["bindRequestContext<br/>request id for the logger"]
+  G --> H[routes]
+  H --> I[notFoundHandler]
+  F -. parse error .-> J
+  H -. thrown error .-> J["errorHandler<br/>typed mapping, sanitized body"]
 ```
 
 | File | Responsibility |
@@ -46,8 +47,7 @@ The existing domain errors are part of the hierarchy and keep their names, so
 `instanceof` checks are unchanged: `EscrowNotFoundError`,
 `ReservationNotFoundError` and `MilestoneNotFoundError` are `NotFoundError`s;
 `StateConflictError`, `StaleStateError` and `EscrowStateConflictError` are
-`ConflictError`s; `TenantMismatchError` is a `ForbiddenError`;
-`ZkVerifierUnavailableError` is a `ServiceUnavailableError`.
+`ConflictError`s; and `TenantMismatchError` is a `ForbiddenError`.
 `EscrowValidationError` and `MilestoneValidationError` keep their configurable
 status. Each sets a specific code such as `escrow_not_found` or
 `tenant_mismatch`.
@@ -110,14 +110,11 @@ Route handlers and middleware must not call `console.*` directly.
 and libraries still use `console` in places and move to the logger
 incrementally.
 
-## Raw body for signed webhooks
+## Request-body handling
 
-TrustlessWork callbacks are verified with an HMAC over
-`timestamp + '.' + rawBody`. `express.json({ verify })` stores the exact
-request bytes on `req.rawBody` before parsing, and the error-handling change
-leaves that path as it was. `src/__tests__/app.errors.test.ts` checks it end to
-end: a signature over the bytes sent is accepted, and a signature over the
-re-serialized JSON is rejected.
+The JSON parser enforces a 100 KB request limit and does not retain a second raw
+copy of request bodies. The old Trustless Work callback HMAC path was retired
+with its callback routes; no active webhook route needs raw request bytes.
 
 ## CORS origin policy
 

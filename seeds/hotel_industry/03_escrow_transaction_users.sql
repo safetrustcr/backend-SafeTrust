@@ -7,18 +7,43 @@ INSERT INTO hotel_industry.escrow_transaction_users (
     'RENTER', 'ACTIVE', true
   ),
   (
-    (SELECT email FROM hotel_industry.users WHERE email = 'bob.owner@example.com'),
+    'bob.owner@example.com',
     (SELECT id FROM hotel_industry.escrow_transactions WHERE contract_id = 'contract-1'),
     'OWNER', 'ACTIVE', true
   ),
   (
-    (SELECT email FROM hotel_industry.users WHERE email = 'charlie.witness@example.com'),
+    'charlie.witness@example.com',
     (SELECT id FROM hotel_industry.escrow_transactions WHERE contract_id = 'contract-1'),
     'WITNESS', 'PENDING', false
   ),
   (
-    (SELECT email FROM hotel_industry.users WHERE email = 'diana.renter@example.com'),
+    'diana.renter@example.com',
     (SELECT id FROM hotel_industry.escrow_transactions WHERE contract_id = 'contract-2'),
     'RENTER', 'CONFIRMED', true
+  ),
+  (
+    'bob.owner@example.com',
+    (SELECT id FROM hotel_industry.escrow_transactions WHERE contract_id = 'contract-2'),
+    'OWNER', 'ACTIVE', true
+  ),
+  (
+    'alice.renter@example.com',
+    (SELECT id FROM hotel_industry.escrow_transactions WHERE contract_id = 'contract-3'),
+    'RENTER', 'FAILED', true
+  ),
+  (
+    'bob.owner@example.com',
+    (SELECT id FROM hotel_industry.escrow_transactions WHERE contract_id = 'contract-3'),
+    'OWNER', 'ACTIVE', true
+  ),
+  (
+    'diana.renter@example.com',
+    (SELECT id FROM hotel_industry.escrow_transactions WHERE contract_id = 'contract-4'),
+    'RENTER', 'PENDING', true
+  ),
+  (
+    'bob.owner@example.com',
+    (SELECT id FROM hotel_industry.escrow_transactions WHERE contract_id = 'contract-4'),
+    'OWNER', 'ACTIVE', true
   )
 ON CONFLICT DO NOTHING;

@@ -1,7 +1,6 @@
 import request from 'supertest'
 import express from 'express'
 import router from '../initialize.route'
-import signatureMiddleware from '../../../middleware/trustlesswork-signature.middleware'
 import { setX402Addon } from '../../../middleware/x402-payment.middleware'
 
 const mockAddon = {
@@ -33,11 +32,6 @@ jest.mock('../../../repositories/escrow.repository', () => ({
   createEscrow: jest.fn().mockResolvedValue({ id: 'escrow-1' }),
 }))
 
-jest.mock('../../../middleware/trustlesswork-signature.middleware', () => ({
-  __esModule: true,
-  default: jest.fn((_req: any, _res: any, next: any) => next()),
-}))
-
 describe('initialize.route with x402 payment gate', () => {
   const originalEnv = process.env
   const app = express()
@@ -58,18 +52,7 @@ describe('initialize.route with x402 payment gate', () => {
     process.env = originalEnv
   })
 
-  it('uses TrustlessWork signature verification when x402 is disabled and a signature header is present', async () => {
-    process.env.X402_ENABLED = 'false'
-
-    await request(app)
-      .post('/api/escrows/initialize')
-      .set('x-trustlesswork-signature', 'test-signature')
-      .send({ contract_id: 'test-123' })
-
-    expect(signatureMiddleware).toHaveBeenCalledTimes(1)
-  })
-
-  it('returns 503 when x402 is disabled and no TrustlessWork signature is present', async () => {
+  it('returns 503 when x402 is disabled', async () => {
     process.env.X402_ENABLED = 'false'
 
     const res = await request(app)

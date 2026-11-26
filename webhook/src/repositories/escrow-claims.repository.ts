@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg'
-import { pool } from '../services/db'
+import { connect, pool } from '../services/db'
 
 export interface EscrowClaimRow {
   id: string
@@ -27,6 +27,14 @@ export interface NewEscrowClaim {
 }
 
 export const CLAIM_RATE_LIMIT = 5
+
+export async function lockClaimScope(
+  client: PoolClient,
+  authorId: string,
+  escrowId: string
+): Promise<void> {
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))", [authorId, escrowId])
+}
 
 const PARTICIPATION_SELECT = `
   SELECT r.id AS reservation_id, r.status
@@ -117,4 +125,18 @@ export async function listForEscrow(
   const runner = client ?? pool
   const result = await runner.query(LIST_FOR_ESCROW, [escrowId])
   return result.rows
+}
+
+export async function listForParticipant(
+  escrowId: string,
+  uid: string
+): Promise<Omit<EscrowClaimRow, 'escrow_id' | 'reservation_id' | 'client_op_id'>[] | null> {
+  const client = await connect()
+  try {
+    const participation = await findParticipation(client, escrowId, uid)
+    if (!participation) return null
+    return await listForEscrow(escrowId, client)
+  } finally {
+    client.release()
+  }
 }

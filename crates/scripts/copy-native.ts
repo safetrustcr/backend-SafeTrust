@@ -38,10 +38,6 @@ const crateConfigs: Record<string, CrateConfig> = {
     libraryName: 'x402_processor',
     destination: 'index.node',
   },
-  'zk-verifier': {
-    libraryName: 'zk_verifier',
-    destination: 'index.node',
-  },
 }
 
 const cratesDir = path.resolve(__dirname, '..')

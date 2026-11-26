@@ -1,6 +1,6 @@
 'use strict';
 
-// Mock hasura service and zk-verifier before imports
+// Mock hasura service before imports
 jest.mock('../../services/hasura', () => ({
   hasuraRequest: jest.fn(),
 }));
@@ -13,10 +13,6 @@ jest.mock('../../repositories/webhook-event.repository', () => ({
   getWebhookEventIdentity: jest.fn(() => 'test-event-identity'),
   logAndCheckWebhookEvent: jest.fn(),
   markWebhookEventProcessed: jest.fn(),
-}));
-
-jest.mock('../../lib/zk-verifier', () => ({
-  verifyProofOfFunds: jest.fn(),
 }));
 
 // Mock amountToStroops from the shared lib to avoid any native addon chain
@@ -33,9 +29,9 @@ import {
   validateEscrowInitializationPayload,
   initializeEscrow,
   persistEscrow,
+  isEscrowParty,
   linkReservationToEscrow,
   EscrowValidationError,
-  ZkVerifierUnavailableError,
   ReservationNotFoundError,
   EscrowInitPayload,
 } from '../../services/escrow.service';
@@ -46,7 +42,6 @@ import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../../repositories/webhook-event.repository';
-import { verifyProofOfFunds } from '../../lib/zk-verifier';
 
 const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>;
 const mockedLogAndCheckWebhookEvent =
@@ -54,7 +49,6 @@ const mockedLogAndCheckWebhookEvent =
 const mockedMarkWebhookEventProcessed =
   markWebhookEventProcessed as jest.MockedFunction<typeof markWebhookEventProcessed>;
 const mockedQuery = query as jest.MockedFunction<typeof query>;
-const mockedVerifyProof = verifyProofOfFunds as jest.MockedFunction<typeof verifyProofOfFunds>;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -82,10 +76,7 @@ function validPayload(overrides: Partial<EscrowInitPayload> = {}): EscrowInitPay
     escrow_type: 'single_release',
     asset_code: 'USDC',
     asset_issuer: null,
-    booking_id: null,
-    room_id: null,
-    hotel_id: null,
-    guest_id: null,
+    reservation_id: null,
     booking_metadata: null,
     raw: body as any,
     ...overrides,
@@ -97,8 +88,6 @@ function validPayload(overrides: Partial<EscrowInitPayload> = {}): EscrowInitPay
 describe('validateEscrowInitializationPayload', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.ZK_ENABLED = 'true'
-    mockedVerifyProof.mockReturnValue(true);
   });
 
   it('returns a normalized payload for a valid body', () => {
@@ -156,120 +145,18 @@ describe('validateEscrowInitializationPayload', () => {
     ).not.toThrow();
   });
 
-  it('allows ZK bundle to be absent', () => {
-    const result = validateEscrowInitializationPayload(validBody());
-    expect(mockedVerifyProof).not.toHaveBeenCalled();
+  it('ignores legacy zk_* fields in the payload and initializes successfully', () => {
+    const payload = validBody({
+      zk_proof: 'proof-hex',
+      zk_verification_key: 'vk-hex',
+      zk_threshold_stroops: '1000000000',
+      zk_balance_commitment: 'ab'.repeat(32),
+    });
+    const result = validateEscrowInitializationPayload(payload);
+    expect(result).toBeDefined();
     expect(result.contract_id).toBe('contract-1');
-  });
-
-  it('throws EscrowValidationError for a partial ZK bundle', () => {
-    expect(() =>
-      validateEscrowInitializationPayload(validBody({ zk_proof: 'proof-hex' }))
-    ).toThrow(EscrowValidationError);
-    expect(mockedVerifyProof).not.toHaveBeenCalled();
-  });
-
-  it('throws EscrowValidationError when ZK threshold does not match amount', () => {
-    expect(() =>
-      validateEscrowInitializationPayload(
-        validBody({
-          zk_proof: 'proof-hex',
-          zk_verification_key: 'vk-hex',
-          zk_threshold_stroops: '999999999', // does not match 100 => 1000000000
-          zk_balance_commitment: 'ab'.repeat(32),
-        })
-      )
-    ).toThrow(EscrowValidationError);
-    expect(mockedVerifyProof).not.toHaveBeenCalled();
-  });
-
-  it('throws EscrowValidationError when verifyProofOfFunds returns false', () => {
-    mockedVerifyProof.mockReturnValue(false);
-    expect(() =>
-      validateEscrowInitializationPayload(
-        validBody({
-          zk_proof: 'bad-proof',
-          zk_verification_key: 'vk-hex',
-          zk_threshold_stroops: '1000000000',
-          zk_balance_commitment: 'ab'.repeat(32),
-        })
-      )
-    ).toThrow(EscrowValidationError);
-  });
-
-  it('throws ZkVerifierUnavailableError (503) when native verifier throws', () => {
-    mockedVerifyProof.mockImplementation(() => {
-      throw new Error('native addon missing');
-    });
-    let caught: unknown;
-    try {
-      validateEscrowInitializationPayload(
-        validBody({
-          zk_proof: 'proof-hex',
-          zk_verification_key: 'vk-hex',
-          zk_threshold_stroops: '1000000000',
-          zk_balance_commitment: 'ab'.repeat(32),
-        })
-      );
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ZkVerifierUnavailableError);
-    expect((caught as ZkVerifierUnavailableError).statusCode).toBe(503);
-  });
-
-  it('calls verifyProofOfFunds with correct arguments for a complete bundle', () => {
-    validateEscrowInitializationPayload(
-      validBody({
-        zk_proof: 'proof-hex',
-        zk_verification_key: 'vk-hex',
-        zk_threshold_stroops: '1000000000',
-        zk_balance_commitment: 'ab'.repeat(32),
-      })
-    );
-    expect(mockedVerifyProof).toHaveBeenCalledWith(
-      'proof-hex',
-      'vk-hex',
-      '1000000000',
-      'ab'.repeat(32)
-    );
-  });
-
-  it('throws EscrowValidationError (500) when ZK verifier is misconfigured', () => {
-    const error = new Error('misconfigured') as Error & { code?: string };
-    error.code = 'ZK_VERIFIER_MISCONFIGURED';
-    mockedVerifyProof.mockImplementation(() => {
-      throw error;
-    });
-
-    expect(() =>
-      validateEscrowInitializationPayload(
-        validBody({
-          zk_proof: 'proof-hex',
-          zk_verification_key: 'vk-hex',
-          zk_threshold_stroops: '1000000000',
-          zk_balance_commitment: 'ab'.repeat(32),
-        })
-      )
-    ).toThrow(expect.objectContaining({
-      message: 'ZK proof verifier is misconfigured',
-      statusCode: 500,
-    }));
-  });
-
-  it('throws EscrowValidationError when ZK_ENFORCEMENT_ENABLED is true and bundle is missing', () => {
-    const originalFlag = process.env.ZK_ENFORCEMENT_ENABLED;
-    try {
-      process.env.ZK_ENFORCEMENT_ENABLED = 'true';
-      expect(() =>
-        validateEscrowInitializationPayload(validBody())
-      ).toThrow(expect.objectContaining({
-        message: 'ZK proof of funds bundle is required for escrow initialization',
-        statusCode: 400,
-      }));
-    } finally {
-      process.env.ZK_ENFORCEMENT_ENABLED = originalFlag;
-    }
+    expect(result.amount).toBe(100);
+    expect(result.escrow_type).toBe('single_release');
   });
 });
 
@@ -524,6 +411,31 @@ describe('persistEscrow', () => {
     expect(mutation).toContain('update_columns: [contractId]');
 
     expect(result).toEqual(escrowResponse);
+
+    const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
+    expect(callArgs.object.escrowMetadata.roles).toMatchObject({
+      approver: 'GAPPROVER',
+      serviceProvider: 'GMARKER',
+      releaseSigner: 'GRELEASER',
+    });
+    expect(callArgs.object).not.toHaveProperty('bookingMetadata');
+  });
+
+  it('does not trust payer-supplied receiver role metadata', async () => {
+    mockedHasuraRequest.mockResolvedValue({
+      insert_trustless_work_escrows_one: escrowResponse,
+    });
+
+    await persistEscrow(validPayload({
+      raw: {
+        ...validBody(),
+        roles: { receiver: 'PAYER_CONTROLLED_WALLET' },
+      } as any,
+    }), 'safetrust');
+
+    const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
+    expect(callArgs.object.escrowMetadata.roles.receiver).toBeNull();
+    expect(callArgs.object.escrowMetadata.roles.receiver).not.toBe('PAYER_CONTROLLED_WALLET');
   });
 
   it('writes the tenant passed by the caller instead of a literal', async () => {
@@ -564,9 +476,34 @@ describe('persistEscrow', () => {
     await persistEscrow(validPayload(), 'safetrust');
 
     const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
+    expect(callArgs.object.contractId).toBe('contract-1');
     expect(callArgs.object.assetCode).toBe('USDC');
     expect(callArgs.object.resolver).toBeNull();
-    expect(callArgs.object.bookingId).toBeNull();
+    expect(callArgs.object.bookingId).toBeUndefined();
+  });
+});
+
+describe('isEscrowParty', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('authorizes against only the current Trustless Work V1 role metadata', async () => {
+    mockedQuery.mockResolvedValueOnce({ rows: [{ is_party: true }] } as never);
+
+    await expect(isEscrowParty('user-1', 'contract-1', 'tenant-1')).resolves.toBe(true);
+
+    const [sql, params] = mockedQuery.mock.calls[0];
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,approver}'");
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,serviceProvider}'");
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,platformAddress}'");
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,releaseSigner}'");
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,disputeResolver}'");
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,receiver}'");
+    expect(sql).not.toContain('escrow.approver,');
+    expect(sql).not.toContain('escrow.marker,');
+    expect(sql).not.toContain('escrow.releaser');
+    expect(params).toEqual(['user-1', 'contract-1', 'tenant-1']);
   });
 });
 

@@ -26,9 +26,25 @@ INSERT INTO pricing_overrides (override_name, base_rule_id, override_base_amount
 ('Small XLM Fixed Fee', (SELECT id FROM pricing_rules WHERE rule_name = 'XLM Service Fee' LIMIT 1), 0.15, 50.00, 35, true);
 
 -- Targeted User Promotions
-INSERT INTO pricing_overrides (override_name, base_rule_id, override_percentage, user_id_list, priority, is_active) VALUES
-('Beta Tester Reward', (SELECT id FROM pricing_rules WHERE rule_name = 'USDC Standard Fee' LIMIT 1), 0.0125, ARRAY['user_001', 'user_002', 'user_003'], 15, true),
-('Early Adopter XLM', (SELECT id FROM pricing_rules WHERE rule_name = 'XLM Service Fee' LIMIT 1), 0.0100, ARRAY['user_004', 'user_005'], 15, true);
+INSERT INTO pricing_overrides (override_name, base_rule_id, override_percentage, priority, is_active) VALUES
+('Beta Tester Reward', (SELECT id FROM pricing_rules WHERE rule_name = 'USDC Standard Fee' LIMIT 1), 0.0125, 15, true),
+('Early Adopter XLM', (SELECT id FROM pricing_rules WHERE rule_name = 'XLM Service Fee' LIMIT 1), 0.0100, 15, true);
+
+-- Targeted user memberships (replaces the old user_id_list array).
+-- Users come from 1733963959819_user_seed.sql, which must be applied first.
+INSERT INTO pricing_override_users (override_id, user_id)
+SELECT po.id, u.id
+FROM pricing_overrides po
+JOIN users u ON u.id IN ('demo-tenant-uid-001', 'demo-user-uid-003', 'demo-user-uid-004')
+WHERE po.override_name = 'Beta Tester Reward'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO pricing_override_users (override_id, user_id)
+SELECT po.id, u.id
+FROM pricing_overrides po
+JOIN users u ON u.id IN ('demo-owner-uid-002', 'demo-user-uid-003')
+WHERE po.override_name = 'Early Adopter XLM'
+ON CONFLICT DO NOTHING;
 
 -- Seasonal Campaigns
 INSERT INTO pricing_overrides (override_name, base_rule_id, override_percentage, effective_from, effective_until, priority, is_active) VALUES

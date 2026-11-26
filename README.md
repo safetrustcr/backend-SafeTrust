@@ -120,9 +120,7 @@ the total time and the health checks. Every run also writes per-tenant logs to
 for the summary format, `--verbose`, and troubleshooting.
 
 Seed inserts use conflict-safe or stable-key cleanup patterns, making
-`bin/start` safe to rerun without `docker compose down -v`. Chunked seeding
-with `SEED_CHUNK_SIZE` (default `500` rows per transaction) is done by
-[`bin/deploy_init`](docs/infra/deploy-init.md), not `bin/start`.
+`bin/start` safe to rerun without `docker compose down -v`.
 
 **Target a specific tenant:**
 
@@ -282,7 +280,7 @@ In-depth guides live in [`docs/`](docs/README.md).
 
 | Document | What it covers |
 |---|---|
-| [SafeTrust Schema Migration Strategy](docs/migrations/safetrust-schema-migration.md) | Why SafeTrust tables moved from `public` to the `safetrust` schema, plus the deployment and rollback sequences |
+| [SafeTrust Schema Migration Strategy](docs/history/safetrust-schema-migration.md) | Historical reference for moving SafeTrust tables from `public` to the `safetrust` schema, plus deployment and rollback sequences |
 
 ---
 
