@@ -2,14 +2,21 @@
  * Maps a Trustless Work V1 indexer escrow onto the record the reconciliation
  * UPSERT writes (`safetrust.trustless_work_escrows`).
  *
- * Both sync paths (sequential TypeScript fetch and the parallel Rust
- * chunk-processor) return raw indexer JSON; this is the single mapping.
+ * The indexer fetch returns raw indexer JSON; this is the single mapping.
  *
  * ── Status derivation ───────────────────────────────────────────────────────
- * The V1 indexer has no `status` field. Status is derived from flags, first
- * match wins:
+ * The V1 indexer has no `status` field. Escrow-level V1 flags use this exact
+ * first-match precedence:
  *
- *   single-release (escrow `flags`, milestone `approved`)
+ *     isCancelled → cancelled
+ *     isDisputed  → disputed
+ *     isCompleted → completed
+ *     isPending   → pending_funding
+ *     no V1 flag  → legacy derivation below, then created
+ *
+ * During the indexer transition, legacy flags remain supported:
+ *
+ *   single-release (escrow legacy `flags`, milestone `approved`)
  *     flags.resolved                       → resolved
  *     flags.released                       → completed
  *     flags.disputed                       → disputed
@@ -25,17 +32,18 @@
  *     balance > 0 or fundedBy set          → funded
  *     otherwise                            → created
  *
- * Not derivable from the indexer: `active` and `pending_funding` (SafeTrust
- * steps with no V1 flag) and `cancelled` (V1 has no cancel operation). A
- * single-release `withdraw-remaining-funds` emits no V1 event, so it is not
- * observable here either.
+ * `active` remains a SafeTrust-only state with no V1 flag. Legacy payloads
+ * without the four `is*` flags continue through the older derivation rules.
  *
  * ── Roles ────────────────────────────────────────────────────────────────────
- * The table still uses the pre-V1 role columns until the schema migration:
+ * Migration 1795147840886 adds the canonical V1 role columns. The current
+ * reconciliation payload still emits these temporary aliases until TW-01
+ * switches its UPSERT parameters to the canonical columns:
  *   marker   ← roles.serviceProvider
  *   approver ← roles.approver
  *   releaser ← roles.releaseSigner
- * `platformAddress`, `disputeResolver` and `receiver` have no column yet.
+ * The canonical `platformAddress`, `disputeResolver`, and `receiver` values
+ * are stored once that parallel reconciliation change is deployed.
  */
 
 import type { EscrowRecord } from '../reconciliation.types'
@@ -43,11 +51,13 @@ import type { TwFlags, TwIndexerEscrow, TwMilestone } from './tw-indexer.types'
 
 export type DerivedEscrowStatus =
   | 'created'
+  | 'pending_funding'
   | 'funded'
   | 'milestone_approved'
   | 'disputed'
   | 'completed'
   | 'resolved'
+  | 'cancelled'
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -97,6 +107,15 @@ function deriveSingleReleaseStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus
   return isFunded(escrow) ? 'funded' : 'created'
 }
 
+/** Exact SafeTrust compatibility mapping for the four escrow-level V1 flags. */
+export function deriveV1FlagsStatus(flags: TwFlags): DerivedEscrowStatus | null {
+  if (flags.isCancelled === true) return 'cancelled'
+  if (flags.isDisputed === true) return 'disputed'
+  if (flags.isCompleted === true) return 'completed'
+  if (flags.isPending === true) return 'pending_funding'
+  return null
+}
+
 function deriveMultiReleaseStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus {
   const milestones = milestonesOf(escrow)
   if (milestones.length === 0) return deriveSingleReleaseStatus(escrow)
@@ -117,6 +136,8 @@ function deriveMultiReleaseStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus 
 
 /** Lifecycle status for a V1 indexer escrow (see the table at the top). */
 export function deriveEscrowStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus {
+  const v1Status = deriveV1FlagsStatus(flagsOf(escrow.flags))
+  if (v1Status) return v1Status
   return isMultiRelease(escrow)
     ? deriveMultiReleaseStatus(escrow)
     : deriveSingleReleaseStatus(escrow)
@@ -129,6 +150,14 @@ export function configuredAmount(escrow: TwIndexerEscrow): number {
   return total > 0 ? total : toNumber(escrow.amount) ?? 0
 }
 
+function ledgerSeqOrNull(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint') {
+    return String(value)
+  }
+  return null
+}
+
 /**
  * Normalize one raw indexer escrow. Never drops a record: an escrow without a
  * contract id is returned with an empty one so the UPSERT counts it as skipped.
@@ -137,6 +166,10 @@ export function normalizeIndexerEscrow(raw: unknown): EscrowRecord {
   const escrow: TwIndexerEscrow = isPlainObject(raw) ? (raw as TwIndexerEscrow) : {}
   const roles: Record<string, unknown> = isPlainObject(escrow.roles) ? escrow.roles : {}
   const balance = toNumber(escrow.balance)
+  const rawWithSeq = escrow as TwIndexerEscrow & {
+    ledgerSeq?: unknown
+    ledger_seq?: unknown
+  }
 
   return {
     contractId: stringOr(escrow.contractId),
@@ -151,8 +184,8 @@ export function normalizeIndexerEscrow(raw: unknown): EscrowRecord {
       approver: stringOr(roles.approver),
       releaser: stringOr(roles.releaseSigner),
     },
-    // The V1 indexer carries no ledger sequence (see escrow-freshness.ts).
-    ledgerSeq: null,
+    ledgerSeq:
+      ledgerSeqOrNull(rawWithSeq.ledgerSeq) ?? ledgerSeqOrNull(rawWithSeq.ledger_seq),
   }
 }
 

@@ -2,6 +2,8 @@
 
 Reference documentation for the **SafeTrust** backend — Hasura GraphQL, PostgreSQL, the multi-tenant engine, smart contract escrow lifecycle, and operational tooling.
 
+> **Documentation rule:** Pages under `docs/` describe the code as it is today. History lives in git, PRs, ADRs ([`adr/`](#architecture-decision-records-adrs)), and [`history/`](#history). Any PR that changes behavior must update the corresponding page in the same PR.
+
 For setup and day-to-day commands, start with the [root README](../README.md).
 
 ---
@@ -11,43 +13,47 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 ### 🏗️ Architecture
 | Document | Description |
 |---|---|
-| [Architecture Overview](architecture/overview.md) | System layers, SafeTrust-built unsigned XDR, wallet signing, and indexer reconciliation |
+| [Architecture Overview](architecture/overview.md) | System layers, unsigned XDR signing, and indexer reconciliation |
 | [Multi-Tenant Architecture](architecture/multi-tenant.md) | Two-tenant isolation model (`safetrust` and `hotel_industry`), schema routing, and RBAC rules |
+| [Safetrust Permissions](architecture/safetrust-permissions.md) | Role-scoped Hasura permissions (`guest`, `host`, `admin`) across `safetrust` tables and actions |
 | [Rust Crates in SafeTrust](architecture/rust-crates.md) | The remaining `x402-processor` addon, and the TypeScript that replaced the other crates |
 | [Crate Boundaries](architecture/crate-boundaries.md) | Consumers, exports, fallback and quarantine gate of `x402-processor`, and the record of each crate removal |
 | [Escrow Claims API](architecture/escrow-claims-api.md) | Request and response contract, error codes, idempotency and rate limit for claims on released escrows |
 | [Reservations API](architecture/reservations-api.md) | Lifecycle, allowed actions computation, read endpoints, and safe cancellation protocol |
 | [Wallet Registry API](architecture/wallets-api.md) | Verified wallet management lifecycle (list, unlink, and atomic set-primary endpoints) |
-| [Hotel Conversation Notifications](architecture/hotel-conversation-notifications.md) | In-process lifecycle notifications, time budget, idempotent conversation creation, and removal of the internal secret |
+| [Hotel Conversation Notifications](architecture/hotel-conversation-notifications.md) | In-process lifecycle notifications, time budget, and idempotent conversation creation |
 | [Error Handling, Logging and CORS](architecture/error-handling-and-logging.md) | Typed `AppError` mapping, sanitized 5xx bodies, structured logs with `requestId`, raw-body capture, and the CORS origin policy |
-
-### 📜 Architecture Decision Records (ADRs)
-| Document | Description |
-|---|---|
-| [ADR-0001: ZK Eligibility Statement and Trust Model](adr/0001-zk-eligibility-statement-and-trust-model.md) | *(Superseded by #753)* Predicate specification, trust boundaries, feasibility trade-offs, and verification key pinning for escrow admission |
 
 ### 🔐 Stellar & Escrow Flows
 | Document | Description |
 |---|---|
-| [Escrow Lifecycle](stellar/escrow-lifecycle.md) | Full TrustlessWork Stellar smart contract escrow state machine and transitions |
-| [Fund Escrow](stellar/fund-escrow.md) | Funding transaction build, wallet signing, Trustless Work submission, and state confirmation |
-| [Approve Milestone](stellar/approve-milestone.md) | Milestone approval transaction build, wallet signing, and result reconciliation |
-| [Release Funds](stellar/release-funds.md) | Release transaction build, wallet signing, and result reconciliation |
-| [Dispute & Resolve](stellar/dispute-resolve.md) | Dispute and resolution transactions, signing roles, and indexer reconciliation |
-| [Escrow State Source](stellar/escrow-state-source.md) | Authoritative state source selection, removal of fabricated reads, and adapter validation |
-| [Trustless Work Indexer Sync](stellar/trustless-work-indexer.md) | How reconciliation reads the Trustless Work V1 indexer: configuration, request, status derivation from flags, field mapping, and the unversioned-snapshot limitation |
+| [Escrow Lifecycle](stellar/escrow-lifecycle.md) | Full TrustlessWork Stellar smart contract state machine, retry mechanics, and fund, approve, release, and dispute/resolve flows |
+| [Escrow State Source & Reconciliation](stellar/reconciliation.md) | Polling architecture, Trustless Work V1 indexer endpoint, status derivation, field mapping, and the boundary for a future on-chain check |
 | [x402 Protocol](stellar/x402-protocol.md) | Agentic payments on Stellar using Soroban authorization entries and USDC SEP-41 |
 
-
-### 🐘 Database & Migrations
+### 📊 Analytics
 | Document | Description |
 |---|---|
-| [SafeTrust Schema Migration Architecture](migrations/safetrust-schema-migration.md) | Comprehensive architecture, Mermaid diagrams, deployment sequence, and rollback procedures for migration `1779300000001_migrate_to_safetrust_schema` |
+| [Analytics Console Runbook](analytics/console-runbook.md) | Hasura Console verification queries, role checks, and Karate test procedures for analytics functions |
+| [Analytics Metric Dictionary](analytics/metrics.md) | Definitions, currency/UTC conventions, and dashboard labels for all analytics fields |
 
 ### 🚀 Infrastructure & Tooling
 | Document | Description |
 |---|---|
 | [bin/start Guide](infra/bin-start.md) | Container startup orchestration, database health checks, and tenant initialization |
+
+### 📜 Architecture Decision Records (ADRs)
+<a id="architecture-decision-records-adrs"></a>
+| Document | Description |
+|---|---|
+| [ADR-0001: ZK Eligibility Statement and Trust Model](adr/0001-zk-eligibility-statement-and-trust-model.md) | *(Superseded by #753)* Predicate specification, trust boundaries, feasibility trade-offs, and verification key pinning for escrow admission |
+
+### 🕰️ History
+<a id="history"></a>
+| Document | Description |
+|---|---|
+| [Investigation: Missing `users` GraphQL Operations (#666)](history/hasura-users-schema-666.md) | *(Historical)* Root-cause investigation and live-deployment runbook for restoring `users` root fields after schema migration |
+| [SafeTrust Schema Migration Architecture](history/safetrust-schema-migration.md) | *(Historical)* Completed one-time migration architecture, deployment sequence, and rollback procedures for moving `public` to `safetrust` |
 
 ---
 

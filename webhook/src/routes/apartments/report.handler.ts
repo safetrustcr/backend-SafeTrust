@@ -34,7 +34,7 @@ export const createReportHandler = async (
   if (!reporterId) return res.status(401).json({ error: 'Unauthorized' })
 
   const apartmentId = req.params.id
-  if (!UUID_RE.test(apartmentId)) {
+  if (typeof apartmentId !== 'string' || !UUID_RE.test(apartmentId)) {
     return res.status(400).json({ error: 'INVALID_REPORT' satisfies ReportErrorCode })
   }
 

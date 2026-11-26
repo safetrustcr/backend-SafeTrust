@@ -21,10 +21,20 @@ export interface EscrowRecord {
   roles?: EscrowRoles
 }
 
+export interface ReconciliationTransitionSummary {
+  detected: number
+  applied: number
+  duplicates: number
+  failed: number
+  errors: string[]
+  failedContractIds: string[]
+}
+
 export interface UpsertResult {
   updated: number
   unchanged: number
   skipped: number
+  transitions?: ReconciliationTransitionSummary
 }
 
 export interface ChunkSyncResult extends UpsertResult {

@@ -70,7 +70,7 @@ most 50 escrows per indexer request, once every 15 minutes.
 |---|---|---|
 | `stellar-utils` | `StrKey.isValidEd25519PublicKey`, `Keypair.fromPublicKey(address).verify(data, signature)` from `@stellar/stellar-sdk` | `webhook/src/lib/stellar-wallet.ts` |
 | `escrow-state-machine` | One TypeScript transition table | `webhook/src/lib/escrow-transitions.ts` (used by `escrow.service.ts`, the route handlers, and `escrow-freshness.ts`, whose `CANONICAL_TRANSITIONS` is now derived from it) |
-| `webhook-verifier` | `createHmac` + `timingSafeEqual` from `node:crypto` (the crate's former Node fallback) | `webhook/src/lib/hmac-signature.ts` |
+| `webhook-verifier` | `createHmac` + `timingSafeEqual` from `node:crypto` (the crate's former Node fallback). No runtime caller since the callback routes were removed; kept with its tests as the rollback path. | `webhook/src/lib/hmac-signature.ts` |
 | `chunk-processor` | Deleted. The sequential chunk loop was already the default. | `syncAllChunks` in `webhook/src/services/reconciliation.service.ts` |
 | `pg-bulk-upsert` | Deleted. The per-row UPSERT was already the default. | `upsertEscrows` in `webhook/src/repositories/reconciliation.repository.ts` |
 | `soroban-reconciler` | Deleted, with `SOROBAN_*` settings and the `soroban*` fields of the sync response. It was off by default and its reader fabricated state. | — |
@@ -88,7 +88,7 @@ environment, and its reader fabricated state (Security Review Finding F1).
 
 If an on-chain drift check is needed later (ESC-02), write it in TypeScript
 with `@stellar/stellar-sdk/rpc`, against an authoritative state source. The
-gap analysis in [Escrow State Source](../stellar/escrow-state-source.md) still
+gap analysis in [Reconciliation and Indexer Sync](../stellar/reconciliation.md#5-authoritative-state-source-architecture) still
 applies.
 
 ---
@@ -104,10 +104,12 @@ flowchart TD
     E -->|Yes| G[accepted]
 ```
 
-The middleware builds the canonical payload as
-`Buffer.concat([timestamp, ".", req.rawBody])`, so the digest covers the exact
+The removed callback middleware built the canonical payload as
+`Buffer.concat([timestamp, ".", req.rawBody])`, so the digest covered the exact
 request bytes. `verifyHmacSignature` accepts a `Buffer`/`Uint8Array` (raw
-bytes) or a string (UTF-8 encoded once).
+bytes) or a string (UTF-8 encoded once). It has no runtime caller since the
+callback routes were removed (#769, #837); it stays, with its tests, as the
+rollback path.
 
 Every failure path returns `false`: empty secret, malformed signature,
 length mismatch, unsupported payload type, and any exception during
@@ -140,15 +142,16 @@ flowchart LR
   `x402-processor` module or its native addon.
 - With x402 disabled, a request carrying `X-Payment`,
   `X-Payment-Protocol`, or `X-Payment-Required` is **not** evaluated by x402;
-  it must pass the Trustless Work HMAC check like any other callback.
+  the initialize entrypoint follows its normal request path.
 - The middleware itself also fails closed with `503` if it is invoked while the
   flag is off, so a future route cannot accidentally mount it.
 - `X402_SETTLE_ENABLED=false` is the default. A successful facilitator
   `/verify` does not trigger `/settle`. The current settlement task has no
   durable retry, idempotency record, or reconciliation, so it must not run in
   production until F2/F3/F8 are closed.
-- The eligibility authority remains the HMAC-verified Trustless Work callback.
-  `escrow.service.ts` does not import `x402-processor`.
+- The eligibility authority remains local escrow validation; reconciliation is
+  authoritative for externally confirmed lifecycle state. `escrow.service.ts`
+  does not import `x402-processor`.
 
 The x402 Karate suite runs with `X402_ENABLED=true` in the isolated test
 compose file to exercise the payment gate; settlement stays disabled.

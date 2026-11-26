@@ -5,6 +5,7 @@ FROM node:24-bookworm-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+# security-reviewed: official rustup installer until #756 removes Rust crates
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
@@ -13,7 +14,7 @@ WORKDIR /app
 
 # 1. Node dependencies first (cached until package.json changes).
 COPY webhook/package*.json ./webhook/
-RUN cd webhook && npm ci
+RUN cd webhook && npm ci --ignore-scripts
 
 # 2. Rust workspace: root manifest + lockfile + crate members at /app so
 #    `cargo build --manifest-path ../crates/Cargo.toml` resolves from webhook.
@@ -37,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 
 COPY webhook/package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts
 
 COPY --from=builder /app/webhook/dist ./dist
 # x402 payment validation is opt-in at runtime but required by the enabled

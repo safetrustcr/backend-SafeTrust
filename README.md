@@ -280,7 +280,7 @@ In-depth guides live in [`docs/`](docs/README.md).
 
 | Document | What it covers |
 |---|---|
-| [SafeTrust Schema Migration Strategy](docs/migrations/safetrust-schema-migration.md) | Why SafeTrust tables moved from `public` to the `safetrust` schema, plus the deployment and rollback sequences |
+| [SafeTrust Schema Migration Strategy](docs/history/safetrust-schema-migration.md) | Historical reference for moving SafeTrust tables from `public` to the `safetrust` schema, plus deployment and rollback sequences |
 
 ---
 

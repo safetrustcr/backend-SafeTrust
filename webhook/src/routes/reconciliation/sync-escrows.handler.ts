@@ -27,6 +27,7 @@ export type SyncEscrowsResult = ReconciliationResponse
 export { SyncSummary, ReconciliationResponse }
 
 const STALE_ESCROW_DAYS = 7
+const TENANT_ID = 'safetrust'
 
 /**
  * Handles the POST /reconciliation/sync-escrows trigger from Hasura cron job.
@@ -44,10 +45,19 @@ export const syncEscrowsHandler = async (
   logger.info('reconciliation.sync.started')
 
   try {
-    const contractIds = await fetchEscrowContractIds('safetrust')
-    const sync = await syncEscrowsWithIndexer(contractIds)
+    const contractIds = await fetchEscrowContractIds(TENANT_ID)
+    const sync = await syncEscrowsWithIndexer(contractIds, {
+      applyTransitions: true,
+      tenantId: TENANT_ID,
+    })
     const stale = await detectStaleEscrows(STALE_ESCROW_DAYS)
-    const summary = formatReconciliationSummary(sync, stale, Date.now() - startTime)
+    const summary = formatReconciliationSummary(
+      sync,
+      stale,
+      Date.now() - startTime,
+      undefined,
+      sync.transitions
+    )
 
     const level = summary.errors > 0 ? 'warn' : 'info'
     logger[level]('reconciliation.sync.completed', {
@@ -59,6 +69,7 @@ export const syncEscrowsHandler = async (
       skipped: summary.skipped,
       stale: summary.staleCount,
       errors: summary.errors,
+      ...(summary.transitions ? { transitions: summary.transitions } : {}),
     })
 
     return ok(res, summary)

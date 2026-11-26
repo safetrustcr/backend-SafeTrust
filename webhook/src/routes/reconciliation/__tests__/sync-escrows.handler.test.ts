@@ -1,13 +1,13 @@
 'use strict'
 
 import { Request, Response } from 'express'
-import * as reconciliationService from '../../../services/reconciliation.service'
+import * as reconciliationService from '../../../services/reconciliation.service'
 
-jest.mock('../../../services/reconciliation.service', () => ({
-  ...jest.requireActual('../../../services/reconciliation.service'),
-  fetchEscrowContractIds: jest.fn(),
-  syncEscrowsWithIndexer: jest.fn(),
-  detectStaleEscrows: jest.fn(),
+jest.mock('../../../services/reconciliation.service', () => ({
+  ...jest.requireActual('../../../services/reconciliation.service'),
+  fetchEscrowContractIds: jest.fn(),
+  syncEscrowsWithIndexer: jest.fn(),
+  detectStaleEscrows: jest.fn(),
 }))
 
 describe('syncEscrowsHandler', () => {
@@ -15,16 +15,16 @@ describe('syncEscrowsHandler', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks()
-    ;(reconciliationService.fetchEscrowContractIds as jest.Mock).mockResolvedValue([])
-    ;(reconciliationService.syncEscrowsWithIndexer as jest.Mock).mockResolvedValue({
-      totalEscrows: 0,
-      chunks: 0,
-      updated: 0,
-      unchanged: 0,
-      skipped: 0,
-      errors: [],
-    })
-    ;(reconciliationService.detectStaleEscrows as jest.Mock).mockResolvedValue([])
+    ;(reconciliationService.fetchEscrowContractIds as jest.Mock).mockResolvedValue([])
+    ;(reconciliationService.syncEscrowsWithIndexer as jest.Mock).mockResolvedValue({
+      totalEscrows: 0,
+      chunks: 0,
+      updated: 0,
+      unchanged: 0,
+      skipped: 0,
+      errors: [],
+    })
+    ;(reconciliationService.detectStaleEscrows as jest.Mock).mockResolvedValue([])
     const module = await import('../sync-escrows.handler')
     syncEscrowsHandler = module.syncEscrowsHandler
   })
@@ -52,16 +52,24 @@ describe('syncEscrowsHandler', () => {
   })
 
   it('processes chunks successfully', async () => {
-    ;(reconciliationService.fetchEscrowContractIds as jest.Mock).mockResolvedValueOnce([
-      'mock_1',
-    ])
-    ;(reconciliationService.syncEscrowsWithIndexer as jest.Mock).mockResolvedValueOnce({
-      totalEscrows: 1,
+    ;(reconciliationService.fetchEscrowContractIds as jest.Mock).mockResolvedValueOnce([
+      'mock_1',
+    ])
+    ;(reconciliationService.syncEscrowsWithIndexer as jest.Mock).mockResolvedValueOnce({
+      totalEscrows: 1,
       chunks: 1,
       updated: 1,
       unchanged: 0,
       skipped: 0,
       errors: [],
+      transitions: {
+        detected: 1,
+        applied: 0,
+        duplicates: 0,
+        failed: 1,
+        errors: ['mock_1: mirror unavailable'],
+        failedContractIds: ['mock_1'],
+      },
     })
 
     const req = {} as Request
@@ -71,6 +79,11 @@ describe('syncEscrowsHandler', () => {
     } as unknown as Response
 
     await syncEscrowsHandler(req, res)
+
+    expect(reconciliationService.syncEscrowsWithIndexer).toHaveBeenCalledWith(['mock_1'], {
+      applyTransitions: true,
+      tenantId: 'safetrust',
+    })
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith(
@@ -85,9 +98,9 @@ describe('syncEscrowsHandler', () => {
   })
 
   it('handles fatal database error with 500 status', async () => {
-    ;(reconciliationService.fetchEscrowContractIds as jest.Mock).mockRejectedValueOnce(
-      new Error('DB connection failed')
-    )
+    ;(reconciliationService.fetchEscrowContractIds as jest.Mock).mockRejectedValueOnce(
+      new Error('DB connection failed')
+    )
 
     const req = {} as Request
     const res = {
