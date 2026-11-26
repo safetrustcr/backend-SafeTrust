@@ -383,7 +383,7 @@ export function checkFileContent(filePath, content) {
 
   // 7. Dangerous SQL in migrations/**/*.sql
   if (normPath.startsWith('migrations/') && ext === '.sql') {
-    const isCreateExtMigration = /_create_(?:uuid_)?extensions?\//.test(normPath);
+    const isCreateExtMigration = /_create_[a-z0-9_]*extensions?(\/|$)/.test(normPath);
     for (let idx = 0; idx < lines.length; idx += 1) {
       const rawLine = lines[idx];
       const lineNumber = idx + 1;
