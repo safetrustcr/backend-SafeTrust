@@ -33,6 +33,10 @@ Add here some information
 
 This pull request will **close # [Issue Number]** upon merging.
 
+## ✅ Checklist
+
+- [ ] Docs updated for behavior changes
+
 ---
 
 

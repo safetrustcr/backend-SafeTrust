@@ -1,0 +1,29 @@
+title = "SafeTrust Secret Scan Config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allow documented local/test defaults, example placeholders, and public Stellar addresses"
+
+paths = [
+  '''^\.env\.example$''',
+  '''^webhook/\.env\.example$''',
+  '''^\.gitleaks\.toml$''',
+]
+
+regexTarget = "match"
+regexes = [
+  # Public Stellar account addresses (G...) and Soroban contract IDs (C...) are public identifiers, not secrets.
+  '''\b[GC][A-Z2-7]{55}\b''',
+]
+
+[[allowlist.rules]]
+id = "allow-docker-compose-test-defaults"
+description = "Documented test-only fallback values in docker-compose-test.yml"
+paths = ['''^docker-compose-test\.yml$''']
+stopwords = [
+  "postgrespassword",
+  "dev-secret",
+  "testsecret",
+]

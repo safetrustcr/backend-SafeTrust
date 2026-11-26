@@ -1,0 +1,189 @@
+name: Security
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL (JavaScript/TypeScript)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          category: "/language:javascript-typescript"
+
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  lockfile-integrity:
+    name: Lockfile & Package Integrity
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: webhook/package-lock.json
+
+      - name: Install webhook dependencies without install scripts
+        run: npm ci --ignore-scripts --prefix webhook
+
+      - name: Lint lockfile host, HTTPS, and integrity
+        run: npx --prefix webhook lockfile-lint --path webhook/package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity
+
+      - name: Verify npm registry signatures
+        run: npm audit signatures --prefix webhook
+
+      - name: Audit production dependencies for high/critical CVEs
+        run: npm audit --prefix webhook --omit=dev --audit-level=high
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+      EVENT_NAME: ${{ github.event_name }}
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PUSH_BEFORE_SHA: ${{ github.event.before }}
+      GITHUB_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install checksum-verified gitleaks
+        run: |
+          curl -fLsS "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          chmod +x /tmp/gitleaks
+
+      - name: Scan PR/push commits with gitleaks
+        run: |
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            LOG_RANGE="${PR_BASE_SHA}..${PR_HEAD_SHA}"
+          elif [ "${PUSH_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ] && [ -n "${PUSH_BEFORE_SHA}" ]; then
+            LOG_RANGE="${PUSH_BEFORE_SHA}..${GITHUB_SHA}"
+          else
+            LOG_RANGE="-n 1"
+          fi
+          /tmp/gitleaks git --config .gitleaks.toml --redact --verbose --log-opts="${LOG_RANGE}"
+
+  suspicious-code:
+    name: Suspicious-Code Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EVENT_NAME: ${{ github.event_name }}
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PUSH_BEFORE_SHA: ${{ github.event.before }}
+      GITHUB_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Run suspicious-code unit tests
+        run: node --test scripts/check-suspicious-code.test.mjs
+
+      - name: Check changed files for suspicious patterns
+        run: |
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git diff --name-only --diff-filter=ACMR "${PR_BASE_SHA}...${PR_HEAD_SHA}" | node scripts/check-suspicious-code.mjs --stdin
+          elif [ "${PUSH_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ] && [ -n "${PUSH_BEFORE_SHA}" ]; then
+            git diff --name-only --diff-filter=ACMR "${PUSH_BEFORE_SHA}...${GITHUB_SHA}" | node scripts/check-suspicious-code.mjs --stdin
+          else
+            git diff-tree --no-commit-id --name-only -r --diff-filter=ACMR "${GITHUB_SHA}" | node scripts/check-suspicious-code.mjs --stdin
+          fi
+
+  workflow-lint:
+    name: Workflow Lint (zizmor + actionlint)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Run zizmor workflow security audit
+        uses: zizmorcore/zizmor-action@1b4550e929643b8b26a62303c6bd64814271a4f1 # v0.9.2
+        with:
+          advanced-security: false
+          annotations: true
+          collect: workflows
+
+      - name: Install and run checksum-verified actionlint
+        run: |
+          curl -fLsS "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" -o /tmp/actionlint.tar.gz
+          echo "${ACTIONLINT_SHA256}  /tmp/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          chmod +x /tmp/actionlint
+          /tmp/actionlint
