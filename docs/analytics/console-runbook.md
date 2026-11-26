@@ -55,7 +55,7 @@ The SafeTrust Analytics Dashboard depends on two PostgreSQL functions exposed as
    bin/test
    ```
 3. Open the Hasura Console locally:
-   - When running `bin/start`: navigate to `http://localhost:8080/console` (Admin Secret: `$HASURA_ADMIN_SECRET`, loaded from `.env`).
+   - When running `bin/start`: navigate to `http://localhost:8080/console` (Admin Secret: enter the actual value of `HASURA_ADMIN_SECRET` from `.env`; do not enter the variable name itself).
    - When running the CLI test container: navigate to `http://localhost:9696`.
 
 ---
@@ -262,7 +262,7 @@ The admin role has unrestricted privileges and can query metrics for any tenant.
 **Headers**:
 ```http
 Content-Type: application/json
-x-hasura-admin-secret: $HASURA_ADMIN_SECRET
+x-hasura-admin-secret: <HASURA_ADMIN_SECRET>
 ```
 
 **Query**:
@@ -301,7 +301,7 @@ A tenant-authenticated host user querying their tenant (`safetrust`).
 **Headers**:
 ```http
 Content-Type: application/json
-x-hasura-admin-secret: $HASURA_ADMIN_SECRET
+x-hasura-admin-secret: <HASURA_ADMIN_SECRET>
 x-hasura-role: host
 x-hasura-user-id: usr_st_7721
 x-hasura-tenant-id: safetrust
