@@ -36,7 +36,7 @@ import { hasuraRequest } from '../services/hasura'
 import { hasuraTenantRequest } from '../services/tenant-scoped-hasura'
 import { getPlatformTenantId } from '../config/tenant'
 import { PoolClient } from 'pg'
-import { query, connect } from '../services/db'
+import { query, connect, withTransaction, type Queryable } from '../services/db'
 import {
   evaluateFreshness,
   formatExactBalance,
@@ -77,6 +77,14 @@ export type EscrowStatus =
 export interface TrustlessWorkEscrow {
   id: string
   contractId: string
+  engagementId?: string | null
+  approver?: string | null
+  serviceProvider?: string | null
+  platformAddress?: string | null
+  releaseSigner?: string | null
+  disputeResolver?: string | null
+  receiver?: string | null
+  flags?: Record<string, boolean> | null
   status: EscrowStatus
   balance?: number
   createdAt?: string
@@ -85,9 +93,19 @@ export interface TrustlessWorkEscrow {
 
 export interface CreateEscrowInput {
   contractId: string
-  marker: string
+  engagementId?: string | null
   approver: string
+  serviceProvider?: string | null
+  platformAddress?: string | null
+  releaseSigner?: string | null
+  disputeResolver?: string | null
+  receiver?: string | null
+  flags?: Record<string, boolean> | null
+  /** @deprecated Pre-V1 alias retained while initialization callers migrate. */
+  marker: string
+  /** @deprecated Pre-V1 alias retained while initialization callers migrate. */
   releaser: string
+  /** @deprecated Pre-V1 alias retained while initialization callers migrate. */
   resolver?: string | null
   escrowType: string
   status: string
@@ -113,6 +131,14 @@ export async function getEscrowByContractId(
       trustless_work_escrows(where: { contractId: { _eq: $contractId } }) {
         id
         contractId
+        engagementId
+        approver
+        serviceProvider
+        platformAddress
+        releaseSigner
+        disputeResolver
+        receiver
+        flags
         status
         balance
         createdAt
@@ -125,6 +151,14 @@ export async function getEscrowByContractId(
     trustless_work_escrows?: Array<{
       id: string
       contractId: string
+      engagementId?: string | null
+      approver?: string | null
+      serviceProvider?: string | null
+      platformAddress?: string | null
+      releaseSigner?: string | null
+      disputeResolver?: string | null
+      receiver?: string | null
+      flags?: Record<string, boolean> | null
       status: string
       balance?: number
       createdAt?: string
@@ -140,6 +174,14 @@ export async function getEscrowByContractId(
   return {
     id: escrow.id,
     contractId: escrow.contractId,
+    ...(escrow.engagementId !== undefined && { engagementId: escrow.engagementId }),
+    ...(escrow.approver !== undefined && { approver: escrow.approver }),
+    ...(escrow.serviceProvider !== undefined && { serviceProvider: escrow.serviceProvider }),
+    ...(escrow.platformAddress !== undefined && { platformAddress: escrow.platformAddress }),
+    ...(escrow.releaseSigner !== undefined && { releaseSigner: escrow.releaseSigner }),
+    ...(escrow.disputeResolver !== undefined && { disputeResolver: escrow.disputeResolver }),
+    ...(escrow.receiver !== undefined && { receiver: escrow.receiver }),
+    ...(escrow.flags !== undefined && { flags: escrow.flags }),
     status: escrow.status,
     balance: escrow.balance,
     createdAt: escrow.createdAt,
@@ -319,23 +361,44 @@ export async function approveEscrowStatus(
 }
 
 /**
- * Updates an escrow status to funded with a prior-state guard via GraphQL mutation.
- *
- * @param contractId - On-chain contract identifier
- * @param amount - Deposit amount to set as balance
- * @param validStates - Allowed prior statuses
- * @returns Updated escrow record or null
+ * Updates an escrow status to funded with a prior-state guard.
+ * Supports db: Queryable as first argument, with backward-compatible GraphQL fallback.
  */
 export async function fundEscrow(
   contractId: string,
   amount: number,
-  validStates: string[]
+  validStates: string[],
+  tenantId?: string
+): Promise<TrustlessWorkEscrow | null>
+export async function fundEscrow(
+  db: Queryable,
+  contractId: string,
+  amount: number,
+  validStates: string[],
+  tenantId?: string
+): Promise<TrustlessWorkEscrow | null>
+export async function fundEscrow(
+  dbOrContractId: Queryable | string,
+  contractIdOrAmount: string | number,
+  amountOrValidStates: number | string[],
+  validStatesOrTenantId?: string[] | string,
+  maybeTenantId?: string
 ): Promise<TrustlessWorkEscrow | null> {
-  const mutation = `
-    mutation FundEscrow($contractId: String!, $amount: numeric!, $validStates: [String!]!) {
+  if (typeof dbOrContractId === 'string') {
+    const contractId = dbOrContractId
+    const amount = contractIdOrAmount as number
+    const validStates = amountOrValidStates as string[]
+    const tenantId =
+      typeof validStatesOrTenantId === 'string'
+        ? validStatesOrTenantId
+        : getPlatformTenantId()
+
+    const mutation = `
+    mutation FundEscrow($contractId: String!, $amount: numeric!, $validStates: [String!]!, $tenantId: String!) {
       update_trustless_work_escrows(
         where: {
           contractId: { _eq: $contractId }
+          tenantId: { _eq: $tenantId }
           status: { _in: $validStates }
         }
         _set: {
@@ -353,34 +416,57 @@ export async function fundEscrow(
     }
   `
 
-  const data = await hasuraRequest<{
-    update_trustless_work_escrows?: {
-      returning: Array<{ id: string; contractId: string; status: string; balance: number }>
+    const data = await hasuraRequest<{
+      update_trustless_work_escrows?: {
+        returning: Array<{ id: string; contractId: string; status: string; balance: number }>
+      }
+    }>(mutation, { contractId, amount, validStates, tenantId })
+
+    const updated = data?.update_trustless_work_escrows?.returning?.[0]
+    if (!updated) {
+      return null
     }
-  }>(mutation, { contractId, amount, validStates })
 
-  const updated = data?.update_trustless_work_escrows?.returning?.[0]
-  if (!updated) {
-    return null
+    return {
+      id: updated.id,
+      contractId: updated.contractId,
+      status: updated.status,
+      balance: updated.balance,
+    }
   }
 
-  return {
-    id: updated.id,
-    contractId: updated.contractId,
-    status: updated.status,
-    balance: updated.balance,
-  }
+  const db = dbOrContractId as Queryable
+  const contractId = contractIdOrAmount as string
+  const amount = amountOrValidStates as number
+  const validStates = validStatesOrTenantId as string[]
+  const tenantId = maybeTenantId ?? getPlatformTenantId()
+
+  const result = await db.query<{
+    id: string
+    contract_id: string
+    status: string
+    balance: number
+  }>(
+    `UPDATE safetrust.trustless_work_escrows
+     SET status = 'funded', balance = $1, updated_at = NOW()
+     WHERE contract_id = $2
+       AND tenant_id = $4
+       AND status = ANY($3::varchar[])
+     RETURNING id, contract_id, status, balance`,
+    [amount, contractId, validStates, tenantId]
+  )
+
+  const updated = result.rows[0]
+  return updated
+    ? {
+        id: updated.id,
+        contractId: updated.contract_id,
+        status: updated.status,
+        balance: updated.balance,
+      }
+    : null
 }
 
-/**
- * Updates an escrow status to funded with a prior-state guard within an existing PostgreSQL transaction.
- *
- * @param client - PostgreSQL pool client
- * @param contractId - On-chain contract identifier
- * @param amount - Deposit amount to set as balance
- * @param validStates - Allowed prior statuses
- * @returns Updated escrow record or null
- */
 export async function fundEscrowInTransaction(
   client: PoolClient,
   contractId: string,
@@ -416,17 +502,46 @@ export async function fundEscrowInTransaction(
 
 /**
  * Releases funds and transitions an escrow status to completed with a prior-state guard.
- * Throws StateConflictError if no row matches the allowed prior states.
- *
- * @param contractId - On-chain contract identifier
- * @param validStates - Optional allowed prior statuses; defaults to canonical valid states
- * @returns Updated escrow record
- * @throws StateConflictError if the escrow cannot transition to completed
+ * Supports db: Queryable as first argument, with backward-compatible GraphQL fallback.
  */
 export async function releaseFunds(
   contractId: string,
-  validStates?: string[]
+  validStates?: string[],
+  tenantId?: string
+): Promise<TrustlessWorkEscrow>
+export async function releaseFunds(
+  db: Queryable,
+  contractId: string,
+  validStates?: string[],
+  tenantId?: string
+): Promise<TrustlessWorkEscrow>
+export async function releaseFunds(
+  dbOrContractId: Queryable | string,
+  contractIdOrValidStates?: string | string[],
+  validStatesOrTenantId?: string[] | string,
+  maybeTenantId?: string
 ): Promise<TrustlessWorkEscrow> {
+  const isQueryable = typeof dbOrContractId !== 'string'
+
+  let db: Queryable | undefined
+  let contractId: string
+  let validStates: string[] | undefined
+  let tenantId: string
+
+  if (isQueryable) {
+    db = dbOrContractId as Queryable
+    contractId = contractIdOrValidStates as string
+    validStates = validStatesOrTenantId as string[] | undefined
+    tenantId = maybeTenantId ?? getPlatformTenantId()
+  } else {
+    contractId = dbOrContractId as string
+    validStates = contractIdOrValidStates as string[] | undefined
+    tenantId =
+      typeof validStatesOrTenantId === 'string'
+        ? validStatesOrTenantId
+        : getPlatformTenantId()
+  }
+
   const canonicalPriorStates = getValidPriorStates(
     CanonicalStatus.Completed,
     EscrowEventType.FundsReleased
@@ -436,11 +551,13 @@ export async function releaseFunds(
       ? canonicalPriorStates
       : validStates.filter((state) => canonicalPriorStates.includes(state))
 
-  const mutation = `
-    mutation ReleaseFunds($contractId: String!, $validStates: [String!]!) {
+  if (!isQueryable || !db) {
+    const mutation = `
+    mutation ReleaseFunds($contractId: String!, $validStates: [String!]!, $tenantId: String!) {
       update_trustless_work_escrows(
         where: {
           contractId: { _eq: $contractId }
+          tenantId: { _eq: $tenantId }
           status: { _in: $validStates }
         }
         _set: {
@@ -453,13 +570,43 @@ export async function releaseFunds(
     }
   `
 
-  const data = await hasuraRequest<{
-    update_trustless_work_escrows?: {
-      returning: Array<{ id: string; contractId: string; status: string; balance: number }>
-    }
-  }>(mutation, { contractId, validStates: allowedPriorStates })
+    const data = await hasuraRequest<{
+      update_trustless_work_escrows?: {
+        returning: Array<{ id: string; contractId: string; status: string; balance: number }>
+      }
+    }>(mutation, { contractId, validStates: allowedPriorStates, tenantId })
 
-  const updated = data?.update_trustless_work_escrows?.returning?.[0]
+    const updated = data?.update_trustless_work_escrows?.returning?.[0]
+    if (!updated) {
+      throw new StateConflictError(
+        `Escrow cannot transition to completed: contractId '${contractId}' not found or current status not in [${allowedPriorStates.join(', ')}]`
+      )
+    }
+
+    return {
+      id: updated.id,
+      contractId: updated.contractId,
+      status: updated.status,
+      balance: updated.balance,
+    }
+  }
+
+  const result = await db.query<{
+    id: string
+    contract_id: string
+    status: string
+    balance: number
+  }>(
+    `UPDATE safetrust.trustless_work_escrows
+     SET status = 'completed', balance = 0, updated_at = NOW()
+     WHERE contract_id = $1
+       AND tenant_id = $3
+       AND status = ANY($2::varchar[])
+     RETURNING id, contract_id, status, balance`,
+    [contractId, allowedPriorStates, tenantId]
+  )
+
+  const updated = result.rows[0]
   if (!updated) {
     throw new StateConflictError(
       `Escrow cannot transition to completed: contractId '${contractId}' not found or current status not in [${allowedPriorStates.join(', ')}]`
@@ -468,20 +615,12 @@ export async function releaseFunds(
 
   return {
     id: updated.id,
-    contractId: updated.contractId,
+    contractId: updated.contract_id,
     status: updated.status,
     balance: updated.balance,
   }
 }
 
-/**
- * Releases funds and transitions an escrow to completed with a prior-state guard in a transaction.
- *
- * @param client - PostgreSQL pool client
- * @param contractId - On-chain contract identifier
- * @param validStates - Allowed prior statuses
- * @returns Updated escrow record or null
- */
 export async function releaseFundsInTransaction(
   client: PoolClient,
   contractId: string,
@@ -667,142 +806,135 @@ export interface EscrowObservationInput {
  * Evaluates the four conflict cases, unversioned snapshot rules, terminal state protection,
  * network/contract identity checks, and exact token amount preservation.
  */
-export async function updateEscrowWithFreshness(
-  idOrContractId: string,
-  observation: EscrowObservationInput,
-  providedClient?: PoolClient
-): Promise<FreshnessOutcome> {
-  const isCustomClient = Boolean(providedClient)
-  const client =
-    providedClient ?? (typeof connect === 'function' ? await connect() : null)
+interface EscrowTransactionRow {
+  id: string
+  contract_id: string
+  status: string
+  balance: string | null
+  ledger_seq: bigint | string | null
+  network: string | null
+}
 
-  const executeQuery = async (
-    sql: string,
-    params: any[] = []
-  ): Promise<{ rows: any[] }> => {
-    if (client) {
-      return client.query(sql, params)
-    }
-    return query(sql, params)
+export async function updateEscrowWithFreshness(
+  dbOrId: Queryable | string,
+  idOrObservation: string | EscrowObservationInput,
+  observationOrClient?: EscrowObservationInput | Queryable
+): Promise<FreshnessOutcome> {
+  let db: Queryable | null = null
+  let idOrContractId: string
+  let observation: EscrowObservationInput
+
+  if (typeof dbOrId === 'string') {
+    idOrContractId = dbOrId
+    observation = idOrObservation as EscrowObservationInput
+    db = (observationOrClient as Queryable) ?? null
+  } else {
+    db = dbOrId
+    idOrContractId = idOrObservation as string
+    observation = observationOrClient as EscrowObservationInput
   }
 
-  let txOpen = false
-  try {
-    await executeQuery('BEGIN')
-    txOpen = true
+  if (!db) {
+    return withTransaction((txClient) =>
+      updateEscrowWithFreshness(txClient, idOrContractId, observation)
+    )
+  }
 
-    // Select with FOR UPDATE (row-level lock)
-    // Supports either UUID id or contract_id string
-    const selectSql = `
+  // Caller owns transaction lifecycle when providing Queryable; updateEscrowWithFreshness preserves savepoint behavior
+  const selectSql = `
+    SELECT id, contract_id, status, balance::text, ledger_seq, network
+    FROM safetrust.trustless_work_escrows
+    WHERE id::text = $1 OR contract_id = $1
+    FOR UPDATE
+  `
+  let storedRow: EscrowTransactionRow | null = null
+  await db.query('SAVEPOINT sp_select')
+  try {
+    const res = await db.query<EscrowTransactionRow>(selectSql, [idOrContractId])
+    storedRow = res.rows[0] ?? null
+    await db.query('RELEASE SAVEPOINT sp_select')
+  } catch (err) {
+    await db.query('ROLLBACK TO SAVEPOINT sp_select')
+    if (!isUndefinedTableError(err)) throw err
+    // Fall back to unqualified trustless_work_escrows table if safetrust schema is not configured
+    const fallbackSql = `
       SELECT id, contract_id, status, balance::text, ledger_seq, network
-      FROM safetrust.trustless_work_escrows
+      FROM trustless_work_escrows
       WHERE id::text = $1 OR contract_id = $1
       FOR UPDATE
     `
-    let storedRow: any = null
-    await executeQuery('SAVEPOINT sp_select')
+    const res = await db.query<EscrowTransactionRow>(fallbackSql, [idOrContractId])
+    storedRow = res.rows[0] ?? null
+  }
+
+  const storedState: StoredEscrowState | null = storedRow
+    ? {
+        id: storedRow.id,
+        contractId: storedRow.contract_id,
+        status: storedRow.status,
+        balance: storedRow.balance ?? '0.0000000',
+        ledgerSeq: storedRow.ledger_seq,
+        network: storedRow.network,
+      }
+    : null
+
+  const incoming: IncomingEscrowObservation = {
+    contractId: storedState?.contractId ?? idOrContractId,
+    status: observation.status,
+    balance: observation.balance ?? (storedState?.balance ?? '0.0000000'),
+    amount: observation.amount,
+    ledgerSeq: observation.ledgerSeq,
+    network: observation.network,
+  }
+
+  // CodeRabbit review comment: Reject missing-row observations instead of inserting placeholders
+  const outcome: FreshnessOutcome = storedRow
+    ? evaluateFreshness(storedState, incoming)
+    : {
+        type: 'REJECT_INVALID_TRANSITION',
+        reason: 'Cannot create an escrow row without an existing escrow identity',
+      }
+
+  if (outcome.type === 'WRITE' && storedRow) {
+    // Update existing row
+    const updateSql = `
+      UPDATE safetrust.trustless_work_escrows
+      SET status = $2, balance = $3::numeric, ledger_seq = $4,
+          network = COALESCE(safetrust.trustless_work_escrows.network, $5),
+          updated_at = NOW()
+      WHERE id::text = $1 OR contract_id = $1
+    `
+    await db.query('SAVEPOINT sp_update')
     try {
-      const res = await executeQuery(selectSql, [idOrContractId])
-      storedRow = res.rows[0]
-      await executeQuery('RELEASE SAVEPOINT sp_select')
+      await db.query(updateSql, [
+        idOrContractId,
+        outcome.status,
+        outcome.balance,
+        outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+        incoming.network ?? null,
+      ])
+      await db.query('RELEASE SAVEPOINT sp_update')
     } catch (err) {
-      await executeQuery('ROLLBACK TO SAVEPOINT sp_select')
+      await db.query('ROLLBACK TO SAVEPOINT sp_update')
       if (!isUndefinedTableError(err)) throw err
-      // Fall back to unqualified trustless_work_escrows table if safetrust schema is not configured
-      const fallbackSql = `
-        SELECT id, contract_id, status, balance::text, ledger_seq, network
-        FROM trustless_work_escrows
-        WHERE id::text = $1 OR contract_id = $1
-        FOR UPDATE
-      `
-      const res = await executeQuery(fallbackSql, [idOrContractId])
-      storedRow = res.rows[0]
-    }
-
-    const storedState: StoredEscrowState | null = storedRow
-      ? {
-          id: storedRow.id,
-          contractId: storedRow.contract_id,
-          status: storedRow.status,
-          balance: storedRow.balance ?? '0.0000000',
-          ledgerSeq: storedRow.ledger_seq,
-          network: storedRow.network,
-        }
-      : null
-
-    const incoming: IncomingEscrowObservation = {
-      contractId: storedState?.contractId ?? idOrContractId,
-      status: observation.status,
-      balance: observation.balance ?? (storedState?.balance ?? '0.0000000'),
-      amount: observation.amount,
-      ledgerSeq: observation.ledgerSeq,
-      network: observation.network,
-    }
-
-    // CodeRabbit review comment: Reject missing-row observations instead of inserting placeholders
-    const outcome: FreshnessOutcome = storedRow
-      ? evaluateFreshness(storedState, incoming)
-      : {
-          type: 'REJECT_INVALID_TRANSITION',
-          reason: 'Cannot create an escrow row without an existing escrow identity',
-        }
-
-    if (outcome.type === 'WRITE' && storedRow) {
-      // Update existing row
-      const updateSql = `
-        UPDATE safetrust.trustless_work_escrows
+      const fallbackUpdate = `
+        UPDATE trustless_work_escrows
         SET status = $2, balance = $3::numeric, ledger_seq = $4,
-            network = COALESCE(safetrust.trustless_work_escrows.network, $5),
+            network = COALESCE(trustless_work_escrows.network, $5),
             updated_at = NOW()
         WHERE id::text = $1 OR contract_id = $1
       `
-      await executeQuery('SAVEPOINT sp_update')
-      try {
-        await executeQuery(updateSql, [
-          idOrContractId,
-          outcome.status,
-          outcome.balance,
-          outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
-          incoming.network ?? null,
-        ])
-        await executeQuery('RELEASE SAVEPOINT sp_update')
-      } catch (err) {
-        await executeQuery('ROLLBACK TO SAVEPOINT sp_update')
-        if (!isUndefinedTableError(err)) throw err
-        const fallbackUpdate = `
-          UPDATE trustless_work_escrows
-          SET status = $2, balance = $3::numeric, ledger_seq = $4,
-              network = COALESCE(trustless_work_escrows.network, $5),
-              updated_at = NOW()
-          WHERE id::text = $1 OR contract_id = $1
-        `
-        await executeQuery(fallbackUpdate, [
-          idOrContractId,
-          outcome.status,
-          outcome.balance,
-          outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
-          incoming.network ?? null,
-        ])
-      }
-    }
-
-    await executeQuery('COMMIT')
-    txOpen = false
-    return outcome
-  } catch (err) {
-    if (txOpen) {
-      try {
-        await executeQuery('ROLLBACK')
-      } catch {
-        // ignore rollback error
-      }
-    }
-    throw err
-  } finally {
-    if (client && !isCustomClient && typeof (client as any).release === 'function') {
-      (client as any).release()
+      await db.query(fallbackUpdate, [
+        idOrContractId,
+        outcome.status,
+        outcome.balance,
+        outcome.ledgerSeq ? outcome.ledgerSeq.toString() : null,
+        incoming.network ?? null,
+      ])
     }
   }
+
+  return outcome
 }
 
 export const applyEscrowFreshnessUpdate = updateEscrowWithFreshness

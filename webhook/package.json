@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "build:rust": "npm run build:tooling && cargo build --release --manifest-path ../crates/Cargo.toml -p webhook-verifier -p stellar-utils -p chunk-processor -p pg-bulk-upsert -p escrow-state-machine -p x402-processor -p soroban-reconciler && node ../crates/scripts/copy-native.js --crate=webhook-verifier && node ../crates/scripts/copy-native.js --crate=stellar-utils && node ../crates/scripts/copy-native.js --crate=chunk-processor && node ../crates/scripts/copy-native.js --crate=pg-bulk-upsert && node ../crates/scripts/copy-native.js --crate=escrow-state-machine && node ../crates/scripts/copy-native.js --crate=x402-processor && node ../crates/scripts/copy-native.js --crate=soroban-reconciler",
+    "copy:crates": "node ../crates/scripts/copy-native.js --crate=webhook-verifier && node ../crates/scripts/copy-native.js --crate=stellar-utils && node ../crates/scripts/copy-native.js --crate=chunk-processor && node ../crates/scripts/copy-native.js --crate=pg-bulk-upsert && node ../crates/scripts/copy-native.js --crate=escrow-state-machine && node ../crates/scripts/copy-native.js --crate=x402-processor && node ../crates/scripts/copy-native.js --crate=soroban-reconciler",
+    "build:rust": "npm run build:tooling && cargo build --release --manifest-path ../crates/Cargo.toml -p webhook-verifier -p stellar-utils -p chunk-processor -p pg-bulk-upsert -p escrow-state-machine -p x402-processor -p soroban-reconciler && npm run copy:crates",
     "build": "npm run build:rust && tsc",
     "dev": "nodemon --exec ts-node src/index.ts",
     "start": "node dist/index.js",
@@ -22,6 +23,7 @@
     "@types/pg": "^8.21.0",
     "@types/supertest": "^6.0.3",
     "jest": "^29.7.0",
+    "lockfile-lint": "5.1.0",
     "nodemon": "^3.1.14",
     "supertest": "^6.3.4",
     "ts-jest": "^29.4.12",

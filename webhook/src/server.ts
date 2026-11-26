@@ -3,6 +3,7 @@ import { getHasuraAdminSecret } from './services/hasura'
 import { initializeFirebaseAdmin } from './config/firebase-admin'
 import { pool } from './services/db'
 import { logger } from './middleware/logger'
+import { startHoldExpiryJob, stopHoldExpiryJob } from './services/hold-expiry.job'
 
 const rawPort = process.env.WEBHOOK_PORT ?? process.env.PORT
 const port = rawPort === undefined ? 3001 : Number(rawPort)
@@ -23,6 +24,7 @@ try {
 const server = app.listen(port, () => {
   logger.info('server.started', { port })
 })
+startHoldExpiryJob()
 
 const shutdownTimeoutMs = 30_000
 let shuttingDown = false
@@ -33,6 +35,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   }
   shuttingDown = true
   logger.info('server.shutdown.started', { signal })
+  stopHoldExpiryJob()
 
   const timeout = setTimeout(() => {
     logger.error('server.shutdown.timeout', { timeoutMs: shutdownTimeoutMs })

@@ -129,9 +129,9 @@ flowchart TD
 - `tenant_id`: Multi-tenant partition key (`safetrust`)
 
 ### Bounded Exponential Backoff Formula
-$$\text{delay} = \min\left(\text{BASE\_DELAY} \times 2^{\text{attempt\_count} - 1},\, \text{MAX\_DELAY}\right)$$
-- `BASE_DELAY`: 1,000 ms (1 second)
-- `MAX_DELAY`: 300,000 ms (5 minutes)
+$$\text{delay} = \min\left(\text{BASE\_RETRY\_DELAY\_MS} \times 2^{\text{attempt\_count} - 1},\, \text{MAX\_RETRY\_DELAY\_MS}\right)$$
+- `BASE_RETRY_DELAY_MS`: 1,000 ms (1 second)
+- `MAX_RETRY_DELAY_MS`: 300,000 ms (5 minutes)
 - Attempt 1: 1s, Attempt 2: 2s, Attempt 3: 4s, Attempt 4: 8s, Attempt 5: 16s.
 
 ### Crash Survivability & Background Reconciliation
@@ -250,3 +250,109 @@ stateDiagram-v2
     resolved --> [*]
     cancelled --> [*]
 ```
+
+---
+
+## 9. Escrow Operation Flows
+
+SafeTrust does not hold user private keys and does not receive Trustless Work
+webhooks. Across all post-deploy escrow operations, the frontend obtains an
+unsigned XDR from Trustless Work, the authorized wallet signs it locally, the
+signed transaction is submitted to Stellar (via Trustless Work
+`POST /helper/send-transaction` or directly to Horizon/Soroban RPC), and
+SafeTrust learns and records the resulting state through reconciliation polling
+(`POST /reconciliation/sync-escrows`) and, for deployment/funding
+confirmation, `POST /api/escrows/confirm-transaction`. See
+[Escrow State Source & Reconciliation](./reconciliation.md) for status
+derivation, field mapping, and unversioned-snapshot freshness rules.
+
+### Fund Escrow
+
+1. **Build unsigned XDR:** The frontend requests an unsigned funding
+   transaction from Trustless Work:
+   - Single-release: `POST /escrow/single-release/fund-escrow`
+   - Multi-release: `POST /escrow/multi-release/fund-escrow`
+2. **Sign & submit:** The user signs the XDR in their wallet and submits it via
+   Trustless Work `POST /helper/send-transaction` (or directly to Stellar and
+   calls `POST /api/escrows/confirm-transaction` with `action: "fund"`).
+3. **Reconcile & confirm:** Reconciliation polling
+   (`POST /reconciliation/sync-escrows` → `GET /helper/get-escrow-by-contract-ids`)
+   and/or the confirmation engine promotes `status` from `created` or
+   `pending_funding` to `funded` with `balance = amount` once `balance > 0` or
+   `fundedBy` is observed on-chain/in the indexer.
+
+An unsigned XDR or wallet signature alone never promotes escrow status.
+
+### Approve Milestone
+
+1. **Build unsigned XDR:** The frontend requests an unsigned milestone-approval
+   transaction from Trustless Work:
+   - Single-release: `POST /escrow/single-release/approve-milestone`
+   - Multi-release: `POST /escrow/multi-release/approve-milestone`
+2. **Sign & submit:** The **Approver** wallet signs the XDR and submits it
+   through `POST /helper/send-transaction`.
+3. **State synchronization & current wiring:**
+   - **Unversioned reconciliation polling cannot advance a `funded` escrow to `milestone_approved`:** The V1 indexer snapshot omits `ledger_seq`, so the freshness policy in `webhook/src/lib/escrow-freshness.ts` rejects unversioned updates to confirmed (`funded`) rows, `LIFECYCLE_TRANSITION_SPECS` in `webhook/src/services/reconciliation.service.ts` does not register `milestone_approved`, and `webhook/src/services/confirmation.service.ts` handles only `deploy` and `fund` actions.
+   - **Implementation paths that write `milestone_approved`:**
+     - **Milestone service (`webhook/src/services/milestone.service.ts`):** `approveMilestone` and `approveMilestoneAndUpdateReservation` (alongside the separate `approveMilestone` helper in `webhook/src/repositories/escrow.repository.ts`) atomically mark the `safetrust.escrow_milestones` row `approved`, update `safetrust.trustless_work_escrows.status` to `milestone_approved`, and mirror `checked_in`/`checked_out` to `safetrust.reservations`. This service is **not** currently wired to an HTTP route or cron trigger in this checkout (invoked only in tests after legacy callbacks were removed in #769).
+     - **Versioned snapshot UPSERT (`upsertEscrows` / `pg-bulk-upsert`):** When a snapshot carries a newer `ledger_seq` (or stored `ledger_seq` is `NULL`), reconciliation derives `milestone_approved` from an approved milestone flag (single-release) or any approved/released milestone (multi-release) and updates escrow-level status without modifying `escrow_milestones` or `reservations`.
+   - See [reconciliation.md](./reconciliation.md) for status derivation and freshness rules.
+
+### Release Funds
+
+1. **Build unsigned XDR:** The frontend requests an unsigned release
+   transaction from Trustless Work:
+   - Single-release: `POST /escrow/single-release/release-funds`
+   - Multi-release milestone: `POST /escrow/multi-release/release-milestone-funds`
+2. **Sign & submit:** The authorized **Release Signer** wallet signs the XDR
+   and submits it through `POST /helper/send-transaction`.
+3. **Reconcile:** For single-release escrows, `flags.released` derives
+   `completed`. For multi-release escrows, all milestones must be released or
+   resolved to derive `completed` (or `resolved` if any milestone was resolved).
+   SafeTrust applies legal transitions via the lifecycle service and requires a
+   versioned snapshot or transaction confirmation to advance beyond `funded`.
+
+### Dispute and Resolve
+
+A dispute or its resolution is an on-chain transaction, never a local-only DB
+update.
+
+```mermaid
+sequenceDiagram
+    participant FE as Frontend
+    participant TW as Trustless Work API
+    participant W as Authorized Wallet
+    participant ST as Stellar
+    participant CR as Hasura cron
+    participant BE as SafeTrust backend
+
+    FE->>TW: POST dispute or resolve build endpoint
+    TW-->>FE: unsigned XDR
+    FE->>W: sign unsigned XDR
+    W-->>FE: signed XDR
+    FE->>TW: POST /helper/send-transaction
+    TW->>ST: submit signed transaction
+    ST-->>TW: transaction result
+    CR->>BE: POST /reconciliation/sync-escrows
+    BE->>TW: GET /helper/get-escrow-by-contract-ids
+    TW-->>BE: flags and balance
+    BE->>BE: reconcile indexed state
+```
+
+1. **Raise a dispute:**
+   - Single-release: `POST /escrow/single-release/dispute-escrow`
+   - Multi-release milestone: `POST /escrow/multi-release/dispute-milestone`
+   - Signed by the authorized party; `flags.disputed` derives `disputed`.
+2. **Resolve a dispute:**
+   - Single-release: `POST /escrow/single-release/resolve-dispute`; `flags.resolved` derives `resolved`.
+   - Multi-release milestone: `POST /escrow/multi-release/resolve-milestone-dispute`; `resolved` is derived as an **aggregate** only when **every** milestone is `released` or `resolved` and at least one milestone has `flags.resolved === true` (resolving a single milestone while another remains unreleased does not mark the escrow `resolved`).
+   - Signed by the **Dispute Resolver** wallet (distinct from the Release Signer).
+3. **Resolution vs. cancellation:** `resolved` records a dispute outcome on
+   an escrow; `cancelled` is the other terminal outcome when funds are returned
+   to the tenant (legal from `created`, `pending_funding`, `funded`, or
+   `disputed`).
+4. **Reconcile:** `POST /reconciliation/sync-escrows` executes legal
+   transitions through `executeEscrowLifecycleTransition` in a single
+   transaction before upserting remaining indexer fields, withholding failed
+   transitions so they remain retryable. Advancing past `funded` requires a
+   versioned snapshot (newer ledger sequence) or transaction confirmation.

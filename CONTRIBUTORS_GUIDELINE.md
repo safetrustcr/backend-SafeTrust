@@ -96,4 +96,31 @@ We’re excited you’re interested in contributing! Please follow these steps t
 - Make sure your code adheres to the repository’s coding standards.
 - Respect the project maintainers' feedback and requested changes.
 
+---
+
+## 🔒 Security Checks
+
+Every pull request to `main` runs the **Security** workflow (`.github/workflows/security.yml`):
+
+1. **Code scanning (CodeQL):** Scans `webhook/src` JavaScript/TypeScript with `security-extended`.
+2. **Dependency review:** Fails on new dependencies with `high` or `critical` advisories or known malware.
+3. **Lockfile & package integrity:** Runs `lockfile-lint` (HTTPS, `registry.npmjs.org`, SHA integrity), `npm ci --ignore-scripts`, `npm audit signatures`, and `npm audit --omit=dev --audit-level=high` inside `webhook/`.
+4. **Secret scanning:** Runs `gitleaks` against PR commits using `.gitleaks.toml`.
+5. **Suspicious-code check:** Runs `scripts/check-suspicious-code.mjs` on PR-changed files for hidden Unicode (bidi/zero-width), off-screen long lines (`>500` chars), `eval` / `new Function` / `child_process` / `vm` usage, large base64 payloads, unchecked `curl | sh` / executable downloads, dangerous migration SQL, and overly broad non-admin Hasura permissions (`filter: {}` / `check: {}`).
+6. **Workflow linting:** Runs `zizmor` and `actionlint` on `.github/workflows/**`.
+
+### Running checks locally
+
+```bash
+node --test scripts/check-suspicious-code.test.mjs
+git diff --name-only origin/main...HEAD | node scripts/check-suspicious-code.mjs --stdin
+npx --prefix webhook lockfile-lint --path webhook/package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity
+```
+
+### Handling false positives
+
+- **Migrations (`migrations/**/*.sql`):** If a migration legitimately requires a flagged SQL keyword (for example `GRANT` or `SECURITY DEFINER`), add an inline `-- security-reviewed: <reason>` comment on that line so the check records the rationale in the job summary instead of failing.
+- **Secrets (`.gitleaks.toml`):** Local test defaults belong in `.env.example` / `webhook/.env.example` or scoped `.gitleaks.toml` allowlist entries. Never commit real credentials or Stellar secret seeds (`S...`).
+- **Install scripts:** CI and Docker builds run `npm ci --ignore-scripts`. Do not rely on package `postinstall` scripts without documenting and explicitly invoking them after maintainer review.
+
 Thank you for contributing! 🚀✨

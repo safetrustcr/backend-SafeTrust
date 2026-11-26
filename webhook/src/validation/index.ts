@@ -40,6 +40,8 @@ const apartmentListQuerySchema = z.object({
     z.enum(['true', 'false', '1', '0', 'yes', 'no'])
   ).optional(),
   category: z.string().optional(),
+  checkIn: z.string().optional(),
+  checkOut: z.string().optional(),
   page: z.string().regex(/^[1-9]\d*$/).optional(),
   limit: z.string().regex(/^[1-9]\d*$/).optional(),
   sort: z.enum(['price_asc', 'price_desc', 'created_at']).optional(),

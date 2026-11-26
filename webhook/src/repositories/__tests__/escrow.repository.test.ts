@@ -234,13 +234,17 @@ describe('escrow.repository', () => {
         },
       })
 
-      const result = await fundEscrow('c-1', 200, ['created'])
+      const result = await fundEscrow('c-1', 200, ['created'], 'tenant-test')
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('FundEscrow'), {
-        contractId: 'c-1',
-        amount: 200,
-        validStates: ['created'],
-      })
+      expect(mockedHasuraRequest).toHaveBeenCalledWith(
+        expect.stringContaining('tenantId: { _eq: $tenantId }'),
+        {
+          contractId: 'c-1',
+          amount: 200,
+          validStates: ['created'],
+          tenantId: 'tenant-test',
+        }
+      )
       expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'funded', balance: 200 })
     })
 
@@ -249,7 +253,7 @@ describe('escrow.repository', () => {
         update_trustless_work_escrows: { returning: [] },
       })
 
-      const result = await fundEscrow('c-1', 200, ['created'])
+      const result = await fundEscrow('c-1', 200, ['created'], 'tenant-test')
       expect(result).toBeNull()
     })
   })
@@ -262,12 +266,16 @@ describe('escrow.repository', () => {
         },
       })
 
-      const result = await releaseFunds('c-1', ['milestone_approved'])
+      const result = await releaseFunds('c-1', ['milestone_approved'], 'tenant-test')
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
-        contractId: 'c-1',
-        validStates: ['milestone_approved'],
-      })
+      expect(mockedHasuraRequest).toHaveBeenCalledWith(
+        expect.stringContaining('tenantId: { _eq: $tenantId }'),
+        {
+          contractId: 'c-1',
+          validStates: ['milestone_approved'],
+          tenantId: 'tenant-test',
+        }
+      )
       expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 })
     })
 
@@ -278,11 +286,12 @@ describe('escrow.repository', () => {
         },
       })
 
-      const result = await releaseFunds('c-1')
+      const result = await releaseFunds('c-1', undefined, 'tenant-test')
 
       expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
         contractId: 'c-1',
         validStates: ['funded', 'milestone_approved'],
+        tenantId: 'tenant-test',
       })
       expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 })
     })
@@ -306,6 +315,7 @@ describe('escrow.repository', () => {
       expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
         contractId: 'c-1',
         validStates: [],
+        tenantId: 'safetrust',
       })
     })
   })
