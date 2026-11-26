@@ -92,6 +92,7 @@ interface HoldRow {
   expires_at: Date
   is_expired: boolean
   reservation_id: string | null
+  reservation_status: string | null
   contract_id: string | null
   unsigned_xdr: string | null
   quote_deposit: string | null
@@ -262,6 +263,7 @@ async function loadHold(holdId: string, tenantId: string): Promise<HoldRow | und
            h.check_in, h.check_out, h.guests, h.status, h.expires_at,
            h.expires_at <= NOW() AS is_expired,
            r.id AS reservation_id,
+           r.status AS reservation_status,
            e.contract_id AS contract_id,
            tx.unsigned_xdr AS unsigned_xdr,
            h.quote_deposit,
@@ -574,6 +576,15 @@ export async function createAgentBooking(
 
     // Idempotency check: retrying the same converted hold returns existing reservation and XDR
     if (hold.status === 'converted') {
+      // The reservation created from this hold may have been cancelled (by the
+      // guest, or by the hold-expiry sweep while the deposit stayed unfunded).
+      // Its dates are free again, so the hold can never produce a booking.
+      if (hold.reservation_status === 'cancelled') {
+        throw new ConflictError('Booking for this hold was cancelled', {
+          code: 'hold_expired',
+        })
+      }
+
       if (hold.reservation_id && hold.contract_id && hold.unsigned_xdr) {
         return {
           reservation_id: hold.reservation_id,

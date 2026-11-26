@@ -188,6 +188,38 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
     expect(mockSettleBookingFee).not.toHaveBeenCalled()
   })
 
+  it('returns 409 when the reservation behind a converted hold was cancelled', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: HOLD_ID,
+          tenant_id: 'safetrust',
+          apartment_id: APT_ID,
+          user_id: 'agent-1',
+          status: 'converted',
+          expires_at: new Date(Date.now() - 60000),
+          is_expired: true,
+          reservation_id: 'res-cancelled-123',
+          reservation_status: 'cancelled',
+          contract_id: 'CAATN5DEXISTING000000000000000000000000000000000000000001',
+          unsigned_xdr: 'AAAA_EXISTING_UNSIGNED_XDR_123',
+          quote_deposit: '50.00',
+          asset_code: 'USDC',
+        },
+      ],
+    })
+
+    const res = await request(app('agent-1'))
+      .post('/api/v1/bookings')
+      .set('x-payment', 'valid-x402-proof')
+      .send({ hold_id: HOLD_ID })
+
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('hold_expired')
+    expect(mockSettleBookingFee).not.toHaveBeenCalled()
+    expect(mockWithTransaction).not.toHaveBeenCalled()
+  })
+
   it('converts active hold, deploys escrow, generates unsigned XDR and returns 201', async () => {
     // 1. Hold lookup query
     mockQuery.mockResolvedValueOnce({

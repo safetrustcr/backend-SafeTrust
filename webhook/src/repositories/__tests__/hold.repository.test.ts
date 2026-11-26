@@ -1,6 +1,10 @@
 import { PoolClient } from 'pg'
 import { pool } from '../../services/db'
-import { convertHoldToReservation } from '../hold.repository'
+import {
+  cancelUnfundedReservationsForExpiredHolds,
+  convertHoldToReservation,
+  UNFUNDED_RESERVATION_GRACE_MS,
+} from '../hold.repository'
 
 describe('hold.repository - convertHoldToReservation', () => {
   let client: {
@@ -154,5 +158,27 @@ describe('hold.repository - convertHoldToReservation', () => {
     expect(client.query).toHaveBeenCalledWith('ROLLBACK')
     expect(client.query).not.toHaveBeenCalledWith('COMMIT')
     expect(client.release).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('hold.repository - cancelUnfundedReservationsForExpiredHolds', () => {
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  it('cancels only unfunded escrow_created reservations past the grace period', async () => {
+    const querySpy = jest.spyOn(pool, 'query') as unknown as jest.Mock
+    querySpy.mockResolvedValueOnce({ rowCount: 2, rows: [] })
+
+    const cancelled = await cancelUnfundedReservationsForExpiredHolds()
+
+    expect(cancelled).toBe(2)
+    const [sql, params] = querySpy.mock.calls[0] as [string, unknown[]]
+    expect(sql).toContain("SET status = 'cancelled'")
+    expect(sql).toContain("r.status = 'escrow_created'")
+    expect(sql).toContain("cancel_reason = 'hold_expired'")
+    // Funded escrows are excluded, so an on-chain deposit is never cancelled.
+    expect(sql).toContain("e.status IN ('funded', 'completed')")
+    expect(params).toEqual([String(UNFUNDED_RESERVATION_GRACE_MS)])
   })
 })

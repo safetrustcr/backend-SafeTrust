@@ -7,6 +7,12 @@ export const HOLD_DURATION_MS = 10 * 60 * 1000
 export const MAX_ACTIVE_HOLDS_PER_USER = 3
 /** pending_payment holds older than this never got their payment confirmed. */
 export const PENDING_PAYMENT_TIMEOUT_MS = 2 * 60 * 1000
+/**
+ * Grace period after a hold's deadline before its unfunded reservation is
+ * cancelled. The agent may have submitted its signed fund transaction just
+ * before the deadline and the poller may not have observed the balance yet.
+ */
+export const UNFUNDED_RESERVATION_GRACE_MS = 15 * 60 * 1000
 
 const EXCLUSION_VIOLATION = '23P01'
 
@@ -217,10 +223,45 @@ export async function releaseHold(holdId: string, userId: string, tenantId: stri
 }
 
 /**
- * Expire holds past expires_at, and release pending_payment holds whose
- * payment was never confirmed. Returns the number of holds changed.
+ * Cancel reservations that were created from a hold but whose deposit escrow
+ * was never funded before the hold deadline (plus a short grace period, so a
+ * transaction submitted just before the deadline can still be observed).
+ *
+ * The reservation stays `escrow_created` while the agent signs and submits the
+ * fund transaction; if it never does, cancelling frees the dates for others.
+ * Funded (or completed) escrows are never touched, so an on-chain deposit can
+ * never be cancelled by the sweep.
+ */
+export async function cancelUnfundedReservationsForExpiredHolds(): Promise<number> {
+  const result = await query(
+    `UPDATE safetrust.reservations r
+        SET status = 'cancelled',
+            cancelled_at = NOW(),
+            cancelled_by = NULL,
+            cancel_reason = 'hold_expired',
+            updated_at = NOW()
+       FROM safetrust.booking_holds h
+      WHERE r.booking_hold_id = h.id
+        AND r.status = 'escrow_created'
+        AND h.expires_at <= NOW() - ($1 || ' milliseconds')::interval
+        AND NOT EXISTS (
+          SELECT 1
+            FROM safetrust.trustless_work_escrows e
+           WHERE e.id = r.escrow_id
+             AND e.status IN ('funded', 'completed')
+        )`,
+    [String(UNFUNDED_RESERVATION_GRACE_MS)]
+  )
+  return result.rowCount ?? 0
+}
+
+/**
+ * Expire holds past expires_at, release pending_payment holds whose payment
+ * was never confirmed, and cancel reservations left unfunded by a lapsed hold.
+ * Returns the number of holds and reservations changed.
  */
 export async function expireHolds(): Promise<number> {
+  const cancelled = await cancelUnfundedReservationsForExpiredHolds()
   const expired = await query(
     `UPDATE safetrust.booking_holds
         SET status = 'expired', updated_at = NOW()
@@ -233,7 +274,7 @@ export async function expireHolds(): Promise<number> {
         AND created_at <= NOW() - ($1 || ' milliseconds')::interval`,
     [String(PENDING_PAYMENT_TIMEOUT_MS)]
   )
-  return (expired.rowCount ?? 0) + (stuck.rowCount ?? 0)
+  return (expired.rowCount ?? 0) + (stuck.rowCount ?? 0) + cancelled
 }
 
 export interface ConvertHoldResult {

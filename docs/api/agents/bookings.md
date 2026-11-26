@@ -63,15 +63,16 @@ Trustless Work smart contracts enforce multi-party governance on the Stellar net
 ### 4. What Happens if the Agent Never Submits the Signed XDR
 - When the reservation and escrow are generated, the reservation enters **`escrow_created`** status with an on-chain balance of `0`.
 - The originating booking hold transitions to `converted`.
-- If the agent crashes, abandons the flow, or never submits the signed XDR, the escrow remains unfunded (`balance: 0`).
+- If the agent crashes, abandons the flow, or never submits the signed XDR, the escrow remains unfunded (`balance: 0`), and the reservation is cancelled once the converted hold's deadline (plus a short grace period) passes, releasing the dates.
 
-#### Known Limitation: Unfunded Reservation Cleanup (Deferred)
+#### Unfunded Reservation Cleanup
 
-There is currently **no automatic scheduled cleanup of unfunded reservations**. This is a known limitation, not an oversight of the documented behaviour:
+Unfunded `escrow_created` reservations are cancelled automatically, freeing the dates:
 
-- The background hold expiry sweep (`expireHolds`) expires only `pending_payment` and `active` holds whose `expires_at` has passed. It deliberately does not modify reservations.
-- A `converted` hold and its `escrow_created` reservation therefore stay in place after the hold deadline passes, keeping the dates blocked, until they are explicitly cancelled through `POST /api/reservations/:id/cancel`.
-- Automatic release of these unfunded `escrow_created` reservations after their hold deadline is intentionally deferred to a follow-up issue. Until it ships, agents and operators must cancel abandoned bookings to free the dates.
+- Every 30 seconds the hold expiry job runs `expireHolds`, which also cancels `escrow_created` reservations created from a hold whose `expires_at` has passed.
+- A 15-minute grace period after the hold deadline lets a `fund_escrow` transaction submitted just before the deadline be observed by the poller before the sweep runs.
+- The sweep never touches a reservation whose escrow is already `funded` or `completed`, so an on-chain deposit can never be cancelled by it.
+- The reservation is written as `cancelled` with `cancel_reason = 'hold_expired'`; retrying the booking with the same `hold_id` then answers `409` (`code: hold_expired`) because the hold can no longer produce a booking.
 
 ### 5. Escrow Locks Only the Quoted Deposit (Not the Full Stay)
 - The Trustless Work contract amount locks **strictly the security deposit** (`warranty_deposit`), as calculated by the server-side quote service.
