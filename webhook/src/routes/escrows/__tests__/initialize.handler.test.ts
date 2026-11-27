@@ -70,7 +70,7 @@ describe('initializeEscrowHandler', () => {
     const req = makeRequest({}, null);
     const res = makeResponse();
 
-    await initializeEscrowHandler(req, res);
+    await runHandler(initializeEscrowHandler, req, res);
 
     expect(res.status).toHaveBeenCalledWith(401);
     expect(initializeEscrow).not.toHaveBeenCalled();

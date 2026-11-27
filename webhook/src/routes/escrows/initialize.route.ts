@@ -81,7 +81,8 @@ router.post(
   '/api/escrows/initialize',
   (req: Request, res: Response, next: NextFunction) => {
     if (process.env.X402_ENABLED !== 'true') {
-      res.status(503).json({
+      const unavailableStatus = 503
+      res.status(unavailableStatus).json({
         error: 'Feature Unavailable',
         feature: 'x402',
         message: 'x402 payments are disabled',

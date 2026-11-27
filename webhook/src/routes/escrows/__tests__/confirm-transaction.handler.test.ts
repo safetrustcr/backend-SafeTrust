@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import { confirmTransactionHandler } from '../confirm-transaction.handler'
+import { runHandler } from '../../__tests__/run-handler'
 
 describe('confirmTransactionHandler Network & Input Validation', () => {
   const originalEnv = process.env.STELLAR_NETWORK
@@ -36,7 +37,7 @@ describe('confirmTransactionHandler Network & Input Validation', () => {
 
     const { res, status, json } = createMockRes()
 
-    await confirmTransactionHandler(req, res)
+    await runHandler(confirmTransactionHandler, req, res)
 
     expect(status).toHaveBeenCalledWith(400)
     expect(json).toHaveBeenCalledWith(
@@ -56,10 +57,12 @@ describe('confirmTransactionHandler Network & Input Validation', () => {
 
     const { res, status, json } = createMockRes()
 
-    await confirmTransactionHandler(req, res)
+    await runHandler(confirmTransactionHandler, req, res)
 
     expect(status).toHaveBeenCalledWith(400)
-    expect(json).toHaveBeenCalledWith({ error: 'escrowId is required' })
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'escrowId is required' })
+    )
   })
 
   it('rejects when action is invalid', async () => {
@@ -73,10 +76,12 @@ describe('confirmTransactionHandler Network & Input Validation', () => {
 
     const { res, status, json } = createMockRes()
 
-    await confirmTransactionHandler(req, res)
+    await runHandler(confirmTransactionHandler, req, res)
 
     expect(status).toHaveBeenCalledWith(400)
-    expect(json).toHaveBeenCalledWith({ error: 'action must be either "deploy" or "fund"' })
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'action must be either "deploy" or "fund"' })
+    )
   })
 
   it('rejects when signingOnly is true', async () => {
@@ -90,7 +95,7 @@ describe('confirmTransactionHandler Network & Input Validation', () => {
 
     const { res, status, json } = createMockRes()
 
-    await confirmTransactionHandler(req, res)
+    await runHandler(confirmTransactionHandler, req, res)
 
     expect(status).toHaveBeenCalledWith(400)
     expect(json).toHaveBeenCalledWith(

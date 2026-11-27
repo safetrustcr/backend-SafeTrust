@@ -542,17 +542,34 @@ export function validateSignedXdr(
           return { valid: false, error: 'Malformed invokeHostFunction operation: missing func' }
         }
 
-        const funcType = typeof func.type === 'string' ? func.type : (func.type?.name ?? '')
-        if (funcType === 'hostFunctionTypeInvokeContract' || func.invokeContract) {
-          const invokeArgs = func.invokeContract
+        const funcType =
+          typeof func.switch === 'function'
+            ? func.switch()?.name
+            : typeof func.type === 'string'
+              ? func.type
+              : (func.type?.name ?? '')
+        const isInvoke =
+          funcType === 'hostFunctionTypeInvokeContract' ||
+          (typeof func.arm === 'function' && func.arm() === 'invokeContract') ||
+          !!func.invokeContract
+
+        if (isInvoke) {
+          const invokeArgs =
+            typeof func.invokeContract === 'function'
+              ? func.invokeContract()
+              : (func.invokeContract ?? (func.value ? (typeof func.value === 'function' ? func.value() : func.value) : null))
           if (!invokeArgs) {
             return { valid: false, error: 'Malformed invokeContract args in host function' }
           }
 
           let invokedContractAddress = ''
           try {
-            if (invokeArgs.contractAddress) {
-              invokedContractAddress = Address.fromScAddress(invokeArgs.contractAddress).toString()
+            const rawContractAddr =
+              typeof invokeArgs.contractAddress === 'function'
+                ? invokeArgs.contractAddress()
+                : (invokeArgs.contractAddress ?? invokeArgs.contract_address)
+            if (rawContractAddr) {
+              invokedContractAddress = Address.fromScAddress(rawContractAddr).toString()
             }
           } catch {
             // ignore address decoding error
@@ -571,7 +588,11 @@ export function validateSignedXdr(
             }
           }
 
-          const fnName = invokeArgs.functionName ? invokeArgs.functionName.toString().trim() : ''
+          const rawFnName =
+            typeof invokeArgs.functionName === 'function'
+              ? invokeArgs.functionName()
+              : (invokeArgs.functionName ?? invokeArgs.function_name)
+          const fnName = rawFnName ? rawFnName.toString().trim() : ''
           if (fnName && !AUTHORIZED_ESCROW_FUNCTIONS.has(fnName.toLowerCase())) {
             return {
               valid: false,
@@ -643,7 +664,10 @@ export function validateSignedXdr(
     let hasValidSig = false
     const txHash = tx.hash()
     for (const sig of tx.signatures) {
-      const rawSig = sig.signature?.value || sig.signature
+      const rawSig =
+        typeof sig.signature === 'function'
+          ? sig.signature()
+          : (sig.signature?.value || sig.signature)
       if (rawSig && sourceAccount) {
         try {
           const keypair = Keypair.fromPublicKey(sourceAccount)

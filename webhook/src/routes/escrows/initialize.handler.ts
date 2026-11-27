@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { duplicate, ok } from '../../utils/response';
-import { ValidationError } from '../../utils/errors';
+import { AuthError, ValidationError } from '../../utils/errors';
 import { initializeEscrow as initializeEscrowService } from '../../services/escrow.service';
 import { amountToStroops } from '../../lib/stellar-amounts';
 import { getPlatformTenantId } from '../../config/tenant';
@@ -20,7 +20,16 @@ export const initializeEscrowHandler = async (
     throw new ValidationError('amount must be a positive finite numeric value');
   }
 
-  const result = await initializeEscrowService(req.body, getPlatformTenantId());
+  const callerUserId = (req as any).user?.uid || (req as any).user?.id;
+  const isServerAgent = Boolean((req as any).isAgent);
+  const hasPaymentSignature = Boolean(req.headers?.['payment-signature']);
+
+  if (!callerUserId && !isServerAgent && !hasPaymentSignature) {
+    throw new AuthError('Authentication required: caller identity must be verified');
+  }
+
+  const context = callerUserId || isServerAgent ? { callerUserId, isServerAgent } : undefined;
+  const result = await initializeEscrowService(req.body, getPlatformTenantId(), context);
 
   if (result.isDuplicate) {
     return duplicate(res, result.eventId);
