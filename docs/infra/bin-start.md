@@ -5,13 +5,12 @@
 flowchart TD
     A([bin/start\nsafetrust hotel_industry]) --> B[docker compose up -d --build\npostgres + hasura + webhook]
     B --> C[Wait for Hasura /healthz\n0.5s poll interval\n120s timeout]
-    C --> D[Grant temporary DDL to the hasura role\nmigration step only]
-    D --> E[Register database sources\npg_add_source for each tenant]
-    E --> F[Apply migrations\nhasura migrate apply × N tenants\nafter that: revoke DDL]
-    F --> G[Deploy metadata\nsetup-tenant.sh × N tenants]
-    G --> H[Reload metadata\nhasura metadata reload]
-    H --> I[Apply seeds\nhasura seed apply × N tenants]
-    I --> J([Ready\n127.0.0.1:8080 Hasura\n127.0.0.1:3000 Webhook])
+    C --> D[Register database sources\npg_add_source for each tenant]
+    D --> E[Apply migrations\nhasura migrate apply × N tenants\nDDL window: grant CREATE, revoke after]
+    E --> F[Deploy metadata\nsetup-tenant.sh × N tenants]
+    F --> G[Reload metadata\nhasura metadata reload]
+    G --> H[Apply seeds\nhasura seed apply × N tenants]
+    H --> I([Ready\n127.0.0.1:8080 Hasura\n127.0.0.1:3000 Webhook])
 ```
 
 ## Prerequisites
@@ -55,14 +54,18 @@ docker compose exec -T postgres bash /docker-entrypoint-initdb.d/01-init-roles.s
 | Role | Used by | Rights |
 | --- | --- | --- |
 | `postgres` | migrations only (`bin/start`, `migrate-test`) | superuser, never used by a running service |
-| `hasura` | Hasura data source | `USAGE` + table privileges on the `safetrust` and `hotel_industry` schemas; no superuser, no access to the catalog database |
+| `hasura` | Hasura data source | `USAGE` + table privileges on the `safetrust` and `hotel_industry` schemas; `CREATE` only inside the migration run; no superuser, no access to the catalog database |
 | `hasura_metadata` | Hasura metadata | owns the separate `hasura_metadata` database |
 | `webhook` | webhook | `SELECT/INSERT/UPDATE/DELETE` on `safetrust`; no `CREATE`, no `TRUNCATE`, no `COPY … PROGRAM` |
 
-Migrations run through the Hasura data source, so they need DDL. `bin/start`
-grants `CREATE` on the tenant schemas (and on `public`, where legacy migrations
-stage tables before moving them) immediately before the migration step and
-revokes it immediately after — the running service keeps only `USAGE` and DML.
+Migrations run through the Hasura data source, so they are the only step that
+needs DDL. The init script never grants `CREATE`: the migration step itself —
+`bin/start` for the stack, `bin/prepare-test-db` for the test stack — grants it
+on the tenant schemas (and on `public`, where legacy migrations stage tables
+before moving them) immediately before `hasura migrate apply` and revokes it
+immediately after. An `EXIT` trap closes the window when a migration fails or
+the run is interrupted, so a stack that is only `docker compose up`-ed, and
+every phase after migrations, has no role that can create or drop objects.
 New tables inherit the webhook grants through `ALTER DEFAULT PRIVILEGES`; the
 tables moved out of `public` are covered by migration
 `1779400000000_grant_webhook_role`.
@@ -70,7 +73,8 @@ tables moved out of `public` are covered by migration
 `bin/test` runs `tests/db/assert-webhook-role.sh` (compose service
 `db-privileges`) after migrations; it fails the suite if the webhook role can
 `CREATE TABLE`, create a schema, drop/truncate a table, or run
-`COPY … PROGRAM`.
+`COPY … PROGRAM`, and if the hasura role still holds `CREATE` on `safetrust`,
+`hotel_industry` or `public` once the migration run is over.
 
 ## Secrets
 Required variables (no defaults, so a missing value fails fast):

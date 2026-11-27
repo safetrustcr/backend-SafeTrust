@@ -109,11 +109,11 @@ elif [[ "$RESTART_CONTAINERS" == "true" ]]; then
   docker compose down
 fi
 
-# Migrations run through the Hasura data source, whose role only has DML at
-# runtime. bin/start grants CREATE on the tenant schemas — and on `public`, where
-# legacy migrations stage tables before moving them — for the migration step,
-# and revokes it again afterwards so the running service cannot create or drop
-# objects. The migration step itself still connects as the postgres admin role.
+# Migrations run through the Hasura data source, whose role has DML only. This
+# is the single place that opens and closes its DDL window: CREATE on the tenant
+# schemas — and on `public`, where legacy migrations stage tables before moving
+# them — exists only while apply_migrations runs, so the serving stack cannot
+# create or drop objects.
 set_migration_ddl() {
   local action="$1"
   if ! docker compose exec -T postgres \
@@ -191,12 +191,7 @@ echo ""
 
 # ── 4. Apply migrations for each tenant ──────────────────────────────────────
 # Tables are created here — must run before metadata deploy.
-if [[ "$RESTART_CONTAINERS" != "true" ]]; then
-  echo "📂 Applying migrations..."
-
-  set_migration_ddl GRANT
-  trap 'set_migration_ddl REVOKE >/dev/null 2>&1 || true' EXIT
-
+apply_migrations() {
   # Sources share Hasura CLI catalog state. Concurrent migration commands can
   # overwrite each other's applied versions, so apply tenants sequentially.
   for TENANT in "${TENANTS[@]}"; do
@@ -207,6 +202,18 @@ if [[ "$RESTART_CONTAINERS" != "true" ]]; then
       --database-name "$TENANT"
     echo "   ✅ Migrations applied for $TENANT"
   done
+}
+
+if [[ "$RESTART_CONTAINERS" != "true" ]]; then
+  echo "📂 Applying migrations..."
+
+  # The only window in which the hasura role can create or drop objects; the
+  # EXIT trap closes it when a migration fails or the run is interrupted.
+  set_migration_ddl GRANT
+  trap 'set_migration_ddl REVOKE >/dev/null 2>&1 || true' EXIT
+  apply_migrations
+  set_migration_ddl REVOKE
+  trap - EXIT
 
   if [[ "$TRACK_SAFETRUST_TIMINGS" == "true" ]]; then
     TIMING_MIGRATIONS_SAFETRUST=$((SECONDS - TIMER_START))
@@ -215,10 +222,6 @@ else
   echo "⏭️  --restart: skipping migrations (schema unchanged)"
   TIMING_MIGRATIONS_SAFETRUST=0
 fi
-
-# Always leave the runtime role without DDL rights, including after --restart.
-set_migration_ddl REVOKE
-trap - EXIT
 
 echo ""
 

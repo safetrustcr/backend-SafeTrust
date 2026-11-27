@@ -1,8 +1,29 @@
 #!/usr/bin/env bash
+# Migrations for the test stack (docker-compose-test.yml: migrate-test).
+#
+# Migrations run through the Hasura data source, whose role has DML only. This
+# script grants CREATE on the tenant schemas — and on `public`, where the legacy
+# migration stages tables before moving them — immediately before
+# `hasura migrate apply` and revokes it immediately after, so the hasura role
+# never holds DDL outside the migration run (even when a migration fails).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ENDPOINT="${HASURA_GRAPHQL_ENDPOINT:-http://graphql-engine-test:8080}"
 ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:?Hasura admin secret is required}"
+
+# Admin connection, used only to open and close the migration DDL window.
+: "${PGHOST:?PGHOST is required}"
+: "${PGUSER:=postgres}"
+: "${PGDATABASE:=postgres}"
+: "${PGPASSWORD:?PGPASSWORD is required}"
+export PGHOST PGUSER PGDATABASE PGPASSWORD
+
+set_migration_ddl() {
+  local action="$1"
+  psql -X -q -v ON_ERROR_STOP=1 \
+    -c "${action} CREATE ON SCHEMA safetrust, hotel_industry, public TO hasura"
+}
+
 for ((attempt=0; ; attempt++)); do
   if curl -fsS --connect-timeout 5 --max-time 5 "$ENDPOINT/healthz" >/dev/null; then
     break
@@ -13,12 +34,21 @@ for ((attempt=0; ; attempt++)); do
   fi
   sleep 2
 done
+
 for tenant in safetrust hotel_industry; do
   payload=$(jq -cn --arg name "$tenant" '{type:"pg_add_source",args:{name:$name,replace_configuration:true,configuration:{connection_info:{database_url:{from_env:"PG_DATABASE_URL"},isolation_level:"read-committed"}}}}')
   curl -fsS -X POST "$ENDPOINT/v1/metadata" \
     -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
     -H 'Content-Type: application/json' -d "$payload" >/dev/null
+done
+
+set_migration_ddl GRANT
+trap 'set_migration_ddl REVOKE >/dev/null 2>&1 || true' EXIT
+for tenant in safetrust hotel_industry; do
   echo "[migrate-test] Migrating tenant: $tenant"
   hasura migrate apply --database-name "$tenant" --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
 done
+set_migration_ddl REVOKE
+trap - EXIT
+
 metadata/setup-tenant.sh safetrust hotel_industry --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"

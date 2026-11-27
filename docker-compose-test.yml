@@ -239,6 +239,13 @@ services:
     environment:
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine-test:8080
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
+      # Admin connection used only to open and close the migration DDL window;
+      # the hasura role itself has no CREATE outside that window.
+      PGHOST: postgres_test
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: ${TEST_POSTGRES_PASSWORD:-postgrespassword}
     working_dir: /app
     command: ["bash", "bin/prepare-test-db"]
     depends_on:

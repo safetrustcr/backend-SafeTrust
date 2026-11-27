@@ -6,7 +6,9 @@
 FROM debian:bookworm-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e # bookworm-slim
 
 # --no-install-recommends keeps the package set minimal; the apt cache is
-# removed so the layer does not ship package indexes.
+# removed so the layer does not ship package indexes. postgresql-client (psql)
+# is what bin/prepare-test-db uses to grant and revoke the hasura role's DDL
+# window around the test migrations.
 # socat is gone: it was only needed for the Hasura v1.x loopback port
 # workaround (see start.sh), and Hasura v2.47.0 binds where it is told.
 RUN apt-get update \
@@ -14,6 +16,7 @@ RUN apt-get update \
         ca-certificates \
         curl \
         jq \
+        postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Hasura CLI directly from GitHub releases (checksum verification: CI security issue).

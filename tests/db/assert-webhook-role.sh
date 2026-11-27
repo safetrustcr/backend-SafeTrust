@@ -76,6 +76,17 @@ else
     FAILED=1
 fi
 
+# Migrations open a DDL window on the hasura role and close it again
+# (bin/prepare-test-db / bin/start). Nothing outside that run may hold CREATE.
+for schema in safetrust hotel_industry public; do
+    if [[ "$(psql -X -tA -c "SELECT has_schema_privilege('hasura', '${schema}', 'CREATE')")" == "f" ]]; then
+        echo "✅ hasura role has no CREATE on schema ${schema}"
+    else
+        echo "❌ hasura role still has CREATE on schema ${schema} after the migration run"
+        FAILED=1
+    fi
+done
+
 if [[ "$FAILED" -ne 0 ]]; then
     echo "❌ database role privilege check failed"
     exit 1

@@ -98,12 +98,13 @@ ALTER DEFAULT PRIVILEGES FOR ROLE hasura IN SCHEMA safetrust
 ALTER DEFAULT PRIVILEGES FOR ROLE hasura IN SCHEMA safetrust
     GRANT USAGE, SELECT ON SEQUENCES TO webhook;
 
--- Migrations stage legacy tables in `public` before moving them into a tenant
--- schema (see migration 1779300000001). This DDL grant is required by the
--- migration step only; bin/start revokes it as soon as migrations are applied,
--- so the running Hasura service can touch its tenant schemas and nothing else.
-GRANT USAGE, CREATE ON SCHEMA public TO hasura;
-GRANT CREATE ON SCHEMA safetrust, hotel_industry TO hasura;
+-- No CREATE for the hasura role: migrations are the only step that needs DDL,
+-- so bin/start and bin/prepare-test-db grant CREATE on the tenant schemas — and
+-- on `public`, where migration 1779300000001 stages legacy tables — immediately
+-- before applying migrations and revoke it immediately after. A stack that is
+-- merely `docker compose up`-ed therefore never has a role that can create or
+-- drop objects. tests/db/assert-webhook-role.sh checks the window is closed.
+GRANT USAGE ON SCHEMA public TO hasura;
 
 -- Tenant schemas first on the search path for both runtime roles.
 ALTER ROLE hasura SET search_path TO safetrust, hotel_industry, public;
