@@ -29,6 +29,7 @@ import {
   validateEscrowInitializationPayload,
   initializeEscrow,
   persistEscrow,
+  isEscrowParty,
   linkReservationToEscrow,
   EscrowValidationError,
   ReservationNotFoundError,
@@ -410,6 +411,31 @@ describe('persistEscrow', () => {
     expect(mutation).toContain('update_columns: [contractId]');
 
     expect(result).toEqual(escrowResponse);
+
+    const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
+    expect(callArgs.object.escrowMetadata.roles).toMatchObject({
+      approver: 'GAPPROVER',
+      serviceProvider: 'GMARKER',
+      releaseSigner: 'GRELEASER',
+    });
+    expect(callArgs.object).not.toHaveProperty('bookingMetadata');
+  });
+
+  it('does not trust payer-supplied receiver role metadata', async () => {
+    mockedHasuraRequest.mockResolvedValue({
+      insert_trustless_work_escrows_one: escrowResponse,
+    });
+
+    await persistEscrow(validPayload({
+      raw: {
+        ...validBody(),
+        roles: { receiver: 'PAYER_CONTROLLED_WALLET' },
+      } as any,
+    }), 'safetrust');
+
+    const callArgs = mockedHasuraRequest.mock.calls[0][1] as any;
+    expect(callArgs.object.escrowMetadata.roles.receiver).toBeNull();
+    expect(callArgs.object.escrowMetadata.roles.receiver).not.toBe('PAYER_CONTROLLED_WALLET');
   });
 
   it('writes the tenant passed by the caller instead of a literal', async () => {
@@ -454,6 +480,30 @@ describe('persistEscrow', () => {
     expect(callArgs.object.assetCode).toBe('USDC');
     expect(callArgs.object.resolver).toBeNull();
     expect(callArgs.object.bookingId).toBeUndefined();
+  });
+});
+
+describe('isEscrowParty', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('authorizes against only the current Trustless Work V1 role metadata', async () => {
+    mockedQuery.mockResolvedValueOnce({ rows: [{ is_party: true }] } as never);
+
+    await expect(isEscrowParty('user-1', 'contract-1', 'tenant-1')).resolves.toBe(true);
+
+    const [sql, params] = mockedQuery.mock.calls[0];
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,approver}'");
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,serviceProvider}'");
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,platformAddress}'");
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,releaseSigner}'");
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,disputeResolver}'");
+    expect(sql).toContain("escrow.escrow_metadata #>> '{roles,receiver}'");
+    expect(sql).not.toContain('escrow.approver,');
+    expect(sql).not.toContain('escrow.marker,');
+    expect(sql).not.toContain('escrow.releaser');
+    expect(params).toEqual(['user-1', 'contract-1', 'tenant-1']);
   });
 });
 

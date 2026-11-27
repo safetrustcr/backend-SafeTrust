@@ -95,14 +95,14 @@ export interface ProcessRetriesSummary {
 // ── Trustless Work Indexer Synchronization ────────────────────────────────────
 
 /**
- * Calls Trustless Work's indexer/update-from-txHash endpoint.
+ * Calls Trustless Work's PUT /indexer/update-from-txhash endpoint.
  * Guardrail: Only callable for TW-generated XDR contexts!
  */
 export async function updateTWIndexerFromTxHash(
   txHash: string,
-  network: StellarNetwork,
-  isTWGenerated: boolean
-): Promise<{ success: boolean; error?: string }> {
+  isTWGenerated: boolean,
+  network: StellarNetwork = 'testnet'
+): Promise<{ success: boolean; isTimeout?: boolean; error?: string }> {
   if (!isTWGenerated) {
     return {
       success: false,
@@ -119,7 +119,7 @@ export async function updateTWIndexerFromTxHash(
  */
 export async function sendTransactionViaTWHelper(
   signedXdr: string,
-  network: StellarNetwork
+  network: StellarNetwork = 'testnet'
 ): Promise<{ success: boolean; txHash?: string; isTimeout?: boolean; error?: string }> {
   return sendTransactionViaHelper(signedXdr, network)
 }
@@ -308,7 +308,7 @@ export async function processHelperSubmission(params: {
   }
 
   // Submit via TW helper
-  const sendRes = await sendTransactionViaTWHelper(signedXdr, network)
+  const sendRes = await sendTransactionViaTWHelper(signedXdr)
   if (!sendRes.success || !sendRes.txHash) {
     if (sendRes.isTimeout) {
       const derivedId = crypto.createHash('sha256').update(signedXdr).digest('hex')
@@ -482,7 +482,7 @@ export async function processExternalSubmission(params: {
   }
 
   // 5. Invoke Trustless Work indexer/update-from-txHash
-  const twRes = await updateTWIndexerFromTxHash(txHash, network, isTWGenerated)
+  const twRes = await updateTWIndexerFromTxHash(txHash, isTWGenerated)
   if (!twRes.success) {
     const errorMsg = twRes.error ?? 'TW indexer synchronization failed'
     await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
@@ -587,7 +587,6 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
       if (record.submissionPath === 'external') {
         const twRes = await updateTWIndexerFromTxHash(
           record.txHash,
-          record.network,
           true
         )
         if (!twRes.success) {

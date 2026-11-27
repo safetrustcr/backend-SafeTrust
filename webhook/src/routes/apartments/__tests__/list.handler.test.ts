@@ -6,6 +6,7 @@ import {
   listApartments as findApartments,
 } from '../../../repositories/apartment.repository'
 import { listApartments, createApartment, getApartmentById } from '../list.handler'
+import { runHandler } from '../../__tests__/run-handler'
 
 jest.mock('../../../repositories/apartment.repository', () => ({
   createApartmentRecord: jest.fn(),
@@ -64,18 +65,18 @@ describe('apartments/list.handler', () => {
     [{ sort: 'invalid_sort' }, 'Invalid sort parameter. Supported values: price_asc, price_desc, created_at'],
   ])('returns 400 for an invalid list query', async (query, error) => {
     const res = makeResponse()
-    await listApartments({ query } as unknown as Request, res)
+    await runHandler(listApartments, { query } as unknown as Request, res)
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error }))
     expect(findApartments).not.toHaveBeenCalled()
   })
 
   it('returns 500 when the list repository fails', async () => {
     ;(findApartments as jest.Mock).mockRejectedValue(new Error('DB failure'))
     const res = makeResponse()
-    await listApartments({ query: {} } as Request, res)
+    await runHandler(listApartments, { query: {} } as Request, res)
     expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Database error' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Internal server error' }))
   })
 
   it('validates and creates an apartment, preserving formatted response values', async () => {
@@ -87,7 +88,7 @@ describe('apartments/list.handler', () => {
       body: { name: 'New Spot', location: 'Downtown', pricePerMonth: 1200, rooms: 2, bathrooms: 1 },
     } as AuthenticatedRequest
     const res = makeResponse()
-    await createApartment(req, res)
+    await runHandler(createApartment, req, res)
     expect(createApartmentRecord).toHaveBeenCalledWith(expect.objectContaining({
       ownerId: 'owner-1', name: 'New Spot', price: 1200, rooms: 2,
     }))
@@ -99,17 +100,17 @@ describe('apartments/list.handler', () => {
 
   it('returns unchanged create errors for invalid input and repository failures', async () => {
     const unauthorized = makeResponse()
-    await createApartment({} as AuthenticatedRequest, unauthorized)
+    await runHandler(createApartment, {} as AuthenticatedRequest, unauthorized)
     expect(unauthorized.status).toHaveBeenCalledWith(401)
 
     ;(createApartmentRecord as jest.Mock).mockRejectedValue(new Error('Insert error'))
     const failed = makeResponse()
-    await createApartment({
+    await runHandler(createApartment, {
       user: { uid: 'owner-1' },
       body: { name: 'Place', location: 'Downtown', pricePerMonth: 1200 },
     } as AuthenticatedRequest, failed)
     expect(failed.status).toHaveBeenCalledWith(500)
-    expect(failed.json).toHaveBeenCalledWith({ error: 'Failed to create apartment' })
+    expect(failed.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Internal server error' }))
   })
 
   it('returns, formats, and reports missing single apartments', async () => {
@@ -124,8 +125,8 @@ describe('apartments/list.handler', () => {
     })
 
     const missing = makeResponse()
-    await getApartmentById({ params: { id: 'missing' } } as Request<{ id: string }>, missing)
+    await runHandler(getApartmentById, { params: { id: 'missing' } } as Request<{ id: string }>, missing)
     expect(missing.status).toHaveBeenCalledWith(404)
-    expect(missing.json).toHaveBeenCalledWith({ error: 'Apartment not found' })
+    expect(missing.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Apartment not found' }))
   })
 })
