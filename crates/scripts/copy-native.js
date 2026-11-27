@@ -28,10 +28,6 @@ const crateConfigs = {
         libraryName: 'soroban_reconciler',
         destination: path.join('native', 'index.node'),
     },
-    'x402-processor': {
-        libraryName: 'x402_processor',
-        destination: 'index.node',
-    },
 };
 const cratesDir = path.resolve(__dirname, '..');
 function parseCrateArgument(args) {
