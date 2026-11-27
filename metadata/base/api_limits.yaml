@@ -1,1 +1,12 @@
-{}
+disabled: false
+depth_limit:
+  global: 10
+node_limit:
+  global: 1000
+time_limit:
+  global: 10
+rate_limit:
+  global:
+    unique_params:
+      - x-hasura-user-id
+    max_reqs_per_min: 120

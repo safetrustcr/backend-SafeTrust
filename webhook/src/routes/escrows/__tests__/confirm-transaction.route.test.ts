@@ -4,6 +4,12 @@ import request from 'supertest'
 import express from 'express'
 import confirmTransactionRoute from '../confirm-transaction.route'
 import * as confirmationService from '../../../services/confirmation.service'
+import * as escrowService from '../../../services/escrow.service'
+import { errorHandler } from '../../../middleware/error-handler'
+
+jest.mock('firebase-admin/auth', () => ({
+  getAuth: jest.fn(),
+}))
 
 jest.mock('../../../services/confirmation.service', () => ({
   ...jest.requireActual('../../../services/confirmation.service'),
@@ -11,11 +17,19 @@ jest.mock('../../../services/confirmation.service', () => ({
   processExternalSubmission: jest.fn(),
 }))
 
+jest.mock('../../../services/escrow.service', () => ({
+  ...jest.requireActual('../../../services/escrow.service'),
+  isEscrowParty: jest.fn(),
+}))
+
 const mockedHelper = confirmationService.processHelperSubmission as jest.MockedFunction<
   typeof confirmationService.processHelperSubmission
 >
 const mockedExternal = confirmationService.processExternalSubmission as jest.MockedFunction<
   typeof confirmationService.processExternalSubmission
+>
+const mockedIsEscrowParty = escrowService.isEscrowParty as jest.MockedFunction<
+  typeof escrowService.isEscrowParty
 >
 
 describe('POST /api/escrows/confirm-transaction', () => {
@@ -27,7 +41,17 @@ describe('POST /api/escrows/confirm-transaction', () => {
     jest.clearAllMocks()
     app = express()
     app.use(express.json())
+    app.use((req, _res, next) => {
+      req.context = {
+        uid: 'test-user-123',
+        tenantId: 'safetrust',
+        roles: [],
+      }
+      next()
+    })
     app.use(confirmTransactionRoute)
+    app.use(errorHandler)
+    mockedIsEscrowParty.mockResolvedValue(true)
   })
 
   it('rejects client signing without submission', async () => {

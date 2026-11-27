@@ -53,22 +53,6 @@ RETURNING id`, not a find-then-create in application code:
 The conversation upsert and the message insert run in one transaction, so a
 message is never written without its conversation.
 
-## Removed: internal self-HTTP endpoint and `INTERNAL_SERVICE_SECRET`
-
-Lifecycle notifications used to `fetch` the webhook's own
-`POST /api/hotel/conversations/send` endpoint, authenticated with the
-`x-internal-secret` header and `INTERNAL_SERVICE_SECRET`. That call had no
-timeout, and `docker-compose.yml` never passed the secret to the container,
-so under Compose no notification was sent.
-
-Now that the shared service is called in-process, the endpoint, its
-`x-internal-secret` middleware and the `INTERNAL_SERVICE_SECRET` variable have
-been removed. Deployments can delete the secret from their secret manager.
-No caller outside the notifier was found in this repository. An external
-service that relied on the endpoint now receives `401` from the Firebase-
-authenticated `/api` routes and should call the API through a user session
-instead.
-
 ## Delivery guarantee and when to strengthen it
 
 Delivery is best effort: a message lost to a failure or timeout is not

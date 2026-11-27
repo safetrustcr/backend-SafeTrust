@@ -115,25 +115,28 @@ result before applying the corresponding local state change. The five wallet
 flows documented here submit through Trustless Work from the frontend, so
 SafeTrust learns their results through reconciliation polling. The indexer's
 status and field mapping, including its snapshot-freshness limitation, is
-documented in [Trustless Work Indexer](../stellar/trustless-work-indexer.md).
+documented in [Reconciliation and Indexer Sync](../stellar/reconciliation.md).
 
-## Escrow route map
+## Who calls what
 
-These are the frontend-facing SafeTrust operation routes for the planned
-Issue-03 flow. Trustless Work endpoint paths are relative to its configured API
-base URL; select the path that matches the escrow type.
+SafeTrust no longer exposes operation-specific `POST /api/escrows/fund`,
+`approve-milestone`, `release-funds`, `dispute` or `resolve-dispute` endpoints.
+Those routes, and the corresponding Trustless Work callbacks that used to feed
+them, were removed when polling became the only sync source.
 
-| Operation | SafeTrust route | Trustless Work build endpoint |
-|---|---|---|
-| Fund | `POST /api/escrows/fund` | `POST /escrow/{single-release\|multi-release}/fund-escrow` |
-| Approve milestone | `POST /api/escrows/approve-milestone` | `POST /escrow/{single-release\|multi-release}/approve-milestone` |
-| Release | `POST /api/escrows/release-funds` | `POST /escrow/single-release/release-funds` or `POST /escrow/multi-release/release-milestone-funds` |
-| Dispute | `POST /api/escrows/dispute` | `POST /escrow/single-release/dispute-escrow` or `POST /escrow/multi-release/dispute-milestone` |
-| Resolve | `POST /api/escrows/resolve-dispute` | `POST /escrow/single-release/resolve-dispute` or `POST /escrow/multi-release/resolve-milestone-dispute` |
+The current flow is:
 
-All five operations submit signed XDR with `POST /helper/send-transaction`.
-SafeTrust then uses `GET /helper/get-escrow-by-contract-ids` during
-reconciliation to learn the indexed escrow state.
+- **The frontend calls Trustless Work directly** to build and submit escrow
+  transactions — fund, approve milestone, release, dispute, resolve dispute —
+  using the Trustless Work `/escrow/{single-release|multi-release}/…` build
+  endpoints and `POST /helper/send-transaction` to broadcast the signed XDR.
+- **SafeTrust learns the result through reconciliation.** The sync-escrows
+  job polls Trustless Work (`GET /helper/get-escrow-by-contract-ids`) and
+  reconciles indexed escrow state into Postgres; there are no inbound
+  webhooks from Trustless Work any more.
+
+See [`sync-escrows`](../../webhook/src/routes/reconciliation/sync-escrows.route.ts)
+for the polling implementation.
 
 ## Repository structure
 

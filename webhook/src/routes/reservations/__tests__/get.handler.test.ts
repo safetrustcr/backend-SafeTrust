@@ -1,6 +1,7 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { getReservationHandler } from '../get.handler'
+import { runHandler } from '../../__tests__/run-handler'
 import * as reservationRepo from '../../../repositories/reservation.repository'
 
 jest.mock('../../../repositories/reservation.repository', () => ({
@@ -43,10 +44,10 @@ describe('reservations/get.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await getReservationHandler(req, res)
+    await runHandler(getReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(401)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Unauthorized' }))
   })
 
   it('returns 404 when reservation is not found', async () => {
@@ -58,10 +59,10 @@ describe('reservations/get.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await getReservationHandler(req, res)
+    await runHandler(getReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(404)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Reservation not found' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Reservation not found' }))
   })
 
   it('returns 404 for a stranger (neither guest nor apartment owner)', async () => {
@@ -73,10 +74,10 @@ describe('reservations/get.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await getReservationHandler(req, res)
+    await runHandler(getReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(404)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Reservation not found' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Reservation not found' }))
   })
 
   it('returns reservation DTO when caller is the guest', async () => {
@@ -88,7 +89,7 @@ describe('reservations/get.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await getReservationHandler(req, res)
+    await runHandler(getReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({
@@ -114,7 +115,7 @@ describe('reservations/get.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await getReservationHandler(req, res)
+    await runHandler(getReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({

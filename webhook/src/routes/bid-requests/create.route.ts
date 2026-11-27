@@ -2,6 +2,8 @@
 
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
 import { createBidRequestHandler, isValidCalendarDate } from './create.handler'
+import { requireRole } from '../../middleware/require-role'
+import { ValidationError } from '../../utils/errors'
 
 const router = Router()
 
@@ -20,29 +22,24 @@ export function validateCreateBidRequest(req: Request, res: Response, next: Next
   const desiredMoveIn = req.body?.desiredMoveIn || req.body?.desired_move_in
 
   if (apartmentId == null || proposedPrice == null || desiredMoveIn == null) {
-    res.status(400).json({ error: 'Missing required fields' })
-    return
+    throw new ValidationError('Missing required fields')
   }
   if (typeof apartmentId !== 'string' || !UUID_RE.test(apartmentId)) {
-    res.status(400).json({ error: 'apartmentId must be a valid UUID' })
-    return
+    throw new ValidationError('apartmentId must be a valid UUID')
   }
   if (typeof proposedPrice !== 'number' && typeof proposedPrice !== 'string') {
-    res.status(400).json({ error: 'proposedPrice must be a positive number' })
-    return
+    throw new ValidationError('proposedPrice must be a positive number')
   }
   const price = Number(proposedPrice)
   if (!Number.isFinite(price) || price <= 0) {
-    res.status(400).json({ error: 'proposedPrice must be a positive number' })
-    return
+    throw new ValidationError('proposedPrice must be a positive number')
   }
   if (typeof desiredMoveIn !== 'string' || !isValidCalendarDate(desiredMoveIn)) {
-    res.status(400).json({ error: 'desiredMoveIn must be a valid date' })
-    return
+    throw new ValidationError('desiredMoveIn must be a valid date')
   }
   next()
 }
 
-router.post('/', validateCreateBidRequest, createBidRequestHandler as unknown as RequestHandler)
+router.post('/', requireRole(['guest', 'host']), validateCreateBidRequest, createBidRequestHandler as unknown as RequestHandler)
 
 export default router

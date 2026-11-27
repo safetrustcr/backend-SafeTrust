@@ -1,0 +1,46 @@
+name: agent ci
+
+on:
+  push:
+    paths:
+      - 'agent/**'
+      - '.github/workflows/agent-ci.yml'
+  pull_request:
+    paths:
+      - 'agent/**'
+      - '.github/workflows/agent-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  agent-checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+
+      - name: Install agent dependencies
+        working-directory: agent
+        run: npm ci
+
+      - name: Type-check agent
+        working-directory: agent
+        run: npm run type-check
+
+      - name: Build agent
+        working-directory: agent
+        run: npm run build
+
+      - name: Run agent unit tests
+        working-directory: agent
+        run: npm test
