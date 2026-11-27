@@ -897,6 +897,7 @@ mod tests {
             escrow_type: "single_release".to_string(),
             ledger_seq: seq,
             network: Some("testnet".to_string()),
+            tenant_id: "safetrust".to_string(),
         }
     }
 
