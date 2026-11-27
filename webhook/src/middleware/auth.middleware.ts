@@ -137,3 +137,21 @@ export async function authMiddleware(
     res.status(500).json({ error: "Internal Server Error", message: "Failed to resolve user role" });
   }
 }
+
+export async function optionalAuthMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  if (req.context) {
+    next()
+    return
+  }
+
+  if (typeof req.headers.authorization !== 'string') {
+    next()
+    return
+  }
+
+  await authMiddleware(req, res, next)
+}

@@ -1,6 +1,6 @@
 import { NextFunction, Request, RequestHandler, Response } from 'express'
 import { paymentMiddleware } from '@x402/express'
-import { authMiddleware } from './auth.middleware'
+import { optionalAuthMiddleware } from './auth.middleware'
 import { getActiveX402ResourceServer, getX402Config } from '../config/x402'
 
 const paymentMiddlewares = new Map<string, RequestHandler>()
@@ -67,35 +67,21 @@ export function x402UnlessAuthenticated(
       return
     }
 
-    const authorization = req.headers.authorization
-    if (authorization === undefined) {
-      const injected = paymentMiddlewares.get(routeKey) ?? paymentMiddlewares.get('*')
-      if (injected) {
-        injected(req, res, next)
-        return
-      }
-      const requirePayment = getPropertyPaymentMiddleware(price, routeKey)
-      requirePayment(req, res, next)
-      return
-    }
-
-    if (!/^Bearer \S+$/.test(authorization)) {
-      res.status(401).json({
-        error: 'Unauthorized',
-        message: 'Missing or malformed Authorization header',
-      })
-      return
-    }
-
     void Promise.resolve(
-      authMiddleware(req, res, (error?: unknown) => {
+      optionalAuthMiddleware(req, res, (error?: unknown) => {
         if (error) {
           next(error)
           return
         }
         if (res.headersSent) return
         if (!req.context) {
-          res.status(401).json({ error: 'Unauthorized', message: 'Invalid or expired token' })
+          const injected = paymentMiddlewares.get(routeKey) ?? paymentMiddlewares.get('*')
+          if (injected) {
+            injected(req, res, next)
+            return
+          }
+          const requirePayment = getPropertyPaymentMiddleware(price, routeKey)
+          requirePayment(req, res, next)
           return
         }
         next()

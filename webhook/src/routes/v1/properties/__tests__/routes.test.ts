@@ -7,10 +7,14 @@ import {
   searchProperties,
 } from '../../../../repositories/property.repository'
 import propertiesRouter from '../index'
-import { authMiddleware } from '../../../../middleware/auth.middleware'
+import {
+  authMiddleware,
+  optionalAuthMiddleware,
+} from '../../../../middleware/auth.middleware'
 
 jest.mock('../../../../middleware/auth.middleware', () => ({
   authMiddleware: jest.fn(),
+  optionalAuthMiddleware: jest.fn(),
 }))
 
 jest.mock('../../../../repositories/property.repository', () => ({
@@ -19,6 +23,7 @@ jest.mock('../../../../repositories/property.repository', () => ({
 }))
 
 const mockAuthMiddleware = authMiddleware as jest.Mock
+const mockOptionalAuthMiddleware = optionalAuthMiddleware as jest.Mock
 
 const PROPERTY_ID = '11111111-1111-4111-8111-111111111111'
 const query = 'check_in=2099-12-15&check_out=2099-12-20&guests=4'
@@ -43,6 +48,13 @@ function createApp() {
 describe('agent property routes', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockOptionalAuthMiddleware.mockImplementation((req, res, next) => {
+      if (typeof req.headers.authorization !== 'string') {
+        next()
+        return
+      }
+      mockAuthMiddleware(req, res, next)
+    })
     setPropertyPaymentMiddleware(
       (_req, res) => res.status(402).json({
         accepts: [{ amount: '0.001 USDC' }],

@@ -5,13 +5,15 @@ import {
   setPropertyPaymentMiddleware,
   x402UnlessAuthenticated,
 } from '../x402-unless-authenticated'
-import { authMiddleware } from '../auth.middleware'
+import { authMiddleware, optionalAuthMiddleware } from '../auth.middleware'
 
 jest.mock('../auth.middleware', () => ({
   authMiddleware: jest.fn(),
+  optionalAuthMiddleware: jest.fn(),
 }))
 
 const mockAuthMiddleware = authMiddleware as jest.Mock
+const mockOptionalAuthMiddleware = optionalAuthMiddleware as jest.Mock
 
 function createApp() {
   const app = express()
@@ -24,6 +26,13 @@ function createApp() {
 describe('x402UnlessAuthenticated', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockOptionalAuthMiddleware.mockImplementation((req, res, next) => {
+      if (typeof req.headers.authorization !== 'string') {
+        next()
+        return
+      }
+      mockAuthMiddleware(req, res, next)
+    })
     setPropertyPaymentMiddleware(
       (_req, res) => res.status(402).json({
         accepts: [{ amount: '0.001 USDC' }],
