@@ -4,7 +4,7 @@ import { Response } from 'express'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { listForParticipant } from '../../repositories/escrow-claims.repository'
 import { UUID_PATTERN } from './validation'
-import { logger } from '../../middleware/logger'
+import { AuthError, NotFoundError, ValidationError } from '../../utils/errors'
 
 /**
  * GET /api/escrow-claims/:escrowId: both parties of the escrow see all its claims.
@@ -15,32 +15,27 @@ export const listClaimsHandler = async (
 ): Promise<Response> => {
   const { escrowId } = req.params as { escrowId: string }
   if (!UUID_PATTERN.test(escrowId ?? '')) {
-    return res.status(400).json({ error: 'INVALID_CLAIM_REQUEST' })
+    throw new ValidationError('INVALID_CLAIM_REQUEST', { code: 'invalid_claim_request' })
   }
 
   const uid = req.user?.uid
   if (!uid) {
-    return res.status(401).json({ error: 'UNAUTHORIZED' })
+    throw new AuthError('UNAUTHORIZED', { code: 'unauthorized' })
   }
 
-  try {
-    const rows = await listForParticipant(escrowId, uid)
-    if (!rows) {
-      return res.status(404).json({ error: 'ESCROW_NOT_FOUND' })
-    }
-
-    return res.status(200).json({
-      claims: rows.map((row) => ({
-        id: row.id,
-        authorId: row.author_id,
-        body: row.body,
-        status: row.status,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      })),
-    })
-  } catch (err) {
-    logger.error('escrow_claims.list.failed', { error: err })
-    return res.status(500).json({ error: 'INTERNAL_ERROR' })
+  const rows = await listForParticipant(escrowId, uid)
+  if (!rows) {
+    throw new NotFoundError('ESCROW_NOT_FOUND', { code: 'escrow_not_found' })
   }
+
+  return res.status(200).json({
+    claims: rows.map((row) => ({
+      id: row.id,
+      authorId: row.author_id,
+      body: row.body,
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    })),
+  })
 }

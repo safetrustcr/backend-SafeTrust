@@ -19,7 +19,7 @@ And header Authorization = 'Bearer ' + validToken
 And header x-test-uid = 'test-user'
 When method get
 Then status 404
-And match response == { error: 'Apartment not found' }
+And match response contains { error: 'Apartment not found' }
 
 # Optional: set APARTMENT_ID to a real UUID to assert 200 in CI/local
 Scenario: returns 200 for existing apartment id (optional)

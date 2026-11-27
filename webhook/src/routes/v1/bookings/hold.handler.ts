@@ -74,6 +74,8 @@ export async function createHoldHandler(
       throw new ValidationError('Hold expired before payment was confirmed')
     }
 
+    res.locals.activatedHold = { id: hold.id, userId: ctx.uid, tenantId: ctx.tenantId }
+
     res.status(201).json({
       hold_id: hold.id,
       expires_at: new Date(hold.expires_at).toISOString(),

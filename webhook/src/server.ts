@@ -1,6 +1,7 @@
 import app from './app'
 import { getHasuraAdminSecret } from './services/hasura'
 import { initializeFirebaseAdmin } from './config/firebase-admin'
+import { getX402Config } from './config/x402'
 import { pool } from './services/db'
 import { logger } from './middleware/logger'
 import { startHoldExpiryJob, stopHoldExpiryJob } from './services/hold-expiry.job'
@@ -16,6 +17,9 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 try {
   getHasuraAdminSecret()
   initializeFirebaseAdmin()
+  if (process.env.X402_ENABLED === 'true') {
+    getX402Config()
+  }
 } catch (error) {
   logger.error('server.initialization_failed', { error })
   process.exit(1)

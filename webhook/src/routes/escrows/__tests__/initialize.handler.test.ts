@@ -1,3 +1,4 @@
+import { runHandler } from '../../__tests__/run-handler';
 'use strict';
 
 jest.mock('../../../services/escrow.service', () => ({
@@ -78,14 +79,39 @@ describe('initializeEscrowHandler', () => {
     });
   });
 
+  it.each([
+    ['a non-numeric value', 'not-an-amount'],
+    ['a non-finite value', Number.POSITIVE_INFINITY],
+    ['a NaN value', Number.NaN],
+    ['zero', 0],
+    ['a null value', null],
+    ['a negative value', -1],
+  ])('rejects %s before calling the service', async (_description, amount) => {
+    const res = makeResponse();
+
+    await runHandler(initializeEscrowHandler, makeRequest({ amount }), res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(initializeEscrow).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed amount types before calling the service', async () => {
+    const res = makeResponse();
+
+    await runHandler(initializeEscrowHandler, makeRequest({ amount: { value: 100 } }), res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(initializeEscrow).not.toHaveBeenCalled();
+  });
+
   it('maps service validation errors to a bad request', async () => {
     initializeEscrow.mockRejectedValueOnce(new EscrowValidationError('invalid payload'));
     const res = makeResponse();
 
-    await initializeEscrowHandler(makeRequest(), res);
+    await runHandler(initializeEscrowHandler, makeRequest(), res);
 
     expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({ success: false, error: 'invalid payload' });
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Request could not be processed' }));
   });
 });
 

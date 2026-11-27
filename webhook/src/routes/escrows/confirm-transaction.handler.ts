@@ -10,15 +10,26 @@ import { Request, Response } from 'express'
 import {
   processHelperSubmission,
   processExternalSubmission,
-  type StellarNetwork,
+  EscrowAction,
+  StellarNetwork,
+  SubmissionPath,
 } from '../../services/confirmation.service'
-import { isEscrowParty } from '../../services/escrow.service'
-import type { ConfirmTransactionBody } from '../../validation'
+import { assertSignedXdrCannotAdvanceStatus, isEscrowParty } from '../../services/escrow.service'
+import { AuthError, ForbiddenError, ValidationError } from '../../utils/errors'
 
-export type ConfirmTransactionPayload = ConfirmTransactionBody
+export interface ConfirmTransactionPayload {
+  submissionPath?: SubmissionPath
+  txHash?: string
+  signedXdr?: string
+  escrowId?: string
+  action?: EscrowAction
+  network?: StellarNetwork
+  isTWGenerated?: boolean
+  signingOnly?: boolean
+}
 
 export async function confirmTransactionHandler(
-  req: Request<{}, {}, ConfirmTransactionBody>,
+  req: Request<{}, {}, ConfirmTransactionPayload>,
   res: Response
 ): Promise<Response> {
   const {
@@ -27,34 +38,45 @@ export async function confirmTransactionHandler(
     signedXdr,
     escrowId,
     action,
+    network = (process.env.STELLAR_NETWORK as StellarNetwork) || 'testnet',
     isTWGenerated = true,
+    signingOnly = false,
   } = req.body
-  const configuredNetwork = req.body.network ?? process.env.STELLAR_NETWORK ?? 'testnet'
-  if (configuredNetwork !== 'testnet' && configuredNetwork !== 'mainnet') {
-    return res.status(400).json({ error: 'network must be either "testnet" or "mainnet"' })
+
+  // 1. Guard against advancing status via client signing alone
+  if (signingOnly || (signedXdr && !submissionPath && !txHash)) {
+    throw new ValidationError(
+      'Client-side wallet signing cannot advance escrow status; transaction must be submitted with a txHash'
+    )
   }
-  const network: StellarNetwork = configuredNetwork
-  const tenantId = req.context?.tenantId
-  if (!tenantId) {
-    return res.status(401).json({ error: 'Unauthorized' })
+
+  // 2. Validate required fields
+  if (!escrowId) {
+    throw new ValidationError('escrowId is required')
+  }
+
+  if (!action || !['deploy', 'fund'].includes(action)) {
+    throw new ValidationError('action must be either "deploy" or "fund"')
+  }
+
+  if (!['testnet', 'mainnet'].includes(network)) {
+    throw new ValidationError('network must be either "testnet" or "mainnet"')
   }
 
   const uid = req.context?.uid || req.user?.uid
-  if (!uid) {
-    return res.status(401).json({ error: 'Unauthorized' })
+  const tenantId = req.context?.tenantId
+  if (!uid || !tenantId) {
+    throw new AuthError('Unauthorized')
   }
 
   if (!(await isEscrowParty(uid, escrowId, tenantId))) {
-    return res.status(403).json({
-      error: 'Forbidden',
-      message: 'Caller is not a recognized party on this escrow',
-    })
+    throw new ForbiddenError('Caller is not a recognized party on this escrow')
   }
 
-  // Dispatch according to the validated submission path.
+  // 3. Dispatch according to submission path
   if (submissionPath === 'helper') {
     if (!signedXdr) {
-      return res.status(400).json({ error: 'signedXdr is required for helper submission' })
+      throw new ValidationError('signedXdr is required for helper submission')
     }
 
     const result = await processHelperSubmission({
@@ -63,16 +85,10 @@ export async function confirmTransactionHandler(
       action,
       network,
       isTWGenerated,
-      tenantId,
     })
 
     if (!result.success) {
-      return res.status(400).json({
-        success: false,
-        stage: result.stage,
-        error: result.error,
-        retryRecordId: result.retryRecordId,
-      })
+      throw new ValidationError(result.error ?? 'Helper submission failed')
     }
 
     return res.status(200).json({
@@ -87,7 +103,7 @@ export async function confirmTransactionHandler(
     })
   } else if (submissionPath === 'external') {
     if (!txHash) {
-      return res.status(400).json({ error: 'txHash is required for external submission' })
+      throw new ValidationError('txHash is required for external submission')
     }
 
     // update-from-txHash only updates Trustless Work's Firebase index; it does
@@ -98,16 +114,10 @@ export async function confirmTransactionHandler(
       action,
       network,
       isTWGenerated,
-      tenantId,
     })
 
     if (!result.success) {
-      return res.status(400).json({
-        success: false,
-        stage: result.stage,
-        error: result.error,
-        retryRecordId: result.retryRecordId,
-      })
+      throw new ValidationError(result.error ?? 'Helper submission failed')
     }
 
     return res.status(200).json({
@@ -121,8 +131,6 @@ export async function confirmTransactionHandler(
       twIndexed: result.twIndexed,
     })
   } else {
-    return res.status(400).json({
-      error: 'Invalid submissionPath; must be "helper" or "external"',
-    })
+    throw new ValidationError('Invalid submissionPath; must be "helper" or "external"')
   }
 }
