@@ -3,8 +3,10 @@ import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { syncUserHandler } from '../sync-user.handler'
 import { runHandler } from '../../__tests__/run-handler'
 import { syncUser } from '../../../repositories/user.repository'
+import { syncClaims } from '../../../services/claims'
 
 jest.mock('../../../repositories/user.repository', () => ({ syncUser: jest.fn() }))
+jest.mock('../../../services/claims', () => ({ syncClaims: jest.fn() }))
 
 function makeResponse(): Response {
   const res: Partial<Response> = {}
@@ -16,6 +18,7 @@ function makeResponse(): Response {
 describe('auth/sync-user.handler', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(syncClaims as jest.Mock).mockResolvedValue(true)
   })
 
   it('returns 401 when unauthenticated', async () => {
@@ -57,9 +60,11 @@ describe('auth/sync-user.handler', () => {
     await runHandler(syncUserHandler, req, res)
 
     expect(syncUser).toHaveBeenCalledWith('firebase-user-123', 'user@example.com')
+    expect(syncClaims).toHaveBeenCalledWith('firebase-user-123')
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({
+      claimsUpdated: true,
       user: {
         id: 'firebase-user-123',
         email: 'user@example.com',
@@ -94,6 +99,7 @@ describe('auth/sync-user.handler', () => {
     expect(syncUser).toHaveBeenCalledWith('firebase-user-456', 'legacy@example.com')
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({
+      claimsUpdated: true,
       user: {
         id: 'legacy-uuid-456',
         email: 'legacy@example.com',
@@ -129,6 +135,7 @@ describe('auth/sync-user.handler', () => {
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({
+      claimsUpdated: true,
       user: {
         id: 'new-user-789',
         email: 'new@example.com',
@@ -136,6 +143,31 @@ describe('auth/sync-user.handler', () => {
         last_seen: newUser.last_seen,
       },
     })
+  })
+
+  it('reports claimsUpdated false when the claims did not change', async () => {
+    ;(syncUser as jest.Mock).mockResolvedValueOnce({
+      id: 'unchanged-user',
+      firebase_uid: 'unchanged-user',
+      email: 'unchanged@example.com',
+    })
+    ;(syncClaims as jest.Mock).mockResolvedValueOnce(false)
+
+    const req = {
+      context: {
+        uid: 'unchanged-user',
+        tenantId: 'safetrust',
+        roles: ['guest'],
+      },
+    } as AuthenticatedRequest
+    const res = makeResponse()
+
+    await runHandler(syncUserHandler, req, res)
+
+    expect(res.status).toHaveBeenCalledWith(200)
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ claimsUpdated: false }),
+    )
   })
 
   it('returns 500 when database error occurs', async () => {

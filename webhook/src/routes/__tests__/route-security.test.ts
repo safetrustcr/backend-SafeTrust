@@ -337,6 +337,8 @@ describe('public route boundary', () => {
       '/health:healthRateLimit',
       '/reconciliation:publicRateLimit',
       '/reconciliation:reconciliationRoutes',
+      '/webhooks:claimsWebhookRoutes',
+      '/webhooks:publicRateLimit',
     ])
 
     const bareUses = [...appSource.matchAll(/app\.use\(\s*([A-Za-z_$][\w$]*)\s*\)/g)]
@@ -375,12 +377,16 @@ describe('public route boundary', () => {
       'utf8'
     )
     expect(declaredPaths(reconciliation)).toEqual(['/sync-escrows'])
+    expect(declaredPaths(routeSource('webhooks/sync-claims.route.ts'))).toEqual([
+      '/sync-claims',
+    ])
   })
 
   it('requires role middleware on every write route except the public allowlist', () => {
     const publicWrites = new Set([
       'escrows/initialize.route.ts:/api/escrows/initialize',
       'reconciliation/sync-escrows.route.ts:/sync-escrows',
+      'webhooks/sync-claims.route.ts:/sync-claims',
     ])
     const violations = routeSourceFiles(join(__dirname, '..'))
       .flatMap((file) => {

@@ -202,19 +202,33 @@ currently has a self-only host filter, not an empty one. Its row restriction
 also applies to list, primary-key, relationship, and aggregate query paths;
 host aggregation is not enabled.
 
-The checked-in [`.env.example`](./.env.example) configures
-`HASURA_GRAPHQL_JWT_SECRET` with the Firebase issuer and Hasura claims
-namespace. [`claims.ts`](./webhook/src/services/claims.ts) constructs the
-user ID and role claims (`x-hasura-user-id`, `x-hasura-default-role`, and
-`x-hasura-allowed-roles`). These files document repository configuration and
-claim construction, but do not verify that this configuration is deployed or
-that `syncClaims` has run for issued tokens. A role name in metadata alone
-does not prove that ordinary clients cannot claim `host`: deployment must
-verify that trusted token issuance sets `X-Hasura-User-Id` to the
-authenticated user's ID and only grants `host` in the allowed-role claims to
-authorized users. Do not use an admin-secret query to validate row
-permissions; test with two actual authenticated host/guest users and their
-supported claims.
+Hasura verifies Firebase ID tokens with the `HASURA_GRAPHQL_JWT_SECRET`
+configured in [`.env.example`](./.env.example). [`claims.ts`](./webhook/src/services/claims.ts)
+is the only writer of the `https://hasura.io/jwt/claims` namespace: it reads
+`safetrust.user_roles` and writes `x-hasura-user-id`, `x-hasura-default-role`,
+and `x-hasura-allowed-roles` with Firebase `setCustomUserClaims`, skipping the
+write when the claims are already identical.
+
+The claim flow is:
+
+1. `POST /api/auth/sync-user` upserts the user and calls `syncClaims(uid)`. The
+   response's `claimsUpdated` flag tells the client to call `getIdToken(true)`
+   so the next ID token carries the claims.
+2. Roles change through Hasura (admin insert/delete on `safetrust.user_roles`).
+   The `on_user_roles_changed` event trigger in
+   [`public_user_roles.yaml`](./metadata/tenants/safetrust/databases/tables/public_user_roles.yaml)
+   POSTs the insert/delete event to `/webhooks/sync-claims`, authenticated with
+   the `x-hasura-event-secret` header built from `HASURA_EVENT_SECRET`.
+3. Hasura reads the claims from the configured namespace on every request. An
+   existing ID token keeps its old claims until the client refreshes it with
+   `getIdToken(true)`.
+
+A role name in metadata alone does not prove that ordinary clients cannot
+claim `host`: deployment must verify that trusted token issuance sets
+`X-Hasura-User-Id` to the authenticated user's ID and only grants `host` in
+the allowed-role claims to authorized users. Do not use an admin-secret query
+to validate row permissions; test with two actual authenticated host/guest
+users after refreshing their tokens and with their supported claims.
 
 Local metadata is not evidence of deployed state. Confirm the exported target
 metadata after the HAS-02 metadata-deployment fix, then test the deployed

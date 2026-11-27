@@ -1,25 +1,50 @@
-import { getAuth } from "firebase-admin/auth";
-import { listUserRoles } from "../repositories/user.repository";
+import { getApp } from 'firebase-admin/app'
+import { listUserRoles } from '../repositories/user.repository'
 
-const PRECEDENCE = ["admin", "host", "guest"];
+const CLAIMS_KEY = 'https://hasura.io/jwt/claims'
+const PRECEDENCE = ['admin', 'host', 'guest']
 
-export async function syncClaims(uid: string, userRoles?: string[]): Promise<void> {
-  const roles = userRoles ?? await listUserRoles(uid, true);
+function firebaseAdminConfigured(): boolean {
+  try {
+    getApp()
+    return true
+  } catch {
+    return false
+  }
+}
 
-  const highestRole = PRECEDENCE.find((role) => roles.includes(role)) || "guest";
-  const allowedRoles = roles.includes("guest") ? roles : [...roles, "guest"];
+async function getFirebaseAuth() {
+  const { getAuth } = await import('firebase-admin/auth')
+  return getAuth()
+}
 
-  await getAuth().setCustomUserClaims(uid, {
-    "https://hasura.io/jwt/claims": {
-      "x-hasura-default-role": highestRole,
-      "x-hasura-allowed-roles": allowedRoles,
-      "x-hasura-user-id": uid,
-    },
-  });
+export async function syncClaims(uid: string, userRoles?: string[]): Promise<boolean> {
+  if (!firebaseAdminConfigured()) return false
+
+  const roles = userRoles ?? (await listUserRoles(uid, true))
+  const highestRole = PRECEDENCE.find((role) => roles.includes(role)) || 'guest'
+  const allowedRoles = roles.includes('guest') ? roles : [...roles, 'guest']
+  const hasuraClaims = {
+    'x-hasura-default-role': highestRole,
+    'x-hasura-allowed-roles': allowedRoles,
+    'x-hasura-user-id': uid,
+  }
+
+  const auth = await getFirebaseAuth()
+  const customClaims = (await auth.getUser(uid)).customClaims ?? {}
+  if (JSON.stringify(customClaims[CLAIMS_KEY]) === JSON.stringify(hasuraClaims)) {
+    return false
+  }
+
+  await auth.setCustomUserClaims(uid, {
+    ...customClaims,
+    [CLAIMS_KEY]: hasuraClaims,
+  })
+  return true
 }
 
 export async function getHighestRole(uid: string, userRoles?: string[]): Promise<string> {
-  const roles = userRoles ?? await listUserRoles(uid);
+  const roles = userRoles ?? (await listUserRoles(uid))
 
-  return PRECEDENCE.find((role) => roles.includes(role)) || "guest";
+  return PRECEDENCE.find((role) => roles.includes(role)) || 'guest'
 }
