@@ -295,11 +295,21 @@ describe('Confirmation Service - Issue #660', () => {
   // ── 5. Deployment vs. Funding separation ──────────────────────────────────
   describe('Criterion 5: Strict separation of Deployment vs Funding', () => {
     it('promotes deployment to created status without setting balance or marking funded', async () => {
+      mockedDbQuery.mockResolvedValue({
+        rows: [{
+          id: 'escrow-uuid-1',
+          tenant_id: 'safetrust',
+          contract_id: ESCROW_ID,
+          amount: '100',
+          marker: 'marker',
+          approver: 'approver',
+        }],
+      } as any)
       await promoteEscrowStatus(ESCROW_ID, 'deploy', VALID_TX_HASH, 'testnet')
 
       expect(mockedDbQuery).toHaveBeenCalledWith(
         expect.stringContaining("status = 'created'"),
-        [VALID_TX_HASH, 'testnet', ESCROW_ID]
+        [VALID_TX_HASH, 'testnet', ESCROW_ID, 'safetrust']
       )
       expect(mockedDbQuery).not.toHaveBeenCalledWith(
         expect.stringContaining("status = 'funded'"),
@@ -308,11 +318,21 @@ describe('Confirmation Service - Issue #660', () => {
     })
 
     it('promotes funding to funded status and updates balance', async () => {
+      mockedDbQuery.mockResolvedValue({
+        rows: [{
+          id: 'escrow-uuid-1',
+          tenant_id: 'safetrust',
+          contract_id: ESCROW_ID,
+          amount: '100',
+          marker: 'marker',
+          approver: 'approver',
+        }],
+      } as any)
       await promoteEscrowStatus(ESCROW_ID, 'fund', VALID_TX_HASH, 'testnet')
 
       expect(mockedDbQuery).toHaveBeenCalledWith(
         expect.stringContaining("status = 'funded'"),
-        [VALID_TX_HASH, 'testnet', ESCROW_ID]
+        [VALID_TX_HASH, 'testnet', ESCROW_ID, 'safetrust']
       )
     })
   })
@@ -360,7 +380,7 @@ describe('Confirmation Service - Issue #660', () => {
       // Verify retry was updated with status 'retrying' and attempt 1
       expect(mockedDbQuery).toHaveBeenCalledWith(
         expect.stringContaining("status = $1"),
-        ['retrying', 1, expect.stringContaining('503'), expect.any(Number), 'retry-temp-fail']
+        ['retrying', 1, expect.stringContaining('503'), expect.any(Number), 'retry-temp-fail', 'safetrust']
       )
     })
 
@@ -432,14 +452,14 @@ describe('Confirmation Service - Issue #660', () => {
 
       expect(mockedDbQuery).toHaveBeenCalledWith(
         expect.stringContaining("status = $1"),
-        ['dead_letter', 5, expect.stringContaining('Exceeded maximum'), 0, 'retry-dead-letter-1']
+        ['dead_letter', 5, expect.stringContaining('Exceeded maximum'), 0, 'retry-dead-letter-1', 'safetrust']
       )
     })
   })
 
   // ── 7. Idempotency ────────────────────────────────────────────────────────
   describe('Criterion 7: Strict Idempotency', () => {
-    it('uses ON CONFLICT (tx_hash, escrow_action) to guarantee idempotency upon duplicate submissions', async () => {
+    it('uses a tenant-scoped conflict key to guarantee idempotency within a tenant', async () => {
       mockedDbQuery.mockResolvedValue({
         rows: [
           {
@@ -461,6 +481,7 @@ describe('Confirmation Service - Issue #660', () => {
         action: 'deploy',
         network: 'testnet',
         submissionPath: 'external',
+        tenantId: 'tenant-a',
       })
 
       const record2 = await upsertRetryRecord({
@@ -469,13 +490,14 @@ describe('Confirmation Service - Issue #660', () => {
         action: 'deploy',
         network: 'testnet',
         submissionPath: 'external',
+        tenantId: 'tenant-a',
       })
 
       expect(record1.txHash).toBe(record2.txHash)
       expect(mockedDbQuery).toHaveBeenCalledTimes(2)
       expect(mockedDbQuery).toHaveBeenCalledWith(
-        expect.stringContaining('ON CONFLICT (tx_hash, escrow_action)'),
-        expect.anything()
+        expect.stringContaining('ON CONFLICT (tenant_id, tx_hash, escrow_action)'),
+        expect.arrayContaining(['tenant-a'])
       )
     })
   })

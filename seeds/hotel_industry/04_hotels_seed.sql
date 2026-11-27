@@ -1,7 +1,7 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS postgis;
 
-INSERT INTO hotel_industry.hotels (id, name, description, address, location_area, coordinates)
+INSERT INTO hotel_industry.hotels (id, name, description, address_line, neighborhood, coordinates)
 VALUES
   (
     uuid_generate_v4(),

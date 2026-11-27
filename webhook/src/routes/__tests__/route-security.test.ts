@@ -179,7 +179,7 @@ describe('route security', () => {
           location: 'Test city',
           pricePerMonth: 1000,
         },
-        'PATCH /api/bid-requests/bid-id': { status: 'approved' },
+        'PATCH /api/bid-requests/bid-id': { status: 'APPROVED' },
         'POST /api/bid-requests': {
           apartmentId: TEST_UUID,
           proposedPrice: 100,
@@ -257,7 +257,7 @@ describe('route security', () => {
     const response = await callRoute('PATCH', '/api/bid-requests/bid-id')
       .set('Authorization', 'Bearer test-token')
       .set('x-test-role', 'host')
-      .send({ status: 'approved' })
+      .send({ status: 'APPROVED' })
 
     expect(response.status).toBe(403)
   })

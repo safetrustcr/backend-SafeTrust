@@ -58,7 +58,8 @@ Feature: POST /api/auth/sync-wallet
     And request { chain_type: 'ETH', is_primary: false }
     When method POST
     Then status 400
-    And match response.error == 'wallet_address is required'
+    And match response.error == 'validation_failed'
+    And match response.fields.wallet_address == '#string'
 
   Scenario: Invalid chain_type → 400
     Given path '/api/auth/sync-wallet'
@@ -67,7 +68,8 @@ Feature: POST /api/auth/sync-wallet
     And request { wallet_address: '#(ethAddress)', chain_type: 'INVALID', is_primary: false }
     When method POST
     Then status 400
-    And match response.error contains 'chain_type must be one of'
+    And match response.error == 'validation_failed'
+    And match response.fields.chain_type == '#string'
 
   Scenario: STELLAR wallet requires challenge-verify flow → 400
     Given path '/api/auth/sync-wallet'

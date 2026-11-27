@@ -16,7 +16,7 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Architecture Overview](architecture/overview.md) | System layers, unsigned XDR signing, and indexer reconciliation |
 | [Multi-Tenant Architecture](architecture/multi-tenant.md) | Two-tenant isolation model (`safetrust` and `hotel_industry`), schema routing, and RBAC rules |
 | [Safetrust Permissions](architecture/safetrust-permissions.md) | Role-scoped Hasura permissions (`guest`, `host`, `admin`) across `safetrust` tables and actions |
-| [SafeTrust Schema Normalization](architecture/safetrust-normalization.md) | Canonical ownership for users, apartments, pricing overrides, and bid request facts |
+| [SafeTrust Schema Normalization](architecture/safetrust-normalization.md) | Canonical ownership of user roles, apartment capacity, pricing override users, and bid requester facts |
 | [Rust Crates in SafeTrust](architecture/rust-crates.md) | High-assurance native extensions via Neon bindings for cryptography and blockchain operations |
 | [Crate Boundaries](architecture/crate-boundaries.md) | Consumers, exports, fallbacks, dispositions, and quarantine gates for all eight Rust crates |
 | [Escrow Claims API](architecture/escrow-claims-api.md) | Request and response contract, error codes, idempotency and rate limit for claims on released escrows |

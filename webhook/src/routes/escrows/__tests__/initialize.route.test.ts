@@ -3,6 +3,7 @@ import express from 'express'
 import router, { setPaymentMiddleware } from '../initialize.route'
 import { setX402ResourceServer, buildX402ResourceServer } from '../../../config/x402'
 import { FacilitatorClient } from '@x402/core/server'
+import { errorHandler } from '../../../middleware/error-handler'
 
 jest.mock('../../../services/escrow.service', () => ({
   EscrowValidationError: class EscrowValidationError extends Error {
@@ -75,6 +76,7 @@ describe('initialize.route with official x402 payment gate', () => {
     app = express()
     app.use(express.json())
     app.use(router)
+    app.use(errorHandler)
   })
 
   afterAll(() => {
@@ -94,9 +96,9 @@ describe('initialize.route with official x402 payment gate', () => {
         .send({})
 
       expect(res.status).toBe(503)
-      expect(res.body.error).toBe('Feature Unavailable')
-      expect(res.body.feature).toBe('x402')
-      expect(res.body.message).toBe('x402 payments are disabled')
+      expect(res.body.success).toBe(false)
+      expect(res.body.error).toBe('Service unavailable')
+      expect(res.body.code).toBe('feature_unavailable')
     })
 
     it('fails closed when an X-Payment header is sent while x402 is disabled', async () => {
@@ -106,8 +108,9 @@ describe('initialize.route with official x402 payment gate', () => {
         .send({})
 
       expect(res.status).toBe(503)
-      expect(res.body.error).toBe('Feature Unavailable')
-      expect(res.body.feature).toBe('x402')
+      expect(res.body.success).toBe(false)
+      expect(res.body.error).toBe('Service unavailable')
+      expect(res.body.code).toBe('feature_unavailable')
     })
 
     it('fails closed when payment-signature is sent while x402 is disabled', async () => {
@@ -117,8 +120,9 @@ describe('initialize.route with official x402 payment gate', () => {
         .send({})
 
       expect(res.status).toBe(503)
-      expect(res.body.error).toBe('Feature Unavailable')
-      expect(res.body.feature).toBe('x402')
+      expect(res.body.success).toBe(false)
+      expect(res.body.error).toBe('Service unavailable')
+      expect(res.body.code).toBe('feature_unavailable')
     })
   })
 

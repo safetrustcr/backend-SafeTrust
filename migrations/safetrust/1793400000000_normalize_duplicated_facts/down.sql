@@ -46,4 +46,3 @@ UPDATE safetrust.users u SET role = COALESCE((
   WHERE ur.user_id = u.id ORDER BY CASE r.name WHEN 'admin' THEN 1 WHEN 'host' THEN 2 ELSE 3 END LIMIT 1), 'guest');
 ALTER TABLE safetrust.users ADD CONSTRAINT valid_user_role CHECK (role IN ('guest','host','admin'));
 CREATE INDEX idx_users_role ON safetrust.users(role);
-

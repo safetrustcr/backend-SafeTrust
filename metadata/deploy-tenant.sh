@@ -254,9 +254,7 @@ process_metadata_tables() {
     fi
 
     # Track table select permissions. `admin` is Hasura's built-in full-access
-    # role: declaring a permission for it is rejected ("already defined"), and
-    # because the request is a bulk, that one rejection would drop every
-    # permission. YAML may still list admin to document intent; skip it here.
+    # role, so YAML may list it for documentation but it is skipped here.
 
     local desired_table_perms
     desired_table_perms=$(echo "$raw_tables_json" | jq --arg source "$tenant_name" \
@@ -291,6 +289,113 @@ process_metadata_tables() {
                 return 1
             fi
             echo "✅ Table select permissions updated for $tenant_name"
+        fi
+    fi
+
+    # Reconcile insert/update permissions as well as select permissions. These
+    # are declared in tenant metadata but must be applied explicitly because the
+    # metadata deployer tracks tables and relationships individually.
+    local managed_table_write_kinds
+    managed_table_write_kinds=$(echo "$raw_tables_json" | jq -c '
+        [.[] as $tbl
+         | ["insert", "update"][] as $kind
+         | select($tbl[($kind + "_permissions")] != null)
+         | { table: { name: $tbl.table.name, schema: ($tbl.table.schema // "public") }, kind: $kind }]
+    ') || return 1
+
+    if [ -n "$managed_table_write_kinds" ] && [ "$managed_table_write_kinds" != "[]" ] && [ "$managed_table_write_kinds" != "null" ]; then
+        local desired_table_write_perms current_table_write_perms
+        desired_table_write_perms=$(echo "$raw_tables_json" | jq -c --arg source "$tenant_name" '
+            [.[] as $tbl
+             | ["insert", "update"][] as $kind
+             | ($tbl[($kind + "_permissions")] // [])[]?
+             | select(.role != "admin")
+             | { source: $source,
+                 table: { name: $tbl.table.name, schema: ($tbl.table.schema // "public") },
+                 kind: $kind,
+                 role: .role,
+                 permission: .permission }]
+        ') || return 1
+
+        current_meta=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d '{"type":"export_metadata","args":{}}') || return 1
+        current_table_write_perms=$(jq -cn --arg source "$tenant_name" --argjson metadata "$current_meta" '
+            [($metadata.metadata // $metadata).sources[]?
+             | select(.name == $source)
+             | .tables[]? as $entry
+             | $entry.table as $table
+             | ["insert", "update"][] as $kind
+             | $entry[($kind + "_permissions")][]? as $permission
+             | { table: $table, kind: $kind, role: $permission.role, permission: $permission.permission }]
+        ') || return 1
+
+        local table_write_perms_to_drop table_write_perms_to_create
+        table_write_perms_to_drop=$(jq -cn \
+            --arg source "$tenant_name" \
+            --argjson current "$current_table_write_perms" \
+            --argjson desired "$desired_table_write_perms" \
+            --argjson managed "$managed_table_write_kinds" '
+            [$current[] as $permission
+             | select($permission.role != "admin")
+             | select(any($managed[]; .table == $permission.table and .kind == $permission.kind))
+             | select(any($desired[];
+                 .table == $permission.table and
+                 .kind == $permission.kind and
+                 .role == $permission.role and
+                 .permission == $permission.permission
+               ) | not)
+             | { source: $source, table: $permission.table, kind: $permission.kind, role: $permission.role }]
+        ') || return 1
+        table_write_perms_to_create=$(jq -cn \
+            --argjson current "$current_table_write_perms" \
+            --argjson desired "$desired_table_write_perms" '
+            [$desired[] as $permission
+             | select(any($current[];
+                 .table == $permission.table and
+                 .kind == $permission.kind and
+                 .role == $permission.role and
+                 .permission == $permission.permission
+               ) | not)
+             | $permission]
+        ') || return 1
+
+        local table_write_perms_payload table_write_perms_response
+        table_write_perms_payload=$(jq -cn \
+            --argjson drops "$table_write_perms_to_drop" \
+            --argjson creates "$table_write_perms_to_create" '
+            { type: "bulk",
+              args:
+                ([$drops[] | {
+                    type: ("pg_drop_" + .kind + "_permission"),
+                    args: { source: .source, table: .table, role: .role }
+                 }] +
+                 [$creates[] | {
+                    type: ("pg_create_" + .kind + "_permission"),
+                    args: { source: .source, table: .table, role: .role, permission: .permission }
+                 }])
+            }
+        ') || return 1
+
+        if [ "$table_write_perms_payload" != '{"type":"bulk","args":[]}' ]; then
+            echo "🔎 Reconciling table insert/update permissions for $tenant_name..."
+            if ! table_write_perms_response=$(curl -sS --fail-with-body -X POST "${hasura_endpoint}/v1/metadata" \
+                -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+                -H "Content-Type: application/json" \
+                -d "$table_write_perms_payload"); then
+                echo "❌ Failed to reconcile table insert/update permissions for $tenant_name: $table_write_perms_response" >&2
+                return 1
+            fi
+            if ! echo "$table_write_perms_response" | jq -e 'type == "object" or type == "array"' >/dev/null 2>&1; then
+                echo "❌ Invalid response reconciling table insert/update permissions for $tenant_name: $table_write_perms_response" >&2
+                return 1
+            fi
+            if echo "$table_write_perms_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+                echo "❌ Error reconciling table insert/update permissions for $tenant_name: $table_write_perms_response" >&2
+                return 1
+            fi
+            echo "✅ Table insert/update permissions reconciled for $tenant_name"
         fi
     fi
 

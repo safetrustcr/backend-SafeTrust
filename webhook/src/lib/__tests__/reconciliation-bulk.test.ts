@@ -95,9 +95,9 @@ describe('upsertEscrowsBulk', () => {
     process.env.POSTGRES_PASSWORD = 'p';
 
     // amount absent -> "0"; roles absent -> "" defaults.
-    await upsertEscrowsBulk([{ contractId: 'C1', status: 'funded' }]);
+    await upsertEscrowsBulk([{ contractId: 'C1', status: 'funded' }], 'tenant-1')
 
-    const [updatesJson, connString] = bulkUpsertEscrows.mock.calls[0];
+    const [updatesJson, connString, tenantId] = bulkUpsertEscrows.mock.calls[0];
     expect(JSON.parse(updatesJson)).toEqual([
       {
         contract_id: 'C1',
@@ -113,6 +113,7 @@ describe('upsertEscrowsBulk', () => {
       },
     ]);
     expect(connString).toContain('@db:');
+    expect(tenantId).toBe('tenant-1')
   });
 
   it('returns rows_affected as updated and the addon unchanged count', async () => {

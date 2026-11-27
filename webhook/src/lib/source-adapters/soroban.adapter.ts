@@ -1,3 +1,5 @@
+import { logger } from '../../middleware/logger'
+
 type QueryEscrowState = (contractId: string, network: string) => string
 type ReconcileBatch = (onChainJson: string, dbJson: string) => string
 
@@ -9,11 +11,7 @@ try {
   queryEscrowStateBatch = sorobanReconciler.queryEscrowStateBatch
   reconcileBatch = sorobanReconciler.reconcileBatch
 } catch (err) {
-  const error = err as Error
-  console.warn(
-    '[reconciliation] ⚠️ soroban-reconciler native addon unavailable:',
-    error.message
-  )
+  logger.warn('reconciliation.soroban_reconciler.unavailable', { error: err })
 }
 
 export function setSorobanReconcilerAddon(addon: {

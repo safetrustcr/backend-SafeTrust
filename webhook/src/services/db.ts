@@ -1,6 +1,7 @@
 'use strict'
 
 import { Pool, QueryResult, PoolClient, QueryResultRow } from 'pg'
+import { logger } from '../middleware/logger'
 
 function positiveIntegerFromEnv(name: string, defaultValue: number): number {
   const value = process.env[name]
@@ -37,7 +38,7 @@ export const pool = new Pool({
 })
 
 pool.on('error', (err: Error) => {
-  console.error('[db] Unexpected error on idle database client:', err)
+  logger.error('db.idle_client.failed', { error: err })
 })
 
 export interface Queryable {
@@ -77,7 +78,7 @@ export async function withTransaction<T>(
     try {
       await client.query('ROLLBACK')
     } catch (rollbackError) {
-      console.error('[db] Failed to rollback transaction:', rollbackError)
+      logger.error('db.transaction.rollback_failed', { error: rollbackError })
       // Rollback failed: the connection may still be in an aborted transaction.
       // Pass the error to release() so pg discards it instead of pooling it.
       releaseError = rollbackError as Error

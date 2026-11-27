@@ -59,7 +59,8 @@ describe('wallet service', () => {
     })
 
     expect(result).toEqual({ kind: 'expired' })
-    expect(deleteWalletChallenge).toHaveBeenCalledWith(client, 'challenge-1')
+    expect(findWalletChallenge).toHaveBeenCalledWith(client, 'challenge-1', 'safetrust')
+    expect(deleteWalletChallenge).toHaveBeenCalledWith(client, 'challenge-1', 'safetrust')
     expect(client.query).toHaveBeenCalledWith('COMMIT')
     expect(client.release).toHaveBeenCalled()
     expect(findWalletOwner).not.toHaveBeenCalled()

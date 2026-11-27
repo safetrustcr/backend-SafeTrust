@@ -12,12 +12,17 @@ import {
   StateConflictError,
 } from '../escrow.repository'
 import { hasuraRequest } from '../../services/hasura'
+import { hasuraTenantRequest } from '../../services/tenant-scoped-hasura'
 
 jest.mock('../../services/hasura', () => ({
   hasuraRequest: jest.fn(),
 }))
+jest.mock('../../services/tenant-scoped-hasura', () => ({
+  hasuraTenantRequest: jest.fn(),
+}))
 
 const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>
+const mockedHasuraTenantRequest = hasuraTenantRequest as jest.MockedFunction<typeof hasuraTenantRequest>
 
 describe('escrow.repository', () => {
   beforeEach(() => {
@@ -229,13 +234,17 @@ describe('escrow.repository', () => {
         },
       })
 
-      const result = await fundEscrow('c-1', 200, ['created'])
+      const result = await fundEscrow('c-1', 200, ['created'], 'tenant-test')
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('FundEscrow'), {
-        contractId: 'c-1',
-        amount: 200,
-        validStates: ['created'],
-      })
+      expect(mockedHasuraRequest).toHaveBeenCalledWith(
+        expect.stringContaining('tenantId: { _eq: $tenantId }'),
+        {
+          contractId: 'c-1',
+          amount: 200,
+          validStates: ['created'],
+          tenantId: 'tenant-test',
+        }
+      )
       expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'funded', balance: 200 })
     })
 
@@ -244,7 +253,7 @@ describe('escrow.repository', () => {
         update_trustless_work_escrows: { returning: [] },
       })
 
-      const result = await fundEscrow('c-1', 200, ['created'])
+      const result = await fundEscrow('c-1', 200, ['created'], 'tenant-test')
       expect(result).toBeNull()
     })
   })
@@ -257,12 +266,16 @@ describe('escrow.repository', () => {
         },
       })
 
-      const result = await releaseFunds('c-1', ['milestone_approved'])
+      const result = await releaseFunds('c-1', ['milestone_approved'], 'tenant-test')
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
-        contractId: 'c-1',
-        validStates: ['milestone_approved'],
-      })
+      expect(mockedHasuraRequest).toHaveBeenCalledWith(
+        expect.stringContaining('tenantId: { _eq: $tenantId }'),
+        {
+          contractId: 'c-1',
+          validStates: ['milestone_approved'],
+          tenantId: 'tenant-test',
+        }
+      )
       expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 })
     })
 
@@ -273,11 +286,12 @@ describe('escrow.repository', () => {
         },
       })
 
-      const result = await releaseFunds('c-1')
+      const result = await releaseFunds('c-1', undefined, 'tenant-test')
 
       expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
         contractId: 'c-1',
         validStates: ['funded', 'milestone_approved'],
+        tenantId: 'tenant-test',
       })
       expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'completed', balance: 0 })
     })
@@ -301,6 +315,7 @@ describe('escrow.repository', () => {
       expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ReleaseFunds'), {
         contractId: 'c-1',
         validStates: [],
+        tenantId: 'safetrust',
       })
     })
   })
@@ -312,13 +327,19 @@ describe('escrow.repository', () => {
           returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'disputed' }],
         },
       })
+      mockedHasuraTenantRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: {
+          returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'disputed' }],
+        },
+      })
 
       const result = await disputeEscrow('c-1', ['funded'])
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('DisputeEscrow'), {
-        contractId: 'c-1',
-        validStates: ['funded'],
-      })
+      expect(mockedHasuraTenantRequest).toHaveBeenCalledWith(
+        'safetrust',
+        expect.stringContaining('tenantId'),
+        { contractId: 'c-1', validStates: ['funded'], tenantId: 'safetrust' }
+      )
       expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'disputed' })
     })
   })
@@ -330,13 +351,19 @@ describe('escrow.repository', () => {
           returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'resolved', balance: 0 }],
         },
       })
+      mockedHasuraTenantRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: {
+          returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'resolved', balance: 0 }],
+        },
+      })
 
       const result = await resolveDispute('c-1', ['disputed'])
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ResolveDispute'), {
-        contractId: 'c-1',
-        validStates: ['disputed'],
-      })
+      expect(mockedHasuraTenantRequest).toHaveBeenCalledWith(
+        'safetrust',
+        expect.stringContaining('tenantId'),
+        { contractId: 'c-1', validStates: ['disputed'], tenantId: 'safetrust' }
+      )
       expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'resolved', balance: 0 })
     })
   })
@@ -346,14 +373,18 @@ describe('escrow.repository', () => {
       mockedHasuraRequest.mockResolvedValueOnce({
         update_trustless_work_escrows: { affected_rows: 1 },
       })
+      mockedHasuraTenantRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: { affected_rows: 1 },
+      })
 
       const note = { resolver: 'r-1', note: 'resolved' }
       const result = await appendResolutionNote('c-1', note)
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('AppendResolutionNote'), {
-        contractId: 'c-1',
-        note,
-      })
+      expect(mockedHasuraTenantRequest).toHaveBeenCalledWith(
+        'safetrust',
+        expect.stringContaining('tenantId'),
+        { contractId: 'c-1', note, tenantId: 'safetrust' }
+      )
       expect(result).toBe(true)
     })
   })

@@ -1,8 +1,8 @@
 import { createHash } from 'crypto'
 import { PoolClient } from 'pg'
 import { pool } from '../services/db'
-
-const TENANT_ID = 'safetrust'
+import { getPlatformTenantId } from '../config/tenant'
+import { logger } from '../middleware/logger'
 
 export interface WebhookEventResult {
   isDuplicate: boolean
@@ -36,7 +36,7 @@ export function getWebhookEventIdentity(
   contractId: string,
   eventType: string,
   payload: unknown,
-  tenantId: string = TENANT_ID
+  tenantId: string = getPlatformTenantId()
 ): string {
   // Existing Trustless Work payload types and the event table expose no single
   // provider ID; use recognized IDs when present, otherwise hash the full event.
@@ -72,10 +72,11 @@ export function getWebhookEventIdentity(
 export async function logAndCheckWebhookEvent(
   contractId: string,
   eventType: string,
-  payload: unknown
+  payload: unknown,
+  tenantId: string = getPlatformTenantId()
 ): Promise<WebhookEventResult> {
   const client = await pool.connect()
-  const eventIdentity = getWebhookEventIdentity(contractId, eventType, payload)
+  const eventIdentity = getWebhookEventIdentity(contractId, eventType, payload, tenantId)
 
   try {
     await client.query('BEGIN')
@@ -91,7 +92,7 @@ export async function logAndCheckWebhookEvent(
        ) VALUES ($1, $2, $3, $4, false, $5)
        ON CONFLICT (tenant_id, event_identity) DO NOTHING
        RETURNING id`,
-      [contractId, eventType, eventIdentity, JSON.stringify(payload), TENANT_ID]
+      [contractId, eventType, eventIdentity, JSON.stringify(payload), tenantId]
     )
 
     let eventId = inserted.rows[0]?.id
@@ -103,7 +104,7 @@ export async function logAndCheckWebhookEvent(
         `SELECT id, processed
          FROM safetrust.trustless_work_webhook_events
          WHERE tenant_id = $1 AND event_identity = $2`,
-        [TENANT_ID, eventIdentity]
+        [tenantId, eventIdentity]
       )
       eventId = existing.rows[0]?.id
       if (!eventId) {
@@ -133,10 +134,11 @@ export async function processWebhookEvent<T>(
   contractId: string,
   eventType: string,
   payload: unknown,
-  process: (client: PoolClient) => Promise<T | null>
+  process: (client: PoolClient) => Promise<T | null>,
+  tenantId: string = getPlatformTenantId()
 ): Promise<ProcessedWebhookEventResult<T>> {
   const client = await pool.connect()
-  const eventIdentity = getWebhookEventIdentity(contractId, eventType, payload)
+  const eventIdentity = getWebhookEventIdentity(contractId, eventType, payload, tenantId)
 
   try {
     await client.query('BEGIN')
@@ -147,7 +149,7 @@ export async function processWebhookEvent<T>(
        ) VALUES ($1, $2, $3, $4, false, $5)
        ON CONFLICT (tenant_id, event_identity) DO NOTHING
        RETURNING id`,
-      [contractId, eventType, eventIdentity, JSON.stringify(payload), TENANT_ID]
+      [contractId, eventType, eventIdentity, JSON.stringify(payload), tenantId]
     )
 
     const claimedEventId = inserted.rows[0]?.id
@@ -156,7 +158,7 @@ export async function processWebhookEvent<T>(
         `SELECT id
          FROM safetrust.trustless_work_webhook_events
          WHERE tenant_id = $1 AND event_identity = $2`,
-        [TENANT_ID, eventIdentity]
+        [tenantId, eventIdentity]
       )
       const eventId = existing.rows[0]?.id
       if (!eventId) {
@@ -175,8 +177,9 @@ export async function processWebhookEvent<T>(
     await client.query(
       `UPDATE safetrust.trustless_work_webhook_events
        SET processed = true, processed_at = NOW()
-       WHERE id = $1`,
-      [claimedEventId]
+       WHERE id = $1
+         AND tenant_id = $2`,
+      [claimedEventId, tenantId]
     )
     await client.query('COMMIT')
 
@@ -185,7 +188,7 @@ export async function processWebhookEvent<T>(
     try {
       await client.query('ROLLBACK')
     } catch (rollbackError) {
-      console.error('[webhook-event.repository] Failed to rollback event transaction:', rollbackError)
+      logger.error('webhook_event.rollback_failed', { error: rollbackError })
     }
     throw error
   } finally {
@@ -196,12 +199,16 @@ export async function processWebhookEvent<T>(
 /**
  * Mark a webhook event as processed.
  */
-export async function markWebhookEventProcessed(eventId: string): Promise<void> {
+export async function markWebhookEventProcessed(
+  eventId: string,
+  tenantId: string = getPlatformTenantId()
+): Promise<void> {
   await pool.query(
     `UPDATE safetrust.trustless_work_webhook_events
      SET processed    = true,
          processed_at = $2
-     WHERE id = $1`,
-    [eventId, new Date()]
+     WHERE id = $1
+       AND tenant_id = $3`,
+    [eventId, new Date(), tenantId]
   )
 }

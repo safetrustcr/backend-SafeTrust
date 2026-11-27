@@ -36,6 +36,9 @@ describe('reconciliation repository', () => {
     ).resolves.toEqual({ updated: 1, unchanged: 0, skipped: 0 })
 
     const [sql, params] = db.query.mock.calls[0]
+    expect(sql).toContain(
+      'WHERE (\n    safetrust.trustless_work_escrows.tenant_id = EXCLUDED.tenant_id'
+    )
     expect(sql).toContain('EXCLUDED.ledger_seq > safetrust.trustless_work_escrows.ledger_seq')
     expect(sql).toContain(
       'EXCLUDED.ledger_seq = safetrust.trustless_work_escrows.ledger_seq'

@@ -11,12 +11,13 @@ describe('Rust upsert adapter', () => {
     const bulkUpsertEscrows = jest.fn(async () => '{"rows_affected":1}')
     __setBulkUpsertForTests({ bulkUpsertEscrows })
 
-    await expect(bulkUpsertWithRust('[]', 'postgresql://localhost/db')).resolves.toBe(
+    await expect(bulkUpsertWithRust('[]', 'postgresql://localhost/db', 'tenant-1')).resolves.toBe(
       '{"rows_affected":1}'
     )
     expect(bulkUpsertEscrows).toHaveBeenCalledWith(
       '[]',
-      'postgresql://localhost/db'
+      'postgresql://localhost/db',
+      'tenant-1'
     )
   })
 })

@@ -23,3 +23,68 @@ array_relationships:
           schema: hotel_industry
           name: pricing_rules
         column: hotel_id
+  - name: members
+    using:
+      foreign_key_constraint_on:
+        table:
+          schema: hotel_industry
+          name: hotel_members
+        column: hotel_id
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - name
+        - description
+        - address_line
+        - city
+        - neighborhood
+        - country_code
+        - coordinates
+        - created_at
+        - updated_at
+      filter: {} # security-reviewed: hotel catalog is public; selectable columns are public-facing
+insert_permissions:
+  - role: user
+    permission:
+      check:
+        created_by_user_id:
+          _eq: x-hasura-user-id
+      set:
+        created_by_user_id: X-Hasura-User-Id
+      columns:
+        - name
+        - description
+        - address_line
+        - city
+        - neighborhood
+        - country_code
+        - coordinates
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - name
+        - description
+        - address_line
+        - city
+        - neighborhood
+        - country_code
+        - coordinates
+      filter:
+        members:
+          user_id:
+            _eq: x-hasura-user-id
+          role:
+            _in:
+              - OWNER
+              - MANAGER
+      check:
+        members:
+          user_id:
+            _eq: x-hasura-user-id
+          role:
+            _in:
+              - OWNER
+              - MANAGER

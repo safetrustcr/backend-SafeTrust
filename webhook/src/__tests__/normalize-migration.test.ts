@@ -31,3 +31,19 @@ describe('issue #790 normalization migration', () => {
     }
   })
 })
+
+describe('confirmation retry tenant uniqueness migration', () => {
+  const retryDir = join(__dirname, '../../../migrations/safetrust/1795620000000_scope_confirmation_retry_tenant_uniqueness')
+  const retryUp = readFileSync(join(retryDir, 'up.sql'), 'utf8')
+  const retryDown = readFileSync(join(retryDir, 'down.sql'), 'utf8')
+
+  it('archives and deletes duplicate retries in one statement', () => {
+    expect(retryDown).toMatch(/removed_retries AS\s*\(\s*DELETE FROM/)
+    expect(retryDown).toMatch(/RETURNING retries\.\*/)
+  })
+
+  it('restores archived retries without overwriting live progress', () => {
+    expect(retryUp).toContain('WHERE NOT EXISTS')
+    expect(retryUp).toMatch(/ON CONFLICT \(tenant_id, tx_hash, escrow_action\) DO NOTHING/)
+  })
+})
