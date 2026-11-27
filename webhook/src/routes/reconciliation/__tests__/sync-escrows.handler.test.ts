@@ -240,6 +240,7 @@ describe('syncEscrowsHandler', () => {
         error: 'Internal server error',
       })
     )
+  })
   it('records a per-tenant failure and still syncs the next tenant', async () => {
     ;(reconciliationService.listReconciliationTenants as jest.Mock).mockResolvedValue([
       'safetrust',
@@ -275,6 +276,5 @@ describe('syncEscrowsHandler', () => {
         }),
       }
     )
-  })
   })
 })

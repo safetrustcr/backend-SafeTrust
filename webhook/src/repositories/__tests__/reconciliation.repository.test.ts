@@ -103,4 +103,33 @@ describe('reconciliation repository', () => {
     const [, params] = db.query.mock.calls[0]
     expect(params[params.length - 1]).toBe('hotel_industry')
   })
+
+  it('only updates an unversioned row owned by the syncing tenant', async () => {
+    db.query.mockResolvedValueOnce({ rows: [{ contract_id: 'C1' }] })
+
+    await expect(
+      upsertEscrows([{ contractId: 'C1' }], 'hotel_industry')
+    ).resolves.toEqual({ updated: 1, unchanged: 0, skipped: 0 })
+
+    const [sql] = db.query.mock.calls[0]
+    expect(sql).toContain(
+      'safetrust.trustless_work_escrows.tenant_id = EXCLUDED.tenant_id'
+    )
+  })
+
+  it('only updates a versioned row owned by the syncing tenant', async () => {
+    db.query.mockResolvedValueOnce({ rows: [{ contract_id: 'C1' }] })
+
+    await expect(
+      upsertEscrows(
+        [{ contractId: 'C1', status: 'funded', ledgerSeq: '30' }],
+        'hotel_industry'
+      )
+    ).resolves.toEqual({ updated: 1, unchanged: 0, skipped: 0 })
+
+    const [sql] = db.query.mock.calls[0]
+    expect(sql).toContain(
+      'safetrust.trustless_work_escrows.tenant_id = EXCLUDED.tenant_id'
+    )
+  })
 })

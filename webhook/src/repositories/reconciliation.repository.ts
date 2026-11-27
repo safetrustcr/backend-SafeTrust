@@ -83,7 +83,8 @@ const UPSERT_ESCROW_SQL = `
     network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
     updated_at = NOW()
   WHERE (
-    safetrust.trustless_work_escrows.status IN ('created', 'pending_funding')
+    safetrust.trustless_work_escrows.tenant_id = EXCLUDED.tenant_id
+    AND safetrust.trustless_work_escrows.status IN ('created', 'pending_funding')
     AND (
       safetrust.trustless_work_escrows.status = EXCLUDED.status
       OR (${SQL_TRANSITION_RULES})
@@ -142,7 +143,8 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
     updated_at = NOW()
   WHERE (
-    (
+    safetrust.trustless_work_escrows.tenant_id = EXCLUDED.tenant_id
+    AND (
       safetrust.trustless_work_escrows.status NOT IN ('completed', 'resolved', 'cancelled')
       OR (
         EXCLUDED.ledger_seq = safetrust.trustless_work_escrows.ledger_seq

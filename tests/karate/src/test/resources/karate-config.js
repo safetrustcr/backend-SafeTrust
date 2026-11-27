@@ -82,6 +82,10 @@ function fn() {
             'x-hasura-admin-secret': config.adminSecret
         };
     });
-    karate.log("Config initialized:", config);
+    // Log a sanitized copy of the config: eventSecret and adminSecret must never
+    // appear in Karate output. The full config (with eventSecret) is still
+    // returned to the tests below.
+    var safeConfig = { baseUrl: endpoints.baseUrl, webhookUrl: endpoints.webhookUrl };
+    karate.log("Config initialized:", safeConfig);
     return config;
 }
