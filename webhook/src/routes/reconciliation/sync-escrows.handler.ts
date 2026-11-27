@@ -7,7 +7,7 @@
  */
 
 import { Request, Response } from 'express'
-import { ok, serverError } from '../../utils/response'
+import { ok } from '../../utils/response'
 import {
   fetchEscrowContractIds,
   listReconciliationTenants,
@@ -58,7 +58,6 @@ export const syncEscrowsHandler = async (
   const startTime = Date.now()
   logger.info('reconciliation.sync.started')
 
-  try {
     const tenantIds = await listReconciliationTenants()
 
     const syncTotals: SyncSummary = {
@@ -140,24 +139,20 @@ export const syncEscrowsHandler = async (
       transitionsTotals
     )
 
-    const level = summary.errors > 0 ? 'warn' : 'info'
-    logger[level]('reconciliation.sync.completed', {
-      durationMs: summary.durationMs,
-      totalEscrows: summary.totalEscrows,
-      chunks: summary.chunks,
-      updated: summary.updated,
-      unchanged: summary.unchanged,
-      skipped: summary.skipped,
-      stale: summary.staleCount,
-      sorobanDrift: summary.sorobanDrift,
-      sorobanCorrected: summary.sorobanCorrected,
-      errors: summary.errors,
-      ...(summary.transitions ? { transitions: summary.transitions } : {}),
-    })
+  const level = summary.errors > 0 ? 'warn' : 'info'
+  logger[level]('reconciliation.sync.completed', {
+    durationMs: summary.durationMs,
+    totalEscrows: summary.totalEscrows,
+    chunks: summary.chunks,
+    updated: summary.updated,
+    unchanged: summary.unchanged,
+    skipped: summary.skipped,
+    stale: summary.staleCount,
+    sorobanDrift: summary.sorobanDrift,
+    sorobanCorrected: summary.sorobanCorrected,
+    errors: summary.errors,
+    ...(summary.transitions ? { transitions: summary.transitions } : {}),
+  })
 
-    return ok(res, summary)
-  } catch (fatalError) {
-    logger.error('reconciliation.sync.failed', { error: fatalError })
-    return serverError(res, 'Reconciliation failed')
-  }
+  return ok(res, summary)
 }

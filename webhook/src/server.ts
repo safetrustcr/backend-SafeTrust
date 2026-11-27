@@ -1,6 +1,7 @@
 import app from './app'
 import { getHasuraAdminSecret, requireHasuraEventSecret } from './services/hasura'
 import { initializeFirebaseAdmin } from './config/firebase-admin'
+import { getX402Config } from './config/x402'
 import { pool } from './services/db'
 import { startHoldExpiryJob, stopHoldExpiryJob } from './services/hold-expiry.job'
 
@@ -16,6 +17,9 @@ try {
   getHasuraAdminSecret()
   requireHasuraEventSecret()
   initializeFirebaseAdmin()
+  if (process.env.X402_ENABLED === 'true') {
+    getX402Config()
+  }
 } catch (error) {
   console.error(`❌ ${error instanceof Error ? error.message : String(error)}`)
   process.exit(1)

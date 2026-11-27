@@ -1,24 +1,27 @@
 # Native crate build gates
 
-The default Cargo workspace build includes only crates used by the safe startup
-path. `x402-processor` and `soroban-reconciler` remain workspace
-members so they can be built deliberately, but are excluded from
-`default-members` and from the default webhook build and image.
+The default Cargo workspace `default-members` build includes only the core
+crates (`webhook-verifier`, `stellar-utils`, `chunk-processor`, `pg-bulk-upsert`,
+`escrow-state-machine`). `soroban-reconciler` is excluded from
+`default-members` so `cargo build --manifest-path crates/Cargo.toml` does not
+compile it by default, while `webhook/package.json` (`build:rust` / `copy:crates`)
+and `webhook/Dockerfile` explicitly build and copy its native addon so it is
+available in the webhook image behind its runtime `SOROBAN_VALIDATION_ENABLED`
+gate.
 
 The workspace root package in `crates/Cargo.toml` owns the opt-in feature map
 and its optional path dependencies:
 
 | Crate | Cargo feature | Prerequisite before enabling |
 |---|---|---|
-| `x402-processor` | `x402-processor` | Close ESC-05: resolve the payment-flow gaps and wire the experimental feature flag. |
 | `soroban-reconciler` | `soroban-reconciler` | Close ESC-02: establish an authoritative on-chain state source. |
 
 Each feature activates the corresponding `optional = true` path dependency.
-For example, explicitly include one crate in the build graph with:
+For example, explicitly include `soroban-reconciler` in the Cargo workspace build graph with:
 
 ```sh
 cargo build --manifest-path crates/Cargo.toml \
-  -p safetrust-native-gates --features x402-processor
+  -p safetrust-native-gates --features soroban-reconciler
 ```
 
 To produce a Neon addon artifact for an explicitly approved deployment, build
