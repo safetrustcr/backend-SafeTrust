@@ -3,13 +3,20 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { logger } from '../../middleware/logger'
-import type { CreateBidRequestBody } from '../../validation'
 import { createBidRequest as createBid } from '../../services/bid-request.service'
 import type { BidRequest } from '../../repositories/bid-request.repository'
+import { ConflictError, ValidationError } from '../../utils/errors'
 
 export type { BidRequest } from '../../repositories/bid-request.repository'
 
-export type CreateBidRequestPayload = CreateBidRequestBody
+export interface CreateBidRequestPayload {
+  apartmentId?: string
+  apartment_id?: string
+  proposedPrice?: number | string
+  proposed_price?: number | string
+  desiredMoveIn?: string
+  desired_move_in?: string
+}
 
 /**
  * Validates that a date string is a valid calendar date without silent overflow normalization
@@ -47,35 +54,40 @@ export const createBidRequestHandler = async (
   res: Response
 ): Promise<Response> => {
   const uid = req.context?.uid || req.user?.uid
-  const apartmentId = req.body.apartmentId ?? req.body.apartment_id!
-  const proposedPrice = req.body.proposedPrice ?? req.body.proposed_price!
-  const desiredMoveIn = req.body.desiredMoveIn ?? req.body.desired_move_in!
+  const apartmentId = req.body?.apartmentId || req.body?.apartment_id
+  const proposedPrice = req.body?.proposedPrice || req.body?.proposed_price
+  const desiredMoveIn = req.body?.desiredMoveIn || req.body?.desired_move_in
+
+  if (apartmentId == null || proposedPrice == null || desiredMoveIn == null) {
+    throw new ValidationError('Missing required fields')
+  }
 
   const price = Number(proposedPrice)
+  if (!Number.isFinite(price) || price <= 0) {
+    throw new ValidationError('proposedPrice must be a positive number')
+  }
+
+  if (typeof desiredMoveIn !== 'string' || !isValidCalendarDate(desiredMoveIn)) {
+    throw new ValidationError('desiredMoveIn must be a valid date')
+  }
 
   const moveIn = new Date(desiredMoveIn)
 
-  try {
-    const result = await createBid({
-      apartmentId,
-      uid,
-      price,
-      desiredMoveIn: moveIn.toISOString(),
+  const result = await createBid({
+    apartmentId,
+    uid,
+    price,
+    desiredMoveIn: moveIn.toISOString(),
+  })
+  if (result.kind === 'duplicate') {
+    throw new ConflictError('Duplicate pending bid', {
+      code: 'duplicate_pending_bid',
     })
-    if (result.kind === 'duplicate') {
-      return res.status(409).json({
-        error: 'Duplicate pending bid',
-      })
-    }
-    const bid = result.bid
-
-    // bid_status_histories entry is inserted automatically by the record_bid_status trigger
-
-    logger.info('bid_requests.create.succeeded', { bidId: bid.id })
-    return res.status(201).json({ bid })
-  } catch (error) {
-    const err = error as Error
-    logger.error('bid_requests.create.failed', { error: err })
-    return res.status(500).json({ error: 'Failed to create bid request' })
   }
+  const bid = result.bid
+
+  // bid_status_histories entry is inserted automatically by the record_bid_status trigger
+
+  logger.info('bid_requests.create.succeeded', { bidId: bid.id })
+  return res.status(201).json({ bid })
 }
