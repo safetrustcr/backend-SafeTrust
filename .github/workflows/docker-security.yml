@@ -1,5 +1,6 @@
 # Builds the webhook image and scans it, plus the Dockerfile/Compose
-# configuration, for fixable HIGH/CRITICAL vulnerabilities.
+# configuration, for fixable HIGH/CRITICAL vulnerabilities, and renders both
+# Compose files so a broken anchor, service or required variable fails on the PR.
 #
 # Dependabot docker entries keep the base-image digests in the Dockerfiles and
 # Compose files current; this job is what catches a vulnerable OS package.
@@ -53,3 +54,26 @@ jobs:
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: '1'
+
+  # `docker compose config` needs no daemon: it resolves every anchor, `:?`
+  # interpolation and service definition, so a broken Compose file fails here
+  # instead of on a developer's machine.
+  compose-config:
+    runs-on: ubuntu-latest
+    env:
+      # The stack refuses to start without these; rendering needs placeholder
+      # values only, and nothing here is a real credential.
+      POSTGRES_PASSWORD: ci-postgres-password
+      HASURA_DB_PASSWORD: ci-hasura-password
+      HASURA_METADATA_DB_PASSWORD: ci-hasura-metadata-password
+      WEBHOOK_DB_PASSWORD: ci-webhook-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Render docker-compose.yml
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: Render docker-compose-test.yml
+        run: docker compose -f docker-compose-test.yml config --quiet
