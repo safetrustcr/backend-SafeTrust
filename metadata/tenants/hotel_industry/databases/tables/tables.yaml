@@ -11,3 +11,5 @@
 - "!include hotel_industry_pricing_rules.yaml"
 - "!include hotel_industry_conversations.yaml"
 - "!include hotel_industry_messages.yaml"
+- "!include hotel_industry_find_nearby_hotels_result.yaml"
+- "!include hotel_industry_get_top_rooms_by_reservations_result.yaml"

@@ -1,6 +1,6 @@
 # Escrow Claims API
 
-A participant of a released escrow (the reservation's guest or the apartment owner) can file a written claim about the deposit, for example damage found later, a wrong deduction, or a missing refund. The platform or an admin handles claims off-chain. Use `open_dispute` instead while the escrow is not yet released.
+A participant of a released escrow (the reservation's guest or the apartment owner) can file a written claim about the deposit, for example damage found later, a wrong deduction, or a missing refund. The platform or an admin handles claims off-chain. Disputes before release are also handled off-chain by platform admins.
 
 Both endpoints live behind the Firebase auth middleware (`Authorization: Bearer <idToken>`). They are mounted at `/api/escrow-claims`, not under `/api/escrows`, which is reserved for Trustless Work signed webhooks.
 

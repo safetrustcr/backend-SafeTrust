@@ -1,0 +1,2 @@
+-- Intentionally no-op: PostgreSQL extensions are shared across tenant schemas.
+-- Dropping postgis, uuid-ossp, or btree_gist would break the other tenants.

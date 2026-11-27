@@ -1,5 +1,5 @@
 -- Seeds trustless_work_escrows and escrow_milestones
--- Uses contract IDs matching _trustless_work_webhook_events.sql
+-- Shares contract IDs with reservation and escrow test data
 -- Safe to re-run: DELETE guards on all inserts
 
 DELETE FROM safetrust.escrow_milestones

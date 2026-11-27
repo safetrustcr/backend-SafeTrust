@@ -51,8 +51,8 @@ Safetrust JWTs use the `guest`, `host`, and `admin` roles. Authenticated
 | `pricing_rules` | All columns and rows | Create pricing rules | Update pricing rules |
 | `pricing_overrides` | All columns and rows | Create overrides | Update overrides |
 
-Admins can invoke `trigger_fund_release` and `process_refund_request`. Guests
-and hosts can invoke `process_refund_request`.
+Escrow funding and release use the Trustless Work API and reconciliation, not
+Hasura actions. Refunds and disputes are handled off-chain by platform admins.
 Admins can also delete user-role assignments.
 
 Stellar wallet creation and unlinking are handled by the verified wallet
