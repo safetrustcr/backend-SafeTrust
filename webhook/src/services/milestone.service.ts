@@ -1,10 +1,11 @@
-import { hasuraRequest } from './hasura';
+import { hasuraTenantRequest } from './tenant-scoped-hasura';
 import { AppError, NotFoundError } from '../utils/errors';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
 import { withTransaction } from './db';
+import { getPlatformTenantId } from '../config/tenant';
 import {
   getValidPriorStates,
   StateConflictError,
@@ -77,19 +78,23 @@ export function validateApproveMilestonePayload(
  * Throws EscrowNotFoundError (404) if no record is found.
  */
 export async function lookupEscrowByContractId(
-  contractId: string
+  contractId: string,
+  tenantId: string = getPlatformTenantId()
 ): Promise<EscrowLookupResult> {
   const query = `
-    query GetEscrowId($contractId: String!) {
-      trustless_work_escrows(where: { contractId: { _eq: $contractId } }) {
+    query GetEscrowId($contractId: String!, $tenantId: String!) {
+      trustless_work_escrows(where: {
+        contractId: { _eq: $contractId },
+        tenantId: { _eq: $tenantId }
+      }) {
         id
       }
     }
   `;
 
-  const data = await hasuraRequest<{
+  const data = await hasuraTenantRequest<{
     trustless_work_escrows?: Array<{ id: string }>;
-  }>(query, { contractId });
+  }>(tenantId, query, { contractId, tenantId });
 
   const escrowId = data.trustless_work_escrows?.[0]?.id;
   if (!escrowId) {
@@ -111,7 +116,8 @@ export async function lookupEscrowByContractId(
 export async function approveMilestoneAndUpdateReservation(
   escrowId: string,
   milestoneId: string,
-  approver: string
+  approver: string,
+  tenantId: string = getPlatformTenantId()
 ): Promise<void> {
   const approvedAt = new Date().toISOString();
 
@@ -145,9 +151,10 @@ export async function approveMilestoneAndUpdateReservation(
         SELECT id, status
         FROM safetrust.trustless_work_escrows
         WHERE id = $1
+          AND tenant_id = $2
         FOR UPDATE
       `,
-      [escrowId]
+      [escrowId, tenantId]
     );
 
     if (escrowResult.rowCount === 0) {
@@ -190,9 +197,10 @@ export async function approveMilestoneAndUpdateReservation(
           status = 'milestone_approved',
           updated_at = $1
         WHERE id = $2
+          AND tenant_id = $4
           AND status = ANY($3)
       `,
-      [approvedAt, escrowId, validStates]
+      [approvedAt, escrowId, validStates, tenantId]
     );
 
     if (updateEscrowResult && updateEscrowResult.rowCount === 0) {
@@ -208,8 +216,9 @@ export async function approveMilestoneAndUpdateReservation(
           status = $1,
           updated_at = $2
         WHERE escrow_id = $3
+          AND tenant_id = $4
       `,
-      [reservationStatus, approvedAt, escrowId]
+      [reservationStatus, approvedAt, escrowId, tenantId]
     );
   });
 }
@@ -221,24 +230,26 @@ export async function approveMilestone(
   contractId: string,
   milestoneId: string,
   approver: string,
-  rawPayload: Record<string, unknown>
+  rawPayload: Record<string, unknown>,
+  tenantId: string = getPlatformTenantId()
 ): Promise<{ isDuplicate: boolean; eventId: string }> {
   const { isDuplicate, eventId } = await logAndCheckWebhookEvent(
     contractId,
     `milestone.approved:${milestoneId}`,
-    rawPayload
+    rawPayload,
+    tenantId
   );
 
   if (isDuplicate) {
-    await markWebhookEventProcessed(eventId);
+    await markWebhookEventProcessed(eventId, tenantId);
     return { isDuplicate: true, eventId };
   }
 
   const service = require('./milestone.service') as typeof import('./milestone.service');
-  const { escrowId } = await service.lookupEscrowByContractId(contractId);
-  await service.approveMilestoneAndUpdateReservation(escrowId, milestoneId, approver);
+  const { escrowId } = await service.lookupEscrowByContractId(contractId, tenantId);
+  await service.approveMilestoneAndUpdateReservation(escrowId, milestoneId, approver, tenantId);
 
-  await markWebhookEventProcessed(eventId);
+  await markWebhookEventProcessed(eventId, tenantId);
 
   return { isDuplicate: false, eventId };
 }

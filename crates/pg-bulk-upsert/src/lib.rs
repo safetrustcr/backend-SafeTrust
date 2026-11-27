@@ -60,14 +60,14 @@ pub mod validator;
 pub const SELECT_LOCK_SQL: &str = "
     SELECT ledger_seq, status, balance::text, network
     FROM safetrust.trustless_work_escrows
-    WHERE id::text = $1 OR contract_id = $1
+    WHERE (id::text = $1 OR contract_id = $1) AND tenant_id = $2
     FOR UPDATE
 ";
 
 pub const BATCH_SELECT_LOCK_SQL: &str = "
     SELECT id::text, contract_id, ledger_seq, status, balance::text, network
     FROM safetrust.trustless_work_escrows
-    WHERE id::text = ANY($1) OR contract_id = ANY($1)
+    WHERE (id::text = ANY($1) OR contract_id = ANY($1)) AND tenant_id = $2
     FOR UPDATE
 ";
 
@@ -87,13 +87,13 @@ pub const UPDATE_ROW_SQL: &str = "
         ledger_seq = $9,
         network = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM($10), '')),
         updated_at = NOW()
-    WHERE id::text = $1 OR contract_id = $1
+    WHERE (id::text = $1 OR contract_id = $1) AND tenant_id = $11
 ";
 
 pub const INSERT_ROW_SQL: &str = "
     INSERT INTO safetrust.trustless_work_escrows
       (contract_id, status, amount, balance, marker, approver, releaser, escrow_type, ledger_seq, network, updated_at, tenant_id)
-    VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NULLIF(TRIM($10), ''), NOW(), 'safetrust')
+    VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NULLIF(TRIM($10), ''), NOW(), $11)
     ON CONFLICT (contract_id) DO NOTHING
 ";
 
@@ -516,6 +516,7 @@ fn connection_cell() -> &'static Mutex<Option<(String, Client)>> {
 async fn run_bulk_upsert(
     updates: &[EscrowUpdate],
     conn_string: &str,
+    tenant_id: &str,
 ) -> Result<(u64, u64), String> {
     let mut guard = connection_cell().lock().await;
 
@@ -559,7 +560,7 @@ async fn run_bulk_upsert(
         .collect();
 
     let locked_rows = tx
-        .query(BATCH_SELECT_LOCK_SQL, &[&keys])
+        .query(BATCH_SELECT_LOCK_SQL, &[&keys, &tenant_id])
         .await
         .map_err(|e| format!("Batch SELECT FOR UPDATE failed: {e}"))?;
 
@@ -633,6 +634,7 @@ async fn run_bulk_upsert(
                                 &u.escrow_type,
                                 &new_ledger_seq,
                                 &u.network,
+                                &tenant_id,
                             ],
                         )
                         .await
@@ -653,6 +655,7 @@ async fn run_bulk_upsert(
                                 &escrow_type,
                                 &new_ledger_seq,
                                 &u.network,
+                                &tenant_id,
                             ],
                         )
                         .await
@@ -662,7 +665,7 @@ async fn run_bulk_upsert(
                         // Concurrent insert race: another transaction inserted this contract concurrently.
                         // Lock the inserted row and evaluate freshness against incoming observation.
                         let locked_row = tx
-                            .query_opt(SELECT_LOCK_SQL, &[&u.contract_id])
+                            .query_opt(SELECT_LOCK_SQL, &[&u.contract_id, &tenant_id])
                             .await
                             .map_err(|e| format!("SELECT FOR UPDATE on conflicting contract {}: {e}", u.contract_id))?;
                         if let Some(row) = locked_row {
@@ -703,6 +706,7 @@ async fn run_bulk_upsert(
                                                 &u.escrow_type,
                                                 &new_ledger_seq,
                                                 &u.network,
+                                                &tenant_id,
                                             ],
                                         )
                                         .await
@@ -817,6 +821,7 @@ async fn run_bulk_upsert(
 fn bulk_upsert_escrows(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let updates_json = cx.argument::<JsString>(0)?.value(&mut cx);
     let conn_string = cx.argument::<JsString>(1)?.value(&mut cx);
+    let tenant_id = cx.argument::<JsString>(2)?.value(&mut cx);
 
     let (deferred, promise) = cx.promise();
     let channel = cx.channel();
@@ -843,7 +848,7 @@ fn bulk_upsert_escrows(mut cx: FunctionContext) -> JsResult<JsPromise> {
 
     runtime().spawn(async move {
         let started = Instant::now();
-        let outcome = run_bulk_upsert(&updates, &conn_string).await;
+        let outcome = run_bulk_upsert(&updates, &conn_string, &tenant_id).await;
         let duration_ms = started.elapsed().as_millis() as u64;
 
         deferred.settle_with(&channel, move |mut cx| match outcome {

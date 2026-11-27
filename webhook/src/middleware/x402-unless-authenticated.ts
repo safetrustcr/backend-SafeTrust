@@ -1,0 +1,91 @@
+import { NextFunction, Request, RequestHandler, Response } from 'express'
+import { paymentMiddleware } from '@x402/express'
+import { optionalAuthMiddleware } from './auth.middleware'
+import { getActiveX402ResourceServer, getX402Config } from '../config/x402'
+
+const paymentMiddlewares = new Map<string, RequestHandler>()
+
+function hasVerifiedSession(req: Request): boolean {
+  const context = req.context
+  return typeof context?.uid === 'string'
+    && context.uid.length > 0
+    && typeof context.tenantId === 'string'
+    && context.tenantId.length > 0
+    && Array.isArray(context.roles)
+}
+
+export function setPropertyPaymentMiddleware(
+  middleware: RequestHandler | null,
+  routeKey = '*'
+): void {
+  if (middleware) paymentMiddlewares.set(routeKey, middleware)
+  else paymentMiddlewares.delete(routeKey)
+}
+
+function getPropertyPaymentMiddleware(
+  price: number,
+  routeKey: string
+): RequestHandler {
+  const cacheKey = `${routeKey}:${price}`
+  const injected = paymentMiddlewares.get(routeKey)
+  const wildcardInjected = paymentMiddlewares.get('*')
+  if (wildcardInjected) return wildcardInjected
+  if (injected) return injected
+  if (paymentMiddlewares.has(cacheKey)) return paymentMiddlewares.get(cacheKey)!
+
+  const config = getX402Config()
+  const server = getActiveX402ResourceServer()
+  const middleware = paymentMiddleware(
+    {
+      [routeKey]: {
+        accepts: [{
+          scheme: 'exact',
+          price: `$${price.toFixed(3)}`,
+          network: config.network,
+          payTo: config.payTo,
+        }],
+        description: 'SafeTrust property discovery',
+        mimeType: 'application/json',
+      },
+    },
+    server,
+    undefined,
+    undefined,
+    false
+  ) as unknown as RequestHandler
+  paymentMiddlewares.set(cacheKey, middleware)
+  return middleware
+}
+
+export function x402UnlessAuthenticated(
+  price: number,
+  routeKey = 'GET /api/v1/properties/search'
+): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (hasVerifiedSession(req)) {
+      next()
+      return
+    }
+
+    void Promise.resolve(
+      optionalAuthMiddleware(req, res, (error?: unknown) => {
+        if (error) {
+          next(error)
+          return
+        }
+        if (res.headersSent) return
+        if (!req.context) {
+          const injected = paymentMiddlewares.get(routeKey) ?? paymentMiddlewares.get('*')
+          if (injected) {
+            injected(req, res, next)
+            return
+          }
+          const requirePayment = getPropertyPaymentMiddleware(price, routeKey)
+          requirePayment(req, res, next)
+          return
+        }
+        next()
+      })
+    ).catch(next)
+  }
+}

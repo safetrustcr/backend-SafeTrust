@@ -16,6 +16,7 @@ import bidRequestsRoute from './bid-requests'
 import reservationsRoute from './reservations'
 import escrowClaimsRoute from './escrow-claims/claims.route'
 import v1BookingsRoute from './v1/bookings'
+import v1PropertiesRoute from './v1/properties'
 
 const router = express.Router()
 
@@ -25,7 +26,10 @@ router.use(healthRoutes)
 // ── 2. Escrows / x402 booking entrypoint ──────────────────────────────────────
 router.use(initializeRoute)
 
-// ── 3. Authenticated routes (Firebase auth required) ──────────────────────────
+// ── 3. Optional-session agent discovery routes ────────────────────────────────
+router.use('/api/v1/properties', v1PropertiesRoute)
+
+// ── 4. Authenticated routes (Firebase auth required) ──────────────────────────
 router.use('/api', apiRouteIpRateLimit, authMiddleware as unknown as RequestHandler, apiRateLimit)
 router.use('/api/auth', authRateLimit)
 router.use('/api/auth',         authRoutes)

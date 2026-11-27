@@ -2,6 +2,7 @@
 
 import { query } from './db'
 import { sendHotelConversationMessage } from './hotel-conversation.service'
+import { logger } from '../middleware/logger'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -121,9 +122,7 @@ async function deliverHotelEscrowMessage({
   const parties = await resolveHotelEscrowParties(contractId)
 
   if (!parties) {
-    console.log(
-      `[hotel-notify] ⏭ skip — no hotel escrow parties for contractId: ${contractId}`
-    )
+    logger.info('hotel_conversation.notification_skipped', { contractId, reason: 'no_parties' })
     return
   }
 
@@ -138,7 +137,7 @@ async function deliverHotelEscrowMessage({
     eventType,
   })
 
-  console.log(`[hotel-notify] ✅ automated message sent — event_type: ${eventType}`)
+  logger.info('hotel_conversation.notification_sent', { contractId, eventType })
 }
 
 // ── Service ────────────────────────────────────────────────────────────────────
@@ -161,10 +160,11 @@ export async function notifyHotelEscrowConversation(
   try {
     await withinTimeBudget(work, timeoutMs)
   } catch (error) {
-    const err = error as Error
-    console.error(
-      `[hotel-notify] ❌ ${params.eventType} for contractId ${params.contractId} — ${err.message}`
-    )
+    logger.error('hotel_conversation.notification_failed', {
+      contractId: params.contractId,
+      eventType: params.eventType,
+      error,
+    })
   }
 }
 

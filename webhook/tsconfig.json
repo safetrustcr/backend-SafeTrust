@@ -5,7 +5,6 @@
     "lib": [
       "ES2022"
     ],
-    "baseUrl": ".",
     "paths": {
       "@x402/core/server": ["./node_modules/@x402/core/dist/cjs/server"],
       "@x402/core/types": ["./node_modules/@x402/core/dist/cjs/types"],

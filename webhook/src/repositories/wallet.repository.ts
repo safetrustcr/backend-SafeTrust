@@ -41,7 +41,10 @@ export async function createWalletChallenge(input: {
 }): Promise<void> {
   const client = await connect()
   try {
-    await client.query('DELETE FROM safetrust.wallet_challenges WHERE expires_at <= NOW()')
+    await client.query(
+      'DELETE FROM safetrust.wallet_challenges WHERE tenant_id = $1 AND expires_at <= NOW()',
+      [input.tenantId]
+    )
     await client.query(
       `INSERT INTO safetrust.wallet_challenges
         (challenge_id, user_id, wallet_address, tenant_id, domain, network, nonce, expires_at)
@@ -64,18 +67,26 @@ export async function createWalletChallenge(input: {
 
 export async function findWalletChallenge(
   client: PoolClient,
-  challengeId: string
+  challengeId: string,
+  tenantId: string
 ): Promise<WalletChallengeRow | null> {
   const result = await client.query<WalletChallengeRow>(
     `SELECT user_id, wallet_address, tenant_id, domain, network, nonce, expires_at
-     FROM safetrust.wallet_challenges WHERE challenge_id = $1 FOR UPDATE`,
-    [challengeId]
+     FROM safetrust.wallet_challenges WHERE challenge_id = $1 AND tenant_id = $2 FOR UPDATE`,
+    [challengeId, tenantId]
   )
   return result.rows[0] ?? null
 }
 
-export async function deleteWalletChallenge(client: PoolClient, challengeId: string): Promise<void> {
-  await client.query('DELETE FROM safetrust.wallet_challenges WHERE challenge_id = $1', [challengeId])
+export async function deleteWalletChallenge(
+  client: PoolClient,
+  challengeId: string,
+  tenantId: string
+): Promise<void> {
+  await client.query(
+    'DELETE FROM safetrust.wallet_challenges WHERE challenge_id = $1 AND tenant_id = $2',
+    [challengeId, tenantId]
+  )
 }
 
 export async function findWalletOwner(

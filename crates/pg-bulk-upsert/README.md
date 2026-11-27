@@ -14,7 +14,7 @@ one round trip instead of fifty.
 
 | JS export           | Signature |
 | ------------------- | --------- |
-| `bulkUpsertEscrows` | `(updatesJson: string, connString: string) => string` |
+| `bulkUpsertEscrows` | `(updatesJson: string, connString: string, tenantId: string) => string` |
 
 `updatesJson` is a JSON array of escrow rows. The return value is a JSON
 `BulkUpsertResult`:
@@ -80,10 +80,11 @@ cd webhook && npm run build
 cargo test -p pg-bulk-upsert       # pure columnar-transform + parity tests
 
 # End-to-end benchmark against a real PostgreSQL (row-by-row vs bulk):
-node crates/pg-bulk-upsert/benchmark.js
+PLATFORM_TENANT_ID=safetrust node crates/pg-bulk-upsert/benchmark.js
 ```
 
 `benchmark.js` creates a scratch database, seeds rows, and prints the
 row-by-row-vs-bulk timing and speedup used in the PR description. Connection
 defaults to `127.0.0.1:5432 postgres/postgrespassword`; override with
-`PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD`.
+`PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD`. Both benchmark implementations
+require `PLATFORM_TENANT_ID` to scope generated escrow rows.

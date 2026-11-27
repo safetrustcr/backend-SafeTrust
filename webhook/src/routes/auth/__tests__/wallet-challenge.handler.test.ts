@@ -22,7 +22,11 @@ function makeResponse(): Response {
 }
 
 function makeRequest(body: Record<string, unknown>, uid = 'user-1'): AuthenticatedRequest {
-  return { user: { uid }, body } as AuthenticatedRequest
+  return {
+    user: { uid },
+    context: { uid, tenantId: 'safetrust', roles: ['guest'] },
+    body,
+  } as AuthenticatedRequest
 }
 
 describe('wallet ownership challenge handlers', () => {

@@ -17,6 +17,17 @@ jest.mock('../../../services/confirmation.service', () => ({
   processExternalSubmission: jest.fn(),
 }))
 
+jest.mock('../../../middleware/auth.middleware', () => ({
+  authMiddleware: (
+    req: import('express').Request,
+    _res: import('express').Response,
+    next: import('express').NextFunction
+  ) => {
+    req.context = { uid: 'user-1', tenantId: 'tenant-test', roles: [] }
+    next()
+  },
+}))
+
 jest.mock('../../../services/escrow.service', () => ({
   ...jest.requireActual('../../../services/escrow.service'),
   isEscrowParty: jest.fn(),
@@ -63,7 +74,10 @@ describe('POST /api/escrows/confirm-transaction', () => {
       })
 
     expect(res.status).toBe(400)
-    expect(res.body.error).toContain('Client-side wallet signing cannot advance escrow status')
+    expect(res.body).toEqual({
+      error: 'validation_failed',
+      fields: expect.any(Object),
+    })
   })
 
   it('validates required fields: missing escrowId', async () => {
@@ -74,7 +88,10 @@ describe('POST /api/escrows/confirm-transaction', () => {
       })
 
     expect(res.status).toBe(400)
-    expect(res.body.error).toContain('escrowId is required')
+    expect(res.body).toEqual({
+      error: 'validation_failed',
+      fields: expect.any(Object),
+    })
   })
 
   it('validates required fields: invalid action', async () => {
@@ -86,7 +103,36 @@ describe('POST /api/escrows/confirm-transaction', () => {
       })
 
     expect(res.status).toBe(400)
-    expect(res.body.error).toContain('action must be either "deploy" or "fund"')
+    expect(res.body).toEqual({
+      error: 'validation_failed',
+      fields: expect.any(Object),
+    })
+  })
+
+  it('rejects an unsupported configured network with the existing response', async () => {
+    const originalNetwork = process.env.STELLAR_NETWORK
+    process.env.STELLAR_NETWORK = 'invalid-network'
+
+    try {
+      const res = await request(app)
+        .post('/api/escrows/confirm-transaction')
+        .send({
+          txHash: VALID_TX_HASH,
+          escrowId: ESCROW_ID,
+          action: 'fund',
+        })
+
+      expect(res.status).toBe(400)
+      expect(res.body).toEqual({
+        success: false,
+        error: 'network must be either "testnet" or "mainnet"',
+        code: 'validation_error',
+      })
+      expect(mockedExternal).not.toHaveBeenCalled()
+    } finally {
+      if (originalNetwork === undefined) delete process.env.STELLAR_NETWORK
+      else process.env.STELLAR_NETWORK = originalNetwork
+    }
   })
 
   it('handles Helper submission successfully (Path A)', async () => {
@@ -117,6 +163,7 @@ describe('POST /api/escrows/confirm-transaction', () => {
     expect(res.body.stage).toBe('confirmed')
     expect(res.body.txHash).toBe(VALID_TX_HASH)
     expect(res.body.ledger).toBe(45678)
+    expect(mockedHelper).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 'tenant-test' }))
   })
 
   it('handles External submission successfully (Path B)', async () => {
@@ -148,6 +195,7 @@ describe('POST /api/escrows/confirm-transaction', () => {
     expect(res.body.stage).toBe('confirmed')
     expect(res.body.txHash).toBe(VALID_TX_HASH)
     expect(res.body.twIndexed).toBe(true)
+    expect(mockedExternal).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 'tenant-test' }))
   })
 
   it('returns 400 when external submission fails validation or guardrails', async () => {

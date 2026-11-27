@@ -12,6 +12,7 @@ import {
   calculateBackoffMs,
   MAX_ATTEMPTS,
 } from '../services/confirmation.service'
+import { getPlatformTenantId } from '../config/tenant'
 
 const defaultDb: Queryable = {
   query: <T extends import('pg').QueryResultRow = Record<string, unknown>>(
@@ -34,6 +35,7 @@ export interface UpsertRetryRecordParams {
   action: EscrowAction
   network: StellarNetwork
   submissionPath: SubmissionPath
+  tenantId?: string
   status?: RetryStatus
   lastError?: string | null
   attemptCount?: number
@@ -50,6 +52,7 @@ export async function upsertRetryRecord(
   const status = params.status ?? 'retrying'
   const attemptCount = params.attemptCount ?? 0
   const nextRetryMs = status === 'retrying' ? calculateBackoffMs(attemptCount) : 0
+  const tenantId = params.tenantId ?? getPlatformTenantId()
 
   const { rows } = await db.query<ConfirmationRetryRecord>(
     `
@@ -70,9 +73,9 @@ export async function upsertRetryRecord(
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8,
       NOW() + ($9 * INTERVAL '1 millisecond'),
-      $10, $11, 'safetrust', NOW()
+      $10, $11, $12, NOW()
     )
-    ON CONFLICT (tx_hash, escrow_action)
+    ON CONFLICT (tenant_id, tx_hash, escrow_action)
     DO UPDATE SET
       status = EXCLUDED.status,
       last_error = EXCLUDED.last_error,
@@ -107,6 +110,7 @@ export async function upsertRetryRecord(
       nextRetryMs,
       params.lastError ?? null,
       JSON.stringify(params.metadata ?? {}),
+      tenantId,
     ]
   )
 
@@ -121,9 +125,12 @@ export async function updateRetryRecordStatus(
   status: RetryStatus,
   attemptCount: number,
   lastError: string | null,
-  db: Queryable = defaultDb
+  dbOrTenantId: Queryable | string = defaultDb,
+  database?: Queryable
 ): Promise<void> {
   const nextRetryMs = status === 'retrying' ? calculateBackoffMs(attemptCount) : 0
+  const db = typeof dbOrTenantId === 'string' ? database ?? defaultDb : dbOrTenantId
+  const tenantId = typeof dbOrTenantId === 'string' ? dbOrTenantId : getPlatformTenantId()
 
   await db.query(
     `
@@ -135,8 +142,9 @@ export async function updateRetryRecordStatus(
       next_retry_at = NOW() + ($4 * INTERVAL '1 millisecond'),
       updated_at = NOW()
     WHERE id = $5
+      AND tenant_id = $6
     `,
-    [status, attemptCount, lastError, nextRetryMs, id]
+    [status, attemptCount, lastError, nextRetryMs, id, tenantId]
   )
 }
 
@@ -145,8 +153,11 @@ export async function updateRetryRecordStatus(
  */
 export async function fetchPendingRetries(
   limit = 50,
-  db: Queryable = defaultDb
+  dbOrTenantId: Queryable | string = defaultDb,
+  database?: Queryable
 ): Promise<ConfirmationRetryRecord[]> {
+  const db = typeof dbOrTenantId === 'string' ? database ?? defaultDb : dbOrTenantId
+  const tenantId = typeof dbOrTenantId === 'string' ? dbOrTenantId : getPlatformTenantId()
   const { rows } = await db.query<ConfirmationRetryRecord>(
     `
     SELECT
@@ -163,10 +174,11 @@ export async function fetchPendingRetries(
     FROM safetrust.escrow_confirmation_retries
     WHERE status = 'retrying'
       AND next_retry_at <= NOW()
+      AND tenant_id = $2
     ORDER BY next_retry_at ASC
     LIMIT $1
     `,
-    [limit]
+    [limit, tenantId]
   )
 
   return rows

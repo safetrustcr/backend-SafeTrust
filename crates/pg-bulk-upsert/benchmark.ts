@@ -19,7 +19,7 @@ import type { Client as PgClient } from 'pg'
  * Connection defaults to 127.0.0.1:5432 postgres/postgrespassword; override with
  * PGHOST / PGPORT / PGUSER / PGPASSWORD. Run:
  *
- *   node crates/pg-bulk-upsert/benchmark.js
+ *   PLATFORM_TENANT_ID=safetrust node crates/pg-bulk-upsert/benchmark.js
  */
 
 import path = require('node:path')
@@ -28,6 +28,12 @@ import crypto = require('node:crypto')
 
 // The addon.
 const { bulkUpsertEscrows }: typeof import('./index') = require('./index.node')
+function getTenantId(): string {
+  const tenantId = process.env.PLATFORM_TENANT_ID
+  if (!tenantId) throw new Error('PLATFORM_TENANT_ID is required to run the bulk-upsert benchmark')
+  return tenantId
+}
+const tenantId = getTenantId()
 
 // node-postgres lives in webhook/node_modules; resolve it from there so this
 // script runs from the repo root without its own install.
@@ -57,12 +63,13 @@ const benchConnStr = `postgresql://${encodeURIComponent(USER)}:${encodeURICompon
 const ROW_UPSERT_SQL = `
   INSERT INTO safetrust.trustless_work_escrows
     (contract_id, status, amount, balance, marker, approver, releaser, escrow_type, updated_at, tenant_id)
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'safetrust')
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)
   ON CONFLICT (contract_id) DO UPDATE SET
     status = EXCLUDED.status, amount = EXCLUDED.amount, balance = EXCLUDED.balance,
     marker = EXCLUDED.marker, approver = EXCLUDED.approver, releaser = EXCLUDED.releaser,
     updated_at = NOW()
-  WHERE (
+  WHERE safetrust.trustless_work_escrows.tenant_id = EXCLUDED.tenant_id
+    AND (
     safetrust.trustless_work_escrows.status, safetrust.trustless_work_escrows.amount,
     safetrust.trustless_work_escrows.balance, safetrust.trustless_work_escrows.marker,
     safetrust.trustless_work_escrows.approver, safetrust.trustless_work_escrows.releaser
@@ -85,7 +92,9 @@ const CREATE_TABLE_SQL = `
     amount      DECIMAL(20,7) NOT NULL,
     balance     DECIMAL(20,7) DEFAULT 0,
     updated_at  TIMESTAMPTZ DEFAULT NOW(),
-    tenant_id   VARCHAR(255) NOT NULL DEFAULT 'safetrust'
+    ledger_seq  BIGINT,
+    network     TEXT,
+    tenant_id   VARCHAR(255) NOT NULL
   )
 `
 
@@ -115,13 +124,13 @@ async function seed(client: PgClient) {
     `INSERT INTO safetrust.trustless_work_escrows
        (contract_id, status, amount, balance, marker, approver, releaser, escrow_type, tenant_id)
      SELECT u.contract_id, u.status, u.amount::numeric, u.balance::numeric,
-            u.marker, u.approver, u.releaser, u.escrow_type, 'safetrust'
+            u.marker, u.approver, u.releaser, u.escrow_type, $9::text
      FROM UNNEST($1::text[],$2::text[],$3::text[],$4::text[],$5::text[],$6::text[],$7::text[],$8::text[])
        AS u(contract_id, status, amount, balance, marker, approver, releaser, escrow_type)`,
     [
       rows.map((r) => r.contract_id), rows.map((r) => r.status), rows.map((r) => r.amount),
       rows.map((r) => r.balance), rows.map((r) => r.marker), rows.map((r) => r.approver),
-      rows.map((r) => r.releaser), rows.map((r) => r.escrow_type),
+      rows.map((r) => r.releaser), rows.map((r) => r.escrow_type), tenantId,
     ]
   )
 }
@@ -132,7 +141,7 @@ async function runRowByRow(client: PgClient) {
   let updated = 0
   for (const u of updates) {
     const res = await client.query(ROW_UPSERT_SQL, [
-      u.contract_id, u.status, u.amount, u.balance, u.marker, u.approver, u.releaser, u.escrow_type,
+      u.contract_id, u.status, u.amount, u.balance, u.marker, u.approver, u.releaser, u.escrow_type, tenantId,
     ])
     if ((res.rowCount ?? 0) > 0) updated++
   }
@@ -142,7 +151,7 @@ async function runRowByRow(client: PgClient) {
 async function runBulk() {
   const updates = updatesWithBalance('100.0000000')
   const start = Date.now()
-  const result = JSON.parse(await bulkUpsertEscrows(JSON.stringify(updates), benchConnStr))
+  const result = JSON.parse(await bulkUpsertEscrows(JSON.stringify(updates), benchConnStr, tenantId))
   return { durationMs: Date.now() - start, result }
 }
 

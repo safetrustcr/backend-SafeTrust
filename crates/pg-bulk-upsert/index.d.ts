@@ -35,6 +35,7 @@ export interface EscrowUpdate {
  *
  * @param updatesJson JSON-encoded {@link EscrowUpdate}[].
  * @param connString  PostgreSQL connection string (NoTls).
+ * @param tenantId    Tenant owning every row in the batch.
  * @returns Promise resolving to a JSON-encoded {@link BulkUpsertResult}.
  */
-export function bulkUpsertEscrows(updatesJson: string, connString: string): Promise<string>
+export function bulkUpsertEscrows(updatesJson: string, connString: string, tenantId: string): Promise<string>

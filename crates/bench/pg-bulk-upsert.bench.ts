@@ -243,7 +243,7 @@ export async function runPgBulkUpsertBenchmark(): Promise<{ tsMetrics: Benchmark
       for (let iter = 0; iter < ITERATIONS; iter++) {
         const rows = generateRows(ROW_COUNT, String(iter * 10))
         const start = performance.now()
-        await addon.bulkUpsertEscrows(JSON.stringify(rows), connStr)
+        await addon.bulkUpsertEscrows(JSON.stringify(rows), connStr, 'safetrust')
         const duration = performance.now() - start
         rustLatencies.push(duration)
         totalRustDuration += duration

@@ -123,7 +123,7 @@ describe('webhook-event.repository', () => {
     expect([first.isDuplicate, second.isDuplicate].sort()).toEqual([false, true])
     expect(firstClient.query).toHaveBeenCalledWith(
       expect.stringContaining('SET processed = true'),
-      ['evt-claimed']
+      ['evt-claimed', 'safetrust']
     )
   })
 
@@ -212,7 +212,7 @@ describe('webhook-event.repository', () => {
 
     expect(pool.query).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE safetrust.trustless_work_webhook_events'),
-      ['evt-100', expect.any(Date)]
+      ['evt-100', expect.any(Date), 'safetrust']
     )
   })
 })

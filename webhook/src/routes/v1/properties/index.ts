@@ -1,0 +1,39 @@
+import { Router } from 'express'
+import { publicRateLimit } from '../../../middleware/rate-limit'
+import { validate } from '../../../middleware/validate'
+import { x402UnlessAuthenticated } from '../../../middleware/x402-unless-authenticated'
+import {
+  propertyAvailabilityParamsSchema,
+  propertyAvailabilityQuerySchema,
+  propertySearchQuerySchema,
+} from '../../../validation'
+import { getPropertyAvailability } from './availability.handler'
+import { searchProperties } from './search.handler'
+
+export const PROPERTY_SEARCH_PRICE_USDC = 0.001
+
+const router: Router = Router()
+
+router.use(publicRateLimit)
+
+router.get(
+  '/search',
+  validate(propertySearchQuerySchema, 'query'),
+  x402UnlessAuthenticated(
+    PROPERTY_SEARCH_PRICE_USDC,
+    'GET /api/v1/properties/search'
+  ),
+  searchProperties
+)
+router.get(
+  '/:id/availability',
+  validate(propertyAvailabilityParamsSchema, 'params'),
+  validate(propertyAvailabilityQuerySchema, 'query'),
+  x402UnlessAuthenticated(
+    PROPERTY_SEARCH_PRICE_USDC,
+    'GET /api/v1/properties/:id/availability'
+  ),
+  getPropertyAvailability
+)
+
+export default router

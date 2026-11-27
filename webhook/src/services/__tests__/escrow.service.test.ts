@@ -26,7 +26,7 @@ jest.mock('../../lib/stellar-amounts', () => ({
 }));
 
 import {
-  validateEscrowInitializationPayload,
+  parseEscrowInitializationPayload,
   initializeEscrow,
   persistEscrow,
   isEscrowParty,
@@ -83,15 +83,15 @@ function validPayload(overrides: Partial<EscrowInitPayload> = {}): EscrowInitPay
   };
 }
 
-// ── validateEscrowInitializationPayload ────────────────────────────────────────
+// ── parseEscrowInitializationPayload ──────────────────────────────────────────
 
-describe('validateEscrowInitializationPayload', () => {
+describe('parseEscrowInitializationPayload', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
   it('returns a normalized payload for a valid body', () => {
-    const result = validateEscrowInitializationPayload(validBody());
+    const result = parseEscrowInitializationPayload(validBody());
 
     expect(result.contract_id).toBe('contract-1');
     expect(result.escrow_type).toBe('single_release');
@@ -100,7 +100,7 @@ describe('validateEscrowInitializationPayload', () => {
   });
 
   it('throws EscrowValidationError when required fields are missing', () => {
-    expect(() => validateEscrowInitializationPayload({ contract_id: 'x' })).toThrow(
+    expect(() => parseEscrowInitializationPayload({ contract_id: 'x' })).toThrow(
       EscrowValidationError
     );
   });
@@ -108,7 +108,7 @@ describe('validateEscrowInitializationPayload', () => {
   it('throws EscrowValidationError with 400 status for missing fields', () => {
     expect.assertions(2);
     try {
-      validateEscrowInitializationPayload({});
+      parseEscrowInitializationPayload({});
     } catch (err) {
       expect(err).toBeInstanceOf(EscrowValidationError);
       expect((err as EscrowValidationError).statusCode).toBe(400);
@@ -117,7 +117,7 @@ describe('validateEscrowInitializationPayload', () => {
 
   it('rejects a zero escrow amount', () => {
     expect(() =>
-      validateEscrowInitializationPayload(validBody({ amount: 0 }))
+      parseEscrowInitializationPayload(validBody({ amount: 0 }))
     ).toThrow(EscrowValidationError);
   });
 
@@ -129,19 +129,19 @@ describe('validateEscrowInitializationPayload', () => {
     ['a negative value', -1],
   ])('rejects %s amounts', (_description, amount) => {
     expect(() =>
-      validateEscrowInitializationPayload(validBody({ amount }))
+      parseEscrowInitializationPayload(validBody({ amount }))
     ).toThrow(EscrowValidationError);
   });
 
   it('throws EscrowValidationError for an invalid escrow_type', () => {
     expect(() =>
-      validateEscrowInitializationPayload(validBody({ escrow_type: 'invalid' }))
+      parseEscrowInitializationPayload(validBody({ escrow_type: 'invalid' }))
     ).toThrow(EscrowValidationError);
   });
 
   it('accepts both valid escrow_type values', () => {
     expect(() =>
-      validateEscrowInitializationPayload(validBody({ escrow_type: 'multi_release' }))
+      parseEscrowInitializationPayload(validBody({ escrow_type: 'multi_release' }))
     ).not.toThrow();
   });
 
@@ -152,7 +152,7 @@ describe('validateEscrowInitializationPayload', () => {
       zk_threshold_stroops: '1000000000',
       zk_balance_commitment: 'ab'.repeat(32),
     });
-    const result = validateEscrowInitializationPayload(payload);
+    const result = parseEscrowInitializationPayload(payload);
     expect(result).toBeDefined();
     expect(result.contract_id).toBe('contract-1');
     expect(result.amount).toBe(100);
@@ -191,7 +191,8 @@ describe('initializeEscrow', () => {
     });
     expect(mockedHasuraRequest).not.toHaveBeenCalled();
     expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith(
-      'event-duplicate'
+      'event-duplicate',
+      'safetrust'
     );
   });
 
@@ -212,7 +213,7 @@ describe('initializeEscrow', () => {
       eventId: 'event-retry',
       escrow: escrowResponse,
     });
-    expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-retry');
+    expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-retry', 'safetrust');
   });
 
   it('persists, links reservation, and marks the event processed', async () => {
@@ -240,7 +241,7 @@ describe('initializeEscrow', () => {
       escrow: escrowResponse,
     });
     expect(mockedHasuraRequest).toHaveBeenCalledTimes(2);
-    expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-1');
+    expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-1', 'safetrust');
   });
 
   it('uses the resolved reservation tenant for the escrow insert and the link', async () => {
@@ -328,7 +329,7 @@ describe('initializeEscrow', () => {
 
     expect(result.escrow).toEqual(escrowResponse);
     expect(mockedHasuraRequest).toHaveBeenCalledTimes(2);
-    expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-retry');
+    expect(mockedMarkWebhookEventProcessed).toHaveBeenCalledWith('event-retry', 'safetrust');
   });
 
   it('rejects an existing escrow owned by another tenant before linking', async () => {

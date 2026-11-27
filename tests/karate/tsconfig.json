@@ -5,7 +5,8 @@
     "strict": true,
     "noEmitOnError": true,
     "types": [],
-    "alwaysStrict": false
+    "alwaysStrict": false,
+    "ignoreDeprecations": "6.0"
   },
   "files": [
     "src/test/resources/karate-config.ts",

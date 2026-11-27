@@ -6,6 +6,8 @@ import {
   isRustBulkUpsertEnabled,
 } from '../lib/native-adapters/rust-upsert.adapter'
 import { CANONICAL_TRANSITIONS, balancesEqual } from '../lib/escrow-freshness'
+import { getPlatformTenantId } from '../config/tenant'
+import { logger } from '../middleware/logger'
 import type {
   BulkUpsertResult,
   EscrowRecord,
@@ -61,11 +63,12 @@ const UPSERT_ESCROW_SQL = `
   -- comparisons, and without casts Postgres deduces conflicting types for them
   -- ("inconsistent types deduced for parameter") and rejects every row.
   SELECT $1::text, $2::text, $3::numeric, $4::numeric, $5::text, $6::text, $7::text,
-         $8::text, NULL, $9::text, NOW(), 'safetrust'
+         $8::text, NULL, $9::text, NOW(), $10::text
   WHERE $2::text IN ('created', 'pending_funding')
      OR EXISTS (
        SELECT 1 FROM safetrust.trustless_work_escrows existing
         WHERE existing.contract_id = $1::text
+         AND existing.tenant_id = $10::text
      )
   ON CONFLICT (contract_id)
   DO UPDATE SET
@@ -81,7 +84,8 @@ const UPSERT_ESCROW_SQL = `
     releaser   = COALESCE(NULLIF(EXCLUDED.releaser, ''), safetrust.trustless_work_escrows.releaser),
     network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
     updated_at = NOW()
-  WHERE (
+  WHERE safetrust.trustless_work_escrows.tenant_id = EXCLUDED.tenant_id
+    AND (
     safetrust.trustless_work_escrows.status IN ('created', 'pending_funding')
     AND (
       safetrust.trustless_work_escrows.status = EXCLUDED.status
@@ -128,7 +132,7 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     network,
     updated_at,
     tenant_id
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), 'safetrust')
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), $11)
   ON CONFLICT (contract_id)
   DO UPDATE SET
     status     = EXCLUDED.status,
@@ -140,8 +144,8 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
     ledger_seq = EXCLUDED.ledger_seq,
     network    = COALESCE(NULLIF(TRIM(safetrust.trustless_work_escrows.network), ''), NULLIF(TRIM(EXCLUDED.network), '')),
     updated_at = NOW()
-  WHERE (
-    (
+  WHERE safetrust.trustless_work_escrows.tenant_id = EXCLUDED.tenant_id
+    AND (
       safetrust.trustless_work_escrows.status NOT IN ('completed', 'resolved', 'cancelled')
       OR (
         EXCLUDED.ledger_seq = safetrust.trustless_work_escrows.ledger_seq
@@ -191,7 +195,7 @@ const UPSERT_ESCROW_WITH_SEQ_SQL = `
   RETURNING contract_id, (xmax = 0) AS inserted
 `
 export async function fetchEscrowContractIds(
-  tenantId = 'safetrust'
+  tenantId: string = getPlatformTenantId()
 ): Promise<string[]> {
   const { rows } = await db.query<{ contract_id: string }>(
     `SELECT contract_id
@@ -202,11 +206,14 @@ export async function fetchEscrowContractIds(
   return rows.map((row) => row.contract_id)
 }
 
-export async function fetchSorobanEscrowRows(): Promise<ReconciliationEscrowRow[]> {
+export async function fetchSorobanEscrowRows(
+  tenantId: string = getPlatformTenantId()
+): Promise<ReconciliationEscrowRow[]> {
   const { rows } = await db.query<ReconciliationEscrowRow>(
     `SELECT contract_id, id, status, balance, marker, approver
        FROM safetrust.trustless_work_escrows
-      WHERE tenant_id = 'safetrust'`
+      WHERE tenant_id = $1`,
+    [tenantId]
   )
   return rows
 }
@@ -220,7 +227,7 @@ export interface ReconciliationTransitionStateRow {
 
 export async function fetchEscrowTransitionStates(
   contractIds: string[],
-  tenantId = 'safetrust'
+  tenantId: string = getPlatformTenantId()
 ): Promise<ReconciliationTransitionStateRow[]> {
   if (contractIds.length === 0) return []
   const result = await db.query<ReconciliationTransitionStateRow>(
@@ -233,14 +240,20 @@ export async function fetchEscrowTransitionStates(
   return result?.rows ?? []
 }
 
-export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResult> {
+export async function upsertEscrows(
+  escrows: EscrowRecord[],
+  tenantId: string = getPlatformTenantId()
+): Promise<UpsertResult> {
   let updated = 0
   let unchanged = 0
   let skipped = 0
 
   for (const escrow of escrows) {
     if (!escrow?.contractId) {
-      console.warn('[reconciliation] ⚠️  Skipping escrow without contractId:', escrow)
+      logger.warn('reconciliation.escrow.skipped', {
+        reason: 'missing_contract_id',
+        escrow,
+      })
       skipped++
       continue
     }
@@ -263,10 +276,12 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
               ...params,
               typeof seq === 'bigint' ? seq.toString() : seq,
               escrow.network ?? null,
+              tenantId,
             ])
           : await db.query<{ contract_id: string }>(UPSERT_ESCROW_SQL, [
               ...params,
               escrow.network ?? null,
+              tenantId,
             ])
 
       if (result.rows.length > 0) {
@@ -280,8 +295,8 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
           }>(
             `SELECT ledger_seq::text, status, balance::text
                FROM safetrust.trustless_work_escrows
-              WHERE contract_id = $1`,
-            [escrow.contractId]
+              WHERE contract_id = $1 AND tenant_id = $2`,
+            [escrow.contractId, tenantId]
           )
           const stored = storedRows[0]
           if (
@@ -291,18 +306,19 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
             (stored.status !== (escrow.status ?? 'created') ||
               !balancesEqual(stored.balance, escrow.balance))
           ) {
-            console.warn(
-              `[reconciliation] Equal-sequence conflict on contract "${escrow.contractId}" at seq ${seq}`
-            )
+            logger.warn('reconciliation.escrow.equal_sequence_conflict', {
+              contractId: escrow.contractId,
+              sequence: String(seq),
+            })
           }
         }
         unchanged++
       }
     } catch (rowError) {
-      console.error(
-        `[reconciliation] ⚠️  Row error for contract_id "${escrow.contractId}":`,
-        (rowError as Error).message
-      )
+      logger.error('reconciliation.escrow.upsert_failed', {
+        contractId: escrow.contractId,
+        error: rowError,
+      })
       skipped++
     }
   }
@@ -310,14 +326,19 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
   return { updated, unchanged, skipped }
 }
 
-export async function upsertEscrowsBulk(escrows: EscrowRecord[]): Promise<UpsertResult> {
+export async function upsertEscrowsBulk(
+  escrows: EscrowRecord[],
+  tenantId: string = getPlatformTenantId()
+): Promise<UpsertResult> {
   assertBulkUpsertAvailable()
-
   let skipped = 0
   const valid: EscrowRecord[] = []
   for (const escrow of escrows) {
     if (!escrow?.contractId) {
-      console.warn('[reconciliation] ⚠️  Skipping escrow without contractId:', escrow)
+      logger.warn('reconciliation.escrow.skipped', {
+        reason: 'missing_contract_id',
+        escrow,
+      })
       skipped++
       continue
     }
@@ -346,7 +367,8 @@ export async function upsertEscrowsBulk(escrows: EscrowRecord[]): Promise<Upsert
 
   const resultJson = await bulkUpsertWithRust(
     JSON.stringify(updates),
-    buildConnectionString()
+    buildConnectionString(),
+    tenantId
   )
   const result: BulkUpsertResult = JSON.parse(resultJson)
 
@@ -357,21 +379,28 @@ export async function upsertEscrowsBulk(escrows: EscrowRecord[]): Promise<Upsert
   }
 }
 
-export async function upsertEscrowBatch(escrows: EscrowRecord[]): Promise<UpsertResult> {
+export async function upsertEscrowBatch(
+  escrows: EscrowRecord[],
+  tenantId: string = getPlatformTenantId()
+): Promise<UpsertResult> {
   if (!isRustBulkUpsertEnabled() || escrows.length === 0) {
-    return upsertEscrows(escrows)
+    return upsertEscrows(escrows, tenantId)
   }
   try {
-    return await upsertEscrowsBulk(escrows)
+    return await upsertEscrowsBulk(escrows, tenantId)
   } catch (err) {
-    console.error(
-      `[reconciliation] ⚠️  Bulk upsert failed, using row-by-row: ${(err as Error).message}`
-    )
-    return upsertEscrows(escrows)
+    logger.error('reconciliation.bulk_upsert.failed', {
+      fallback: 'row_by_row',
+      error: err,
+    })
+    return upsertEscrows(escrows, tenantId)
   }
 }
 
-export async function findStaleEscrows(staleDays = 7): Promise<string[]> {
+export async function findStaleEscrows(
+  staleDays = 7,
+  tenantId: string = getPlatformTenantId()
+): Promise<string[]> {
   if (!Number.isFinite(staleDays) || staleDays < 1) {
     throw new RangeError('findStaleEscrows: staleDays must be a positive number')
   }
@@ -379,11 +408,11 @@ export async function findStaleEscrows(staleDays = 7): Promise<string[]> {
   const { rows } = await db.query<{ contract_id: string }>(
     `SELECT contract_id
        FROM safetrust.trustless_work_escrows
-      WHERE tenant_id = 'safetrust'
+      WHERE tenant_id = $2
         AND status NOT IN ('completed', 'resolved', 'cancelled')
         AND updated_at < NOW() - ($1 * INTERVAL '1 day')
       ORDER BY updated_at ASC`,
-    [staleDays]
+    [staleDays, tenantId]
   )
 
   return rows.map((r) => r.contract_id)

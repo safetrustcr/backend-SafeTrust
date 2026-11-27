@@ -60,7 +60,7 @@ export async function verifyWalletChallenge(input: {
   try {
     await client.query('BEGIN')
     transactionOpen = true
-    const challenge = await findWalletChallenge(client, input.challengeId)
+    const challenge = await findWalletChallenge(client, input.challengeId, input.context.tenant)
     if (!challenge) {
       await client.query('ROLLBACK')
       transactionOpen = false
@@ -74,7 +74,7 @@ export async function verifyWalletChallenge(input: {
 
     const expiresAt = challengeDate(challenge)
     if (expiresAt.getTime() <= Date.now()) {
-      await deleteWalletChallenge(client, input.challengeId)
+      await deleteWalletChallenge(client, input.challengeId, input.context.tenant)
       await client.query('COMMIT')
       transactionOpen = false
       return { kind: 'expired' }
@@ -106,7 +106,7 @@ export async function verifyWalletChallenge(input: {
 
     const existing = await findWalletOwner(client, challenge.wallet_address)
     if (existing && existing.user_id !== input.uid) {
-      await deleteWalletChallenge(client, input.challengeId)
+      await deleteWalletChallenge(client, input.challengeId, input.context.tenant)
       await client.query('COMMIT')
       transactionOpen = false
       return { kind: 'already-registered' }
@@ -114,7 +114,7 @@ export async function verifyWalletChallenge(input: {
     if (!existing) {
       await insertVerifiedWallet(client, input.uid, challenge.wallet_address, input.isPrimary)
     }
-    await deleteWalletChallenge(client, input.challengeId)
+    await deleteWalletChallenge(client, input.challengeId, input.context.tenant)
     await client.query('COMMIT')
     transactionOpen = false
     return { kind: 'verified', address: challenge.wallet_address }

@@ -1,5 +1,7 @@
 'use strict'
 
+import { logger } from '../middleware/logger'
+
 /**
  * @file webhook/src/lib/escrow-freshness.ts
  * @description State machine validation and atomic freshness evaluation for escrow updates (Issue #661).
@@ -356,7 +358,13 @@ export function evaluateFreshness(
 
   // Case D: Different values -> Conflict log entry, preserve stored confirmed state
   const reason = `Equal sequence conflict at ledger ${incomingSeq}: stored=(status=${storedStatusNorm}, bal=${storedBalanceFormatted}) vs incoming=(status=${incomingStatusNorm}, bal=${incomingBalanceFormatted})`
-  console.warn(`[escrow-freshness] ⚠️  ${reason}`)
+  logger.warn('escrow_freshness.equal_sequence_conflict', {
+    incomingSeq: incomingSeq.toString(),
+    storedStatus: storedStatusNorm,
+    incomingStatus: incomingStatusNorm,
+    storedBalance: storedBalanceFormatted,
+    incomingBalance: incomingBalanceFormatted,
+  })
   return {
     type: 'CONFLICT_LOG',
     reason,

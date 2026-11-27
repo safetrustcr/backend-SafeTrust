@@ -1,9 +1,25 @@
 import { Router, RequestHandler } from 'express'
+import { rateLimit } from 'express-rate-limit'
 import { requireRole } from '../../middleware/require-role'
 import { createReportHandler } from './report.handler'
+import { validate } from '../../middleware/validate'
+import { createListingReportSchema } from '../../validation'
 
 const router = Router()
+const reportRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'TOO_MANY_REQUESTS' },
+})
 
-router.post('/:id/reports', requireRole(['guest', 'host']), createReportHandler as unknown as RequestHandler)
+router.post(
+  '/:id/reports',
+  reportRateLimit,
+  requireRole(['guest', 'host']),
+  validate(createListingReportSchema),
+  createReportHandler as unknown as RequestHandler
+)
 
 export default router
