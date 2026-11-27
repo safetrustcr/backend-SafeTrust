@@ -21,13 +21,18 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe('reservation.service createReservation', () => {
+  const originalLogLevel = process.env.LOG_LEVEL
+
   beforeEach(() => {
+    process.env.LOG_LEVEL = 'info'
     jest.clearAllMocks()
     jest.spyOn(console, 'log').mockImplementation(() => undefined)
   })
 
   afterEach(() => {
     jest.restoreAllMocks()
+    if (originalLogLevel === undefined) delete process.env.LOG_LEVEL
+    else process.env.LOG_LEVEL = originalLogLevel
   })
 
   it('writes the session tenant into the insert payload', async () => {
@@ -98,6 +103,12 @@ describe('reservation.service createReservation', () => {
 
     await createReservation(input())
 
-    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('quote: 500 USDC'))
+    const log = JSON.parse((console.log as jest.Mock).mock.calls[0][0])
+    expect(log).toMatchObject({
+      event: 'reservation.quote.recorded',
+      amount: 500,
+      assetCode: 'USDC',
+      billable: false,
+    })
   })
 })

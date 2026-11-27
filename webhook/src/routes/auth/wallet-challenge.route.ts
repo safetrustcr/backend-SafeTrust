@@ -1,10 +1,12 @@
 import { RequestHandler, Router } from 'express'
 import { createWalletChallengeHandler, verifyWalletChallengeHandler } from './wallet-challenge.handler'
 import { requireRole } from '../../middleware/require-role'
+import { validate } from '../../middleware/validate'
+import { createWalletChallengeSchema, verifyWalletChallengeSchema } from '../../validation'
 
 const router = Router()
 
-router.post('/challenge', requireRole(['guest', 'host', 'admin']), createWalletChallengeHandler as RequestHandler)
-router.post('/verify', requireRole(['guest', 'host', 'admin']), verifyWalletChallengeHandler as RequestHandler)
+router.post('/challenge', requireRole(['guest', 'host', 'admin']), validate(createWalletChallengeSchema), createWalletChallengeHandler as RequestHandler)
+router.post('/verify', requireRole(['guest', 'host', 'admin']), validate(verifyWalletChallengeSchema), verifyWalletChallengeHandler as RequestHandler)
 
 export default router

@@ -359,6 +359,7 @@ describe('atomic lifecycle transaction used by reconciliation', () => {
     reservationStatus: 'funded',
     rawPayload: { contractId: 'C-ATOMIC', status: 'funded', source: 'reconciliation' },
     amount: 100,
+    tenantId: 'safetrust',
   }
 
   test('locks the escrow and mirrors the reservation in the same transaction before commit', async () => {

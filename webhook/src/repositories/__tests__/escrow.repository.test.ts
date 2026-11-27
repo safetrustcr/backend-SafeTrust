@@ -12,12 +12,17 @@ import {
   StateConflictError,
 } from '../escrow.repository'
 import { hasuraRequest } from '../../services/hasura'
+import { hasuraTenantRequest } from '../../services/tenant-scoped-hasura'
 
 jest.mock('../../services/hasura', () => ({
   hasuraRequest: jest.fn(),
 }))
+jest.mock('../../services/tenant-scoped-hasura', () => ({
+  hasuraTenantRequest: jest.fn(),
+}))
 
 const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>
+const mockedHasuraTenantRequest = hasuraTenantRequest as jest.MockedFunction<typeof hasuraTenantRequest>
 
 describe('escrow.repository', () => {
   beforeEach(() => {
@@ -312,13 +317,19 @@ describe('escrow.repository', () => {
           returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'disputed' }],
         },
       })
+      mockedHasuraTenantRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: {
+          returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'disputed' }],
+        },
+      })
 
       const result = await disputeEscrow('c-1', ['funded'])
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('DisputeEscrow'), {
-        contractId: 'c-1',
-        validStates: ['funded'],
-      })
+      expect(mockedHasuraTenantRequest).toHaveBeenCalledWith(
+        'safetrust',
+        expect.stringContaining('tenantId'),
+        { contractId: 'c-1', validStates: ['funded'], tenantId: 'safetrust' }
+      )
       expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'disputed' })
     })
   })
@@ -330,13 +341,19 @@ describe('escrow.repository', () => {
           returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'resolved', balance: 0 }],
         },
       })
+      mockedHasuraTenantRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: {
+          returning: [{ id: 'escrow-1', contractId: 'c-1', status: 'resolved', balance: 0 }],
+        },
+      })
 
       const result = await resolveDispute('c-1', ['disputed'])
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('ResolveDispute'), {
-        contractId: 'c-1',
-        validStates: ['disputed'],
-      })
+      expect(mockedHasuraTenantRequest).toHaveBeenCalledWith(
+        'safetrust',
+        expect.stringContaining('tenantId'),
+        { contractId: 'c-1', validStates: ['disputed'], tenantId: 'safetrust' }
+      )
       expect(result).toEqual({ id: 'escrow-1', contractId: 'c-1', status: 'resolved', balance: 0 })
     })
   })
@@ -346,14 +363,18 @@ describe('escrow.repository', () => {
       mockedHasuraRequest.mockResolvedValueOnce({
         update_trustless_work_escrows: { affected_rows: 1 },
       })
+      mockedHasuraTenantRequest.mockResolvedValueOnce({
+        update_trustless_work_escrows: { affected_rows: 1 },
+      })
 
       const note = { resolver: 'r-1', note: 'resolved' }
       const result = await appendResolutionNote('c-1', note)
 
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(expect.stringContaining('AppendResolutionNote'), {
-        contractId: 'c-1',
-        note,
-      })
+      expect(mockedHasuraTenantRequest).toHaveBeenCalledWith(
+        'safetrust',
+        expect.stringContaining('tenantId'),
+        { contractId: 'c-1', note, tenantId: 'safetrust' }
+      )
       expect(result).toBe(true)
     })
   })

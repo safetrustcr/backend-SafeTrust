@@ -73,14 +73,23 @@ describe('initializeFirebaseAdmin', () => {
 
   it('warns and skips init in non-production when required env vars are missing', () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const originalLogLevel = process.env.LOG_LEVEL
+    process.env.LOG_LEVEL = 'info'
     delete process.env.FIREBASE_PROJECT_ID
 
-    expect(() => initializeFirebaseAdmin()).not.toThrow()
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('skipping cert init (non-production)')
-    )
-    expect(initializeApp).not.toHaveBeenCalled()
-    warnSpy.mockRestore()
+    try {
+      expect(() => initializeFirebaseAdmin()).not.toThrow()
+      const [jsonLog] = warnSpy.mock.calls[0] as [string]
+      expect(JSON.parse(jsonLog)).toMatchObject({
+        event: 'firebase_admin.initialization_skipped',
+        level: 'warn',
+      })
+      expect(initializeApp).not.toHaveBeenCalled()
+    } finally {
+      if (originalLogLevel === undefined) delete process.env.LOG_LEVEL
+      else process.env.LOG_LEVEL = originalLogLevel
+      warnSpy.mockRestore()
+    }
   })
 
   it('unwraps escaped newlines in the private key before building the credential', () => {

@@ -9,6 +9,7 @@
 import { fetchEscrowsByContractIds } from '../lib/source-adapters/tw.adapter'
 import { normalizeIndexerEscrows } from '../lib/source-adapters/tw-indexer.normalize'
 import { logger } from '../middleware/logger'
+import { getPlatformTenantId } from '../config/tenant'
 import {
   isRustChunkProcessingEnabled,
   processChunksWithRust,
@@ -209,7 +210,7 @@ export async function applyReconciliationTransitions(
   }
   const execute = options.executeTransition ?? executeEscrowLifecycleTransition
   const notify = options.notify ?? notifyHotelEscrowConversation
-  const tenantId = options.tenantId ?? 'safetrust'
+  const tenantId = options.tenantId ?? getPlatformTenantId()
 
   for (const transition of transitions) {
     try {
@@ -311,7 +312,7 @@ async function applyObservedStateChanges(
     return { summary: emptyTransitionSummary(), failedContractIds: [] }
   }
 
-  const tenantId = options.tenantId ?? 'safetrust'
+  const tenantId = options.tenantId ?? getPlatformTenantId()
   try {
     const localStates = await fetchEscrowTransitionStates(
       observedEscrows.map((record) => record.contractId),
@@ -361,7 +362,6 @@ async function writeIndexerEscrows(
       reason: record.reason,
     })
   }
-
   let transitions: ReconciliationTransitionSummary | undefined
   let escrowsToUpsert = escrows
   let withheld = 0
@@ -376,7 +376,10 @@ async function writeIndexerEscrows(
     }
   }
 
-  const counts = await upsertEscrowBatch(escrowsToUpsert)
+  const counts = await upsertEscrowBatch(
+    escrowsToUpsert,
+    options.tenantId ?? getPlatformTenantId()
+  )
   return {
     ...counts,
     skipped: counts.skipped + invalid.length + withheld,
@@ -415,11 +418,13 @@ export async function syncChunksParallel(
     unchanged += counts.unchanged
     skipped += counts.skipped
     mergeTransitionSummaries(transitions!, counts.transitions)
-    console.log(
-      `[reconciliation]   chunk ${result.chunk_index + 1}/${chunks.length}` +
-        ` (${chunks[result.chunk_index]?.length ?? 0} ids, ${result.duration_ms}ms) —` +
-        ` updated: ${counts.updated}, unchanged: ${counts.unchanged}, skipped: ${counts.skipped}`
-    )
+    logger.info('reconciliation.chunk.completed', {
+      chunk: result.chunk_index + 1,
+      chunks: chunks.length,
+      contractCount: chunks[result.chunk_index]?.length ?? 0,
+      durationMs: result.duration_ms,
+      ...counts,
+    })
   }
 
   return {
@@ -445,9 +450,10 @@ export async function syncAllChunks(
       const result = await syncChunksParallel(chunks, options)
       return { chunks: chunks.length, ...result }
     } catch (err) {
-      console.error(
-        `[reconciliation] ⚠️  Parallel chunk path failed, using sequential: ${(err as Error).message}`
-      )
+      logger.error('reconciliation.parallel_chunks.failed', {
+        fallback: 'sequential',
+        error: err,
+      })
     }
   }
 
@@ -464,15 +470,19 @@ export async function syncAllChunks(
       unchanged += result.unchanged
       skipped += result.skipped
       mergeTransitionSummaries(transitions!, result.transitions)
-      console.log(
-        `[reconciliation]   chunk ${i + 1}/${chunks.length}` +
-          ` (${chunks[i].length} ids) — updated: ${result.updated}, unchanged: ${result.unchanged}, skipped: ${result.skipped}`
-      )
+      logger.info('reconciliation.chunk.completed', {
+        chunk: i + 1,
+        chunks: chunks.length,
+        contractCount: chunks[i].length,
+        ...result,
+      })
     } catch (chunkError) {
       const errMsg = (chunkError as Error).message || String(chunkError)
-      console.error(
-        `[reconciliation] ⚠️  Chunk ${i + 1}/${chunks.length} failed: ${errMsg}`
-      )
+      logger.error('reconciliation.chunk.failed', {
+        chunk: i + 1,
+        chunks: chunks.length,
+        error: chunkError,
+      })
       errors.push(`chunk_${i}: ${errMsg}`)
     }
   }
@@ -501,6 +511,7 @@ export interface SyncSummary {
 
 export interface SorobanValidationOptions {
   skipStatusCorrectionFor?: Set<string> | string[]
+  tenantId?: string
 }
 
 export interface DriftSummary {
@@ -563,11 +574,11 @@ export interface ReconciliationReport {
 /**
  * Step 1: Fetches all known contract IDs for a given tenant from safetrust.trustless_work_escrows.
  *
- * @param tenantId - Tenant identifier (defaults to 'safetrust')
+ * @param tenantId - Tenant identifier
  * @returns Array of contract IDs
  */
 export async function fetchEscrowContractIds(
-  tenantId: string = 'safetrust'
+  tenantId: string = getPlatformTenantId()
 ): Promise<string[]> {
   return loadEscrowContractIds(tenantId)
 }
@@ -667,12 +678,10 @@ export async function runSorobanValidation(
         )
 
         if (criticalDiscrepancies.length > 0) {
-          console.warn(
-            `[reconciliation] 🚨 Soroban drift for ${contractId}:`,
-            criticalDiscrepancies.map(
-              (d) => `${d.field}: ${d.in_database} → ${d.on_chain}`
-            )
-          )
+          logger.warn('reconciliation.soroban.drift_detected', {
+            contractId,
+            discrepancies: criticalDiscrepancies,
+          })
 
           const skipStatus = skipStatusCorrectionFor.has(contractId)
           const hasNonStatusCorrection = criticalDiscrepancies.some(
@@ -688,9 +697,14 @@ export async function runSorobanValidation(
                      balance:   $balance
                      updatedAt: "now()"`
             const variables = skipStatus
-              ? { contractId, balance: onChain.balance / 10_000_000 }
+              ? {
+                  contractId,
+                  tenantId: options.tenantId ?? getPlatformTenantId(),
+                  balance: onChain.balance / 10_000_000,
+                }
               : {
                   contractId,
+                  tenantId: options.tenantId ?? getPlatformTenantId(),
                   status: onChain.status,
                   balance: onChain.balance / 10_000_000,
                 }
@@ -699,10 +713,14 @@ export async function runSorobanValidation(
             await hasuraRequest(
               `mutation CorrectDriftFromSoroban(
                  $contractId: String!
+                 $tenantId: String!
                  ${statusVariable}$balance: numeric!
                ) {
                  update_trustless_work_escrows(
-                   where: { contractId: { _eq: $contractId } }
+                   where: {
+                     contractId: { _eq: $contractId }
+                     tenantId: { _eq: $tenantId }
+                   }
                    _set: {
                      ${setClause}
                    }
@@ -719,9 +737,10 @@ export async function runSorobanValidation(
       unresolved++
       // "Preserve last confirmed" rule: when authoritative state cannot be established,
       // the last DB-confirmed value is kept as-is and flagged as unresolved — never invented.
-      console.warn(
-        `[reconciliation] ⚠️  Unresolved escrow ${contractId} (preserved last confirmed DB value): ${e.message}`
-      )
+      logger.warn('reconciliation.soroban.validation_unresolved', {
+        contractId,
+        error: e,
+      })
     }
   }
 
@@ -752,7 +771,8 @@ export async function validateSorobanDrift(
     }
   }
 
-  const currentRows = await fetchSorobanEscrowRows()
+  const tenantId = options.tenantId ?? getPlatformTenantId()
+  const currentRows = await fetchSorobanEscrowRows(tenantId)
   const dbStateMap = Object.fromEntries(
     currentRows.map((r) => [r.contract_id, r])
   )
@@ -776,17 +796,19 @@ export async function validateSorobanDrift(
       totalSorobanUnresolved += unresolved
 
       if (drifted > 0) {
-        console.warn(
-          `[reconciliation] ⚠️  Soroban drift in chunk ${i + 1}:` +
-            ` ${drifted} contracts, ${corrected} auto-corrected, ${unresolved} unresolved`
-        )
+        logger.warn('reconciliation.soroban.chunk_drift', {
+          chunk: i + 1,
+          drifted,
+          corrected,
+          unresolved,
+        })
       }
     } catch (sorobanError) {
       const sErr = sorobanError as Error
-      console.error(
-        `[reconciliation] ⚠️  Soroban validation failed for chunk ${i + 1}:`,
-        sErr.message
-      )
+      logger.error('reconciliation.soroban.chunk_failed', {
+        chunk: i + 1,
+        error: sErr,
+      })
       errors.push(`soroban_chunk_${i + 1}: ${sErr.message}`)
     }
   }
@@ -807,14 +829,16 @@ export async function validateSorobanDrift(
  * @returns Array of stale contract IDs
  */
 export async function detectStaleEscrows(
-  staleDays: number = 7
+  staleDays: number = 7,
+  tenantId: string = getPlatformTenantId()
 ): Promise<string[]> {
-  const staleContractIds = (await findStaleEscrows(staleDays)) || []
+  const staleContractIds = (await findStaleEscrows(staleDays, tenantId)) || []
   if (staleContractIds.length > 0) {
-    console.warn(
-      `[reconciliation] ⚠️  ${staleContractIds.length} escrows not updated in ${staleDays}+ days:`,
-      staleContractIds.slice(0, 5)
-    )
+    logger.warn('reconciliation.stale_escrows.detected', {
+      count: staleContractIds.length,
+      staleDays,
+      contractIds: staleContractIds.slice(0, 5),
+    })
   }
   return staleContractIds
 }
@@ -823,7 +847,7 @@ export async function detectStaleEscrows(
  * Step 5: Background sweep that processes durable confirmation retries.
  */
 export async function reconcileConfirmationRetries(): Promise<ProcessRetriesSummary> {
-  return processPendingConfirmationRetries()
+  return processPendingConfirmationRetries(getPlatformTenantId())
 }
 
 /**
@@ -868,7 +892,7 @@ export function formatReconciliationSummary(
     sorobanUnresolved: drift.unresolved ?? 0,
     durationMs: elapsed,
     ...(retries ? { confirmationRetries: retries } : {}),
-    ...(transitions ? { transitions } : {}),
+    ...(effectiveTransitions ? { transitions: effectiveTransitions } : {}),
   }
 
   if (isNoEscrows) {

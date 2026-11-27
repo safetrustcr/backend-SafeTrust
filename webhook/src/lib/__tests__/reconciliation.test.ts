@@ -385,8 +385,8 @@ describe('findStaleEscrows', () => {
     const [sql, params] = db.query.mock.calls[0];
     expect(sql).toMatch(/updated_at\s*<\s*NOW\(\)\s*-\s*\(\$1 \* INTERVAL '1 day'\)/i);
     expect(sql).toMatch(/status NOT IN \('completed', 'resolved', 'cancelled'\)/i);
-    expect(sql).toMatch(/tenant_id = 'safetrust'/i);
-    expect(params).toEqual([7]);
+    expect(sql).toMatch(/tenant_id = \$2/i);
+    expect(params).toEqual([7, 'safetrust']);
   });
 
   it('forwards a custom staleDays parameter', async () => {
@@ -395,7 +395,7 @@ describe('findStaleEscrows', () => {
     const result = await findStaleEscrows(14);
 
     expect(result).toEqual([]);
-    expect(db.query).toHaveBeenCalledWith(expect.any(String), [14]);
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), [14, 'safetrust']);
   });
 
   it('returns an empty array when no stale escrows exist', async () => {

@@ -356,4 +356,3 @@ sequenceDiagram
    transaction before upserting remaining indexer fields, withholding failed
    transitions so they remain retryable. Advancing past `funded` requires a
    versioned snapshot (newer ledger sequence) or transaction confirmation.
-

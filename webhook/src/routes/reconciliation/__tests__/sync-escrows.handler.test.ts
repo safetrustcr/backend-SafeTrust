@@ -100,7 +100,7 @@ describe('syncEscrowsHandler', () => {
     expect(reconciliationService.validateSorobanDrift).toHaveBeenCalledWith(
       ['mock_1'],
       'testnet',
-      { skipStatusCorrectionFor: ['mock_1'] }
+      { tenantId: 'safetrust', skipStatusCorrectionFor: ['mock_1'] }
     )
 
     expect(res.status).toHaveBeenCalledWith(200)

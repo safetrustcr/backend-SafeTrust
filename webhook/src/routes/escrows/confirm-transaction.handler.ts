@@ -85,6 +85,7 @@ export async function confirmTransactionHandler(
       action,
       network,
       isTWGenerated,
+      tenantId,
     })
 
     if (!result.success) {
@@ -114,6 +115,7 @@ export async function confirmTransactionHandler(
       action,
       network,
       isTWGenerated,
+      tenantId,
     })
 
     if (!result.success) {

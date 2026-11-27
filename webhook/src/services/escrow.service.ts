@@ -15,7 +15,8 @@ import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
-import { amountToStroops } from '../lib/stellar-amounts';
+import { logger } from '../middleware/logger';
+import { escrowInitializationSchema } from '../validation';
 
 export { TenantMismatchError };
 
@@ -23,7 +24,7 @@ export { TenantMismatchError };
 
 /**
  * The validated, normalized form of an escrow initialization payload.
- * Produced by validateEscrowInitializationPayload.
+ * Normalized form produced from the escrow initialization schema.
  */
 export interface EscrowInitPayload {
   contract_id: string;
@@ -136,9 +137,12 @@ function toLedgerSeq(value: unknown): bigint | null {
  * Checks required fields and escrow_type whitelist.
  * Throws EscrowValidationError (400) on failure.
  */
-export function validateEscrowInitializationPayload(
-  body: unknown
-): EscrowInitPayload {
+export function parseEscrowInitializationPayload(body: unknown): EscrowInitPayload {
+  const parsed = escrowInitializationSchema.safeParse(body)
+  if (!parsed.success) {
+    throw new EscrowValidationError(parsed.error.issues[0]?.message ?? 'Invalid escrow initialization payload')
+  }
+  const input = parsed.data
   const {
     contract_id,
     marker,
@@ -151,37 +155,11 @@ export function validateEscrowInitializationPayload(
     asset_issuer = null,
     reservation_id = null,
     booking_metadata = null,
-  } = (body as InitializeEscrowPayload) ?? {};
-  
-  // 1 — Required fields
-  if (
-    !contract_id ||
-    !marker ||
-    !approver ||
-    !releaser ||
-    amount === undefined ||
-    amount === null ||
-    !escrow_type
-  ) {
-    throw new EscrowValidationError(
-      'Missing required fields: contract_id, marker, approver, releaser, amount, escrow_type'
-    );
-  }
-
-  // 2 — Runtime type validation
-  if (amountToStroops(amount) === null || typeof escrow_type !== 'string') {
-    throw new EscrowValidationError(
-      'amount must be a positive finite numeric value and escrow_type must be a string'
-    );
-  }
-
-  // 3 — Escrow type whitelist (matches DB CHECK constraint)
-  const validTypes = ['single_release', 'multi_release'];
-  if (!validTypes.includes(escrow_type)) {
-    throw new EscrowValidationError(
-      `escrow_type must be one of: ${validTypes.join(', ')}`
-    );
-  }
+  } = input;
+  const metadataReservationId = typeof booking_metadata?.reservation_id === 'string'
+    ? booking_metadata.reservation_id
+    : null
+  const explicitReservationId = typeof reservation_id === 'string' ? reservation_id : null
 
   return {
     contract_id,
@@ -193,9 +171,9 @@ export function validateEscrowInitializationPayload(
     escrow_type,
     asset_code: asset_code ?? 'USDC',
     asset_issuer: asset_issuer ?? null,
-    reservation_id: reservation_id ?? booking_metadata?.reservation_id ?? null,
+    reservation_id: explicitReservationId ?? metadataReservationId,
     booking_metadata: booking_metadata ?? null,
-    raw: body as InitializeEscrowPayload,
+    raw: input as InitializeEscrowPayload,
   };
 }
 
@@ -314,9 +292,7 @@ export async function linkReservationToEscrow(
 ): Promise<void> {
   await linkEscrowToReservation(reservationId, escrowId, tenantId);
 
-  console.log(
-    `[escrow.service] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrowId}`
-  );
+  logger.info('escrow.reservation.linked', { reservationId, escrowId, tenantId });
 }
 
 
@@ -327,17 +303,18 @@ export async function initializeEscrow(
   body: unknown,
   tenantId: string
 ): Promise<{ isDuplicate: boolean; eventId: string; escrow?: TrustlessWorkEscrow }> {
-  const payload = validateEscrowInitializationPayload(body);
+  const payload = parseEscrowInitializationPayload(body);
   const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
     payload.contract_id,
     'escrow.initialized',
-    payload.raw as unknown as Record<string, unknown>
+    payload.raw as unknown as Record<string, unknown>,
+    tenantId
   );
 
   // Retry a duplicate whose earlier delivery failed part-way; persistEscrow
   // upserts on contract_id, so re-running it is safe.
   if (isDuplicate && processed !== false) {
-    await markWebhookEventProcessed(eventId);
+    await markWebhookEventProcessed(eventId, tenantId);
     return { isDuplicate: true, eventId };
   }
 
@@ -360,7 +337,7 @@ export async function initializeEscrow(
     await linkReservationToEscrow(reservationId, escrow.id, escrowTenantId);
   }
 
-  await markWebhookEventProcessed(eventId);
+  await markWebhookEventProcessed(eventId, tenantId);
 
   return { isDuplicate: false, eventId, escrow };
 }
@@ -467,7 +444,7 @@ export interface EscrowLifecycleParams {
   rawPayload: Record<string, unknown>;
   amount?: number;
   validPriorStates?: string[];
-  tenantId?: string;
+  tenantId: string;
   observedLedgerSeq?: string | number | bigint | null;
 }
 
@@ -492,7 +469,7 @@ export async function executeEscrowLifecycleTransition(
     rawPayload,
     amount,
     validPriorStates,
-    tenantId = getPlatformTenantId(),
+    tenantId,
     observedLedgerSeq,
   } = params;
   const eventIdentity = getWebhookEventIdentity(
@@ -551,8 +528,9 @@ export async function executeEscrowLifecycleTransition(
       `SELECT id, status, balance, ledger_seq::text AS ledger_seq
        FROM safetrust.trustless_work_escrows
        WHERE contract_id = $1
+         AND tenant_id = $2
        FOR UPDATE`,
-      [contractId]
+      [contractId, tenantId]
     );
 
     if (escrowResult.rowCount === 0) {
@@ -570,8 +548,9 @@ export async function executeEscrowLifecycleTransition(
         `UPDATE safetrust.trustless_work_webhook_events
          SET processed = true,
              processed_at = NOW()
-         WHERE id = $1`,
-        [eventId]
+         WHERE id = $1
+           AND tenant_id = $2`,
+        [eventId, tenantId]
       );
       return {
         isDuplicate: true,
@@ -617,10 +596,12 @@ export async function executeEscrowLifecycleTransition(
       values.push(observedSeq.toString());
     }
     values.push(escrowId);
+    values.push(tenantId);
     await client.query(
       `UPDATE safetrust.trustless_work_escrows
        SET ${updates.join(',\n           ')}
-       WHERE id = $${paramIndex}`,
+       WHERE id = $${paramIndex}
+         AND tenant_id = $${paramIndex + 1}`,
       values
     );
 
@@ -632,8 +613,9 @@ export async function executeEscrowLifecycleTransition(
       `UPDATE safetrust.trustless_work_webhook_events
        SET processed = true,
            processed_at = $2
-       WHERE id = $1`,
-      [eventId, now]
+       WHERE id = $1
+         AND tenant_id = $3`,
+      [eventId, now, tenantId]
     );
 
     return {
@@ -651,7 +633,8 @@ export async function executeEscrowLifecycleTransition(
 export async function fundEscrowTransactional(
   contractId: string,
   amount: number,
-  rawPayload: Record<string, unknown>
+  rawPayload: Record<string, unknown>,
+  tenantId: string
 ): Promise<EscrowLifecycleResult> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
@@ -669,6 +652,7 @@ export async function fundEscrowTransactional(
     amount,
     validPriorStates: validStates,
     rawPayload,
+    tenantId,
   });
 }
 
@@ -678,7 +662,8 @@ export async function fundEscrowTransactional(
  */
 export async function releaseFundsTransactional(
   contractId: string,
-  rawPayload: Record<string, unknown>
+  rawPayload: Record<string, unknown>,
+  tenantId: string
 ): Promise<EscrowLifecycleResult> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
@@ -696,6 +681,7 @@ export async function releaseFundsTransactional(
     amount: 0,
     validPriorStates: validStates,
     rawPayload,
+    tenantId,
   });
 }
 

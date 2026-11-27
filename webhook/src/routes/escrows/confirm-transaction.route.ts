@@ -4,6 +4,8 @@ import { RequestHandler, Router } from 'express'
 import { confirmTransactionHandler } from './confirm-transaction.handler'
 import { authMiddleware } from '../../middleware/auth.middleware'
 import { requireRole } from '../../middleware/require-role'
+import { validate } from '../../middleware/validate'
+import { confirmTransactionSchema } from '../../validation'
 
 const router = Router()
 
@@ -17,6 +19,7 @@ router.post(
   '/api/escrows/confirm-transaction',
   authMiddleware as unknown as RequestHandler,
   requireRole(['guest', 'host', 'admin']),
+  validate(confirmTransactionSchema),
   confirmTransactionHandler
 )
 
