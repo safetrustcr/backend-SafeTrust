@@ -1,9 +1,38 @@
+# Version control and editors
 .git
+.gitignore
+.gitattributes
+.github
+.vscode
+.idea
+
+# Secrets and local configuration — never bake these into an image.
+# `COPY . .` used to pull a developer's .env.local or Firebase key into the image.
 .env
+.env.*
+!.env.example
+!.env.test.example
+**/*.pem
+**/*.key
+**/*service-account*.json
+**/*-credentials.json
+secrets/
+
+# Documentation, CI and test output
+docs/
+tests/results
+coverage
+**/coverage
+**/.nyc_output
+htmlcov
+.docker-cache
+
+# Dependencies and build output
 **/node_modules
 **/target
 **/dist
-tests/results
 *.node
-.env.test
-.docker-cache
+
+# Local Compose overlays
+docker-compose.override.yml
+docker-compose.secrets.yml

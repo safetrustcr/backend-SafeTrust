@@ -1,12 +1,12 @@
 # Compile Karate's TypeScript configuration to the JavaScript consumed by Graal.
-FROM node:24-bookworm-slim AS karate-config
+FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530 AS karate-config # 24-bookworm-slim
 WORKDIR /app
 COPY webhook/package*.json ./webhook/
 RUN cd webhook && npm ci --ignore-scripts
 COPY tests/karate/ ./tests/karate/
 RUN cd webhook && npm run build:karate
 
-FROM eclipse-temurin:17-jdk-jammy
+FROM eclipse-temurin:17-jdk-jammy@sha256:96ac8197b2cbc2bb0f9fbcbf91dbb0015f43b3c76a1cb351892da12e7bb91bed # 17-jdk-jammy
 
 WORKDIR /app
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
@@ -20,7 +20,7 @@ RUN mkdir -p /app/tests/karate/src/test/resources
 # Create directory for test results
 RUN mkdir -p /app/target/karate-reports
 
-# Download Karate jar
+# Download Karate jar (checksum verification is tracked in the CI security issue)
 ADD https://github.com/karatelabs/karate/releases/download/v1.4.1/karate-1.4.1.jar /app/tests/karate.jar
 
 # Download Postgres JDBC driver

@@ -18,6 +18,7 @@
 import https from 'https'
 import http from 'http'
 import db from '../services/db'
+import { readSecret } from '../config/secrets'
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -97,7 +98,10 @@ export const CHUNK_SIZE = 50
 // ─── TrustlessWork API base URL (injected from env) ──────────────────────────
 const TW_BASE_URL =
   process.env.TRUSTLESS_WORK_API_URL || 'https://dev.api.trustlesswork.com'
-const TW_API_KEY = process.env.TRUSTLESS_WORK_API_KEY || ''
+// Compose sets TRUSTLESSWORK_API_KEY; TRUSTLESS_WORK_API_KEY is the historical
+// spelling. Both support a *_FILE variant for secrets mounted at /run/secrets/…
+const TW_API_KEY =
+  readSecret('TRUSTLESS_WORK_API_KEY') ?? readSecret('TRUSTLESSWORK_API_KEY') ?? ''
 
 // ─── Optional Rust parallel chunk processor ──────────────────────────────────
 /**
@@ -196,7 +200,7 @@ export function isRustBulkUpsertEnabled(): boolean {
  */
 export function buildConnectionString(): string {
   const user = process.env.POSTGRES_USER
-  const password = process.env.POSTGRES_PASSWORD
+  const password = readSecret('POSTGRES_PASSWORD')
   if (!user || !password) {
     throw new Error(
       'pg-bulk-upsert requires POSTGRES_USER and POSTGRES_PASSWORD to be set'

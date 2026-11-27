@@ -65,7 +65,14 @@ cp .env.example .env
 Fill in `.env` before running anything:
 
 ```dotenv
+# Required — no defaults; the stack fails fast without them
 POSTGRES_PASSWORD=your_postgres_password
+
+# Least-privilege runtime roles, created on the first start (see
+# docs/infra/bin-start.md). Use URL-safe passwords: they end up in connection URLs.
+HASURA_DB_PASSWORD=your_hasura_password
+HASURA_METADATA_DB_PASSWORD=your_metadata_password
+WEBHOOK_DB_PASSWORD=your_webhook_password
 
 # Must be valid JSON, key ≥ 32 characters for HS256
 HASURA_GRAPHQL_JWT_SECRET={"type":"HS256","key":"replace-with-min-32-char-secret-here"}

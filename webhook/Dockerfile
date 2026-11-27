@@ -1,5 +1,6 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM node:24-bookworm-slim AS builder
+# Base images are pinned by digest; the tag in the comment is what Dependabot tracks.
+FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530 AS builder # 24-bookworm-slim
 
 # Rust toolchain for the Neon addons (webhook-verifier, zk-verifier,
 # stellar-utils, chunk-processor, pg-bulk-upsert, x402-processor), plus a glibc
@@ -31,12 +32,17 @@ COPY webhook/src/ ./webhook/src/
 RUN cd webhook && npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
-FROM node:24-bookworm-slim AS production
+FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530 AS production # 24-bookworm-slim
 
 WORKDIR /app/webhook
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
+# No extra binaries: the health check below uses Node's built-in fetch. The
+# base image ships curl, so remove it — nothing in the runtime needs it and it
+# is one more download tool an attacker could use.
+RUN if dpkg -s curl >/dev/null 2>&1; then \
+        apt-get purge -y curl \
+        && rm -rf /var/lib/apt/lists/* \
+    ; fi
 
 COPY webhook/package*.json ./
 RUN npm ci --omit=dev
@@ -76,9 +82,14 @@ COPY --from=builder /app/crates/escrow-state-machine/index.d.ts /app/crates/escr
 # node user/group already exists in the official Node image.
 USER node
 
-EXPOSE 3001
+# One port definition for the image, Compose and the health check. Compose
+# publishes this on 127.0.0.1 and sets PORT to the matching container port.
+ARG PORT=3000
+ENV PORT=${PORT}
+EXPOSE ${PORT}
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:3001/health || exit 1
+# Node instead of curl: the production image has no curl.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
 
 CMD ["node", "dist/index.js"]

@@ -1,0 +1,55 @@
+# Builds the webhook image and scans it, plus the Dockerfile/Compose
+# configuration, for fixable HIGH/CRITICAL vulnerabilities.
+#
+# Dependabot docker entries keep the base-image digests in the Dockerfiles and
+# Compose files current; this job is what catches a vulnerable OS package.
+name: docker security
+
+on:
+  pull_request:
+    paths:
+      - '**/Dockerfile*'
+      - 'docker-compose*.yml'
+      - 'docker/**'
+      - '.github/workflows/docker-security.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/Dockerfile*'
+      - 'docker-compose*.yml'
+      - 'docker/**'
+      - '.github/workflows/docker-security.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build webhook image
+        run: docker build -t safetrust-webhook:scan -f webhook/Dockerfile .
+
+      # aquasecurity/trivy-action v0.36.0 — pinned by commit SHA.
+      - name: Scan webhook image (fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: safetrust-webhook:scan
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+          exit-code: '1'
+
+      # aquasecurity/trivy-action v0.36.0 — pinned by commit SHA.
+      - name: Scan Dockerfiles and Compose files
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: '1'

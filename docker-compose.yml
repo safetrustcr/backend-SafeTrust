@@ -1,36 +1,105 @@
+# SafeTrust backend — hardened Docker Compose stack.
+#
+# PORTS
+#   Nothing is published on all host interfaces. Hasura and the webhook bind
+#   127.0.0.1 only, and Postgres is not published at all. A reverse proxy or the
+#   deployment platform is what exposes Hasura/webhook publicly.
+#   Local tools that need Postgres can copy docker-compose.override.example.yml
+#   to docker-compose.override.yml (git-ignored) for a loopback-only port.
+#
+# DATABASE ROLES (created by docker/postgres/init/01-init-roles.sh)
+#   postgres         admin — migrations only (bin/start, migrate-test); never
+#                    used by a running service
+#   hasura           Hasura data source — tenant schemas (safetrust,
+#                    hotel_industry) only; never superuser
+#   hasura_metadata  owns the separate hasura_metadata database (Hasura catalog)
+#   webhook          webhook — SELECT/INSERT/UPDATE/DELETE on safetrust only;
+#                    no CREATE, no superuser, no COPY … PROGRAM
+#
+# SECRETS
+#   POSTGRES_PASSWORD, HASURA_DB_PASSWORD, HASURA_METADATA_DB_PASSWORD and
+#   WEBHOOK_DB_PASSWORD are required and have no defaults, so a missing secret
+#   fails fast instead of starting with a well-known password. In production,
+#   keep application secrets in files rather than the environment: Compose
+#   `secrets:` mounts them at /run/secrets/… and the webhook reads
+#   FIREBASE_PRIVATE_KEY_FILE, TRUSTLESS_WORK_API_KEY_FILE and
+#   POSTGRES_PASSWORD_FILE. See docker-compose.secrets.example.yml and
+#   docs/infra/bin-start.md. Plain variables stay supported for local dev.
+#
+#   Passwords end up in a connection URL, so use URL-safe characters (no @, /,
+#   :, ? or #).
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
-    image: postgis/postgis:15-3.3
+    # postgis/postgis:15-3.3
+    image: postgis/postgis:15-3.3@sha256:a2fc46b52819d25add4ed93d3da83e106e17ea3ace6883cce3791631c9820bb2
     restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — copy .env.example to .env and set it}
+      # Consumed by docker/postgres/init/01-init-roles.sh to create the roles.
+      HASURA_DB_PASSWORD: ${HASURA_DB_PASSWORD:?HASURA_DB_PASSWORD is required}
+      HASURA_METADATA_DB_PASSWORD: ${HASURA_METADATA_DB_PASSWORD:?HASURA_METADATA_DB_PASSWORD is required}
+      WEBHOOK_DB_PASSWORD: ${WEBHOOK_DB_PASSWORD:?WEBHOOK_DB_PASSWORD is required}
     volumes:
       - db_data:/var/lib/postgresql/data
-    environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    # Deliberately no `ports:` — the superuser port must not be reachable from
+    # the network. Use `docker compose exec postgres psql -U postgres`, or the
+    # loopback-only override in docker-compose.override.example.yml.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
       start_period: 10s
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    # The only capabilities the official Postgres entrypoint needs to initialise
+    # and own its data directory.
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 256
+    logging: *default-logging
     networks:
       - safetrust-network
 
   graphql-engine:
-    image: hasura/graphql-engine:v2.47.0
+    # hasura/graphql-engine:v2.47.0
+    image: hasura/graphql-engine:v2.47.0@sha256:ceefc35c505b3c6201c89549f383d69bfae15f6124895b2e6f712b66f5612677
     ports:
-      - "${HASURA_PORT:-8080}:8080"
+      # Loopback only: a reverse proxy / deployment platform publishes Hasura.
+      - "127.0.0.1:${HASURA_PORT:-8080}:8080"
     restart: always
     environment:
+      # The Hasura catalog lives in its own database, owned by a least-privilege role.
       HASURA_GRAPHQL_METADATA_DATABASE_URL: >-
-        postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+        postgres://hasura_metadata:${HASURA_METADATA_DB_PASSWORD:?HASURA_METADATA_DB_PASSWORD is required}@postgres:5432/hasura_metadata
+      # Tenant data source: non-superuser role, scoped to the tenant schemas.
       PG_DATABASE_URL: >-
-        postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+        postgres://hasura:${HASURA_DB_PASSWORD:?HASURA_DB_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-postgres}
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
       HASURA_GRAPHQL_DEV_MODE: "true"
-      HASURA_GRAPHQL_ENABLED_LOG_TYPES: >-
-        startup, http-log, webhook-log, websocket-log, query-log
+      # No query-log by default: it writes every GraphQL query *and its
+      # variables* (emails, phone numbers, wallet addresses) to the container
+      # log. Enable it per-run for debugging, e.g.
+      #   HASURA_GRAPHQL_ENABLED_LOG_TYPES="startup, http-log, webhook-log, query-log"
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES: ${HASURA_GRAPHQL_ENABLED_LOG_TYPES:-startup, http-log, webhook-log}
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}
       HASURA_GRAPHQL_JWT_SECRET: ${HASURA_GRAPHQL_JWT_SECRET}
       WEBHOOK_URL: ${WEBHOOK_URL:-http://safetrust-webhook:3000}
@@ -43,6 +112,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 256
+    logging: *default-logging
     networks:
       - safetrust-network
 
@@ -62,21 +139,29 @@ services:
         - type=local,dest=.docker-cache/webhook,mode=max
     container_name: safetrust-webhook
     ports:
-      - "${WEBHOOK_PORT:-3000}:${WEBHOOK_PORT:-3000}"
+      # Loopback only: a reverse proxy / deployment platform publishes the webhook.
+      - "127.0.0.1:${WEBHOOK_PORT:-3000}:3000"
     environment:
       NODE_ENV: ${NODE_ENV:-development}
-      PORT: ${WEBHOOK_PORT:-3000}
-      WEBHOOK_PORT: ${WEBHOOK_PORT:-3000}
+      # Container port; the image's HEALTHCHECK and EXPOSE use the same value.
+      PORT: "3000"
       POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
+      POSTGRES_PORT: "5432"
       POSTGRES_DB: ${POSTGRES_DB:-postgres}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Least-privilege role: DML on the safetrust schema only.
+      POSTGRES_USER: webhook
+      POSTGRES_PASSWORD: ${WEBHOOK_DB_PASSWORD:?WEBHOOK_DB_PASSWORD is required}
+      # File-backed secret variants (production). Empty by default; see
+      # docker-compose.secrets.example.yml. The *_FILE value wins when set.
+      POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
+      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
+      FIREBASE_PRIVATE_KEY_FILE: ${FIREBASE_PRIVATE_KEY_FILE:-}
+      TRUSTLESSWORK_API_KEY: ${TRUSTLESSWORK_API_KEY:-}
+      TRUSTLESSWORK_API_KEY_FILE: ${TRUSTLESSWORK_API_KEY_FILE:-}
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}
       HASURA_GRAPHQL_ENDPOINT: >-
         http://graphql-engine:8080/v1/graphql
       TRUSTLESSWORK_API_URL: ${TRUSTLESSWORK_API_URL:-https://dev.api.trustlesswork.com}
-      TRUSTLESSWORK_API_KEY: ${TRUSTLESSWORK_API_KEY}
       STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
       # x402 is quarantined from the eligibility path until F2/F3/F8 are closed.
       X402_ENABLED: ${X402_ENABLED:-false}
@@ -89,11 +174,24 @@ services:
       graphql-engine:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${WEBHOOK_PORT:-3000}/health"]
+      # Node (the image has no curl) against the same port the app listens on.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 20s
+    # The application writes nothing to disk: the root filesystem is read-only.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 300
+    logging: *default-logging
     networks:
       - safetrust-network
     restart: unless-stopped

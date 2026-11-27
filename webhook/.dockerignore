@@ -6,6 +6,11 @@ dist
 .gitignore
 .env
 .env.*
+!.env.example
+**/*.pem
+**/*.key
+**/*service-account*.json
+**/*-credentials.json
 __tests__
 *.test.ts
 *.test.js

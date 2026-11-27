@@ -23,6 +23,11 @@ venv/
 # Docker cache
 .docker-cache/
 
+# Local Compose overlays and file-backed secrets (see docs/infra/bin-start.md)
+docker-compose.override.yml
+docker-compose.secrets.yml
+secrets/
+
 # Karate test artifacts
 tests/results/**
 !tests/results/.gitkeep

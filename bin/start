@@ -19,9 +19,17 @@ fi
 
 HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
 HASURA_PORT="${HASURA_PORT:-8080}"
-POSTGRES_PORT="${POSTGRES_PORT:-5433}"
 WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
+POSTGRES_DB="${POSTGRES_DB:-postgres}"
 HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
+
+# Role passwords have no defaults: fail here, before Compose, with a pointer to
+# the file that documents them. POSTGRES_PASSWORD is the admin/migration role;
+# hasura, hasura_metadata and webhook are the least-privilege runtime roles.
+: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — copy .env.example to .env and set it}"
+: "${HASURA_DB_PASSWORD:?HASURA_DB_PASSWORD is required — see .env.example}"
+: "${HASURA_METADATA_DB_PASSWORD:?HASURA_METADATA_DB_PASSWORD is required — see .env.example}"
+: "${WEBHOOK_DB_PASSWORD:?WEBHOOK_DB_PASSWORD is required — see .env.example}"
 
 RESET_DATABASE=false
 RESTART_CONTAINERS=false
@@ -101,6 +109,21 @@ elif [[ "$RESTART_CONTAINERS" == "true" ]]; then
   docker compose down
 fi
 
+# Migrations run through the Hasura data source, whose role only has DML at
+# runtime. bin/start grants CREATE on the tenant schemas — and on `public`, where
+# legacy migrations stage tables before moving them — for the migration step,
+# and revokes it again afterwards so the running service cannot create or drop
+# objects. The migration step itself still connects as the postgres admin role.
+set_migration_ddl() {
+  local action="$1"
+  if ! docker compose exec -T postgres \
+      psql -v ON_ERROR_STOP=1 -q -U "${POSTGRES_USER:-postgres}" -d "$POSTGRES_DB" \
+      -c "${action} CREATE ON SCHEMA safetrust, hotel_industry, public TO hasura" >/dev/null; then
+    echo "❌ Could not set migration DDL privileges (${action}) on the hasura role"
+    exit 1
+  fi
+}
+
 echo "📦 Starting containers..."
 docker compose up -d --build
 
@@ -171,6 +194,9 @@ echo ""
 if [[ "$RESTART_CONTAINERS" != "true" ]]; then
   echo "📂 Applying migrations..."
 
+  set_migration_ddl GRANT
+  trap 'set_migration_ddl REVOKE >/dev/null 2>&1 || true' EXIT
+
   # Sources share Hasura CLI catalog state. Concurrent migration commands can
   # overwrite each other's applied versions, so apply tenants sequentially.
   for TENANT in "${TENANTS[@]}"; do
@@ -189,6 +215,10 @@ else
   echo "⏭️  --restart: skipping migrations (schema unchanged)"
   TIMING_MIGRATIONS_SAFETRUST=0
 fi
+
+# Always leave the runtime role without DDL rights, including after --restart.
+set_migration_ddl REVOKE
+trap - EXIT
 
 echo ""
 
@@ -303,9 +333,9 @@ fi
 echo ""
 echo "✅ SafeTrust backend ready"
 echo "   Tenants deployed: ${TENANTS[*]}"
-echo "   GraphQL:          ${HASURA_ENDPOINT}/v1/graphql"
-echo "   PostgreSQL:       localhost:${POSTGRES_PORT}"
-echo "   Webhook:          http://localhost:${WEBHOOK_PORT}"
+echo "   GraphQL:          ${HASURA_ENDPOINT}/v1/graphql (127.0.0.1 only)"
+echo "   PostgreSQL:       not published — docker compose exec postgres psql -U postgres"
+echo "   Webhook:          http://localhost:${WEBHOOK_PORT} (127.0.0.1 only)"
 echo ""
 echo "👉 To open Hasura console:"
 echo "   hasura console --endpoint ${HASURA_ENDPOINT} --admin-secret $HASURA_ADMIN_SECRET"

@@ -1,34 +1,68 @@
+# Test stack — every published port binds 127.0.0.1, so running the Karate suite
+# never exposes the database, Hasura (or its console) or the webhook to the
+# network. Roles come from docker/postgres/init/01-init-roles.sh; runtime
+# services use the non-superuser hasura/webhook roles.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres_test:
-    image: postgis/postgis:15-3.3
+    # postgis/postgis:15-3.3
+    image: postgis/postgis:15-3.3@sha256:a2fc46b52819d25add4ed93d3da83e106e17ea3ace6883cce3791631c9820bb2
     restart: always
     volumes:
       - db_data_test:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     environment:
       POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:-postgrespassword}
+      HASURA_DB_PASSWORD: ${TEST_HASURA_DB_PASSWORD:-hasura-test-password}
+      HASURA_METADATA_DB_PASSWORD: ${TEST_HASURA_METADATA_DB_PASSWORD:-hasura-metadata-test-password}
+      WEBHOOK_DB_PASSWORD: ${TEST_WEBHOOK_DB_PASSWORD:-webhook-test-password}
     ports:
-      - "${TEST_POSTGRES_PORT:-5434}:5432"
+      # Loopback only: tests on the host can reach it, nothing else can.
+      - "127.0.0.1:${TEST_POSTGRES_PORT:-5434}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
       start_period: 10s
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 256
+    logging: *default-logging
     networks:
       - test-network
 
   graphql-engine-test:
-    image: hasura/graphql-engine:v2.47.0
+    # hasura/graphql-engine:v2.47.0
+    image: hasura/graphql-engine:v2.47.0@sha256:ceefc35c505b3c6201c89549f383d69bfae15f6124895b2e6f712b66f5612677
     ports:
-      - "${TEST_HASURA_PORT:-8081}:8080"
+      - "127.0.0.1:${TEST_HASURA_PORT:-8081}:8080"
     restart: always
     environment:
-      # NOTE: TEST_POSTGRES_PASSWORD must be URI-safe (no @, /, :, ?) — see .env.test.example
-      HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
-      PG_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
+      # NOTE: the generated passwords must be URI-safe (no @, /, :, ?) — see .env.test.example
+      HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://hasura_metadata:${TEST_HASURA_METADATA_DB_PASSWORD:-hasura-metadata-test-password}@postgres_test:5432/hasura_metadata
+      PG_DATABASE_URL: postgres://hasura:${TEST_HASURA_DB_PASSWORD:-hasura-test-password}@postgres_test:5432/postgres
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
       HASURA_GRAPHQL_DEV_MODE: "true"
-      HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+      # No query-log: it would dump test payloads (and production-shaped user
+      # data) into the log on every request.
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES: ${TEST_HASURA_GRAPHQL_ENABLED_LOG_TYPES:-startup, http-log, webhook-log}
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
     depends_on:
       postgres_test:
@@ -39,6 +73,14 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 256
+    logging: *default-logging
     networks:
       - test-network
 
@@ -51,21 +93,29 @@ services:
       - .:/app
     environment:
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine-test:8080
-      PG_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
       CONSOLE_PORT: 9696
     working_dir: /app
     ports:
-      - "9696:9696"
+      # The Hasura console is loopback-only too.
+      - "127.0.0.1:9696:9696"
     depends_on:
       graphql-engine-test:
         condition: service_healthy
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    logging: *default-logging
     networks:
       - test-network
 
   webhook:
     ports:
-      - "${TEST_WEBHOOK_PORT:-3001}:3001"
+      - "127.0.0.1:${TEST_WEBHOOK_PORT:-3001}:3001"
     build:
       context: .
       dockerfile: webhook/Dockerfile
@@ -75,14 +125,15 @@ services:
         - type=local,dest=.docker-cache/webhook,mode=max
     environment:
       - NODE_ENV=test
-      - WEBHOOK_PORT=3001
+      - PORT=3001
       - HASURA_GRAPHQL_ADMIN_SECRET=${TEST_ADMIN_SECRET:-myadminsecretkey}
       - HASURA_GRAPHQL_ENDPOINT=http://graphql-engine-test:8080/v1/graphql
       - POSTGRES_HOST=postgres_test
       - POSTGRES_PORT=5432
       - POSTGRES_DB=postgres
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${TEST_POSTGRES_PASSWORD:-postgrespassword}
+      # Least-privilege role, same grants as production.
+      - POSTGRES_USER=webhook
+      - POSTGRES_PASSWORD=${TEST_WEBHOOK_DB_PASSWORD:-webhook-test-password}
       - USE_MOCK_DATA=true
       - TRUSTLESSWORK_WEBHOOK_SECRET=${TEST_WEBHOOK_SECRET:-dev-secret}
       # The x402 Karate suite exercises the enabled payment gate. Settlement is
@@ -93,14 +144,52 @@ services:
       postgres_test:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3001) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 5s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 300
+    logging: *default-logging
     networks:
       - test-network
 
+  # Proves the runtime roles are least-privilege: the webhook role must not be
+  # able to CREATE TABLE, create schemas or run COPY … PROGRAM.
+  db-privileges:
+    # postgis/postgis:15-3.3
+    image: postgis/postgis:15-3.3@sha256:a2fc46b52819d25add4ed93d3da83e106e17ea3ace6883cce3791631c9820bb2
+    entrypoint: ["bash", "/checks/assert-webhook-role.sh"]
+    environment:
+      PGHOST: postgres_test
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: ${TEST_POSTGRES_PASSWORD:-postgrespassword}
+    volumes:
+      - ./tests/db:/checks:ro
+    depends_on:
+      migrate-test:
+        condition: service_completed_successfully
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 64
+    logging: *default-logging
+    networks:
+      - test-network
 
   karate:
     build:
@@ -128,8 +217,18 @@ services:
         condition: service_healthy
       migrate-test:
         condition: service_completed_successfully
+      db-privileges:
+        condition: service_completed_successfully
       graphql-engine-test:
         condition: service_healthy
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 2g
+    cpus: 2.0
+    pids_limit: 512
+    logging: *default-logging
     networks:
       - test-network
 
@@ -145,6 +244,14 @@ services:
     depends_on:
       graphql-engine-test:
         condition: service_started
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    logging: *default-logging
     networks:
       - test-network
 
