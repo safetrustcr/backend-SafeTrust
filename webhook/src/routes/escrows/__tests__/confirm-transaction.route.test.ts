@@ -123,7 +123,11 @@ describe('POST /api/escrows/confirm-transaction', () => {
         })
 
       expect(res.status).toBe(400)
-      expect(res.body).toEqual({ error: 'network must be either "testnet" or "mainnet"' })
+      expect(res.body).toEqual({
+        success: false,
+        error: 'network must be either "testnet" or "mainnet"',
+        code: 'validation_error',
+      })
       expect(mockedExternal).not.toHaveBeenCalled()
     } finally {
       if (originalNetwork === undefined) delete process.env.STELLAR_NETWORK

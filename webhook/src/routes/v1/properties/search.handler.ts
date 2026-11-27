@@ -3,6 +3,7 @@ import { logger } from '../../../middleware/logger'
 import { propertySearchQuerySchema } from '../../../validation'
 import { calculatePropertyQuote } from '../../../lib/property-quote'
 import { searchProperties as findProperties } from '../../../repositories/property.repository'
+import { AppError } from '../../../utils/errors'
 
 export async function searchProperties(
   req: Request,
@@ -52,6 +53,6 @@ export async function searchProperties(
     })
   } catch (error) {
     logger.error('properties.search.failed', { error })
-    return res.status(500).json({ error: 'Internal Server Error' })
+    throw new AppError('Failed to search properties', 500)
   }
 }

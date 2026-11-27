@@ -3,6 +3,7 @@ import { logger } from '../../../middleware/logger'
 import { propertyAvailabilityQuerySchema } from '../../../validation'
 import { calculatePropertyQuote } from '../../../lib/property-quote'
 import { findPropertyAvailability } from '../../../repositories/property.repository'
+import { NotFoundError, AppError } from '../../../utils/errors'
 
 export async function getPropertyAvailability(
   req: Request<{ id: string }>,
@@ -17,7 +18,7 @@ export async function getPropertyAvailability(
       checkOut: check_out,
       guests,
     })
-    if (!property) return res.status(404).json({ error: 'Property not found' })
+    if (!property) throw new NotFoundError('Property not found')
 
     const quote = calculatePropertyQuote({
       nightlyPrice: property.nightly_price,
@@ -37,6 +38,7 @@ export async function getPropertyAvailability(
     })
   } catch (error) {
     logger.error('properties.availability.failed', { error })
-    return res.status(500).json({ error: 'Internal Server Error' })
+    if (error instanceof NotFoundError) throw error
+    throw new AppError('Failed to check property availability', 500)
   }
 }
