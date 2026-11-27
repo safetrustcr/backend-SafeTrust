@@ -15,7 +15,7 @@ import {
   settleBookingFee,
   settlementIdempotencyKey,
 } from '../x402-settlement.service'
-import { setX402Addon } from '../../middleware/x402-payment.middleware'
+import { setX402Engine } from '../../middleware/x402-payment.middleware'
 
 const HOLD_ID = '22222222-2222-4222-8222-222222222222'
 const OTHER_HOLD_ID = '33333333-3333-4333-8333-333333333333'
@@ -37,7 +37,7 @@ function settledRow(holdId: string | null, reservationId: string | null = null) 
 describe('x402 settlement service', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    setX402Addon({
+    setX402Engine({
       validateX402Payment: () => JSON.stringify({ is_valid: true }),
       settleX402Payment: (...args: unknown[]) => mockSettleX402Payment(...args),
       buildPaymentRequirement: () => JSON.stringify({}),
@@ -120,7 +120,7 @@ describe('x402 settlement service', () => {
   })
 
   it('never marks a settled receipt as failed', async () => {
-    setX402Addon(null)
+    setX402Engine(null)
     mockQuery.mockImplementation(async (sql: string) => {
       if (String(sql).includes('INSERT INTO safetrust.x402_settlements')) {
         return { rowCount: 1, rows: [{ id: 'settlement-1' }] }

@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import {
   requireX402Payment,
-  setX402Addon,
+  setX402Engine,
 } from '../x402-payment.middleware'
 
 describe('x402-payment.middleware', () => {
@@ -28,11 +28,11 @@ describe('x402-payment.middleware', () => {
     jest.clearAllMocks()
   })
 
-  it('returns 503 when x402 is disabled', () => {
+  it('returns 503 when x402 is disabled', async () => {
     process.env.X402_ENABLED = 'false'
-    setX402Addon(null)
+    setX402Engine(null)
 
-    requireX402Payment(0.10)(req as Request, res as Response, next as NextFunction)
+    await requireX402Payment(0.10)(req as Request, res as Response, next as NextFunction)
 
     expect(res.status).toHaveBeenCalledWith(503)
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
@@ -42,15 +42,15 @@ describe('x402-payment.middleware', () => {
     expect(next).not.toHaveBeenCalled()
   })
 
-  it('returns 503 when the platform wallet is missing', () => {
+  it('returns 503 when the platform wallet is missing', async () => {
     const mockBuildRequirement = jest.fn()
-    setX402Addon({
+    setX402Engine({
       validateX402Payment: jest.fn(),
       buildPaymentRequirement: mockBuildRequirement,
     })
     delete process.env.SAFETRUST_PLATFORM_WALLET
 
-    requireX402Payment(0.10)(req as Request, res as Response, next as NextFunction)
+    await requireX402Payment(0.10)(req as Request, res as Response, next as NextFunction)
 
     expect(res.status).toHaveBeenCalledWith(503)
     expect(res.json).toHaveBeenCalledWith({
@@ -62,15 +62,15 @@ describe('x402-payment.middleware', () => {
     expect(next).not.toHaveBeenCalled()
   })
 
-  it('returns 503 when the platform wallet contains only whitespace', () => {
+  it('returns 503 when the platform wallet contains only whitespace', async () => {
     const mockBuildRequirement = jest.fn()
-    setX402Addon({
+    setX402Engine({
       validateX402Payment: jest.fn(),
       buildPaymentRequirement: mockBuildRequirement,
     })
     process.env.SAFETRUST_PLATFORM_WALLET = '   '
 
-    requireX402Payment(0.10)(req as Request, res as Response, next as NextFunction)
+    await requireX402Payment(0.10)(req as Request, res as Response, next as NextFunction)
 
     expect(res.status).toHaveBeenCalledWith(503)
     expect(res.json).toHaveBeenCalledWith({
@@ -83,10 +83,10 @@ describe('x402-payment.middleware', () => {
   })
 
   describe('Missing X-Payment Header (402 Payment Required)', () => {
-    it('returns 503 when no addon is loaded', () => {
-      setX402Addon(null)
+    it('returns 503 when no addon is loaded', async () => {
+      setX402Engine(null)
       const middleware = requireX402Payment(0.10)
-      middleware(req as Request, res as Response, next as NextFunction)
+      await middleware(req as Request, res as Response, next as NextFunction)
 
       expect(res.status).toHaveBeenCalledWith(503)
       expect(res.json).toHaveBeenCalledWith({
@@ -97,9 +97,9 @@ describe('x402-payment.middleware', () => {
       expect(next).not.toHaveBeenCalled()
     })
 
-    it('returns 402 with mainnet requirement when STELLAR_NETWORK=mainnet', () => {
+    it('returns 402 with mainnet requirement when STELLAR_NETWORK=mainnet', async () => {
       process.env.STELLAR_NETWORK = 'mainnet'
-      setX402Addon({
+      setX402Engine({
         validateX402Payment: jest.fn(),
         buildPaymentRequirement: jest.fn().mockReturnValue(JSON.stringify({
           scheme: 'exact',
@@ -114,7 +114,7 @@ describe('x402-payment.middleware', () => {
         })),
       })
       const middleware = requireX402Payment(0.25)
-      middleware(req as Request, res as Response, next as NextFunction)
+      await middleware(req as Request, res as Response, next as NextFunction)
 
       expect(res.status).toHaveBeenCalledWith(402)
       expect(res.json).toHaveBeenCalledWith(
@@ -138,7 +138,7 @@ describe('x402-payment.middleware', () => {
       )
     })
 
-    it('uses buildPaymentRequirement from addon when available', () => {
+    it('uses buildPaymentRequirement from addon when available', async () => {
       const mockBuildRequirement = jest.fn().mockReturnValue(
         JSON.stringify({
           scheme: 'exact',
@@ -155,13 +155,13 @@ describe('x402-payment.middleware', () => {
         })
       )
 
-      setX402Addon({
+      setX402Engine({
         validateX402Payment: jest.fn(),
         buildPaymentRequirement: mockBuildRequirement,
       })
 
       const middleware = requireX402Payment(0.10)
-      middleware(req as Request, res as Response, next as NextFunction)
+      await middleware(req as Request, res as Response, next as NextFunction)
 
       expect(mockBuildRequirement).toHaveBeenCalledWith(
         0.10,
@@ -185,8 +185,8 @@ describe('x402-payment.middleware', () => {
   })
 
   describe('Invalid X-Payment Header', () => {
-    it('returns 402 with invalid_reason when validateX402Payment returns is_valid: false', () => {
-      setX402Addon({
+    it('returns 402 with invalid_reason when validateX402Payment returns is_valid: false', async () => {
+      setX402Engine({
         validateX402Payment: jest.fn().mockReturnValue(
           JSON.stringify({
             is_valid: false,
@@ -201,7 +201,7 @@ describe('x402-payment.middleware', () => {
 
       req.headers['x-payment'] = 'invalid-header-format'
       const middleware = requireX402Payment(0.10)
-      middleware(req as Request, res as Response, next as NextFunction)
+      await middleware(req as Request, res as Response, next as NextFunction)
 
       expect(res.status).toHaveBeenCalledWith(402)
       expect(res.json).toHaveBeenCalledWith({
@@ -212,8 +212,8 @@ describe('x402-payment.middleware', () => {
       expect(next).not.toHaveBeenCalled()
     })
 
-    it('returns 402 when network is unsupported', () => {
-      setX402Addon({
+    it('returns 402 when network is unsupported', async () => {
+      setX402Engine({
         validateX402Payment: jest.fn().mockReturnValue(
           JSON.stringify({
             is_valid: false,
@@ -228,7 +228,7 @@ describe('x402-payment.middleware', () => {
 
       req.headers['x-payment'] = 'x402 eyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJldGhlcmV1bToxIn0='
       const middleware = requireX402Payment(0.10)
-      middleware(req as Request, res as Response, next as NextFunction)
+      await middleware(req as Request, res as Response, next as NextFunction)
 
       expect(res.status).toHaveBeenCalledWith(402)
       expect(res.json).toHaveBeenCalledWith({
@@ -238,8 +238,8 @@ describe('x402-payment.middleware', () => {
       })
     })
 
-    it('returns 402 when payment amount is insufficient', () => {
-      setX402Addon({
+    it('returns 402 when payment amount is insufficient', async () => {
+      setX402Engine({
         validateX402Payment: jest.fn().mockReturnValue(
           JSON.stringify({
             is_valid: false,
@@ -254,7 +254,7 @@ describe('x402-payment.middleware', () => {
 
       req.headers['x-payment'] = 'x402 eyJhbW91bnQiOjAuMDV9'
       const middleware = requireX402Payment(0.10)
-      middleware(req as Request, res as Response, next as NextFunction)
+      await middleware(req as Request, res as Response, next as NextFunction)
 
       expect(res.status).toHaveBeenCalledWith(402)
       expect(res.json).toHaveBeenCalledWith({
@@ -266,8 +266,8 @@ describe('x402-payment.middleware', () => {
   })
 
   describe('Valid X-Payment Header (Success Flow)', () => {
-    it('populates req.x402 and calls next() on valid payment', () => {
-      setX402Addon({
+    it('populates req.x402 and calls next() on valid payment', async () => {
+      setX402Engine({
         validateX402Payment: jest.fn().mockReturnValue(
           JSON.stringify({
             is_valid: true,
@@ -282,7 +282,7 @@ describe('x402-payment.middleware', () => {
 
       req.headers['x-payment'] = 'x402 valid-b64-payload'
       const middleware = requireX402Payment(0.10)
-      middleware(req as Request, res as Response, next as NextFunction)
+      await middleware(req as Request, res as Response, next as NextFunction)
 
       expect(next).toHaveBeenCalled()
       expect(res.status).not.toHaveBeenCalled()
@@ -296,8 +296,8 @@ describe('x402-payment.middleware', () => {
   })
 
   describe('Error Handling', () => {
-    it('returns 500 when an unexpected exception occurs during validation', () => {
-      setX402Addon({
+    it('returns 500 when an unexpected exception occurs during validation', async () => {
+      setX402Engine({
         validateX402Payment: jest.fn().mockImplementation(() => {
           throw new Error('Fatal native exception')
         }),
@@ -306,7 +306,7 @@ describe('x402-payment.middleware', () => {
 
       req.headers['x-payment'] = 'x402 valid-payload'
       const middleware = requireX402Payment(0.10)
-      middleware(req as Request, res as Response, next as NextFunction)
+      await middleware(req as Request, res as Response, next as NextFunction)
 
       expect(res.status).toHaveBeenCalledWith(500)
       expect(res.json).toHaveBeenCalledWith({

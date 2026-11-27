@@ -1,4 +1,9 @@
 import { Request, Response, NextFunction } from 'express'
+import type {
+  PaymentPayload,
+  PaymentRequirements,
+} from '@x402/core/types'
+import { getActiveX402ResourceServer, getX402Config } from '../config/x402'
 import { logger } from './logger'
 
 export interface X402SettlementResult {
@@ -8,13 +13,20 @@ export interface X402SettlementResult {
   error?: string | null
 }
 
-type X402Addon = {
-  validateX402Payment: (header: string, requiredAmount: number) => string
-  /** Asynchronous settlement; the facilitator call runs off the JS thread. */
+/**
+ * Payment-processor seam. The default engine verifies and settles through the
+ * official `@x402` Stellar packages; tests inject a fake through
+ * {@link setX402Engine}.
+ */
+export interface X402Engine {
+  /** Verify a payment header; returns a JSON string of `{ is_valid, ... }`. */
+  validateX402Payment: (header: string, requiredAmount: number) => string | Promise<string>
+  /** Verify and settle a payment header with the facilitator. */
   settleX402Payment?: (
     header: string,
     requiredAmount: number
   ) => Promise<X402SettlementResult>
+  /** Build the payment requirement advertised in the 402 challenge. */
   buildPaymentRequirement: (
     amountUsdc: number,
     network: string,
@@ -23,45 +35,170 @@ type X402Addon = {
   ) => string
 }
 
-// undefined = not loaded yet; null = unavailable or explicitly injected as absent.
-let x402Addon: X402Addon | null | undefined
-
-function getX402Addon(): X402Addon | null {
-  if (x402Addon !== undefined) return x402Addon
-
-  try {
-    // Load the experimental native addon only when x402 is enabled and used.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    x402Addon = require('../../../crates/x402-processor')
-  } catch (error) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      x402Addon = require('../../crates/x402-processor')
-    } catch (fallbackError) {
-      x402Addon = null
-      logger.warn('x402.native_addon_unavailable', {
-        effect: 'payment validation fails closed',
-        primaryPathError: error instanceof Error ? error.message : error,
-        fallbackPathError:
-          fallbackError instanceof Error ? fallbackError.message : fallbackError,
-      })
-    }
-  }
-
-  return x402Addon ?? null
+/** USDC Soroban contract used by the x402 `exact` Stellar scheme. */
+const USDC_CONTRACTS: Record<string, string> = {
+  'stellar:pubnet': 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+  'stellar:testnet': 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
 }
 
-/** Test seam: allow tests to override or inject the native addon */
-export function setX402Addon(addon: X402Addon | null): void {
-  x402Addon = addon
+interface ValidationResult {
+  is_valid: boolean
+  payer_address?: string | null
+  amount_usdc?: number
+  network?: string
+  invalid_reason?: string | null
 }
 
 /**
- * The loaded addon, or null when unavailable. Settlement uses this directly;
- * unlike the middleware it is not gated by X402_ENABLED.
+ * The payment header carries the base64-encoded x402 payment payload, either
+ * bare or prefixed with the `x402` scheme token.
  */
-export function getX402AddonInstance(): X402Addon | null {
-  return getX402Addon()
+function decodePaymentPayload(header: string): PaymentPayload {
+  const trimmed = header.trim()
+  const encoded = trimmed.toLowerCase().startsWith('x402 ')
+    ? trimmed.slice(5).trim()
+    : trimmed
+  const decoded = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'))
+  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
+    throw new Error('X-Payment header does not contain an x402 payment payload')
+  }
+  return decoded as PaymentPayload
+}
+
+/** Payment requirements for an amount, built by the registered Stellar scheme. */
+async function requirementsFor(amountUsdc: number): Promise<PaymentRequirements[]> {
+  const config = getX402Config()
+  const server = getActiveX402ResourceServer()
+  return server.buildPaymentRequirementsFromOptions(
+    [
+      {
+        scheme: 'exact',
+        payTo: config.payTo,
+        price: `$${amountUsdc.toFixed(2)}`,
+        network: config.network,
+      },
+    ],
+    {}
+  )
+}
+
+function unusable(reason: string): string {
+  return JSON.stringify({ is_valid: false, invalid_reason: reason })
+}
+
+/**
+ * Verify a payment header against the requirements this service advertises.
+ * Only the facilitator decides whether the signed authorization is valid.
+ */
+async function verifyPayment(
+  header: string,
+  requiredAmount: number
+): Promise<{ result: ValidationResult; requirements?: PaymentRequirements }> {
+  let payload: PaymentPayload
+  try {
+    payload = decodePaymentPayload(header)
+  } catch (error) {
+    return {
+      result: {
+        is_valid: false,
+        invalid_reason:
+          error instanceof Error ? error.message : 'Invalid X-Payment header',
+      },
+    }
+  }
+
+  const server = getActiveX402ResourceServer()
+  const requirements = await requirementsFor(requiredAmount)
+  const matched = server.findMatchingRequirements(requirements, payload)
+  if (!matched) {
+    return {
+      result: {
+        is_valid: false,
+        invalid_reason:
+          'Payment does not match the required scheme, network, asset or payee',
+      },
+    }
+  }
+
+  const verified = await server.verifyPayment(payload, matched)
+  if (!verified.isValid) {
+    return {
+      result: {
+        is_valid: false,
+        invalid_reason: verified.invalidReason ?? 'Payment verification failed',
+        payer_address: verified.payer ?? null,
+        network: matched.network,
+      },
+      requirements: matched,
+    }
+  }
+
+  return {
+    result: {
+      is_valid: true,
+      payer_address: verified.payer ?? null,
+      amount_usdc: requiredAmount,
+      network: matched.network,
+    },
+    requirements: matched,
+  }
+}
+
+/**
+ * Default engine: verification and settlement run through the official x402
+ * resource server, so the facilitator's signature checks and the settlement
+ * transaction are the ones the protocol defines.
+ */
+const defaultEngine: X402Engine = {
+  buildPaymentRequirement(amountUsdc, network, facilitatorUrl, payTo) {
+    return JSON.stringify({
+      scheme: 'exact',
+      network,
+      maxAmountRequired: amountUsdc,
+      asset: {
+        code: 'USDC',
+        contract: USDC_CONTRACTS[network] ?? USDC_CONTRACTS['stellar:testnet'],
+      },
+      facilitator_url: facilitatorUrl,
+      pay_to: payTo,
+    })
+  },
+
+  async validateX402Payment(header, requiredAmount) {
+    const { result } = await verifyPayment(header, requiredAmount)
+    return JSON.stringify(result)
+  },
+
+  async settleX402Payment(header, requiredAmount) {
+    const { result, requirements } = await verifyPayment(header, requiredAmount)
+    if (!result.is_valid || !requirements) {
+      return { settled: false, error: result.invalid_reason ?? 'Payment was not verified' }
+    }
+
+    const server = getActiveX402ResourceServer()
+    const payload = decodePaymentPayload(header)
+    const settled = await server.settlePayment(payload, requirements)
+    return {
+      settled: Boolean(settled.success),
+      transaction_hash: settled.success ? settled.transaction : null,
+      network: settled.network ?? requirements.network,
+      error: settled.success ? null : settled.errorReason ?? 'Settlement declined',
+    }
+  },
+}
+
+// undefined = not resolved yet; null = explicitly injected as absent.
+let injectedEngine: X402Engine | null | undefined
+
+/** Test seam: override or remove the payment engine. */
+export function setX402Engine(engine: X402Engine | null): void {
+  injectedEngine = engine
+}
+
+/** The active payment engine, or null when none is available. */
+export function getX402Engine(): X402Engine | null {
+  if (injectedEngine !== undefined) return injectedEngine
+  return defaultEngine
 }
 
 export interface X402Context {
@@ -72,28 +209,37 @@ export interface X402Context {
   paymentHeader: string
 }
 
-declare global {
-  namespace Express {
-    interface Request {
-      x402?: X402Context
-    }
+/**
+ * Fails closed with the documented `503 Feature Unavailable` body whenever
+ * `X402_ENABLED` is not `true`. Shared by every x402-gated route so the
+ * disabled contract is identical everywhere.
+ */
+export function requireX402Enabled(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  if (process.env.X402_ENABLED !== 'true') {
+    res.status(503).json({
+      error: 'Feature Unavailable',
+      feature: 'x402',
+      message: 'x402 payments are disabled',
+    })
+    return
   }
+  next()
 }
 
 export const requireX402Payment =
   (amountUsdc: number) =>
-  (req: Request, res: Response, next: NextFunction): void => {
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (process.env.X402_ENABLED !== 'true') {
-      res.status(503).json({
-        error: 'Feature Unavailable',
-        feature: 'x402',
-        message: 'x402 payments are disabled',
-      })
+      requireX402Enabled(req, res, next)
       return
     }
 
-    const addon = getX402Addon()
-    if (!addon) {
+    const engine = getX402Engine()
+    if (!engine) {
       res.status(503).json({
         error: 'Feature Unavailable',
         feature: 'x402',
@@ -122,7 +268,7 @@ export const requireX402Payment =
     try {
       if (!paymentHeader) {
         const requirement = JSON.parse(
-          addon.buildPaymentRequirement(
+          engine.buildPaymentRequirement(
             amountUsdc,
             `stellar:${network}`,
             facilitatorUrl,
@@ -139,8 +285,8 @@ export const requireX402Payment =
       }
 
       const result = JSON.parse(
-        addon.validateX402Payment(paymentHeader, amountUsdc)
-      )
+        await engine.validateX402Payment(paymentHeader, amountUsdc)
+      ) as ValidationResult
 
       if (!result.is_valid) {
         res.status(402).json({
@@ -152,9 +298,9 @@ export const requireX402Payment =
       }
 
       req.x402 = {
-        payer: result.payer_address,
-        amountUsdc: result.amount_usdc,
-        network: result.network,
+        payer: result.payer_address ?? null,
+        amountUsdc: result.amount_usdc ?? amountUsdc,
+        network: result.network ?? `stellar:${network}`,
         paymentHeader,
       }
       next()

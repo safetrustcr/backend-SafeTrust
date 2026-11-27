@@ -14,8 +14,7 @@ export interface ApartmentListFilters {
   bedrooms?: number
   petFriendly?: boolean
   category?: ApartmentListQuery['category']
-  checkIn?: string
-  checkOut?: string
+  stay?: { checkIn: string; checkOut: string }
   limit: number
   offset: number
   sort: 'price_asc' | 'price_desc' | 'created_at'
@@ -72,10 +71,10 @@ export async function listApartments(filters: ApartmentListFilters): Promise<{
   if (filters.bedrooms !== undefined) add((index) => `a.bedrooms = $${index}`, filters.bedrooms)
   if (filters.petFriendly !== undefined) add((index) => `a.pet_friendly = $${index}`, filters.petFriendly)
   if (filters.category) add((index) => `a.category = $${index}`, filters.category)
-  if (filters.checkIn && filters.checkOut) {
-    const startIdx = params.length + 1
-    params.push(filters.checkIn, filters.checkOut)
-    where.push(`NOT ${liveHoldOverlapSql('a', `$${startIdx}`, `$${startIdx + 1}`)}`)
+
+  if (filters.stay) {
+    params.push(filters.stay.checkIn, filters.stay.checkOut)
+    where.push(`NOT ${liveHoldOverlapSql('a', `$${params.length - 1}`, `$${params.length}`)}`)
   }
 
   const whereString = `WHERE ${where.join(' AND ')}`

@@ -27,7 +27,7 @@ jest.mock('../../../../services/db', () => ({
 import bookingsRouter from '../index'
 import { errorHandler } from '../../../../middleware/error-handler'
 import { PaymentRequiredError } from '../../../../utils/errors'
-import { setX402Addon } from '../../../../middleware/x402-payment.middleware'
+import { setX402Engine } from '../../../../middleware/x402-payment.middleware'
 
 const APT_ID = '11111111-1111-4111-8111-111111111111'
 const HOLD_ID = '22222222-2222-4222-8222-222222222222'
@@ -61,7 +61,7 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
     mockFindSettledBookingFee.mockResolvedValue(undefined)
     process.env.X402_ENABLED = 'true'
     process.env.SAFETRUST_PLATFORM_WALLET = 'GD5JPEHGGTDTK2N7OMDDCOW3DPO5KSFWACYWNYZNNOXD2UC7LQ4DHXMM'
-    setX402Addon({
+    setX402Engine({
       validateX402Payment: () =>
         JSON.stringify({
           is_valid: true,

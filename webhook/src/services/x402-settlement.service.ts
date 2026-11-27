@@ -4,7 +4,7 @@ import crypto from 'crypto'
 import db from './db'
 import { logger } from '../middleware/logger'
 import {
-  getX402AddonInstance,
+  getX402Engine,
   X402SettlementResult,
 } from '../middleware/x402-payment.middleware'
 import {
@@ -306,8 +306,8 @@ export async function settleBookingFee(
     }
   }
 
-  const addon = getX402AddonInstance()
-  if (!addon?.settleX402Payment) {
+  const engine = getX402Engine()
+  if (!engine?.settleX402Payment) {
     const reason = 'x402 settlement processor is unavailable'
     await markFailed(idempotencyKey, reason)
     throw new ServiceUnavailableError(reason)
@@ -315,9 +315,9 @@ export async function settleBookingFee(
 
   let outcome: X402SettlementResult
   try {
-    // The addon performs the facilitator round-trip off the JS thread and
-    // resolves when settlement is confirmed.
-    outcome = await addon.settleX402Payment(input.paymentHeader, input.amountUsdc)
+    // Verification and the facilitator settlement round-trip both happen here;
+    // the promise resolves only once settlement is confirmed.
+    outcome = await engine.settleX402Payment(input.paymentHeader, input.amountUsdc)
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
     await markFailed(idempotencyKey, reason)

@@ -35,9 +35,10 @@ export interface FundXdrParams {
 export function generateSyntheticContractId(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
   let result = 'C'
-  const randomBytes = crypto.randomBytes(55)
   for (let i = 0; i < 55; i++) {
-    result += chars[randomBytes[i] % chars.length]
+    // `randomInt` samples the range without the modulo bias CodeQL reports for
+    // `randomBytes(...) % chars.length`.
+    result += chars[crypto.randomInt(chars.length)]
   }
   return result
 }

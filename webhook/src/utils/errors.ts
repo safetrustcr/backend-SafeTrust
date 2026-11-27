@@ -12,19 +12,27 @@ export interface AppErrorOptions {
   code?: string
   /** Override whether `message` is safe to return. Ignored for 5xx. */
   expose?: boolean
+  /** Optional response headers to set when formatted. */
+  headers?: Record<string, string>
+  /** Optional client-facing fields merged onto 4xx error bodies. Ignored for 5xx. */
+  details?: Record<string, unknown>
 }
 
 export class AppError extends Error {
   readonly statusCode: number
   readonly code: string
   readonly expose: boolean
+  readonly headers?: Record<string, string>
+  readonly details?: Record<string, unknown>
 
-  constructor(message: string, statusCode = 500, { code, expose }: AppErrorOptions = {}) {
+  constructor(message: string, statusCode = 500, { code, expose, headers, details }: AppErrorOptions = {}) {
     super(message)
     this.name = new.target.name
     this.statusCode = statusCode
     this.code = code ?? defaultCode(statusCode)
     this.expose = statusCode < 500 && (expose ?? true)
+    this.headers = headers
+    this.details = this.expose ? details : undefined
   }
 }
 
@@ -66,6 +74,15 @@ export class PaymentRequiredError extends AppError {
   }
 }
 
+/** The client has sent too many requests in a given amount of time. */
+export class TooManyRequestsError extends AppError {
+  constructor(message = 'Too many requests', options: AppErrorOptions = {}) {
+    super(message, 429, { code: 'too_many_requests', ...options })
+  }
+}
+
+export const RateLimitError = TooManyRequestsError
+
 /** A dependency is unavailable. The client sees only the generic message. */
 export class ServiceUnavailableError extends AppError {
   constructor(message = 'Service unavailable', options: AppErrorOptions = {}) {
@@ -80,6 +97,7 @@ function defaultCode(statusCode: number): string {
   if (statusCode === 403) return 'forbidden'
   if (statusCode === 404) return 'not_found'
   if (statusCode === 409) return 'conflict'
+  if (statusCode === 429) return 'too_many_requests'
   if (statusCode === 503) return 'service_unavailable'
   return statusCode >= 500 ? 'internal_error' : 'request_error'
 }

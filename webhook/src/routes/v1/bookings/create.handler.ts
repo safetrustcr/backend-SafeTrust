@@ -53,13 +53,13 @@ export async function createBookingHandler(
       // so retrying this booking resumes its own reservation instead of
       // failing on the dates that reservation itself holds.
       resolveBookingFeeBinding: async () => {
-        if (!x402 || holdId) return null
+        if (!x402?.paymentHeader || holdId) return null
         const settled = await findSettledBookingFee(x402.paymentHeader, x402.amountUsdc)
         return settled?.reservationId ?? null
       },
       // Settlement is durably recorded, so retries reuse the confirmed receipt.
       chargeBookingFee: async () => {
-        if (!x402) {
+        if (!x402?.paymentHeader) {
           throw new PaymentRequiredError('x402 payment is required to create a booking')
         }
         const receipt = await settleBookingFee({
@@ -79,7 +79,7 @@ export async function createBookingHandler(
       // A direct (hold-less) proof may authorize only one reservation: record
       // the one it paid for so a replay returns it instead of charging again.
       bindBookingFeeReservation: async (reservationId: string) => {
-        if (!x402) return
+        if (!x402?.paymentHeader) return
         await bindSettlementToReservation(
           settlementIdempotencyKey(x402.paymentHeader, x402.amountUsdc),
           reservationId

@@ -94,10 +94,11 @@ export async function createHoldHandler(
     // request created earlier, whose activation did not complete. Resume it
     // instead of creating a second hold, which settlement would reject as
     // settlement_hold_mismatch.
-    if (req.x402) {
+    const payment = req.x402
+    if (payment?.paymentHeader) {
       const settledHold = await findSettledHoldFee(
-        req.x402.paymentHeader,
-        req.x402.amountUsdc
+        payment.paymentHeader,
+        payment.amountUsdc
       )
       if (settledHold) {
         const existing = await findHoldById(settledHold.holdId, ctx.tenantId)
@@ -154,17 +155,17 @@ export async function createHoldHandler(
     // requireX402Payment only verifies the payment authorization; funds move
     // only when settlement is confirmed. Charge the hold fee before the hold
     // becomes live, and never leave a live hold behind an unpaid request.
-    if (!req.x402) {
+    if (!payment?.paymentHeader) {
       await releasePendingHold(hold.id)
       throw new ValidationError('x402 payment missing')
     }
 
     try {
       await settleBookingFee({
-        paymentHeader: req.x402.paymentHeader,
-        amountUsdc: req.x402.amountUsdc,
-        payer: req.x402.payer,
-        network: req.x402.network,
+        paymentHeader: payment.paymentHeader,
+        amountUsdc: payment.amountUsdc,
+        payer: payment.payer,
+        network: payment.network,
         purpose: 'hold_fee',
         holdId: hold.id,
       })

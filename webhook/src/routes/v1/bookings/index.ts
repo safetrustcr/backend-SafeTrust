@@ -9,7 +9,7 @@ import { requireRole } from '../../../middleware/require-role'
 export const HOLD_PRICE_USDC = 0.01
 
 /** Booking fee in USDC, charged through x402 to SafeTrust fee account. */
-export const BOOKING_FEE_USDC = 0.10
+export const BOOKING_FEE_USDC = 0.1
 
 const router: Router = Router()
 

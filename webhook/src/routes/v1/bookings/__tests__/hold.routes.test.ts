@@ -21,7 +21,7 @@ jest.mock('../../../../services/x402-settlement.service', () => ({
 
 import bookingsRouter from '../index'
 import { errorHandler } from '../../../../middleware/error-handler'
-import { setX402Addon } from '../../../../middleware/x402-payment.middleware'
+import { setX402Engine } from '../../../../middleware/x402-payment.middleware'
 
 const APT = '11111111-1111-4111-8111-111111111111'
 const body = { property_id: APT, check_in: '2026-12-15', check_out: '2026-12-20', guests: 4 }
@@ -43,7 +43,7 @@ describe('v1 booking holds routes', () => {
     jest.clearAllMocks()
     process.env.X402_ENABLED = 'true'
     process.env.SAFETRUST_PLATFORM_WALLET = 'GWALLET'
-    setX402Addon({
+    setX402Engine({
       validateX402Payment: () => JSON.stringify({ is_valid: true, payer_address: 'GPAYER', amount_usdc: 0.01, network: 'stellar:testnet' }),
       buildPaymentRequirement: (amount: number) => JSON.stringify({ maxAmountRequired: amount }),
     })
