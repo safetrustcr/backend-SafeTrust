@@ -1,66 +1,106 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
+import { paymentMiddleware } from '@x402/express'
 import { initializeEscrowHandler } from './initialize.handler'
-import verifyTrustlessWorkSignature from '../../middleware/trustlesswork-signature.middleware'
+import {
+  consumeVerifiedPayer,
+  getX402Config,
+  getActiveX402ResourceServer,
+} from '../../config/x402'
 
 const router = Router()
 
-type X402Middleware = (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => void
+let cachedPaymentMiddleware: RequestHandler | null = null
 
 /**
- * Load x402 only when the quarantine flag is on.
- *
- * A static import would require `x402-processor` (and its native addon) on
- * every boot, even with the default `X402_ENABLED=false`. Keeping it lazy means
- * the eligibility path has no runtime dependency on the quarantined crate at
- * all unless an operator explicitly enables it.
+ * Builds the @x402/express payment middleware for /api/escrows/initialize.
  */
-function getX402Middleware(): X402Middleware {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { requireX402Payment } = require('../../middleware/x402-payment.middleware') as {
-    requireX402Payment: (amountUsdc: number) => X402Middleware
-  }
-  return requireX402Payment(0.10)
+export function buildPaymentMiddleware(): RequestHandler {
+  const config = getX402Config()
+  const server = getActiveX402ResourceServer()
+
+  return paymentMiddleware(
+    {
+      'POST /api/escrows/initialize': {
+        accepts: [
+          {
+            scheme: 'exact',
+            price: config.price,
+            network: config.network,
+            payTo: config.payTo,
+          },
+        ],
+        description: 'SafeTrust escrow initialization fee',
+        mimeType: 'application/json',
+        unpaidResponseBody: () => ({
+          contentType: 'application/json',
+          body: {
+            error: 'Payment Required',
+            x402Version: 2,
+            accepts: [
+              {
+                scheme: 'exact',
+                network: config.network,
+                asset: {
+                  code: 'USDC',
+                  contract:
+                    config.network === 'stellar:pubnet'
+                      ? 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'
+                      : 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+                },
+                facilitator_url: config.facilitatorUrl,
+                pay_to: config.payTo,
+              },
+            ],
+          },
+        }),
+      },
+    },
+    server,
+    undefined,
+    undefined,
+    false
+  ) as unknown as RequestHandler
 }
 
 /**
- * Escrow initialization is the eligibility boundary: a request that reaches
- * `initializeEscrowHandler` may create booking/escrow state.
- *
- * x402 is quarantined from that boundary. It is only evaluated when
- * `X402_ENABLED=true`; with the default `false`, every request — including one
- * carrying an `X-Payment` header — must pass the TrustlessWork HMAC check.
- * This prevents an unresolved x402 finding (F2/F3/F8) from granting booking
- * eligibility while the processor is under review.
+ * Test seam to get or override the payment middleware instance.
  */
+export function getPaymentMiddleware(): RequestHandler {
+  if (cachedPaymentMiddleware) {
+    return cachedPaymentMiddleware
+  }
+  cachedPaymentMiddleware = buildPaymentMiddleware()
+  return cachedPaymentMiddleware
+}
+
+export function setPaymentMiddleware(mw: RequestHandler | null): void {
+  cachedPaymentMiddleware = mw
+}
+
 router.post(
   '/api/escrows/initialize',
   (req: Request, res: Response, next: NextFunction) => {
-    if (process.env.X402_ENABLED === 'true') {
-      const x402Middleware = getX402Middleware()
-
-      // 1. An explicit x402 protocol header always selects the x402 path.
-      if (
-        req.headers['x-payment'] !== undefined ||
-        req.headers['x-payment-protocol'] !== undefined ||
-        req.headers['x-payment-required'] !== undefined
-      ) {
-        return x402Middleware(req, res, next)
-      }
-
-      // 2. When x402 is enabled, a request without a TrustlessWork signature
-      //    must pay. A signed callback is the non-x402 path.
-      if (!req.headers['x-trustlesswork-signature']) {
-        return x402Middleware(req, res, next)
-      }
+    if (process.env.X402_ENABLED !== 'true') {
+      res.status(503).json({
+        error: 'Feature Unavailable',
+        feature: 'x402',
+        message: 'x402 payments are disabled',
+      })
+      return
     }
 
-    // 3. Default path: TrustlessWork HMAC-verified callback. This is the only
-    //    path that can reach the handler while x402 is disabled.
-    return (verifyTrustlessWorkSignature as RequestHandler)(req, res, next)
+    // The paid path trusts only PAYMENT-SIGNATURE (x402 v2).
+    // Discard legacy x-payment so it cannot satisfy the payment gate.
+    delete req.headers['x-payment']
+
+    res.on('finish', () => {
+      const sig = req.headers['payment-signature']
+      if (typeof sig === 'string') {
+        consumeVerifiedPayer(sig)
+      }
+    })
+
+    return getPaymentMiddleware()(req, res, next)
   },
   initializeEscrowHandler
 )
@@ -68,3 +108,6 @@ router.post(
 export default router
 module.exports = router
 module.exports.default = router
+module.exports.buildPaymentMiddleware = buildPaymentMiddleware
+module.exports.getPaymentMiddleware = getPaymentMiddleware
+module.exports.setPaymentMiddleware = setPaymentMiddleware

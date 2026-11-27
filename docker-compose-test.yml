@@ -64,6 +64,8 @@ services:
       # data) into the log on every request.
       HASURA_GRAPHQL_ENABLED_LOG_TYPES: ${TEST_HASURA_GRAPHQL_ENABLED_LOG_TYPES:-startup, http-log, webhook-log}
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
     depends_on:
       postgres_test:
         condition: service_healthy
@@ -94,6 +96,9 @@ services:
     environment:
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine-test:8080
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
+      PG_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
+      HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       CONSOLE_PORT: 9696
     working_dir: /app
     ports:
@@ -127,6 +132,9 @@ services:
       - NODE_ENV=test
       - PORT=3001
       - HASURA_GRAPHQL_ADMIN_SECRET=${TEST_ADMIN_SECRET:-myadminsecretkey}
+      - WEBHOOK_PORT=3001
+      - HASURA_ADMIN_SECRET=${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      - HASURA_GRAPHQL_ADMIN_SECRET=${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       - HASURA_GRAPHQL_ENDPOINT=http://graphql-engine-test:8080/v1/graphql
       - POSTGRES_HOST=postgres_test
       - POSTGRES_PORT=5432
@@ -135,16 +143,17 @@ services:
       - POSTGRES_USER=webhook
       - POSTGRES_PASSWORD=${TEST_WEBHOOK_DB_PASSWORD:-webhook-test-password}
       - USE_MOCK_DATA=true
-      - TRUSTLESSWORK_WEBHOOK_SECRET=${TEST_WEBHOOK_SECRET:-dev-secret}
-      # The x402 Karate suite exercises the enabled payment gate. Settlement is
-      # still disabled so tests never call a facilitator /settle endpoint.
+      # The x402 Karate suite exercises the enabled payment gate.
       - X402_ENABLED=true
-      - X402_SETTLE_ENABLED=false
+      - SAFETRUST_PLATFORM_WALLET=${TEST_PLATFORM_WALLET:-GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57}
+      - X402_FACILITATOR_URL=${X402_FACILITATOR_URL:-https://x402.org/facilitator}
+      - STELLAR_NETWORK=testnet
     depends_on:
       postgres_test:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3001) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health/live"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -198,9 +207,9 @@ services:
     environment:
       baseUrl: http://graphql-engine-test:8080/v1/graphql
       webhookUrl: http://webhook:3001
-      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
+      HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       JWT_SECRET: ${TEST_JWT_SECRET:-testsecret}
-      TRUSTLESSWORK_WEBHOOK_SECRET: ${TEST_WEBHOOK_SECRET:-dev-secret}
     command: >
       java -cp /app/tests/karate.jar:/app/tests/postgresql-jdbc.jar:/app/tests/karate/src/test/resources
       com.intuit.karate.Main
@@ -246,6 +255,8 @@ services:
       PGUSER: postgres
       PGDATABASE: postgres
       PGPASSWORD: ${TEST_POSTGRES_PASSWORD:-postgrespassword}
+      HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
     working_dir: /app
     command: ["bash", "bin/prepare-test-db"]
     depends_on:
@@ -259,6 +270,7 @@ services:
     cpus: 1.0
     pids_limit: 256
     logging: *default-logging
+        condition: service_healthy
     networks:
       - test-network
 

@@ -23,12 +23,13 @@ Scenario: Endpoint returns 402 with invalid X-Payment header
   And request { contractId: 'test-123' }
   When method POST
   Then status 402
-  And match response.error == 'Invalid x402 payment'
-  And match response.invalid_reason == '#notnull'
+  And match response.error == 'Payment Required'
+  And match response.x402Version == 2
+  And match response.accepts[0].scheme == 'exact'
 
 Scenario: Endpoint accepts valid X-Payment header (mock facilitator)
   # Note: full integration test requires a live testnet wallet
   # This scenario uses the mock facilitator in test environment
-  Given path '/health'
+  Given path '/health/live'
   When method GET
   Then status 200

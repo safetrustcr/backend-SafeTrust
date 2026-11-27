@@ -24,6 +24,10 @@ set_migration_ddl() {
     -c "${action} CREATE ON SCHEMA safetrust, hotel_industry, public TO hasura"
 }
 
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+ENDPOINT="${HASURA_GRAPHQL_ENDPOINT:-http://graphql-engine-test:8080}"
+ADMIN_SECRET="${HASURA_ADMIN_SECRET:-${HASURA_GRAPHQL_ADMIN_SECRET:?Hasura admin secret is required}}"
 for ((attempt=0; ; attempt++)); do
   if curl -fsS --connect-timeout 5 --max-time 5 "$ENDPOINT/healthz" >/dev/null; then
     break
@@ -52,3 +56,22 @@ set_migration_ddl REVOKE
 trap - EXIT
 
 metadata/setup-tenant.sh safetrust hotel_industry --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
+  echo "[migrate-test] Migrating tenant: $tenant"
+  hasura migrate apply --database-name "$tenant" --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
+done
+metadata/setup-tenant.sh safetrust hotel_industry --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
+
+echo "[migrate-test] Tracking get_webhook_health_summary..."
+curl -sS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"pg_track_function","args":{"source":"safetrust","function":{"schema":"safetrust","name":"get_webhook_health_summary"},"configuration":{"custom_name":"get_webhook_health_summary","exposed_as":"query","session_argument":"hasura_session"}}}' \
+  >&2 || true
+
+echo "[migrate-test] Reloading Hasura metadata cache..."
+curl -fsS -X POST "$ENDPOINT/v1/metadata" \
+  -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"reload_metadata","args":{}}' >/dev/null
+
+echo "[migrate-test] Test database preparation complete!"

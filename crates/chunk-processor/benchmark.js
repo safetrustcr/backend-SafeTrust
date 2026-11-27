@@ -22,7 +22,7 @@ const node_child_process_1 = require("node:child_process");
  * timers from the measured loop.
  *
  * Run:  node crates/chunk-processor/benchmark.js
- * (Requires `cargo build --release -p chunk-processor && node copy-native.js`.)
+ * (Requires `cargo build --release -p chunk-processor && node ../scripts/copy-native.js --crate=chunk-processor`.)
  */
 const http = require("node:http");
 // ── Tunables (env-overridable) ────────────────────────────────────────────────

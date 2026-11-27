@@ -5,7 +5,8 @@ set -eo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${BUILD_DIR:-$SCRIPT_DIR/build}"
 HASURA_ENDPOINT="http://localhost:8080"
-HASURA_ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}"
+# Required at runtime — never hardcode a secret in this script.
+HASURA_ADMIN_SECRET="${HASURA_ADMIN_SECRET:-}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # create_metadata_source
@@ -142,45 +143,157 @@ process_metadata_tables() {
     fi
 
     # One yq pass over all table YAML, then a single jq pass to shape the args.
-    local tables_json
-    tables_json=$(yq -o json e '.' "${table_files[@]}" 2>/dev/null \
+    local all_desired_tables
+    all_desired_tables=$(yq -o json e '.' "${table_files[@]}" 2>/dev/null \
         | jq -s 'map(select(type == "object" and ((.table.name? // "") != ""))) | map({ table: { name: .table.name, schema: (.table.schema // "public") }, configuration: (.configuration // {}) })') || {
         echo "❌ Failed to read table metadata for $tenant_name" >&2
         return 1
     }
 
-    # Skip objects already tracked so deployment can safely resume.
+    # Fetch current metadata to find missing tables and reconcile existing configurations.
     local existing_metadata
     existing_metadata=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
         -H "X-Hasura-Admin-Secret: ${admin_secret}" \
         -H "Content-Type: application/json" \
         -d '{"type":"export_metadata","args":{}}') || return 1
+    local tables_json
     tables_json=$(jq -cn --arg source "$tenant_name" \
-        --argjson metadata "$existing_metadata" --argjson desired "$tables_json" \
+        --argjson metadata "$existing_metadata" --argjson desired "$all_desired_tables" \
         '[$metadata | (.metadata // .).sources[] | select(.name == $source) | .tables[]?.table] as $tracked | $desired | map(select(.table as $object | $tracked | index($object) | not))') || return 1
 
-    if [ -z "$tables_json" ] || [ "$tables_json" = "[]" ] || [ "$tables_json" = "null" ]; then
-        echo "⚠️  No trackable tables found for $tenant_name"
-        return 0
+    if [ -n "$tables_json" ] && [ "$tables_json" != "[]" ] && [ "$tables_json" != "null" ]; then
+        local track_payload
+        track_payload=$(jq -cn --arg source "$tenant_name" --argjson tables "$tables_json" \
+            '{type:"pg_track_tables", args:{source:$source, tables:($tables | map(. + {source:$source}))}}')
+
+        echo "🔎 Bulk-tracking tables for $tenant_name..."
+        local track_response
+        track_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d "$track_payload")
+
+        if echo "$track_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+            echo "❌ Error tracking tables for $tenant_name: $track_response"
+            return 1
+        fi
+        echo "✅ Successfully tracked tables for $tenant_name"
+    else
+        echo "ℹ️  All tables already tracked for $tenant_name"
     fi
 
-    local track_payload
-    track_payload=$(jq -cn --arg source "$tenant_name" --argjson tables "$tables_json" \
-        '{type:"pg_track_tables", args:{source:$source, tables:($tables | map(. + {source:$source}))}}')
+    # Reconcile configuration for already-tracked tables whose configuration differs from YAML
+    local table_customizations
+    table_customizations=$(jq -cn --arg source "$tenant_name" \
+        --argjson metadata "$existing_metadata" --argjson desired "$all_desired_tables" \
+        'def norm: if . == null then {} else . as $cfg | ((($cfg.column_config // {}) | to_entries | map(select(.value.custom_name? != null) | {key: .key, value: .value.custom_name}) | from_entries) as $derived | ($cfg + {custom_column_names: ((($cfg.custom_column_names // {}) + $derived)), column_config: {}}) | with_entries(select(((.key == "custom_root_fields" or .key == "column_config" or .key == "custom_column_names") and ((.value == null) or (.value == {}) or (.value == []))) | not))) end;
+         [$metadata | (.metadata // .).sources[]? | select(.name == $source) | .tables[]?] as $tracked |
+         $desired | map(. as $d | ($tracked | map(select(.table == $d.table)) | .[0]) as $current |
+         select($current != null and (($current.configuration | norm) != ($d.configuration | norm))) |
+         {type: "pg_set_table_customization", args: {source: $source, table: .table, configuration: .configuration}})') || return 1
 
-    echo "🔎 Bulk-tracking tables for $tenant_name..."
-    local track_response
-    track_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
-        -H "X-Hasura-Admin-Secret: ${admin_secret}" \
-        -H "Content-Type: application/json" \
-        -d "$track_payload")
+    if [ -n "$table_customizations" ] && [ "$table_customizations" != "[]" ] && [ "$table_customizations" != "null" ]; then
+        echo "🔎 Reconciling table configurations for $tenant_name..."
+        local table_customizations_payload
+        table_customizations_payload=$(jq -cn --argjson actions "$table_customizations" '{type:"bulk", args:$actions}')
+        local table_customizations_response
+        table_customizations_response=$(curl -sS --fail-with-body -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d "$table_customizations_payload") || {
+            echo "❌ Error reconciling table configurations for $tenant_name: $table_customizations_response" >&2
+            return 1
+        }
 
-    if echo "$track_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
-        echo "❌ Error tracking tables for $tenant_name: $track_response"
-        return 1
+        if echo "$table_customizations_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+            echo "❌ Error reconciling table configurations for $tenant_name: $table_customizations_response" >&2
+            return 1
+        fi
+        echo "✅ Successfully reconciled table configurations for $tenant_name"
     fi
 
-    echo "✅ Successfully tracked tables for $tenant_name"
+    local raw_tables_json
+    raw_tables_json=$(yq -o json e '.' "${table_files[@]}" 2>/dev/null \
+        | jq -s 'map(if type == "array" then .[] else . end) | map(select(type == "object" and ((.table.name? // "") != "")))') || true
+
+    # Create relationships before permissions: select filters such as
+    # `conversation: {guest_id: ...}` are rejected until the relationship exists.
+    local desired_rels
+    desired_rels=$(echo "$raw_tables_json" | jq --arg source "$tenant_name" \
+        '[.[] | . as $tbl | { name: $tbl.table.name, schema: ($tbl.table.schema // "public") } as $t
+          | ((.object_relationships // [])[] | {kind: "object", args: { source: $source, table: $t, name: .name, using: .using }}),
+            ((.array_relationships // [])[] | {kind: "array", args: { source: $source, table: $t, name: .name, using: .using }})]' 2>/dev/null || echo "[]")
+
+    if [ -n "$desired_rels" ] && [ "$desired_rels" != "[]" ] && [ "$desired_rels" != "null" ]; then
+        local rel_meta
+        rel_meta=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d '{"type":"export_metadata","args":{}}') || return 1
+
+        local rels_to_create
+        rels_to_create=$(jq -cn --arg source "$tenant_name" \
+            --argjson metadata "$rel_meta" --argjson desired "$desired_rels" \
+            '[$metadata | (.metadata // .).sources[]? | select(.name == $source) | .tables[]? | .table as $t | ((.object_relationships // []) + (.array_relationships // []))[]? | {table: $t, name: .name}] as $tracked | $desired | map(select(. as $d | $tracked | any(.table == $d.args.table and .name == $d.args.name) | not))') || return 1
+
+        if [ -n "$rels_to_create" ] && [ "$rels_to_create" != "[]" ]; then
+            echo "🔎 Creating table relationships for $tenant_name..."
+            local rels_payload rels_response
+            rels_payload=$(jq -cn --argjson rels "$rels_to_create" \
+                '{type:"bulk", args:($rels | map({type:("pg_create_" + .kind + "_relationship"), args:.args}))}')
+            rels_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+                -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+                -H "Content-Type: application/json" \
+                -d "$rels_payload") || return 1
+            if echo "$rels_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+                echo "❌ Error creating table relationships for $tenant_name: $rels_response" >&2
+                return 1
+            fi
+            echo "✅ Table relationships created for $tenant_name"
+        fi
+    fi
+
+    # Track table select permissions. `admin` is Hasura's built-in full-access
+    # role: declaring a permission for it is rejected ("already defined"), and
+    # because the request is a bulk, that one rejection would drop every
+    # permission. YAML may still list admin to document intent; skip it here.
+
+    local desired_table_perms
+    desired_table_perms=$(echo "$raw_tables_json" | jq --arg source "$tenant_name" \
+        '[.[] | select(.select_permissions != null and (.select_permissions | length) > 0) | . as $tbl | .select_permissions[] | select(.role != "admin") | { source: $source, table: { name: $tbl.table.name, schema: ($tbl.table.schema // "public") }, role: .role, permission: .permission }]' 2>/dev/null || echo "[]")
+
+    if [ -n "$desired_table_perms" ] && [ "$desired_table_perms" != "[]" ] && [ "$desired_table_perms" != "null" ]; then
+        local current_meta
+        current_meta=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d '{"type":"export_metadata","args":{}}') || current_meta="{}"
+
+        local table_perms_to_create
+        table_perms_to_create=$(jq -cn --arg source "$tenant_name" \
+            --argjson metadata "$current_meta" --argjson desired "$desired_table_perms" \
+            '[$metadata | (.metadata // .).sources[]? | select(.name == $source) | .tables[]? | .table as $t | (.select_permissions // [])[]? | {table: $t, role: .role}] as $tracked | $desired | map(select(. as $d | $tracked | any(.table == $d.table and .role == $d.role) | not))' 2>/dev/null || echo "[]")
+
+        if [ -n "$table_perms_to_create" ] && [ "$table_perms_to_create" != "[]" ] && [ "$table_perms_to_create" != "null" ]; then
+            echo "🔎 Creating table select permissions for $tenant_name..."
+            local table_perms_payload
+            table_perms_payload=$(jq -cn --argjson perms "$table_perms_to_create" \
+                '{type:"bulk", args:($perms | map({type:"pg_create_select_permission", args:.}))}')
+            # A bulk request is atomic: one invalid permission rejects them all,
+            # so an error here means no select permission was created.
+            local table_perms_response
+            table_perms_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+                -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+                -H "Content-Type: application/json" \
+                -d "$table_perms_payload") || return 1
+            if echo "$table_perms_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+                echo "❌ Error creating table select permissions for $tenant_name: $table_perms_response" >&2
+                return 1
+            fi
+            echo "✅ Table select permissions updated for $tenant_name"
+        fi
+    fi
+
     return 0
 }
 
@@ -215,45 +328,113 @@ process_metadata_functions() {
         return 0
     fi
 
-    local functions_json
-    functions_json=$(yq -o json e '.' "${function_files[@]}" 2>/dev/null \
-        | jq -s 'map(if type == "array" then .[] else . end) | map(select(type == "object")) | map({ function: (.function // {name: .name, schema: (.schema // "public")}), configuration: ((.configuration // {}) + { exposed_as: (.configuration.exposed_as // "query") }) }) | map(select((.function.name? // "") != ""))') || {
+    local raw_functions_json
+    raw_functions_json=$(yq -o json e '.' "${function_files[@]}" 2>/dev/null \
+        | jq -s 'map(if type == "array" then .[] else . end) | map(select(type == "object")) | map({ function: (.function // {name: .name, schema: (.schema // "public")}), configuration: ((.configuration // {}) + { exposed_as: (.configuration.exposed_as // "query") }), permissions: (.permissions // []) }) | map(select((.function.name? // "") != ""))') || {
         echo "❌ Failed to read function metadata for $tenant_name" >&2
         return 1
     }
 
-    # Skip objects already tracked so deployment can safely resume.
+    local all_desired_functions
+    all_desired_functions=$(echo "$raw_functions_json" | jq 'map({ function: .function, configuration: .configuration })')
+
+    # Fetch current metadata to find missing functions and reconcile existing configurations.
     local existing_metadata
     existing_metadata=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
         -H "X-Hasura-Admin-Secret: ${admin_secret}" \
         -H "Content-Type: application/json" \
         -d '{"type":"export_metadata","args":{}}') || return 1
+    local functions_json
     functions_json=$(jq -cn --arg source "$tenant_name" \
-        --argjson metadata "$existing_metadata" --argjson desired "$functions_json" \
+        --argjson metadata "$existing_metadata" --argjson desired "$all_desired_functions" \
         '[$metadata | (.metadata // .).sources[] | select(.name == $source) | .functions[]?.function] as $tracked | $desired | map(select(.function as $object | $tracked | index($object) | not))') || return 1
 
-    if [ -z "$functions_json" ] || [ "$functions_json" = "[]" ] || [ "$functions_json" = "null" ]; then
-        echo "⚠️  No trackable functions found for $tenant_name"
-        return 0
+    if [ -n "$functions_json" ] && [ "$functions_json" != "[]" ] && [ "$functions_json" != "null" ]; then
+        local track_payload
+        track_payload=$(jq -cn --arg source "$tenant_name" --argjson functions "$functions_json" \
+            '{type:"bulk", args:($functions | map({type:"pg_track_function", args:(. + {source:$source})}))}')
+
+        echo "🔎 Bulk-tracking functions for $tenant_name..."
+        local track_response
+        track_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d "$track_payload")
+
+        if echo "$track_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+            echo "❌ Error tracking functions for $tenant_name: $track_response"
+            return 1
+        fi
+        echo "✅ Successfully tracked functions for $tenant_name"
+    else
+        echo "ℹ️  All functions already tracked for $tenant_name"
     fi
 
-    local track_payload
-    track_payload=$(jq -cn --arg source "$tenant_name" --argjson functions "$functions_json" \
-        '{type:"bulk", args:($functions | map({type:"pg_track_function", args:(. + {source:$source})}))}')
+    # Reconcile configuration for already-tracked functions whose configuration differs from YAML
+    local function_customizations
+    function_customizations=$(jq -cn --arg source "$tenant_name" \
+        --argjson metadata "$existing_metadata" --argjson desired "$all_desired_functions" \
+        'def norm: if . == null then {} else with_entries(select(((.key == "custom_root_fields" or .key == "column_config" or .key == "custom_column_names") and ((.value == null) or (.value == {}) or (.value == []))) | not)) end;
+         [$metadata | (.metadata // .).sources[]? | select(.name == $source) | .functions[]?] as $tracked |
+         $desired | map(. as $d | ($tracked | map(select(.function == $d.function)) | .[0]) as $current |
+         select($current != null and (($current.configuration | norm) != ($d.configuration | norm))) |
+         {type: "pg_set_function_customization", args: {source: $source, function: .function, configuration: .configuration}})') || return 1
 
-    echo "🔎 Bulk-tracking functions for $tenant_name..."
-    local track_response
-    track_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+    if [ -n "$function_customizations" ] && [ "$function_customizations" != "[]" ] && [ "$function_customizations" != "null" ]; then
+        echo "🔎 Reconciling function configurations for $tenant_name..."
+        local fn_customizations_payload
+        fn_customizations_payload=$(jq -cn --argjson actions "$function_customizations" '{type:"bulk", args:$actions}')
+        local fn_customizations_response
+        fn_customizations_response=$(curl -sS --fail-with-body -X POST "${hasura_endpoint}/v1/metadata" \
+            -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d "$fn_customizations_payload") || {
+            echo "❌ Error reconciling function configurations for $tenant_name: $fn_customizations_response" >&2
+            return 1
+        }
+
+        if echo "$fn_customizations_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+            echo "❌ Error reconciling function configurations for $tenant_name: $fn_customizations_response" >&2
+            return 1
+        fi
+        echo "✅ Successfully reconciled function configurations for $tenant_name"
+    fi
+
+    # Re-fetch metadata so the permissions idempotency diff uses the post-tracking state.
+    # (existing_metadata was fetched before pg_track_function calls, so it may be stale.)
+    existing_metadata=$(curl -fsS -X POST "${hasura_endpoint}/v1/metadata" \
         -H "X-Hasura-Admin-Secret: ${admin_secret}" \
         -H "Content-Type: application/json" \
-        -d "$track_payload")
+        -d '{"type":"export_metadata","args":{}}') || return 1
 
-    if echo "$track_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
-        echo "❌ Error tracking functions for $tenant_name: $track_response"
-        return 1
+    # Track function permissions
+    local desired_perms
+    desired_perms=$(echo "$raw_functions_json" | jq --arg source "$tenant_name" \
+        '[.[] | select(.permissions != null and (.permissions | length) > 0) | . as $fn | .permissions[] | { source: $source, function: $fn.function, role: .role }]')
+
+    if [ -n "$desired_perms" ] && [ "$desired_perms" != "[]" ] && [ "$desired_perms" != "null" ]; then
+        local perms_to_create
+        perms_to_create=$(jq -cn --arg source "$tenant_name" \
+            --argjson metadata "$existing_metadata" --argjson desired "$desired_perms" \
+            '[$metadata | (.metadata // .).sources[] | select(.name == $source) | .functions[]? | .function as $f | (.permissions // [])[]? | {function: $f, role: .role}] as $tracked | $desired | map(select(. as $d | $tracked | any(.function == $d.function and .role == $d.role) | not))')
+
+        if [ -n "$perms_to_create" ] && [ "$perms_to_create" != "[]" ] && [ "$perms_to_create" != "null" ]; then
+            echo "🔎 Creating function permissions for $tenant_name..."
+            local perm_payload
+            perm_payload=$(jq -cn --argjson perms "$perms_to_create" \
+                '{type:"bulk", args:($perms | map({type:"pg_create_function_permission", args:.}))}')
+            local perm_response
+            perm_response=$(curl -sS -X POST "${hasura_endpoint}/v1/metadata" \
+                -H "X-Hasura-Admin-Secret: ${admin_secret}" \
+                -H "Content-Type: application/json" \
+                -d "$perm_payload") || return 1
+            if echo "$perm_response" | jq -e 'type == "object" and has("error")' >/dev/null 2>&1; then
+                echo "❌ Error creating function permissions for $tenant_name: $perm_response" >&2
+                return 1
+            fi
+            echo "✅ Function permissions updated for $tenant_name"
+        fi
     fi
-
-    echo "✅ Successfully tracked functions for $tenant_name"
     return 0
 }
 
@@ -312,6 +493,11 @@ main() {
 
     if [ ${#tenants[@]} -eq 0 ]; then
         echo "Usage: ./deploy-tenant.sh tenant1 tenant2 ... [--admin-secret SECRET] [--endpoint URL]"
+        exit 1
+    fi
+
+    if [ -z "$HASURA_ADMIN_SECRET" ]; then
+        echo "❌ Error: HASURA_ADMIN_SECRET is required. Export it in the environment or pass --admin-secret." >&2
         exit 1
     fi
 

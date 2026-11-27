@@ -1,0 +1,73 @@
+table:
+  name: escrow_claims
+  schema: safetrust
+configuration:
+  custom_name: safetrust_escrow_claims
+  column_config:
+    escrow_id:
+      custom_name: escrowId
+    reservation_id:
+      custom_name: reservationId
+    author_id:
+      custom_name: authorId
+    client_op_id:
+      custom_name: clientOpId
+    created_at:
+      custom_name: createdAt
+    updated_at:
+      custom_name: updatedAt
+object_relationships:
+  - name: escrow
+    using:
+      foreign_key_constraint_on: escrow_id
+  - name: reservation
+    using:
+      foreign_key_constraint_on: reservation_id
+  - name: author
+    using:
+      foreign_key_constraint_on: author_id
+select_permissions:
+  - role: guest
+    permission:
+      columns:
+        - id
+        - escrow_id
+        - reservation_id
+        - author_id
+        - body
+        - status
+        - created_at
+        - updated_at
+      filter:
+        _or:
+          - author_id:
+              _eq: X-Hasura-User-Id
+          - reservation:
+              guest_id:
+                _eq: X-Hasura-User-Id
+          - reservation:
+              apartment:
+                owner_id:
+                  _eq: X-Hasura-User-Id
+  - role: host
+    permission:
+      columns:
+        - id
+        - escrow_id
+        - reservation_id
+        - author_id
+        - body
+        - status
+        - created_at
+        - updated_at
+      filter:
+        _or:
+          - author_id:
+              _eq: X-Hasura-User-Id
+          - reservation:
+              guest_id:
+                _eq: X-Hasura-User-Id
+          - reservation:
+              apartment:
+                owner_id:
+                  _eq: X-Hasura-User-Id

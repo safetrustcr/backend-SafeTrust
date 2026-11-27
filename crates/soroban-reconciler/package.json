@@ -5,7 +5,8 @@
   "main": "native/index.node",
   "scripts": {
     "build": "neon build --release",
-    "build:debug": "neon build"
+    "build:debug": "neon build",
+    "postbuild": "node ../scripts/copy-native.js --crate=soroban-reconciler"
   },
   "devDependencies": {
     "neon-cli": "^0.10.1"

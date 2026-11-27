@@ -1,9 +1,9 @@
 import { RequestHandler, Router } from 'express'
-import { authMiddleware } from '../../middleware/auth.middleware'
 import { meHandler } from './me.handler'
 
-const router = Router()
+const router: Router = Router()
 
-router.get('/me', authMiddleware, meHandler as RequestHandler)
+// Authenticated upstream at the /api boundary
+router.get('/me', meHandler as RequestHandler)
 
 export default router

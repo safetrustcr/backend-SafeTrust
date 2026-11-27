@@ -72,7 +72,7 @@ OpenSSL is required (clean build on Alpine/musl).
 ```bash
 # From the repo root — chunk-processor is a workspace member:
 cargo build --release -p chunk-processor
-node crates/chunk-processor/copy-native.js   # → crates/chunk-processor/index.node
+node crates/scripts/copy-native.js --crate=chunk-processor   # → crates/chunk-processor/index.node
 
 # Or as part of the webhook build (builds both addons + TypeScript):
 cd webhook && npm run build

@@ -4,3 +4,4 @@
 - "!include get_apartments_in_bounds_function.yaml"
 - "!include get_escrow_analytics_by_day_function.yaml"
 - "!include get_escrow_status_summary_function.yaml"
+- "!include get_webhook_health_summary_function.yaml"

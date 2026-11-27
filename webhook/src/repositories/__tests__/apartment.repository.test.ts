@@ -1,75 +1,35 @@
-import { getApartmentWithOwnerWallet } from '../apartment.repository'
-import { hasuraRequest } from '../../services/hasura'
+import { query } from '../../services/db'
+import { listApartments } from '../apartment.repository'
 
-jest.mock('../../services/hasura', () => ({
-  hasuraRequest: jest.fn(),
-}))
+jest.mock('../../services/db', () => ({ query: jest.fn() }))
 
-const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>
-
-describe('apartment.repository', () => {
+describe('listApartments repository', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(query as jest.Mock)
+      .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'apartment-1' }] })
   })
 
-  describe('getApartmentWithOwnerWallet', () => {
-    it('returns apartment with owner wallet when found (happy path)', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        apartments_by_pk: {
-          id: 'apt-uuid-1',
-          name: 'Seaside Villa',
-          owner_id: 'user-123',
-          owner_wallet: 'GBC123XYZ456',
-        },
-      })
+  it('builds parameterized filters and appends pagination after filter values', async () => {
+    await expect(listApartments({
+      location: 'Beach',
+      minPrice: 500,
+      maxPrice: 1500,
+      bedrooms: 2,
+      petFriendly: true,
+      category: 'luxury',
+      limit: 5,
+      offset: 5,
+      sort: 'price_asc',
+    })).resolves.toEqual({ total: 1, rows: [{ id: 'apartment-1' }] })
 
-      const result = await getApartmentWithOwnerWallet('apt-uuid-1')
-
-      expect(mockedHasuraRequest).toHaveBeenCalledTimes(1)
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(
-        expect.stringContaining('GetApartmentWithOwnerWallet'),
-        { apartmentId: 'apt-uuid-1' }
-      )
-      expect(result).toEqual({
-        id: 'apt-uuid-1',
-        name: 'Seaside Villa',
-        owner_id: 'user-123',
-        ownerWallet: 'GBC123XYZ456',
-      })
-    })
-
-    it('returns null when apartment is not found', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        apartments_by_pk: null,
-      })
-
-      const result = await getApartmentWithOwnerWallet('missing-apt')
-
-      expect(mockedHasuraRequest).toHaveBeenCalledWith(
-        expect.stringContaining('GetApartmentWithOwnerWallet'),
-        { apartmentId: 'missing-apt' }
-      )
-      expect(result).toBeNull()
-    })
-
-    it('handles null owner_wallet correctly', async () => {
-      mockedHasuraRequest.mockResolvedValueOnce({
-        apartments_by_pk: {
-          id: 'apt-uuid-2',
-          name: 'Mountain Cabin',
-          owner_id: 'user-456',
-          owner_wallet: null,
-        },
-      })
-
-      const result = await getApartmentWithOwnerWallet('apt-uuid-2')
-
-      expect(result).toEqual({
-        id: 'apt-uuid-2',
-        name: 'Mountain Cabin',
-        owner_id: 'user-456',
-        ownerWallet: null,
-      })
-    })
+    const [countSql, countParams] = (query as jest.Mock).mock.calls[0]
+    const [listSql, listParams] = (query as jest.Mock).mock.calls[1]
+    expect(countSql).toContain('a.category = $6')
+    expect(countParams).toEqual(['%Beach%', 500, 1500, 2, true, 'luxury'])
+    expect(listSql).toContain('ORDER BY a.price ASC')
+    expect(listSql).toContain('LIMIT $7 OFFSET $8')
+    expect(listParams).toEqual(['%Beach%', 500, 1500, 2, true, 'luxury', 5, 5])
   })
 })

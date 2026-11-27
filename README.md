@@ -73,6 +73,8 @@ POSTGRES_PASSWORD=your_postgres_password
 HASURA_DB_PASSWORD=your_hasura_password
 HASURA_METADATA_DB_PASSWORD=your_metadata_password
 WEBHOOK_DB_PASSWORD=your_webhook_password
+# Required. Generate a strong random value; never commit a real secret.
+HASURA_ADMIN_SECRET=
 
 # Must be valid JSON, key ≥ 32 characters for HS256
 HASURA_GRAPHQL_JWT_SECRET={"type":"HS256","key":"replace-with-min-32-char-secret-here"}
@@ -82,6 +84,20 @@ HASURA_EVENT_SECRET=your_event_secret
 ```
 
 > ⚠️ `HASURA_GRAPHQL_JWT_SECRET` must be valid JSON with a key of at least 32 characters. `start` will fail if this is malformed.
+>
+> ⚠️ `HASURA_ADMIN_SECRET` is required and has no default. `bin/start`, the webhook, and the metadata scripts fail closed when it is missing. In CI and production, inject it from the GitHub Actions secret store or your cloud secret manager instead of `.env`.
+>
+> When running the webhook with `NODE_ENV=production`, also provide
+> `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY`.
+> Compose forwards these values to the webhook; keep the private key in your
+> secret manager rather than committing it.
+
+The webhook exposes `/health/live` for process liveness and `/health/ready`
+for Firebase and PostgreSQL readiness. PostgreSQL connection acquisition and
+query timeouts are configurable with `DB_CONNECTION_TIMEOUT_MS` (default
+`5000`) and `DB_QUERY_TIMEOUT_MS` (default `30000`). Native Rust modules are
+loaded only when their corresponding operations run; they do not gate liveness
+or readiness.
 
 ### 2. 🔮 Start everything
 
@@ -95,20 +111,22 @@ bin/start tenant-name tenant-name
 | Step | Action |
 | --- | --- |
 | 1 | Start `postgres`, `graphql-engine`, `webhook` containers |
-| 2 | Poll `GET /healthz` until Hasura is ready (up to 3 min) |
-| 3 | Build and deploy tenant metadata for all tenants |
-| 4 | Apply all migrations per tenant |
-| 5 | Reload Hasura metadata |
-| 6 | Apply seed data per tenant in parallel, with one transaction per seed file |
+| 2 | Poll `GET /healthz` until Hasura is ready (up to 2 min) |
+| 3 | Register a Hasura database source per tenant |
+| 4 | Apply migrations per tenant, one tenant at a time |
+| 5 | Build and deploy tenant metadata, all tenants in parallel |
+| 6 | Reload Hasura metadata |
+| 7 | Apply seeds per tenant with `hasura seed apply` |
+| 8 | Check Hasura, PostgreSQL and the webhook, then print one `DEPLOYMENT SUMMARY` |
 
-Seed files are applied directly with PostgreSQL and `ON_ERROR_STOP=1`. Each file
-is wrapped in `BEGIN`/`COMMIT`, so a failed file rolls back completely; the two
-independent tenants run concurrently. Seed inserts use conflict-safe or
-stable-key cleanup patterns, making `bin/start` safe to rerun without
-`docker compose down -v`.
+The summary shows each tenant's time per phase and status, the shared steps,
+the total time and the health checks. Every run also writes per-tenant logs to
+`tests/results/bin-start/<run-id>/` and a JSON report to
+`tests/results/bin-start-report.json`. See [bin/start](docs/infra/bin-start.md)
+for the summary format, `--verbose`, and troubleshooting.
 
-Set `SEED_CHUNK_SIZE` in `.env` to tune the configured seed batch size (default
-`500`).
+Seed inserts use conflict-safe or stable-key cleanup patterns, making
+`bin/start` safe to rerun without `docker compose down -v`.
 
 **Target a specific tenant:**
 
@@ -139,14 +157,14 @@ bin/start --restart safetrust
 # Rollback safetrust migrations:
 hasura migrate apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
+  --admin-secret "$HASURA_ADMIN_SECRET" \
   --database-name safetrust \
   --down all
 
 # Rollback hotel_industry migrations:
 hasura migrate apply \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey \
+  --admin-secret "$HASURA_ADMIN_SECRET" \
   --database-name hotel_industry \
   --down all
 
@@ -169,6 +187,47 @@ metadata/
 
 ```
 
+### SafeTrust user profile permissions
+
+The `host` role can read only its own user's `display_name` and `avatar_url`,
+scoped by `id = x-hasura-user-id`. Host access does not include the user's
+email, ID, host flag, or timestamps. No cross-user profile relationship is
+currently authorized; add a separately scoped permission only when its
+business rule is defined. This permission supports the host self-profile
+workflow: reading back the display name and avatar that the host can update
+on their own account. Those presentation fields are the minimum needed for
+that workflow; it does not require access to contact details, account
+identifiers, timestamps, or another user's profile. This follows the minimum
+profile-access policy in [issue #668](https://github.com/safetrustcr/backend-SafeTrust/issues/668).
+The guest role's self-only row filter is unchanged.
+
+In Hasura, `filter: {}` means all rows are permitted for that role; it does
+not mean no rows. The checked-in
+[`public_users.yaml`](./metadata/tenants/safetrust/databases/tables/public_users.yaml)
+currently has a self-only host filter, not an empty one. Its row restriction
+also applies to list, primary-key, relationship, and aggregate query paths;
+host aggregation is not enabled.
+
+The checked-in [`.env.example`](./.env.example) configures
+`HASURA_GRAPHQL_JWT_SECRET` with the Firebase issuer and Hasura claims
+namespace. [`claims.ts`](./webhook/src/services/claims.ts) constructs the
+user ID and role claims (`x-hasura-user-id`, `x-hasura-default-role`, and
+`x-hasura-allowed-roles`). These files document repository configuration and
+claim construction, but do not verify that this configuration is deployed or
+that `syncClaims` has run for issued tokens. A role name in metadata alone
+does not prove that ordinary clients cannot claim `host`: deployment must
+verify that trusted token issuance sets `X-Hasura-User-Id` to the
+authenticated user's ID and only grants `host` in the allowed-role claims to
+authorized users. Do not use an admin-secret query to validate row
+permissions; test with two actual authenticated host/guest users and their
+supported claims.
+
+Local metadata is not evidence of deployed state. Confirm the exported target
+metadata after the HAS-02 metadata-deployment fix, then test the deployed
+permissions. This repository does not establish whether the prior broader
+host field list was ever deployed or reachable, so no deployed exposure or
+breach is confirmed.
+
 ---
 
 ## 🛠️ Manual Commands (optional)
@@ -179,7 +238,7 @@ metadata/
 
 ```bash
 cd metadata
-./setup-tenant.sh safetrust --endpoint http://localhost:8080 --admin-secret myadminsecretkey
+HASURA_ADMIN_SECRET="$HASURA_ADMIN_SECRET" ./setup-tenant.sh safetrust --endpoint http://localhost:8080
 
 ```
 
@@ -189,7 +248,7 @@ cd metadata
 hasura migrate apply \
   --database-name safetrust \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 ```
 
@@ -201,7 +260,7 @@ hasura migrate apply \
   --version <timestamp> \
   --type up \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 ```
 
@@ -211,7 +270,7 @@ hasura migrate apply \
 hasura seed apply \
   --database-name safetrust \
   --endpoint http://localhost:8080 \
-  --admin-secret myadminsecretkey
+  --admin-secret "$HASURA_ADMIN_SECRET"
 
 ```
 
@@ -227,7 +286,7 @@ In-depth guides live in [`docs/`](docs/README.md).
 
 | Document | What it covers |
 |---|---|
-| [SafeTrust Schema Migration Strategy](docs/migrations/safetrust-schema-migration.md) | Why SafeTrust tables moved from `public` to the `safetrust` schema, plus the deployment and rollback sequences |
+| [SafeTrust Schema Migration Strategy](docs/history/safetrust-schema-migration.md) | Historical reference for moving SafeTrust tables from `public` to the `safetrust` schema, plus deployment and rollback sequences |
 
 ---
 

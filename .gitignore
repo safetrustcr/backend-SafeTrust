@@ -31,7 +31,6 @@ secrets/
 # Karate test artifacts
 tests/results/**
 !tests/results/.gitkeep
-tests/results/deploy_init_timings.json
 tests/karate.jar
 tests/postgresql-jdbc.jar
 
@@ -58,8 +57,6 @@ target/
 
 # Neon native addon (platform-specific; rebuilt by npm run build:rust)
 *.node
-/crates/zk-verifier/bb
-/crates/zk-verifier/crs/
 
 # Python specific
 .mypy_cache/
@@ -99,4 +96,7 @@ crates/target/
 # The verifier fallback is required at runtime when the native addon fails to
 # load, so its generated compatibility output is checked in with index.js.
 !/crates/webhook-verifier/fallback.js
+# Native crate postbuild hooks run this compiled helper without the webhook
+# tooling build, so keep it available in standalone package builds.
+!/crates/scripts/copy-native.js
 /tests/karate/src/test/resources/**/*.js

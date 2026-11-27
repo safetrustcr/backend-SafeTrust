@@ -7,7 +7,7 @@
  */
 
 import { Request, Response } from 'express'
-import { ok, serverError } from '../../utils/response'
+import { ok } from '../../utils/response'
 import {
   fetchEscrowContractIds,
   syncEscrowsWithIndexer,
@@ -19,6 +19,7 @@ import {
   ReconciliationResponse,
   runSorobanValidation,
 } from '../../services/reconciliation.service'
+import { logger } from '../../middleware/logger'
 
 export interface SyncEscrowsPayload {
   [key: string]: unknown
@@ -35,6 +36,7 @@ export {
 
 const STALE_ESCROW_DAYS = 7
 const NETWORK = process.env.STELLAR_NETWORK ?? 'testnet'
+const TENANT_ID = 'safetrust'
 
 /**
  * Handles the POST /reconciliation/sync-escrows trigger from Hasura cron job.
@@ -49,36 +51,40 @@ export const syncEscrowsHandler = async (
   res: Response
 ): Promise<Response> => {
   const startTime = Date.now()
-  console.log('[reconciliation] 🔄 Starting escrow sync...')
+  logger.info('reconciliation.sync.started')
 
-  try {
-    const contractIds = await fetchEscrowContractIds('safetrust')
-    const sync = await syncEscrowsWithIndexer(contractIds)
-    const drift = await validateSorobanDrift(contractIds, NETWORK)
-    const stale = await detectStaleEscrows(STALE_ESCROW_DAYS)
-    const summary = formatReconciliationSummary(sync, drift, stale, Date.now() - startTime)
+  const contractIds = await fetchEscrowContractIds(TENANT_ID)
+  const sync = await syncEscrowsWithIndexer(contractIds, {
+    applyTransitions: true,
+    tenantId: TENANT_ID,
+  })
+  const drift = await validateSorobanDrift(contractIds, NETWORK, {
+    skipStatusCorrectionFor: sync.transitions?.failedContractIds,
+  })
+  const stale = await detectStaleEscrows(STALE_ESCROW_DAYS)
+  const summary = formatReconciliationSummary(
+    sync,
+    drift,
+    stale,
+    Date.now() - startTime,
+    undefined,
+    sync.transitions
+  )
 
-    console.log(`[reconciliation] ✅ Sync complete in ${summary.durationMs}ms`)
-    console.log(`   Total escrows     : ${summary.totalEscrows}`)
-    console.log(`   Chunks            : ${summary.chunks}`)
-    console.log(`   Updated rows      : ${summary.updated}`)
-    console.log(`   Unchanged rows    : ${summary.unchanged}`)
-    console.log(`   Skipped rows      : ${summary.skipped}`)
-    console.log(`   Stale rows        : ${summary.staleCount}`)
-    console.log(`   Soroban drift     : ${summary.sorobanDrift}`)
-    console.log(`   Soroban corrected : ${summary.sorobanCorrected}`)
-    if (summary.errors > 0) {
-      console.log(`   Errors            : ${summary.errors}`)
-    }
+  const level = summary.errors > 0 ? 'warn' : 'info'
+  logger[level]('reconciliation.sync.completed', {
+    durationMs: summary.durationMs,
+    totalEscrows: summary.totalEscrows,
+    chunks: summary.chunks,
+    updated: summary.updated,
+    unchanged: summary.unchanged,
+    skipped: summary.skipped,
+    stale: summary.staleCount,
+    sorobanDrift: summary.sorobanDrift,
+    sorobanCorrected: summary.sorobanCorrected,
+    errors: summary.errors,
+    ...(summary.transitions ? { transitions: summary.transitions } : {}),
+  })
 
-    return ok(res, summary)
-  } catch (fatalError) {
-    const fErr = fatalError as Error
-    console.error('[reconciliation] ❌ Fatal error:', fErr.message)
-    return serverError(res, {
-      success: false,
-      error: 'Reconciliation failed',
-      details: fErr.message,
-    })
-  }
+  return ok(res, summary)
 }

@@ -1,16 +1,30 @@
 table:
   name: users
   schema: safetrust
+# Issue #666: tables outside the `public` schema are exposed by Hasura as
+# `<schema>_<table>` unless a custom name is set. Without this block the
+# 1779300000001 schema move turned `users` into `safetrust_users` (and
+# `users_by_pk`, `insert_users`, ... into `safetrust_users_by_pk`, ...), which
+# is exactly "the users operations are gone" for every client still using the
+# original names. `custom_name` restores the original contract (same pattern
+# as public_roles.yaml).
+configuration:
+  column_config: {}
+  custom_column_names: {}
+  custom_name: users
+  custom_root_fields: {}
 select_permissions:
   - role: guest
     permission:
       columns:
         - id
         - email
-        - display_name
-        - avatar_url
-        - created_at
-        - updated_at
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
+        - last_seen
       filter:
         id:
           _eq: x-hasura-user-id
@@ -19,37 +33,45 @@ select_permissions:
       columns:
         - id
         - email
-        - display_name
-        - avatar_url
-        - created_at
-        - updated_at
-        - is_host
-      filter: {}
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
+        - last_seen
+      filter:
+        id:
+          _eq: x-hasura-user-id
   - role: admin
     permission:
-      columns:
-        - id
-        - email
-        - display_name
-        - avatar_url
-        - created_at
-        - updated_at
-        - is_host
+      columns: "*"
       filter: {}
 update_permissions:
-  - role: host
+  - role: guest
     permission:
       columns:
-        - display_name
-        - avatar_url
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
       filter:
         id:
           _eq: x-hasura-user-id
-  - role: admin
+      check:
+        id:
+          _eq: x-hasura-user-id
+  - role: host
     permission:
       columns:
-        - email
-        - display_name
-        - avatar_url
-        - is_host
-      filter: {}
+        - first_name
+        - last_name
+        - phone_number
+        - country_code
+        - location
+      filter:
+        id:
+          _eq: x-hasura-user-id
+      check:
+        id:
+          _eq: x-hasura-user-id

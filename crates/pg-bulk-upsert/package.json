@@ -7,5 +7,9 @@
   "files": [
     "index.node",
     "index.d.ts"
-  ]
+  ],
+  "scripts": {
+    "build": "cargo build --release -p pg-bulk-upsert",
+    "postbuild": "node ../scripts/copy-native.js --crate=pg-bulk-upsert"
+  }
 }
