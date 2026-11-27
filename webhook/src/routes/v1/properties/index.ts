@@ -19,14 +19,20 @@ router.use(publicRateLimit)
 router.get(
   '/search',
   validate(propertySearchQuerySchema, 'query'),
-  x402UnlessAuthenticated(PROPERTY_SEARCH_PRICE_USDC),
+  x402UnlessAuthenticated(
+    PROPERTY_SEARCH_PRICE_USDC,
+    'GET /api/v1/properties/search'
+  ),
   searchProperties
 )
 router.get(
   '/:id/availability',
   validate(propertyAvailabilityParamsSchema, 'params'),
   validate(propertyAvailabilityQuerySchema, 'query'),
-  x402UnlessAuthenticated(PROPERTY_SEARCH_PRICE_USDC),
+  x402UnlessAuthenticated(
+    PROPERTY_SEARCH_PRICE_USDC,
+    'GET /api/v1/properties/:id/availability'
+  ),
   getPropertyAvailability
 )
 

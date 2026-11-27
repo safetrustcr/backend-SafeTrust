@@ -1,8 +1,10 @@
 import express from 'express'
 import request from 'supertest'
 import { publicRateLimit } from '../rate-limit'
-import { setX402Addon } from '../x402-payment.middleware'
-import { x402UnlessAuthenticated } from '../x402-unless-authenticated'
+import {
+  setPropertyPaymentMiddleware,
+  x402UnlessAuthenticated,
+} from '../x402-unless-authenticated'
 import { authMiddleware } from '../auth.middleware'
 
 jest.mock('../auth.middleware', () => ({
@@ -20,21 +22,17 @@ function createApp() {
 }
 
 describe('x402UnlessAuthenticated', () => {
-  const buildPaymentRequirement = jest.fn()
-  const validateX402Payment = jest.fn()
-
   beforeEach(() => {
     jest.clearAllMocks()
-    process.env.X402_ENABLED = 'true'
-    process.env.SAFETRUST_PLATFORM_WALLET = 'GTESTPLATFORMWALLET'
-    buildPaymentRequirement.mockReturnValue(JSON.stringify({ amount: '0.001 USDC' }))
-    validateX402Payment.mockReturnValue(JSON.stringify({
-      is_valid: true,
-      payer_address: 'GPAYER',
-      amount_usdc: 0.001,
-      network: 'stellar:testnet',
-    }))
-    setX402Addon({ buildPaymentRequirement, validateX402Payment })
+    setPropertyPaymentMiddleware(
+      (_req, res) => res.status(402).json({
+        accepts: [{ amount: '0.001 USDC' }],
+      })
+    )
+  })
+
+  afterEach(() => {
+    setPropertyPaymentMiddleware(null)
   })
 
   it('routes callers without a session through the payment challenge', async () => {
@@ -56,8 +54,6 @@ describe('x402UnlessAuthenticated', () => {
       .set('Authorization', 'Bearer valid-token')
 
     expect(response.status).toBe(200)
-    expect(buildPaymentRequirement).not.toHaveBeenCalled()
-    expect(validateX402Payment).not.toHaveBeenCalled()
   })
 
   it('does not fall through to payment for an invalid session', async () => {
@@ -71,7 +67,5 @@ describe('x402UnlessAuthenticated', () => {
       .set('x-payment', 'payment')
 
     expect(response.status).toBe(401)
-    expect(validateX402Payment).not.toHaveBeenCalled()
-    expect(buildPaymentRequirement).not.toHaveBeenCalled()
   })
 })

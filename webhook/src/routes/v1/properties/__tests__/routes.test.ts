@@ -1,6 +1,6 @@
 import express from 'express'
 import request from 'supertest'
-import { setX402Addon } from '../../../../middleware/x402-payment.middleware'
+import { setPropertyPaymentMiddleware } from '../../../../middleware/x402-unless-authenticated'
 import type { PropertyAvailabilityRow } from '../../../../repositories/property.repository'
 import {
   findPropertyAvailability,
@@ -41,21 +41,13 @@ function createApp() {
 }
 
 describe('agent property routes', () => {
-  const buildPaymentRequirement = jest.fn()
-  const validateX402Payment = jest.fn()
-
   beforeEach(() => {
     jest.clearAllMocks()
-    process.env.X402_ENABLED = 'true'
-    process.env.SAFETRUST_PLATFORM_WALLET = 'GTESTPLATFORMWALLET'
-    buildPaymentRequirement.mockReturnValue(JSON.stringify({ amount: '0.001 USDC' }))
-    validateX402Payment.mockReturnValue(JSON.stringify({
-      is_valid: true,
-      payer_address: 'GPAYER',
-      amount_usdc: 0.001,
-      network: 'stellar:testnet',
-    }))
-    setX402Addon({ buildPaymentRequirement, validateX402Payment })
+    setPropertyPaymentMiddleware(
+      (_req, res) => res.status(402).json({
+        accepts: [{ amount: '0.001 USDC' }],
+      })
+    )
     mockAuthMiddleware.mockImplementation((req, res, next) => {
       if (req.headers.authorization === 'Bearer valid-token') {
         req.context = { uid: 'guest-1', tenantId: 'safetrust', roles: ['guest'] }
@@ -64,6 +56,10 @@ describe('agent property routes', () => {
       }
       res.status(401).json({ error: 'Unauthorized' })
     })
+  })
+
+  afterEach(() => {
+    setPropertyPaymentMiddleware(null)
   })
 
   it('returns a payment challenge to anonymous callers', async () => {
@@ -104,8 +100,6 @@ describe('agent property routes', () => {
       limit: 20,
       has_more: false,
     })
-    expect(buildPaymentRequirement).not.toHaveBeenCalled()
-    expect(validateX402Payment).not.toHaveBeenCalled()
   })
 
   it('returns 401 for an invalid token instead of attempting payment', async () => {
@@ -115,7 +109,6 @@ describe('agent property routes', () => {
       .set('x-payment', 'payment')
 
     expect(response.status).toBe(401)
-    expect(validateX402Payment).not.toHaveBeenCalled()
     expect(searchProperties).not.toHaveBeenCalled()
   })
 
@@ -125,7 +118,6 @@ describe('agent property routes', () => {
 
     expect(response.status).toBe(400)
     expect(response.body.error).toBe('validation_failed')
-    expect(buildPaymentRequirement).not.toHaveBeenCalled()
   })
 
   it('rejects pages that exceed the database function limit before payment', async () => {
@@ -134,7 +126,6 @@ describe('agent property routes', () => {
 
     expect(response.status).toBe(400)
     expect(response.body.fields.page).toBeDefined()
-    expect(buildPaymentRequirement).not.toHaveBeenCalled()
   })
 
   it('returns unavailable when reservation or hold overlap is found', async () => {
@@ -165,6 +156,5 @@ describe('agent property routes', () => {
 
     expect(response.status).toBe(400)
     expect(response.body.error).toBe('validation_failed')
-    expect(buildPaymentRequirement).not.toHaveBeenCalled()
   })
 })

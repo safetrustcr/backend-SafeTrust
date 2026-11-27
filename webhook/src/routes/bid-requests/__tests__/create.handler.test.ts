@@ -4,6 +4,7 @@ import { Response } from 'express'
 import { createBidRequestHandler, isValidCalendarDate } from '../create.handler'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { createBidRequest as createBid } from '../../../services/bid-request.service'
+import { runHandler } from '../../__tests__/run-handler'
 
 jest.mock('../../../services/bid-request.service', () => ({ createBidRequest: jest.fn() }))
 
@@ -32,6 +33,86 @@ describe('createBidRequestHandler', () => {
     })
   })
 
+  it('returns 400 when required fields are missing', async () => {
+    const req = {
+      user: { uid: 'tenant-123' },
+      body: {},
+    } as unknown as AuthenticatedRequest & { body: any }
+
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    } as unknown as Response
+
+    await runHandler(createBidRequestHandler, req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Missing required fields' }))
+  })
+
+  it('returns 400 when proposedPrice is not positive', async () => {
+    const req = {
+      user: { uid: 'tenant-123' },
+      body: {
+        apartmentId: '123e4567-e89b-12d3-a456-426614174000',
+        proposedPrice: -50,
+        desiredMoveIn: '2026-09-01',
+      },
+    } as unknown as AuthenticatedRequest & { body: any }
+
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    } as unknown as Response
+
+    await runHandler(createBidRequestHandler, req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'proposedPrice must be a positive number' }))
+  })
+
+  it('returns 400 when desiredMoveIn is an invalid date string', async () => {
+    const req = {
+      user: { uid: 'tenant-123' },
+      body: {
+        apartmentId: '123e4567-e89b-12d3-a456-426614174000',
+        proposedPrice: 1000,
+        desiredMoveIn: 'not-a-date',
+      },
+    } as unknown as AuthenticatedRequest & { body: any }
+
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    } as unknown as Response
+
+    await runHandler(createBidRequestHandler, req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'desiredMoveIn must be a valid date' }))
+  })
+
+  it('returns 400 when desiredMoveIn is a calendar-invalid date (e.g. 2026-02-30)', async () => {
+    const req = {
+      user: { uid: 'tenant-123' },
+      body: {
+        apartmentId: '123e4567-e89b-12d3-a456-426614174000',
+        proposedPrice: 1000,
+        desiredMoveIn: '2026-02-30',
+      },
+    } as unknown as AuthenticatedRequest & { body: any }
+
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    } as unknown as Response
+
+    await runHandler(createBidRequestHandler, req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'desiredMoveIn must be a valid date' }))
+  })
+
   it('returns 409 when user already has an active bid in DB pre-check', async () => {
     ;(createBid as jest.Mock).mockResolvedValueOnce({ kind: 'duplicate' })
 
@@ -49,10 +130,10 @@ describe('createBidRequestHandler', () => {
       json: jest.fn(),
     } as unknown as Response
 
-    await createBidRequestHandler(req, res)
+    await runHandler(createBidRequestHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(409)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Duplicate pending bid' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Duplicate pending bid' }))
   })
 
   it('returns 201 on successful bid creation', async () => {
@@ -82,7 +163,7 @@ describe('createBidRequestHandler', () => {
       json: jest.fn(),
     } as unknown as Response
 
-    await createBidRequestHandler(req, res)
+    await runHandler(createBidRequestHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(201)
     expect(res.json).toHaveBeenCalledWith({
@@ -110,10 +191,10 @@ describe('createBidRequestHandler', () => {
       json: jest.fn(),
     } as unknown as Response
 
-    await createBidRequestHandler(req, res)
+    await runHandler(createBidRequestHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(409)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Duplicate pending bid' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Duplicate pending bid' }))
   })
 
   it('returns 500 when database throws general error', async () => {
@@ -133,9 +214,9 @@ describe('createBidRequestHandler', () => {
       json: jest.fn(),
     } as unknown as Response
 
-    await createBidRequestHandler(req, res)
+    await runHandler(createBidRequestHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Failed to create bid request' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Internal server error' }))
   })
 })
