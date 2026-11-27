@@ -8,6 +8,7 @@ import {
 import { createHoldHandler, releaseHoldHandler } from './hold.handler'
 import { releaseHold } from '../../../repositories/hold.repository'
 import { requireRole } from '../../../middleware/require-role'
+import { requireX402Enabled } from '../../../middleware/x402-feature-gate'
 import { logger } from '../../../middleware/logger'
 
 /** Price of a hold in USDC, charged through x402. Not refunded. */
@@ -75,15 +76,6 @@ function getHoldPaymentMiddleware(): RequestHandler {
 }
 
 function requireHoldX402Payment(req: Request, res: Response, next: NextFunction): void {
-  if (process.env.X402_ENABLED !== 'true') {
-    res.status(503).json({
-      error: 'Feature Unavailable',
-      feature: 'x402',
-      message: 'x402 payments are disabled',
-    })
-    return
-  }
-
   delete req.headers['x-payment']
 
   res.on('finish', () => {
@@ -129,6 +121,7 @@ const router: Router = Router()
 router.post(
   '/hold',
   requireRole(['guest']),
+  requireX402Enabled,
   requireHoldX402Payment,
   createHoldHandler as unknown as RequestHandler
 )
