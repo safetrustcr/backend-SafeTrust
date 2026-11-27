@@ -47,6 +47,8 @@ jobs:
           exit-code: '1'
 
       # aquasecurity/trivy-action v0.36.0 — pinned by commit SHA.
+      # .trivyignore.yaml holds one rule/path exception (AVD-DS-0002 on
+      # Dockerfile.test); everything else in the repository is still scanned.
       - name: Scan Dockerfiles and Compose files
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
@@ -54,6 +56,7 @@ jobs:
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: '1'
+          trivyignores: .trivyignore.yaml
 
   # `docker compose config` needs no daemon: it resolves every anchor, `:?`
   # interpolation and service definition, so a broken Compose file fails here

@@ -93,20 +93,14 @@ services:
       # Tenant data source: non-superuser role, scoped to the tenant schemas.
       PG_DATABASE_URL: >-
         postgres://hasura:${HASURA_DB_PASSWORD:?HASURA_DB_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-postgres}
-      HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
-      HASURA_GRAPHQL_DEV_MODE: "true"
+      HASURA_GRAPHQL_ENABLE_CONSOLE: ${HASURA_GRAPHQL_ENABLE_CONSOLE:-false}
+      HASURA_GRAPHQL_DEV_MODE: ${HASURA_GRAPHQL_DEV_MODE:-false}
+      HASURA_GRAPHQL_CORS_DOMAIN: ${CORS_ALLOWED_ORIGINS:-http://localhost:4321}
       # No query-log by default: it writes every GraphQL query *and its
       # variables* (emails, phone numbers, wallet addresses) to the container
       # log. Enable it per-run for debugging, e.g.
       #   HASURA_GRAPHQL_ENABLED_LOG_TYPES="startup, http-log, webhook-log, query-log"
-      HASURA_GRAPHQL_ENABLED_LOG_TYPES: ${HASURA_GRAPHQL_ENABLED_LOG_TYPES:-startup, http-log, webhook-log}
-      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}
-        postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
-      HASURA_GRAPHQL_ENABLE_CONSOLE: ${HASURA_GRAPHQL_ENABLE_CONSOLE:-false}
-      HASURA_GRAPHQL_DEV_MODE: ${HASURA_GRAPHQL_DEV_MODE:-false}
-      HASURA_GRAPHQL_CORS_DOMAIN: ${CORS_ALLOWED_ORIGINS:-http://localhost:4321}
-      HASURA_GRAPHQL_ENABLED_LOG_TYPES: >-
-        startup, http-log, webhook-log, websocket-log, query-log
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES: ${HASURA_GRAPHQL_ENABLED_LOG_TYPES:-startup, http-log, webhook-log, websocket-log}
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:?HASURA_ADMIN_SECRET must be set in .env or the environment}
       HASURA_GRAPHQL_JWT_SECRET: ${HASURA_GRAPHQL_JWT_SECRET}
       WEBHOOK_URL: ${WEBHOOK_URL:-http://safetrust-webhook:3000}
@@ -152,8 +146,7 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       # Container port; the image's HEALTHCHECK and EXPOSE use the same value.
       PORT: "3000"
-      PORT: ${WEBHOOK_PORT:-3000}
-      WEBHOOK_PORT: ${WEBHOOK_PORT:-3000}
+      WEBHOOK_PORT: "3000"
       # Browser origins for the API; see .env.example. Empty in development
       # allows only localhost / 127.0.0.1 origins.
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
@@ -178,17 +171,14 @@ services:
       # File-backed secret variants (production). Empty by default; see
       # docker-compose.secrets.example.yml. The *_FILE value wins when set.
       POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
       FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
       FIREBASE_PRIVATE_KEY_FILE: ${FIREBASE_PRIVATE_KEY_FILE:-}
       TRUSTLESSWORK_API_KEY: ${TRUSTLESSWORK_API_KEY:-}
       TRUSTLESSWORK_API_KEY_FILE: ${TRUSTLESSWORK_API_KEY_FILE:-}
-      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-myadminsecretkey}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       HASURA_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:?HASURA_ADMIN_SECRET must be set in .env or the environment}
-      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
-      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
-      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:?HASURA_ADMIN_SECRET must be set in .env or the environment}
       HASURA_GRAPHQL_ENDPOINT: >-
         http://graphql-engine:8080/v1/graphql
       TRUSTLESSWORK_API_URL: ${TRUSTLESSWORK_API_URL:-https://dev.api.trustlesswork.com}
@@ -205,7 +195,8 @@ services:
       graphql-engine:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${WEBHOOK_PORT:-3000}/health/live"]
+      # Node (the image has no curl) against the same port the app listens on.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/health/live').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 5

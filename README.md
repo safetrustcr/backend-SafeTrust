@@ -73,6 +73,7 @@ POSTGRES_PASSWORD=your_postgres_password
 HASURA_DB_PASSWORD=your_hasura_password
 HASURA_METADATA_DB_PASSWORD=your_metadata_password
 WEBHOOK_DB_PASSWORD=your_webhook_password
+
 # Required. Generate a strong random value; never commit a real secret.
 HASURA_ADMIN_SECRET=
 

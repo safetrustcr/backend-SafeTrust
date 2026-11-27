@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ENDPOINT="${HASURA_GRAPHQL_ENDPOINT:-http://graphql-engine-test:8080}"
-ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:?Hasura admin secret is required}"
+ADMIN_SECRET="${HASURA_ADMIN_SECRET:-${HASURA_GRAPHQL_ADMIN_SECRET:?Hasura admin secret is required}}"
 
 # Admin connection, used only to open and close the migration DDL window.
 : "${PGHOST:?PGHOST is required}"
@@ -19,15 +19,19 @@ ADMIN_SECRET="${HASURA_GRAPHQL_ADMIN_SECRET:?Hasura admin secret is required}"
 export PGHOST PGUSER PGDATABASE PGPASSWORD
 
 set_migration_ddl() {
-  local action="$1"
+  local action="$1" preposition
+  case "$action" in
+    GRANT) preposition="TO" ;;
+    REVOKE) preposition="FROM" ;;
+    *)
+      echo "[migrate-test] unknown privilege change: ${action}" >&2
+      exit 1
+      ;;
+  esac
   psql -X -q -v ON_ERROR_STOP=1 \
-    -c "${action} CREATE ON SCHEMA safetrust, hotel_industry, public TO hasura"
+    -c "${action} CREATE ON SCHEMA safetrust, hotel_industry, public ${preposition} hasura"
 }
 
-set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
-ENDPOINT="${HASURA_GRAPHQL_ENDPOINT:-http://graphql-engine-test:8080}"
-ADMIN_SECRET="${HASURA_ADMIN_SECRET:-${HASURA_GRAPHQL_ADMIN_SECRET:?Hasura admin secret is required}}"
 for ((attempt=0; ; attempt++)); do
   if curl -fsS --connect-timeout 5 --max-time 5 "$ENDPOINT/healthz" >/dev/null; then
     break
@@ -55,10 +59,6 @@ done
 set_migration_ddl REVOKE
 trap - EXIT
 
-metadata/setup-tenant.sh safetrust hotel_industry --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
-  echo "[migrate-test] Migrating tenant: $tenant"
-  hasura migrate apply --database-name "$tenant" --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
-done
 metadata/setup-tenant.sh safetrust hotel_industry --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
 
 echo "[migrate-test] Tracking get_webhook_health_summary..."

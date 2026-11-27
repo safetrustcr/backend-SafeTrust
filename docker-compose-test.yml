@@ -62,9 +62,7 @@ services:
       HASURA_GRAPHQL_DEV_MODE: "true"
       # No query-log: it would dump test payloads (and production-shaped user
       # data) into the log on every request.
-      HASURA_GRAPHQL_ENABLED_LOG_TYPES: ${TEST_HASURA_GRAPHQL_ENABLED_LOG_TYPES:-startup, http-log, webhook-log}
-      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
-      HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES: ${TEST_HASURA_GRAPHQL_ENABLED_LOG_TYPES:-startup, http-log, webhook-log, websocket-log}
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
     depends_on:
       postgres_test:
@@ -95,12 +93,17 @@ services:
       - .:/app
     environment:
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine-test:8080
-      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
       PG_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
       HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       CONSOLE_PORT: 9696
+      HOME: /tmp
     working_dir: /app
+    # The bind mount keeps the checkout's host ownership, so the image's
+    # `hasura` UID cannot write to it; run as the host user instead, which is
+    # what the console needs to generate migrations and export metadata. HOME
+    # moves off /home/hasura because that directory belongs to the image UID.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     ports:
       # The Hasura console is loopback-only too.
       - "127.0.0.1:9696:9696"
@@ -131,7 +134,6 @@ services:
     environment:
       - NODE_ENV=test
       - PORT=3001
-      - HASURA_GRAPHQL_ADMIN_SECRET=${TEST_ADMIN_SECRET:-myadminsecretkey}
       - WEBHOOK_PORT=3001
       - HASURA_ADMIN_SECRET=${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       - HASURA_GRAPHQL_ADMIN_SECRET=${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
@@ -152,8 +154,7 @@ services:
       postgres_test:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3001) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health/live"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3001) + '/health/live').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -247,7 +248,8 @@ services:
       dockerfile: Dockerfile
     environment:
       HASURA_GRAPHQL_ENDPOINT: http://graphql-engine-test:8080
-      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:-myadminsecretkey}
+      HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       # Admin connection used only to open and close the migration DDL window;
       # the hasura role itself has no CREATE outside that window.
       PGHOST: postgres_test
@@ -255,13 +257,11 @@ services:
       PGUSER: postgres
       PGDATABASE: postgres
       PGPASSWORD: ${TEST_POSTGRES_PASSWORD:-postgrespassword}
-      HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
-      HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
     working_dir: /app
     command: ["bash", "bin/prepare-test-db"]
     depends_on:
       graphql-engine-test:
-        condition: service_started
+        condition: service_healthy
     security_opt:
       - "no-new-privileges:true"
     cap_drop:
@@ -270,7 +270,6 @@ services:
     cpus: 1.0
     pids_limit: 256
     logging: *default-logging
-        condition: service_healthy
     networks:
       - test-network
 

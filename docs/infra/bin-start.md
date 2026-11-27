@@ -3,14 +3,11 @@
 ## Flow
 ```mermaid
 flowchart TD
-    A([bin/start\nsafetrust hotel_industry]) --> B[docker compose up -d --build\npostgres + hasura + webhook]
-    B --> C[Wait for Hasura /healthz\n0.5s poll interval\n120s timeout]
+    A([bin/start\nsafetrust hotel_industry]) --> B[docker compose up -d postgres\nwait for TCP readiness]
+    B --> R[Re-run 01-init-roles.sh\nroles + hasura_metadata database]
+    R --> C0[docker compose up -d --build\nhasura + webhook]
+    C0 --> C[Wait for Hasura /healthz\n0.5s poll interval\n120s timeout]
     C --> D[Register database sources\npg_add_source for each tenant]
-    D --> E[Apply migrations\nhasura migrate apply × N tenants\nDDL window: grant CREATE, revoke after]
-    E --> F[Deploy metadata\nsetup-tenant.sh × N tenants]
-    F --> G[Reload metadata\nhasura metadata reload]
-    G --> H[Apply seeds\nhasura seed apply × N tenants]
-    H --> I([Ready\n127.0.0.1:8080 Hasura\n127.0.0.1:3000 Webhook])
     D --> E[Apply migrations\nhasura migrate apply × N tenants]
     E --> F[Deploy metadata\nsetup-tenant.sh × N tenants, in parallel]
     F --> G[Reload metadata\nhasura metadata reload]
@@ -23,11 +20,10 @@ flowchart TD
 - Bash 4.3 or newer (on macOS: `brew install bash`)
 - Docker with Compose v2
 - hasura CLI
-- yq
-- `.env` created from `.env.example` — `POSTGRES_PASSWORD`,
-  `HASURA_DB_PASSWORD`, `HASURA_METADATA_DB_PASSWORD` and `WEBHOOK_DB_PASSWORD`
-  are required and have no defaults.
 - `curl`, `jq`, `yq`
+- `.env` with the four required database passwords: `POSTGRES_PASSWORD`,
+  `HASURA_DB_PASSWORD`, `HASURA_METADATA_DB_PASSWORD`, `WEBHOOK_DB_PASSWORD`
+  (no defaults — the run stops before Compose if one is missing)
 
 `bin/start` checks for these before it starts anything and names any that are
 missing.
@@ -117,13 +113,13 @@ to `docker-compose.override.yml` (git-ignored); it publishes
 port — including the Hasura console on 9696 — to `127.0.0.1`.
 
 ## Database roles
-`docker/postgres/init/01-init-roles.sh` runs once, as the postgres superuser,
-when the data directory is empty (it is mounted at
-`/docker-entrypoint-initdb.d`). On an existing volume, re-run it:
-
-```bash
-docker compose exec -T postgres bash /docker-entrypoint-initdb.d/01-init-roles.sh
-```
+`docker/postgres/init/01-init-roles.sh` runs as the postgres superuser when the
+data directory is empty (it is mounted at `/docker-entrypoint-initdb.d`), and
+`bin/start` runs it again against the running database on every start. The
+script is idempotent (`IF NOT EXISTS`, `ALTER ROLE`, `GRANT`), so an existing
+volume — including one initialised before the least-privilege roles existed, or
+a `--restart` run — gets the roles and the `hasura_metadata` database without a
+manual step or a volume reset.
 
 | Role | Used by | Rights |
 | --- | --- | --- |
@@ -137,9 +133,9 @@ needs DDL. The init script never grants `CREATE`: the migration step itself —
 `bin/start` for the stack, `bin/prepare-test-db` for the test stack — grants it
 on the tenant schemas (and on `public`, where legacy migrations stage tables
 before moving them) immediately before `hasura migrate apply` and revokes it
-immediately after. An `EXIT` trap closes the window when a migration fails or
-the run is interrupted, so a stack that is only `docker compose up`-ed, and
-every phase after migrations, has no role that can create or drop objects.
+immediately after. `bin/start` closes that window from its exit trap too, so a
+failed or interrupted migration run still revokes it, and a stack that is only
+`docker compose up`-ed has no role that can create or drop objects.
 New tables inherit the webhook grants through `ALTER DEFAULT PRIVILEGES`; the
 tables moved out of `public` are covered by migration
 `1779400000000_grant_webhook_role`.
@@ -157,7 +153,7 @@ Required variables (no defaults, so a missing value fails fast):
 - `HASURA_DB_PASSWORD` — `hasura` role
 - `HASURA_METADATA_DB_PASSWORD` — `hasura_metadata` role
 - `WEBHOOK_DB_PASSWORD` — `webhook` role
-- `HASURA_GRAPHQL_ADMIN_SECRET` — Hasura admin secret
+- `HASURA_ADMIN_SECRET` — Hasura admin secret
 
 Use URL-safe passwords: they are embedded in connection URLs.
 
@@ -166,35 +162,42 @@ For production, prefer file-backed secrets — they are not visible to
 
 ```bash
 mkdir -p secrets
-install -m 0400 /secure/firebase_private_key secrets/firebase_private_key
-install -m 0400 /secure/trustlesswork_api_key secrets/trustlesswork_api_key
-install -m 0400 /secure/webhook_db_password secrets/webhook_db_password
+sudo install -m 0400 -o 1000 -g 1000 /secure/firebase_private_key secrets/firebase_private_key
+sudo install -m 0400 -o 1000 -g 1000 /secure/trustlesswork_api_key secrets/trustlesswork_api_key
+sudo install -m 0400 -o 1000 -g 1000 /secure/webhook_db_password secrets/webhook_db_password
 cp docker-compose.secrets.example.yml docker-compose.secrets.yml   # git-ignored
 docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
 ```
 
+Compose mounts a file secret as a bind mount, so the host file's owner and mode
+are what the container sees. The webhook image runs as UID/GID 1000 (`node`),
+which is why the files are installed with `-o 1000 -g 1000`; a root-owned `0400`
+file is unreadable to that user and the webhook fails to start. Already-created
+files can be fixed with `sudo chown 1000:1000 secrets/*`.
+
 The webhook reads `FIREBASE_PRIVATE_KEY_FILE`, `TRUSTLESS_WORK_API_KEY_FILE`
 (and the `TRUSTLESSWORK_API_KEY_FILE` spelling used by Compose) and
-`POSTGRES_PASSWORD_FILE`; the official Postgres image reads
-`POSTGRES_PASSWORD_FILE` the same way. Plain variables still work for local
-development.
+`POSTGRES_PASSWORD_FILE`. Plain variables still work for local development.
+
+Scope: these files keep the secrets out of the webhook container's environment.
+The `postgres` service still receives `WEBHOOK_DB_PASSWORD`, because
+`01-init-roles.sh` uses it to set the webhook role's password — so that value is
+still part of the Postgres container's configuration. Deployment-wide secrecy
+would need file-backed role-password initialization in Postgres as well.
 
 ## Logs
 Every service uses the `json-file` driver with `max-size: 10m` and
-`max-file: 5`. Hasura logs `startup, http-log, webhook-log` by default —
-`query-log` is off because it writes every GraphQL query and its variables
-(emails, phone numbers, wallet addresses) to the log. Enable it per run with
-`HASURA_GRAPHQL_ENABLED_LOG_TYPES="startup, http-log, webhook-log, query-log"`.
+`max-file: 5`. Hasura logs `startup, http-log, webhook-log, websocket-log` by
+default — `query-log` is off because it writes every GraphQL query and its
+variables (emails, phone numbers, wallet addresses) to the log. Enable it per
+run with
+`HASURA_GRAPHQL_ENABLED_LOG_TYPES="startup, http-log, webhook-log, websocket-log, query-log"`.
 
 ## Common failures and fixes
-- Port already in use — Hasura/webhook bind 127.0.0.1; check `HASURA_PORT` /
-  `WEBHOOK_PORT`
-- `POSTGRES_PASSWORD is required` — copy `.env.example` to `.env`
-- `role "webhook" does not exist` on an existing volume — re-run the init script
-  shown above
-- Hasura health timeout
-- Seed duplicate key errors
 - **Port 5433 already in use**: set `POSTGRES_PORT` in `.env`.
+- **`role "webhook" does not exist`**: should not happen on a normal start —
+  `bin/start` re-runs the init script before Hasura starts. If it does, check
+  that step's output and `docker compose logs postgres`.
 - **Hasura health timeout**: the summary shows `failed during: hasura_health`
   and the last 20 `graphql-engine` log lines are printed. Check
   `docker compose logs graphql-engine`.

@@ -1,15 +1,14 @@
 # syntax=docker/dockerfile:1
 # Compile Karate's TypeScript configuration to the JavaScript consumed by Graal.
-FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530 AS karate-config # 24-bookworm-slim
-FROM node:25-bookworm-slim AS karate-config
+# Base images are pinned by digest; the tag in the comment is what Dependabot tracks.
+FROM node:25-bookworm-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS karate-config # 25-bookworm-slim
 WORKDIR /app
 COPY webhook/package*.json ./webhook/
 RUN cd webhook && npm ci --ignore-scripts
 COPY tests/karate/ ./tests/karate/
 RUN cd webhook && npm run build:karate
 
-FROM eclipse-temurin:17-jdk-jammy@sha256:96ac8197b2cbc2bb0f9fbcbf91dbb0015f43b3c76a1cb351892da12e7bb91bed # 17-jdk-jammy
-FROM eclipse-temurin:25-jdk-jammy
+FROM eclipse-temurin:25-jdk-jammy@sha256:43d6f1775a0660b561c1c42edfdf8538a89672a040961acb3730c3ccc53c53de # 25-jdk-jammy
 
 WORKDIR /app
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
@@ -23,8 +22,6 @@ RUN mkdir -p /app/tests/karate/src/test/resources
 # Create directory for test results
 RUN mkdir -p /app/target/karate-reports
 
-# Download Karate jar (checksum verification is tracked in the CI security issue)
-ADD https://github.com/karatelabs/karate/releases/download/v1.4.1/karate-1.4.1.jar /app/tests/karate.jar
 # Download Karate jar
 ADD --checksum=sha256:de03685d4721adf1a4642e9401fc364d7a2bcd296a9ce6427b4827b941c821be https://github.com/karatelabs/karate/releases/download/v1.4.1/karate-1.4.1.jar /app/tests/karate.jar
 
@@ -32,4 +29,10 @@ ADD --checksum=sha256:de03685d4721adf1a4642e9401fc364d7a2bcd296a9ce6427b4827b941
 ADD --checksum=sha256:0c244ac7d02cf89d8e29852eace6595d75bc4d78581b85b2768460081646a57b https://jdbc.postgresql.org/download/postgresql-42.7.2.jar /app/tests/postgresql-jdbc.jar
 
 # Set default command
+#
+# Intentionally no USER: this image only runs the local Karate suite through
+# `bin/test`, and it writes reports into ./tests/results, a bind mount that keeps
+# the host checkout's ownership. A fixed non-root UID cannot write that mount on
+# Linux, so the narrow exception in .trivyignore.yaml covers AVD-DS-0002 for this
+# file only — the rule still applies everywhere else.
 CMD ["java", "-cp", "/app/tests/karate.jar:/app/tests/postgresql-jdbc.jar:/app/tests/karate/src/test/resources", "com.intuit.karate.Main", "--configdir", "/app/tests/karate/src/test/resources", "/app/tests/karate/features"]

@@ -1,6 +1,7 @@
 import https from 'https'
 import http from 'http'
 import { logger } from '../../middleware/logger'
+import { readSecret } from '../../config/secrets'
 import type { TwIndexerEscrow } from './tw-indexer.types'
 
 // ── Configuration ──────────────────────────────────────────────────────────────
@@ -14,10 +15,11 @@ export const DEFAULT_TRUSTLESSWORK_API_URL = 'https://dev.api.trustlesswork.com'
 const warnedLegacyNames = new Set<string>()
 
 function readSetting(name: string, legacyName: string): string | undefined {
-  const value = process.env[name]?.trim()
+  // readSecret prefers <NAME>_FILE (/run/secrets/…) and falls back to <NAME>.
+  const value = readSecret(name)?.trim()
   if (value) return value
 
-  const legacy = process.env[legacyName]?.trim()
+  const legacy = readSecret(legacyName)?.trim()
   if (legacy) {
     if (!warnedLegacyNames.has(legacyName)) {
       warnedLegacyNames.add(legacyName)

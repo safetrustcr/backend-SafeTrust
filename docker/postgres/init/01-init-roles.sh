@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Least-privilege PostgreSQL roles for the SafeTrust stack.
 #
-# Runs once, as the postgres superuser, when the data directory is empty
-# (docker-entrypoint-initdb.d). To apply it to an existing volume:
-#
-#   docker compose exec -T postgres bash /docker-entrypoint-initdb.d/01-init-roles.sh
+# Runs as the postgres superuser when the data directory is empty
+# (docker-entrypoint-initdb.d), and bin/start re-runs it on every start — the
+# script is idempotent — so an existing volume also gets these roles.
 #
 # Roles:
 #   postgres         admin — migrations only (bin/start, migrate-test), never a
@@ -74,6 +73,7 @@ GRANT CONNECT, TEMPORARY ON DATABASE hasura_metadata TO hasura_metadata;
 -- them here so each migration's CREATE EXTENSION IF NOT EXISTS is a no-op.
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE SCHEMA IF NOT EXISTS safetrust;
 CREATE SCHEMA IF NOT EXISTS hotel_industry;

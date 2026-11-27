@@ -3,8 +3,6 @@
 import { Pool, QueryResult, PoolClient, QueryResultRow } from 'pg'
 import { readSecret } from '../config/secrets'
 
-// Fail fast — never use hardcoded credentials in production
-const requiredEnvVars = ['POSTGRES_HOST', 'POSTGRES_DB', 'POSTGRES_USER']
 function positiveIntegerFromEnv(name: string, defaultValue: number): number {
   const value = process.env[name]
   if (value === undefined) {
@@ -19,7 +17,7 @@ function positiveIntegerFromEnv(name: string, defaultValue: number): number {
 }
 
 // Fail fast - never use hardcoded credentials in production
-const requiredEnvVars = ['POSTGRES_HOST', 'POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD']
+const requiredEnvVars = ['POSTGRES_HOST', 'POSTGRES_DB', 'POSTGRES_USER']
 for (const key of requiredEnvVars) {
   if (!process.env[key] && process.env.NODE_ENV === 'production') {
     throw new Error(`Missing required environment variable: ${key}`)
@@ -33,18 +31,16 @@ if (!postgresPassword && process.env.NODE_ENV === 'production') {
     'Missing required environment variable: POSTGRES_PASSWORD (or POSTGRES_PASSWORD_FILE)'
   )
 }
+
 const connectionTimeoutMillis = positiveIntegerFromEnv('DB_CONNECTION_TIMEOUT_MS', 5_000)
 const query_timeout = positiveIntegerFromEnv('DB_QUERY_TIMEOUT_MS', 30_000)
 
 export const pool = new Pool({
-  host:     process.env.POSTGRES_HOST ?? 'localhost',
+  host:     process.env.POSTGRES_HOST     ?? 'localhost',
   port:     parseInt(process.env.POSTGRES_PORT ?? '5432', 10),
-  database: process.env.POSTGRES_DB   ?? 'postgres',
-  user:     process.env.POSTGRES_USER ?? 'postgres',
-  password: postgresPassword           ?? 'postgrespassword',
   database: process.env.POSTGRES_DB       ?? 'postgres',
   user:     process.env.POSTGRES_USER     ?? 'postgres',
-  password: process.env.POSTGRES_PASSWORD ?? 'postgrespassword',
+  password: postgresPassword           ?? 'postgrespassword',
   connectionTimeoutMillis,
   query_timeout,
 })
