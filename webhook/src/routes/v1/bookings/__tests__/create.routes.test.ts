@@ -80,13 +80,15 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
     expect(res.status).toBe(401)
   })
 
-  it('answers 402 with 0.10 USDC requirement when no x-payment header is sent', async () => {
+  it('answers 402 with 0.10 USDC requirement when no payment header is sent', async () => {
     const res = await request(app('agent-1'))
       .post('/api/v1/bookings')
       .send({ hold_id: HOLD_ID })
 
     expect(res.status).toBe(402)
     expect(res.body.accepts[0].maxAmountRequired).toBe(0.10)
+    // The v2 challenge travels in PAYMENT-REQUIRED alongside the body.
+    expect(res.headers['payment-required']).toEqual(expect.any(String))
   })
 
   it('returns 409 when hold is not found', async () => {
@@ -400,10 +402,14 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
     })
 
     // 4. The hold is locked, then settlement fails before anything is written.
+    // Every statement the transaction client runs is recorded, so the test can
+    // prove the declined fee left no hold conversion and no reservation.
+    const txQueries: string[] = []
     mockWithTransaction.mockImplementationOnce(async (cb) => {
       const mockClient = {
         query: jest.fn(async (sql: string) => {
           const lower = String(sql).toLowerCase()
+          txQueries.push(lower)
           if (lower.includes('select id, status') && lower.includes('for no key update')) {
             return {
               rows: [
@@ -436,6 +442,8 @@ describe('v1 create booking route (POST /api/v1/bookings) - Issue #778', () => {
     expect(res.body.code).toBe('settlement_failed')
     // The conversion transaction rolled back: no hold conversion, no reservation.
     expect(mockWithTransaction).toHaveBeenCalledTimes(1)
+    expect(txQueries.some((sql) => sql.includes('update safetrust.booking_holds'))).toBe(false)
+    expect(txQueries.some((sql) => sql.includes('insert into safetrust.reservations'))).toBe(false)
   })
 
   it('rejects an unavailable property with 409 without settling the $0.10 fee', async () => {

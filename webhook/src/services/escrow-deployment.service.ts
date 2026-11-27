@@ -12,6 +12,12 @@ export interface DeployEscrowParams {
   platformWallet: string
   depositAmount: number | string
   tenantId: string
+  /**
+   * Stable key for this deployment attempt. Sent as `Idempotency-Key` so a
+   * retry after a timed-out response — where deployment may already have
+   * succeeded — is not deployed a second time.
+   */
+  idempotencyKey?: string
 }
 
 export interface DeployEscrowResult {
@@ -74,6 +80,66 @@ function trustedWorkConfig(): { baseUrl: string | null; apiKey: string | null } 
   return { baseUrl: usable ? baseUrl : null, apiKey: getTrustlessWorkApiKey() }
 }
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
+
+/** Deadline for one Trustless Work round trip, in milliseconds. */
+function requestTimeoutMs(): number {
+  const configured = Number(process.env.TRUSTLESSWORK_TIMEOUT_MS)
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_REQUEST_TIMEOUT_MS
+}
+
+/**
+ * POST to Trustless Work under a single deadline that covers the request, the
+ * response headers and the body read, so a connection that stalls mid-body
+ * still fails as a retryable 503 instead of hanging the booking request.
+ */
+async function postToTrustlessWork(
+  url: string,
+  payload: unknown,
+  logKey: string,
+  extraHeaders: Record<string, string> = {}
+): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> {
+  const { apiKey } = trustedWorkConfig()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs())
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { 'x-api-key': apiKey } : {}),
+        ...extraHeaders,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    })
+
+    let data: Record<string, unknown> = {}
+    try {
+      data = (await response.json()) as Record<string, unknown>
+    } catch (bodyError) {
+      // A body that never arrives is a timeout, not an empty answer.
+      if (controller.signal.aborted) throw bodyError
+    }
+
+    return { ok: response.ok, status: response.status, data }
+  } catch (error) {
+    if (controller.signal.aborted) {
+      logger.warn(`${logKey}_timeout`, { timeoutMs: requestTimeoutMs() })
+      throw new ServiceUnavailableError(
+        'Trustless Work did not answer before the request deadline'
+      )
+    }
+    logger.warn(`${logKey}_network_error`, { error: (error as Error).message })
+    throw new ServiceUnavailableError('Trustless Work is unavailable')
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /**
  * Deploys a Trustless Work escrow contract for the security deposit.
  * Deployed and signed by the backend (not the agent).
@@ -94,9 +160,10 @@ export async function deployBookingEscrow(
     platformWallet,
     depositAmount,
     tenantId,
+    idempotencyKey,
   } = params
 
-  const { baseUrl, apiKey } = trustedWorkConfig()
+  const { baseUrl } = trustedWorkConfig()
   let contractId: string | null = null
 
   if (isTestEnv() || !baseUrl) {
@@ -108,37 +175,27 @@ export async function deployBookingEscrow(
     // Synthetic IDs are confined to tests, where no on-chain contract exists.
     contractId = generateSyntheticContractId()
   } else {
-    let response: Response
-    try {
-      response = await fetch(`${baseUrl}/escrow/single-release/deploy`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(apiKey ? { 'x-api-key': apiKey } : {}),
+    const response = await postToTrustlessWork(
+      `${baseUrl}/escrow/single-release/deploy`,
+      {
+        signer: platformWallet,
+        roles: {
+          approver: agentWallet,
+          // The owner receives the released deposit.
+          receiver: hostWallet,
+          serviceProvider: hostWallet,
+          platformAddress: platformWallet,
+          releaseSigner: platformWallet,
+          disputeResolver: platformWallet,
         },
-        body: JSON.stringify({
-          signer: platformWallet,
-          roles: {
-            approver: agentWallet,
-            // The owner receives the released deposit.
-            receiver: hostWallet,
-            serviceProvider: hostWallet,
-            platformAddress: platformWallet,
-            releaseSigner: platformWallet,
-            disputeResolver: platformWallet,
-          },
-          amount: String(depositAmount),
-          milestones: [{ description: 'Security Deposit' }],
-        }),
-      })
-    } catch (err) {
-      logger.warn('tw.deploy_escrow_network_error', {
-        error: (err as Error).message,
-      })
-      throw new ServiceUnavailableError(
-        'Trustless Work escrow deployment is unavailable'
-      )
-    }
+        amount: String(depositAmount),
+        milestones: [{ description: 'Security Deposit' }],
+      },
+      'tw.deploy_escrow',
+      // The reservation id keys the attempt, so a retry after an unconfirmed
+      // response does not deploy a second escrow for the same booking.
+      idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}
+    )
 
     if (!response.ok) {
       logger.warn('tw.deploy_escrow_rejected', { status: response.status })
@@ -147,7 +204,7 @@ export async function deployBookingEscrow(
       )
     }
 
-    const data = (await response.json()) as {
+    const data = response.data as {
       contractId?: string
       contract_id?: string
       unsignedTransaction?: string
@@ -227,7 +284,7 @@ export async function generateFundEscrowXdr(
   } = params
 
   let unsignedXdr: string | null = null
-  const { baseUrl, apiKey } = trustedWorkConfig()
+  const { baseUrl } = trustedWorkConfig()
 
   if (isTestEnv() || !baseUrl) {
     if (!isTestEnv()) {
@@ -237,28 +294,15 @@ export async function generateFundEscrowXdr(
     }
     unsignedXdr = generateSyntheticFundXdr(contractId, agentWallet, depositAmount)
   } else {
-    let response: Response
-    try {
-      response = await fetch(`${baseUrl}/escrow/single-release/fund-escrow`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(apiKey ? { 'x-api-key': apiKey } : {}),
-        },
-        body: JSON.stringify({
-          contractId,
-          signer: agentWallet,
-          amount: Number(depositAmount),
-        }),
-      })
-    } catch (err) {
-      logger.warn('tw.fund_escrow_xdr_network_error', {
-        error: (err as Error).message,
-      })
-      throw new ServiceUnavailableError(
-        'Trustless Work funding transaction is unavailable'
-      )
-    }
+    const response = await postToTrustlessWork(
+      `${baseUrl}/escrow/single-release/fund-escrow`,
+      {
+        contractId,
+        signer: agentWallet,
+        amount: Number(depositAmount),
+      },
+      'tw.fund_escrow_xdr'
+    )
 
     if (!response.ok) {
       logger.warn('tw.fund_escrow_xdr_rejected', { status: response.status })
@@ -267,7 +311,7 @@ export async function generateFundEscrowXdr(
       )
     }
 
-    const data = (await response.json()) as {
+    const data = response.data as {
       unsignedTransaction?: string
       unsignedXdr?: string
       unsigned_xdr?: string

@@ -3,7 +3,12 @@ import type {
   PaymentPayload,
   PaymentRequirements,
 } from '@x402/core/types'
-import { getActiveX402ResourceServer, getX402Config } from '../config/x402'
+import {
+  getActiveX402ResourceServer,
+  getX402Config,
+  resolveStellarNetwork,
+  type StellarPaymentNetwork,
+} from '../config/x402'
 import { logger } from './logger'
 
 export interface X402SettlementResult {
@@ -205,8 +210,41 @@ export interface X402Context {
   payer?: string | null
   amountUsdc: number
   network: string
-  /** Raw X-Payment header, used to settle and derive an idempotency key. */
+  /** Raw payment header, used to settle and derive an idempotency key. */
   paymentHeader: string
+}
+
+/**
+ * Recovery hook for an already-settled proof. Replaying a settled payment is
+ * rejected by the facilitator, so verification alone cannot tell a legitimate
+ * retry from a forged proof: the hook answers only from the settlement ledger,
+ * and the handler it feeds never charges that proof a second time.
+ */
+export type SettledProofRecovery = (
+  paymentHeader: string,
+  amountUsdc: number
+) => Promise<{ payer?: string | null; amountUsdc: number; network: string } | null>
+
+export interface X402PaymentOptions {
+  /** Consulted only when verification fails, before answering 402. */
+  recoverSettledProof?: SettledProofRecovery
+}
+
+/**
+ * The v2 payment proof travels in `PAYMENT-SIGNATURE`; `X-Payment` is the
+ * legacy spelling and is still accepted so older clients keep working.
+ */
+function readPaymentHeader(req: Request): string | undefined {
+  const raw = req.headers['payment-signature'] ?? req.headers['x-payment']
+  const value = Array.isArray(raw) ? raw[0] : raw
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+/** Network the resource server verifies against, resolved the same way. */
+function verificationNetwork(): StellarPaymentNetwork {
+  return resolveStellarNetwork(process.env.STELLAR_NETWORK || process.env.X402_NETWORK)
 }
 
 /**
@@ -231,7 +269,7 @@ export function requireX402Enabled(
 }
 
 export const requireX402Payment =
-  (amountUsdc: number) =>
+  (amountUsdc: number, options: X402PaymentOptions = {}) =>
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (process.env.X402_ENABLED !== 'true') {
       requireX402Enabled(req, res, next)
@@ -248,10 +286,12 @@ export const requireX402Payment =
       return
     }
 
-    const network = process.env.STELLAR_NETWORK ?? 'testnet'
+    // Same network the resource server verifies against, so the challenge can
+    // never advertise requirements that verification would reject.
+    const network = verificationNetwork()
     const facilitatorUrl =
       process.env.X402_FACILITATOR_URL ??
-      (network === 'mainnet'
+      (network === 'stellar:pubnet'
         ? 'https://channels.openzeppelin.com/x402'
         : 'https://channels.openzeppelin.com/x402/testnet')
     const platformWallet = process.env.SAFETRUST_PLATFORM_WALLET?.trim() ?? ''
@@ -263,24 +303,31 @@ export const requireX402Payment =
       })
       return
     }
-    const paymentHeader = req.headers['x-payment'] as string | undefined
+    const paymentHeader = readPaymentHeader(req)
 
     try {
       if (!paymentHeader) {
         const requirement = JSON.parse(
           engine.buildPaymentRequirement(
             amountUsdc,
-            `stellar:${network}`,
+            network,
             facilitatorUrl,
             platformWallet
           )
         )
-
-        res.status(402).json({
+        const challenge = {
           error: 'Payment Required',
           x402Version: 2,
           accepts: [requirement],
-        })
+        }
+
+        // v2 clients read the challenge from `PAYMENT-REQUIRED`, base64 JSON.
+        // The body keeps the shape older clients already parse.
+        res.set(
+          'PAYMENT-REQUIRED',
+          Buffer.from(JSON.stringify(challenge)).toString('base64')
+        )
+        res.status(402).json(challenge)
         return
       }
 
@@ -289,6 +336,15 @@ export const requireX402Payment =
       ) as ValidationResult
 
       if (!result.is_valid) {
+        const recovered = options.recoverSettledProof
+          ? await options.recoverSettledProof(paymentHeader, amountUsdc)
+          : null
+        if (recovered) {
+          req.x402 = { ...recovered, paymentHeader }
+          next()
+          return
+        }
+
         res.status(402).json({
           error: 'Invalid x402 payment',
           invalid_reason: result.invalid_reason,
@@ -300,7 +356,7 @@ export const requireX402Payment =
       req.x402 = {
         payer: result.payer_address ?? null,
         amountUsdc: result.amount_usdc ?? amountUsdc,
-        network: result.network ?? `stellar:${network}`,
+        network: result.network ?? network,
         paymentHeader,
       }
       next()

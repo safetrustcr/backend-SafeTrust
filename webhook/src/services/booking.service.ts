@@ -1,6 +1,12 @@
 import { PoolClient } from 'pg'
-import db, { withTransaction } from './db'
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../utils/errors'
+import db, { Queryable, withTransaction } from './db'
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ServiceUnavailableError,
+  ValidationError,
+} from '../utils/errors'
 import { getQuoteForProperty, QuoteResult } from './quote'
 import { deployBookingEscrow, generateFundEscrowXdr } from './escrow-deployment.service'
 import { processHelperSubmission, StellarNetwork } from './confirmation.service'
@@ -36,9 +42,13 @@ export interface CreateBookingParams {
   /**
    * Records which reservation a settled direct (hold-less) payment proof paid
    * for, so one proof can never authorize a second reservation. Optional only
-   * when no fee is charged.
+   * when no fee is charged. Called inside the reservation's transaction with
+   * its client, so a failed binding rolls the reservation back.
    */
-  bindBookingFeeReservation?: (reservationId: string) => Promise<void>
+  bindBookingFeeReservation?: (
+    reservationId: string,
+    client?: Queryable
+  ) => Promise<void>
   /**
    * Resolves, without charging, the reservation an already-settled direct
    * (hold-less) payment proof paid for. Returns null when the proof has not
@@ -331,16 +341,45 @@ async function deployEscrowForReservation(params: {
     platformWallet: wallets.platformWallet,
     depositAmount,
     tenantId,
+    idempotencyKey: `escrow-deploy:${reservationId}`,
   })
 
-  await db.query(
+  // The link is written only if this attempt is the one that claims it. A
+  // concurrent attempt that won the reservation's escrow_id keeps its contract,
+  // so the XDR issued below always belongs to the contract on the reservation.
+  const linked = await db.query(
     `
     UPDATE safetrust.reservations
     SET escrow_id = $1, updated_at = NOW()
-    WHERE id = $2
+    WHERE id = $2 AND tenant_id = $3 AND escrow_id IS NULL
     `,
-    [escrowDbId, reservationId]
+    [escrowDbId, reservationId, tenantId]
   )
+
+  if ((linked.rowCount ?? 0) === 0) {
+    const winner = await db.query<{ contract_id: string | null }>(
+      `
+      SELECT e.contract_id
+      FROM safetrust.reservations r
+      JOIN safetrust.trustless_work_escrows e ON e.id = r.escrow_id
+      WHERE r.id = $1 AND r.tenant_id = $2
+      `,
+      [reservationId, tenantId]
+    )
+    const winningContract = winner.rows[0]?.contract_id
+    if (!winningContract) {
+      throw new ServiceUnavailableError(
+        'Reservation escrow could not be linked or read back'
+      )
+    }
+
+    logger.warn('agent_booking.escrow_link_reused', {
+      reservationId,
+      attemptedContract: contractId,
+      winningContract,
+    })
+    return winningContract
+  }
 
   return contractId
 }
@@ -901,14 +940,17 @@ export async function createAgentBooking(
       throw error
     }
 
-    return resInsert.rows[0].id
-  })
+    const newReservationId = resInsert.rows[0].id
 
-  // Bind the settled proof to the reservation it produced. Done after the
-  // insert commits: the reservation row must be visible for the foreign key.
-  if (bindBookingFeeReservation) {
-    await bindBookingFeeReservation(reservationId)
-  }
+    // Bind the settled proof on the same client: if it already paid for a
+    // different reservation the insert is rolled back, so a failed bind never
+    // leaves a reservation behind that no proof can authorize.
+    if (bindBookingFeeReservation) {
+      await bindBookingFeeReservation(newReservationId, client)
+    }
+
+    return newReservationId
+  })
 
   // ── 3. Deploy escrow & issue funding XDR ───────────────────────────────────
   return finishNewBooking({

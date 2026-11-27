@@ -20,6 +20,11 @@ CREATE TABLE IF NOT EXISTS safetrust.x402_settlements (
   tx_hash VARCHAR(64),
   error TEXT,
   attempts INT NOT NULL DEFAULT 0,
+  -- Ownership token for the request currently settling this row. A row is
+  -- claimed by setting a fresh token, and only the holder of the current token
+  -- may mark the attempt failed, so a request that lost the row to a takeover
+  -- can never overwrite the newer attempt's outcome.
+  claim_token UUID NOT NULL DEFAULT gen_random_uuid(),
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

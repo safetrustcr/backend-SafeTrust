@@ -16,6 +16,7 @@ describe('x402-payment.middleware', () => {
     res = {
       status: jest.fn().mockReturnThis(),
       json: jest.fn().mockReturnThis(),
+      set: jest.fn().mockReturnThis(),
     }
     next = jest.fn()
     delete process.env.STELLAR_NETWORK
@@ -180,6 +181,11 @@ describe('x402-payment.middleware', () => {
             }),
           ],
         })
+      )
+      // The same challenge is exposed to v2 clients as base64 JSON.
+      expect(res.set).toHaveBeenCalledWith(
+        'PAYMENT-REQUIRED',
+        expect.any(String)
       )
     })
   })

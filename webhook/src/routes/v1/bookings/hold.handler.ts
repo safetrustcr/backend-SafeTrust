@@ -12,6 +12,7 @@ import { findSettledHoldFee, settleBookingFee } from '../../../services/x402-set
 import {
   AuthError,
   ConflictError,
+  PaymentRequiredError,
   ServiceUnavailableError,
   ValidationError,
 } from '../../../utils/errors'
@@ -38,10 +39,24 @@ function toDateOnly(value: Date | string): string {
  * proof can resume it, reusing the settled receipt instead of charging again.
  */
 function activationPending(): ServiceUnavailableError {
+  // 5xx bodies never expose the message, so the retry contract is carried by a
+  // stable code plus Retry-After: retry this request with the same payment
+  // proof, which resumes the paid hold instead of charging it again.
   return new ServiceUnavailableError(
     'Hold fee settled but the hold is not active yet; retry with the same payment proof',
-    { code: 'hold_activation_pending' }
+    { code: 'hold_activation_pending', headers: { 'Retry-After': '5' } }
   )
+}
+
+/**
+ * True only when the failure proves nothing was charged for this hold. When the
+ * outcome is unknown (facilitator timeout, ledger write failure, settlement in
+ * flight) the guest may have paid, so the hold must survive for recovery.
+ */
+function isConfirmedNonPayment(error: unknown): boolean {
+  if (error instanceof PaymentRequiredError) return true
+  // The proof paid for a different hold: this one was never charged.
+  return error instanceof ConflictError && error.code === 'settlement_hold_mismatch'
 }
 
 function sendHold(
@@ -102,10 +117,12 @@ export async function createHoldHandler(
       )
       if (settledHold) {
         const existing = await findHoldById(settledHold.holdId, ctx.tenantId)
+        // Property ids compare case-insensitively: the same UUID may arrive
+        // upper-cased from a client, and it must still match the paid hold.
         const sameHold =
           existing !== undefined &&
           existing.user_id === ctx.uid &&
-          existing.apartment_id === propertyId &&
+          existing.apartment_id.toLowerCase() === propertyId.toLowerCase() &&
           toDateOnly(existing.check_in) === checkIn &&
           toDateOnly(existing.check_out) === checkOut &&
           existing.guests === guests
@@ -127,6 +144,27 @@ export async function createHoldHandler(
 
         if (existing.status === 'pending_payment') {
           if (!(await activateHold(existing.id))) {
+            // Activation can lose a race with the expiry sweep or with another
+            // retry: re-read before deciding, instead of reporting a pending
+            // activation for a hold that just became active or expired.
+            const current = await findHoldById(existing.id, ctx.tenantId)
+            const live =
+              current !== undefined &&
+              new Date(current.expires_at).getTime() > Date.now()
+
+            if (current?.status === 'active' && live) {
+              sendHold(res, current, current.quote_total)
+              return
+            }
+            if (!current || current.status === 'expired' || !live) {
+              throw new ConflictError('Hold has expired', { code: 'hold_expired' })
+            }
+            if (current.status !== 'pending_payment') {
+              throw new ConflictError(`Hold is ${current.status}`, {
+                code: 'hold_not_active',
+              })
+            }
+
             logger.error('booking.hold_activation_pending', { holdId: existing.id })
             throw activationPending()
           }
@@ -170,8 +208,12 @@ export async function createHoldHandler(
         holdId: hold.id,
       })
     } catch (error) {
-      // Nothing was paid, so the pending hold must not keep blocking dates.
-      await releasePendingHold(hold.id)
+      // Only a confirmed non-payment frees the dates. If the outcome is unknown
+      // the guest may have been charged, so the hold is kept and the same proof
+      // can resume it; releasing it would erase the only record of that payment.
+      if (isConfirmedNonPayment(error)) {
+        await releasePendingHold(hold.id)
+      }
       throw error
     }
 

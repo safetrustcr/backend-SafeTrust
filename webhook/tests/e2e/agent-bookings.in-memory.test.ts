@@ -33,13 +33,27 @@ jest.mock('../../src/services/db', () => ({
           mockDbState.x402Settlements.set(key, {
             status: 'pending',
             tx_hash: null,
+            reservation_id: null,
             updated_at: new Date(),
           })
-          return { rowCount: 1, rows: [{ id: 'settlement-seeded-1' }] }
+          return {
+            rowCount: 1,
+            rows: [{ id: 'settlement-seeded-1', claim_token: 'claim-seeded-1' }],
+          }
         }
         if (lower.startsWith('update')) {
           const record = key ? mockDbState.x402Settlements.get(key) : undefined
-          if (record && lower.includes("status = 'settled'")) {
+          if (!record) return { rowCount: 0, rows: [] }
+          // Binding the receipt to its reservation is a separate write: it must
+          // leave the receipt's status and transaction hash untouched.
+          if (lower.includes('set reservation_id')) {
+            if (record.status !== 'settled' || record.reservation_id) {
+              return { rowCount: 0, rows: [] }
+            }
+            record.reservation_id = params?.[1] ?? null
+            return { rowCount: 1, rows: [] }
+          }
+          if (lower.includes("status = 'settled'")) {
             record.status = 'settled'
             record.tx_hash = params?.[1] ?? null
           }
@@ -158,6 +172,17 @@ jest.mock('../../src/services/db', () => ({
         }
         if (lower.includes('select 1 from safetrust.reservations')) {
           return { rows: [] }
+        }
+        // The settled payment proof is bound to the reservation inside the
+        // reservation's transaction.
+        if (lower.includes('set reservation_id')) {
+          const key = params?.[0]
+          const record = key ? mockDbState.x402Settlements.get(key) : undefined
+          if (record && record.status === 'settled' && !record.reservation_id) {
+            record.reservation_id = params?.[1] ?? null
+            return { rowCount: 1, rows: [] }
+          }
+          return { rowCount: 0, rows: [] }
         }
         if (lower.includes('insert into safetrust.reservations') && params) {
           const res = {
@@ -292,6 +317,16 @@ describe('Agent bookings flow with an in-memory database (Issue #778)', () => {
     const { reservation_id, contract_id, unsigned_xdr } = bookingRes.body
     const createdReservation = mockDbState.reservations.get(reservation_id)
     expect(createdReservation.status).toBe('escrow_created')
+
+    // The $0.10 proof is recorded as paid for this reservation, and the binding
+    // leaves the settlement receipt's transaction hash intact.
+    const settlementKey = [...mockDbState.x402Settlements.keys()][0]
+    const receipt = mockDbState.x402Settlements.get(settlementKey)
+    expect(receipt).toMatchObject({
+      status: 'settled',
+      reservation_id,
+      tx_hash: 'settlement-e2e-tx-hash',
+    })
 
     // ── Phase 2: Autonomous Agent signs fund_escrow XDR with test wallet ─────
     // Simulate Freighter / agent wallet cryptographic signature over unsigned_xdr

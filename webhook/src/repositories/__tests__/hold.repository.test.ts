@@ -3,6 +3,7 @@ import { pool } from '../../services/db'
 import {
   cancelUnfundedReservationsForExpiredHolds,
   convertHoldToReservation,
+  expireHolds,
   setEscrowFundingChecker,
 } from '../hold.repository'
 
@@ -336,5 +337,59 @@ describe('hold.repository - cancelUnfundedReservationsForExpiredHolds', () => {
     expect(checker).not.toHaveBeenCalled()
     expect(noCancelUpdate(client)).toBe(true)
     expect(client.query).toHaveBeenCalledWith('COMMIT')
+  })
+
+  it('verifies the linked escrow with its own contract and network', async () => {
+    const checker = jest.fn().mockResolvedValue('unfunded')
+    setEscrowFundingChecker(checker)
+    // The candidate scan and the linked escrow disagree: the link wins.
+    querySpy.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ ...escrowCreatedCandidate, contract_id: 'CSCANCONTRACT', network: 'testnet' }],
+    })
+    queueLockedPath({
+      escrowRows: [{ contract_id: 'CLINKEDCONTRACT', network: 'stellar:pubnet', status: 'created' }],
+    })
+
+    const cancelled = await cancelUnfundedReservationsForExpiredHolds()
+
+    expect(cancelled).toBe(1)
+    expect(checker).toHaveBeenCalledWith({
+      contractId: 'CLINKEDCONTRACT',
+      network: 'stellar:pubnet',
+    })
+  })
+
+  it('treats a linked escrow with no network as unverifiable and preserves the reservation', async () => {
+    const checker = jest.fn().mockResolvedValue('unfunded')
+    setEscrowFundingChecker(checker)
+    queueLockedPath({
+      escrowRows: [{ contract_id: 'CLINKEDCONTRACT', network: null, status: 'created' }],
+    })
+
+    const cancelled = await cancelUnfundedReservationsForExpiredHolds()
+
+    expect(cancelled).toBe(0)
+    expect(checker).not.toHaveBeenCalled()
+    expect(noCancelUpdate(client)).toBe(true)
+    expect(client.query).toHaveBeenCalledWith('COMMIT')
+  })
+
+  it('lapses expired and abandoned holds before cancelling their reservations', async () => {
+    // 1. expire lapsed holds, 2. release abandoned pending_payment holds,
+    // 3. then sweep reservations left unfunded by those holds.
+    querySpy
+      .mockResolvedValueOnce({ rowCount: 2, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+
+    const changed = await expireHolds()
+
+    expect(changed).toBe(3)
+    const statements = querySpy.mock.calls.map(([sql]) => String(sql))
+    expect(statements[0]).toContain("SET status = 'expired'")
+    expect(statements[1]).toContain("SET status = 'released'")
+    expect(statements[2]).toContain("r.status = 'escrow_created'")
+    expect(statements[2]).toContain('h.expires_at <= NOW()')
   })
 })

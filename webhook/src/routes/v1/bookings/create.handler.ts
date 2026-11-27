@@ -78,11 +78,12 @@ export async function createBookingHandler(
       },
       // A direct (hold-less) proof may authorize only one reservation: record
       // the one it paid for so a replay returns it instead of charging again.
-      bindBookingFeeReservation: async (reservationId: string) => {
+      bindBookingFeeReservation: async (reservationId: string, client) => {
         if (!x402?.paymentHeader) return
         await bindSettlementToReservation(
           settlementIdempotencyKey(x402.paymentHeader, x402.amountUsdc),
-          reservationId
+          reservationId,
+          client
         )
       },
     })

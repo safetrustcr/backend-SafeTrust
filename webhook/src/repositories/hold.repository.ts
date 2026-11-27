@@ -384,20 +384,36 @@ export async function cancelUnfundedReservationsForExpiredHolds(): Promise<numbe
         return false
       }
 
+      // A linked escrow is authoritative: its contract and network are checked
+      // together, so a reservation linked on one network is never verified
+      // against the candidate scan's different contract or network. With no
+      // linked escrow row there is nothing on-chain to read, so the candidate
+      // values are the only ones available. A linked escrow with no network
+      // cannot be checked at all, and is treated as unverifiable.
       let fundingState: EscrowFundingState
-      try {
-        fundingState = await escrowFundingChecker({
-          contractId: escrow?.contract_id ?? candidate.contract_id,
-          network: escrow?.network ?? candidate.network,
-        })
-      } catch (error) {
-        // A transient check failure must not free dates a deposit may hold.
-        logger.warn('hold.onchain_funding_check_threw', {
-          contractId: candidate.contract_id,
-          reservationId: candidate.reservation_id,
-          error: (error as Error).message,
+      if (escrow && !escrow.network) {
+        // Linked, but on no known network: the escrow cannot be read on-chain.
+        logger.warn('hold.onchain_funding_check_unknown_network', {
+          contractId: escrow.contract_id,
+          reservationId: reservation.reservation_id,
         })
         fundingState = 'unknown'
+      } else {
+        try {
+          fundingState = await escrowFundingChecker(
+            escrow
+              ? { contractId: escrow.contract_id, network: escrow.network }
+              : { contractId: candidate.contract_id, network: candidate.network }
+          )
+        } catch (error) {
+          // A transient check failure must not free dates a deposit may hold.
+          logger.warn('hold.onchain_funding_check_threw', {
+            contractId: candidate.contract_id,
+            reservationId: candidate.reservation_id,
+            error: (error as Error).message,
+          })
+          fundingState = 'unknown'
+        }
       }
 
       if (fundingState !== 'unfunded') return false
@@ -428,7 +444,9 @@ export async function cancelUnfundedReservationsForExpiredHolds(): Promise<numbe
  * Returns the number of holds and reservations changed.
  */
 export async function expireHolds(): Promise<number> {
-  const cancelled = await cancelUnfundedReservationsForExpiredHolds()
+  // Holds are lapsed first. The cancellation sweep then runs against a table
+  // whose expired holds are already terminal, while its own eligibility test
+  // stays on `booking_holds.expires_at`, which this ordering does not change.
   const expired = await query(
     `UPDATE safetrust.booking_holds
         SET status = 'expired', updated_at = NOW()
@@ -441,6 +459,7 @@ export async function expireHolds(): Promise<number> {
         AND created_at <= NOW() - ($1 || ' milliseconds')::interval`,
     [String(PENDING_PAYMENT_TIMEOUT_MS)]
   )
+  const cancelled = await cancelUnfundedReservationsForExpiredHolds()
   return (expired.rowCount ?? 0) + (stuck.rowCount ?? 0) + cancelled
 }
 

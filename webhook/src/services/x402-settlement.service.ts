@@ -1,7 +1,7 @@
 'use strict'
 
 import crypto from 'crypto'
-import db from './db'
+import db, { Queryable } from './db'
 import { logger } from '../middleware/logger'
 import {
   getX402Engine,
@@ -68,8 +68,11 @@ export function settlementIdempotencyKey(
     .digest('hex')
 }
 
-async function findSettlement(idempotencyKey: string): Promise<SettlementRow | undefined> {
-  const result = await db.query<SettlementRow>(
+async function findSettlement(
+  idempotencyKey: string,
+  client: Queryable = db
+): Promise<SettlementRow | undefined> {
+  const result = await client.query<SettlementRow>(
     `SELECT status, tx_hash, hold_id, reservation_id, updated_at
        FROM safetrust.x402_settlements
       WHERE idempotency_key = $1`,
@@ -135,9 +138,15 @@ export async function findSettledHoldFee(
  */
 export async function bindSettlementToReservation(
   idempotencyKey: string,
-  reservationId: string
+  reservationId: string,
+  /**
+   * Transaction that inserted the reservation. Passing it makes the bind
+   * atomic with the insert: a proof already bound elsewhere rolls the
+   * reservation back instead of leaving it behind unpayable.
+   */
+  client: Queryable = db
 ): Promise<void> {
-  const updated = await db.query(
+  const updated = await client.query(
     `UPDATE safetrust.x402_settlements
         SET reservation_id = $2, updated_at = NOW()
       WHERE idempotency_key = $1
@@ -148,7 +157,7 @@ export async function bindSettlementToReservation(
 
   if ((updated.rowCount ?? 0) > 0) return
 
-  const current = await findSettlement(idempotencyKey)
+  const current = await findSettlement(idempotencyKey, client)
   if (current?.reservation_id && current.reservation_id !== reservationId) {
     throw new ConflictError(
       'Payment proof was already used for a different reservation',
@@ -184,14 +193,24 @@ function assertHoldBinding(row: SettlementRow, holdId: string | null | undefined
   }
 }
 
-async function markFailed(idempotencyKey: string, reason: string): Promise<void> {
+/**
+ * Mark an attempt failed, but only for the claim that still owns the row. A
+ * request that lost the row to a takeover has a stale claim token, so it can
+ * never overwrite the newer attempt's outcome.
+ */
+async function markFailed(
+  idempotencyKey: string,
+  reason: string,
+  claimToken: string
+): Promise<void> {
   try {
     await db.query(
       `UPDATE safetrust.x402_settlements
           SET status = 'failed', error = $2, updated_at = NOW()
         WHERE idempotency_key = $1
+          AND claim_token = $3
           AND status <> 'settled'`,
-      [idempotencyKey, reason]
+      [idempotencyKey, reason, claimToken]
     )
   } catch (error) {
     logger.error('x402.settlement_persist_failed', { idempotencyKey, error })
@@ -232,6 +251,10 @@ export async function settleBookingFee(
     })
   }
 
+  // Ownership token for this attempt: only the holder may later mark the row
+  // failed, so a request that was superseded cannot record a stale outcome.
+  let claimToken: string | undefined
+
   if (existing) {
     // An unsettled row may adopt this hold, but never a different one.
     if (holdId && existing.hold_id && existing.hold_id !== holdId) {
@@ -242,17 +265,19 @@ export async function settleBookingFee(
     // Conditional claim: only take over a row that is not settled and is not a
     // fresh pending attempt. Checking the affected row count makes the claim
     // atomic, so two concurrent retries cannot both settle.
-    const claimed = await db.query(
+    const claimed = await db.query<{ claim_token: string }>(
       `UPDATE safetrust.x402_settlements
           SET status = 'pending',
               error = NULL,
               attempts = attempts + 1,
               hold_id = COALESCE($3, hold_id),
+              claim_token = gen_random_uuid(),
               updated_at = NOW()
         WHERE idempotency_key = $1
           AND status <> 'settled'
           AND (status <> 'pending'
-               OR updated_at <= NOW() - ($2 || ' milliseconds')::interval)`,
+               OR updated_at <= NOW() - ($2 || ' milliseconds')::interval)
+        RETURNING claim_token`,
       [idempotencyKey, String(SETTLEMENT_PENDING_TIMEOUT_MS), holdId]
     )
 
@@ -273,13 +298,15 @@ export async function settleBookingFee(
         code: 'settlement_pending',
       })
     }
+
+    claimToken = claimed.rows[0]?.claim_token
   } else {
-    const inserted = await db.query(
+    const inserted = await db.query<{ id: string; claim_token: string }>(
       `INSERT INTO safetrust.x402_settlements
          (idempotency_key, purpose, amount_usdc, network, payer_address, hold_id, status, attempts)
        VALUES ($1, $2, $3, $4, $5, $6, 'pending', 1)
        ON CONFLICT (idempotency_key) DO NOTHING
-       RETURNING id`,
+       RETURNING id, claim_token`,
       [
         idempotencyKey,
         purpose,
@@ -304,12 +331,20 @@ export async function settleBookingFee(
         code: 'settlement_pending',
       })
     }
+
+    claimToken = inserted.rows[0]?.claim_token
+  }
+
+  if (!claimToken) {
+    // Defensive: without a token the attempt cannot record any outcome, so it
+    // must not call the facilitator and charge a guest it cannot attribute.
+    throw new ServiceUnavailableError('x402 settlement could not claim the payment')
   }
 
   const engine = getX402Engine()
   if (!engine?.settleX402Payment) {
     const reason = 'x402 settlement processor is unavailable'
-    await markFailed(idempotencyKey, reason)
+    await markFailed(idempotencyKey, reason, claimToken)
     throw new ServiceUnavailableError(reason)
   }
 
@@ -320,14 +355,14 @@ export async function settleBookingFee(
     outcome = await engine.settleX402Payment(input.paymentHeader, input.amountUsdc)
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
-    await markFailed(idempotencyKey, reason)
+    await markFailed(idempotencyKey, reason, claimToken)
     logger.error('x402.settlement_error', { idempotencyKey, purpose, error })
     throw new ServiceUnavailableError('x402 settlement failed')
   }
 
   if (!outcome.settled) {
     const reason = outcome.error ?? 'x402 settlement was declined'
-    await markFailed(idempotencyKey, reason)
+    await markFailed(idempotencyKey, reason, claimToken)
     logger.warn('x402.settlement_declined', { idempotencyKey, purpose, reason })
     throw new PaymentRequiredError(reason, { code: 'settlement_failed' })
   }

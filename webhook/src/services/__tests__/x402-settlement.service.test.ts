@@ -123,7 +123,7 @@ describe('x402 settlement service', () => {
     setX402Engine(null)
     mockQuery.mockImplementation(async (sql: string) => {
       if (String(sql).includes('INSERT INTO safetrust.x402_settlements')) {
-        return { rowCount: 1, rows: [{ id: 'settlement-1' }] }
+        return { rowCount: 1, rows: [{ id: 'settlement-1', claim_token: 'claim-1' }] }
       }
       if (String(sql).trimStart().toUpperCase().startsWith('SELECT')) {
         return { rows: [] }
@@ -140,5 +140,8 @@ describe('x402 settlement service', () => {
     )
     expect(failedUpdate).toBeDefined()
     expect(String(failedUpdate?.[0])).toContain("status <> 'settled'")
+    // Only the claim that owns the row may record the failure.
+    expect(String(failedUpdate?.[0])).toContain('claim_token = $3')
+    expect(failedUpdate?.[1]).toEqual([expect.any(String), expect.any(String), 'claim-1'])
   })
 })

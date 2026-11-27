@@ -48,7 +48,8 @@ async function call(
     authorization: `Bearer ${FIREBASE_TOKEN}`,
     'content-type': 'application/json',
   }
-  if (init.payment) headers['x-payment'] = X402_PAYMENT
+  // The v2 proof header; the middleware still accepts legacy `X-Payment`.
+  if (init.payment) headers['payment-signature'] = X402_PAYMENT
 
   const response = await fetch(`${WEBHOOK_URL}${path}`, {
     method: init.method,
@@ -132,12 +133,12 @@ describeTestnet('Agent booking end-to-end on Stellar testnet (Issue #778)', () =
       lastBody = current.body
       if (current.status === 200) {
         status = String(current.body.status ?? '')
-        if (current.body.contract_id && current.body.contract_id !== contractId) {
-          throw new Error(
-            `Reservation ${reservationId} reports contract ${current.body.contract_id}, expected ${contractId}`
-          )
+        if (status === 'funded') {
+          // A funded reservation must report the contract that was booked for
+          // it, whether or not the reservation view exposes one at all.
+          expect(current.body.contractId ?? current.body.contract_id).toBe(contractId)
+          break
         }
-        if (status === 'funded') break
       }
       await sleep(5_000)
     }

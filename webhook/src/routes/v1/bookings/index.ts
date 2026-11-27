@@ -1,5 +1,7 @@
 import { RequestHandler, Router } from 'express'
 import { requireX402Payment } from '../../../middleware/x402-payment.middleware'
+import { resolveStellarNetwork } from '../../../config/x402'
+import { findSettledHoldFee } from '../../../services/x402-settlement.service'
 import { createHoldHandler, releaseHoldHandler } from './hold.handler'
 import { createBookingHandler } from './create.handler'
 import { submitBookingHandler } from './submit.handler'
@@ -20,7 +22,23 @@ const router: Router = Router()
 router.post(
   '/hold',
   requireRole(['guest']),
-  requireX402Payment(HOLD_PRICE_USDC),
+  requireX402Payment(HOLD_PRICE_USDC, {
+    // A retry of a hold whose fee already settled is rejected by the
+    // facilitator as a replayed proof. Hand recovery to the handler only when
+    // the ledger recorded this exact proof as settled; the handler then resumes
+    // that hold and never charges it again.
+    recoverSettledProof: async (paymentHeader, amountUsdc) => {
+      const settled = await findSettledHoldFee(paymentHeader, amountUsdc)
+      if (!settled) return null
+      return {
+        payer: null,
+        amountUsdc,
+        network: resolveStellarNetwork(
+          process.env.STELLAR_NETWORK || process.env.X402_NETWORK
+        ),
+      }
+    },
+  }),
   createHoldHandler as unknown as RequestHandler
 )
 router.delete('/hold/:id', requireRole(['guest']), releaseHoldHandler as unknown as RequestHandler)
