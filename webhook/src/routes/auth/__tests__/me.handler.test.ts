@@ -2,6 +2,7 @@ import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { meHandler } from '../me.handler'
 import { listUserRoles as query } from '../../../repositories/user.repository'
+import { errorHandler } from '../../../middleware/error-handler'
 
 jest.mock('../../../repositories/user.repository', () => ({ listUserRoles: jest.fn() }))
 
@@ -10,6 +11,14 @@ function makeResponse(): Response {
   res.status = jest.fn().mockReturnValue(res)
   res.json = jest.fn().mockReturnValue(res)
   return res as Response
+}
+
+async function run(handler: (req: any, res: any) => Promise<any>, req: any, res: any) {
+  try {
+    return await handler(req, res)
+  } catch (err) {
+    errorHandler(err, req, res, () => {})
+  }
 }
 
 describe('auth/me.handler', () => {
@@ -21,10 +30,12 @@ describe('auth/me.handler', () => {
     const req = {} as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await meHandler(req, res)
+    await run(meHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(401)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, error: 'Unauthorized' })
+    )
   })
 
   it('reads roles from req.context without querying the database', async () => {
@@ -38,7 +49,7 @@ describe('auth/me.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await meHandler(req, res)
+    await run(meHandler, req, res)
 
     expect(query).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(200)

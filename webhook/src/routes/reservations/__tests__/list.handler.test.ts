@@ -1,6 +1,7 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { listReservationsHandler } from '../list.handler'
+import { runHandler } from '../../__tests__/run-handler'
 import * as reservationRepo from '../../../repositories/reservation.repository'
 
 jest.mock('../../../repositories/reservation.repository', () => ({
@@ -60,10 +61,10 @@ describe('reservations/list.handler', () => {
     const req = { query: {} } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await listReservationsHandler(req, res)
+    await runHandler(listReservationsHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(401)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Unauthorized' }))
   })
 
   it('returns 400 for invalid role parameter', async () => {
@@ -73,12 +74,10 @@ describe('reservations/list.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await listReservationsHandler(req, res)
+    await runHandler(listReservationsHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: "Invalid role parameter. Must be 'guest', 'host' or 'both'",
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: "Invalid role parameter. Must be 'guest', 'host' or 'both'" }))
   })
 
   it('accepts role=both and queries both guest and host (parsedRole undefined)', async () => {
@@ -90,7 +89,7 @@ describe('reservations/list.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await listReservationsHandler(req, res)
+    await runHandler(listReservationsHandler, req, res)
 
     expect(reservationRepo.findReservationsByParty).toHaveBeenCalledWith(
       'user-1',
@@ -110,7 +109,7 @@ describe('reservations/list.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await listReservationsHandler(req, res)
+    await runHandler(listReservationsHandler, req, res)
 
     expect(reservationRepo.findReservationsByParty).toHaveBeenCalledWith(
       'user-1',
@@ -161,7 +160,7 @@ describe('reservations/list.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await listReservationsHandler(req, res)
+    await runHandler(listReservationsHandler, req, res)
 
     expect(reservationRepo.findReservationsByParty).toHaveBeenCalledWith(
       'user-1',
@@ -181,7 +180,7 @@ describe('reservations/list.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await listReservationsHandler(req, res)
+    await runHandler(listReservationsHandler, req, res)
 
     expect(reservationRepo.findReservationsByParty).toHaveBeenCalledWith(
       'user-1',
@@ -201,7 +200,7 @@ describe('reservations/list.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await listReservationsHandler(req, res)
+    await runHandler(listReservationsHandler, req, res)
 
     expect(reservationRepo.findReservationsByParty).toHaveBeenCalledWith(
       'user-1',

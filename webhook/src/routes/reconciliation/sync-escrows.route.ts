@@ -17,6 +17,7 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
 import { syncEscrowsHandler } from './sync-escrows.handler'
 import { logger } from '../../middleware/logger'
+import { AuthError } from '../../utils/errors'
 
 const router = Router()
 
@@ -35,8 +36,7 @@ export function hasuraSecretGuard(req: Request, res: Response, next: NextFunctio
   const provided = req.headers['x-hasura-event-secret']
   if (!provided || provided !== secret) {
     logger.warn('reconciliation.event_secret_rejected')
-    res.status(401).json({ error: 'Unauthorized: invalid event secret' })
-    return
+    throw new AuthError('Unauthorized: invalid event secret')
   }
   return next()
 }

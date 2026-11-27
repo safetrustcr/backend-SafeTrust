@@ -1,5 +1,5 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM node:24-bookworm-slim AS builder
+FROM node:25-bookworm-slim AS builder
 
 # Rust toolchain for the default-enabled Neon addons.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,7 +30,7 @@ COPY webhook/src/ ./webhook/src/
 RUN cd webhook && npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
-FROM node:24-bookworm-slim AS production
+FROM node:25-bookworm-slim AS production
 
 WORKDIR /app/webhook
 
@@ -60,9 +60,6 @@ COPY --from=builder /app/crates/pg-bulk-upsert/package.json /app/crates/pg-bulk-
 COPY --from=builder /app/crates/escrow-state-machine/index.node /app/crates/escrow-state-machine/index.node
 COPY --from=builder /app/crates/escrow-state-machine/package.json /app/crates/escrow-state-machine/package.json
 COPY --from=builder /app/crates/escrow-state-machine/index.d.ts /app/crates/escrow-state-machine/index.d.ts
-# x402 payment validation is opt-in at runtime but required by the enabled integration tests.
-COPY --from=builder /app/crates/x402-processor/index.node /app/crates/x402-processor/index.node
-COPY --from=builder /app/crates/x402-processor/package.json /app/crates/x402-processor/package.json
 # soroban-reconciler: built by build:rust; still gated at runtime by
 # SOROBAN_VALIDATION_ENABLED and its unvalidated-reader safeguards.
 COPY --from=builder /app/crates/soroban-reconciler/package.json /app/crates/soroban-reconciler/package.json
