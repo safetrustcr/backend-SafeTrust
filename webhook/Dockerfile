@@ -1,5 +1,5 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM node:24-bookworm-slim AS builder
+FROM node:25-bookworm-slim AS builder
 
 # Rust toolchain for the default-enabled Neon addons.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,7 +30,7 @@ COPY webhook/src/ ./webhook/src/
 RUN cd webhook && npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
-FROM node:24-bookworm-slim AS production
+FROM node:25-bookworm-slim AS production
 
 WORKDIR /app/webhook
 
