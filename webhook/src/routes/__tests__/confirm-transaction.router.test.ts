@@ -4,6 +4,7 @@ import express from 'express'
 import request from 'supertest'
 import router from '../index'
 import * as escrowService from '../../services/escrow.service'
+import { errorHandler } from '../../middleware/error-handler'
 
 jest.mock('../../middleware/auth.middleware', () => ({
   authMiddleware: jest.fn((req, _res, next) => {
@@ -42,6 +43,7 @@ describe('confirm transaction parent router', () => {
     const app = express()
     app.use(express.json())
     app.use(router)
+    app.use(errorHandler)
 
     const response = await request(app)
       .post('/api/escrows/confirm-transaction')
@@ -52,7 +54,7 @@ describe('confirm transaction parent router', () => {
       })
 
     expect(response.status).toBe(403)
-    expect(response.body.message).toBe('Caller is not a recognized party on this escrow')
+    expect(response.body.error).toBe('Caller is not a recognized party on this escrow')
     expect(mockedIsEscrowParty).toHaveBeenCalledWith('test-user', 'contract-1', 'safetrust')
   })
 })

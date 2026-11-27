@@ -48,7 +48,17 @@ export function readTimeoutMs(envName: string, defaultMs: number): number {
 function isTimeoutError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
   const record = error as Record<string, unknown>
-  return record.name === 'TimeoutError' || record.name === 'AbortError' || record.code === 'ABORT_ERR'
+  const cause = record.cause as Record<string, unknown> | null | undefined
+  return (
+    record.name === 'TimeoutError' ||
+    record.name === 'AbortError' ||
+    record.code === 'ABORT_ERR' ||
+    (cause != null &&
+      typeof cause === 'object' &&
+      (cause.name === 'TimeoutError' ||
+        cause.name === 'AbortError' ||
+        cause.code === 'UND_ERR_CONNECT_TIMEOUT'))
+  )
 }
 
 function pathOf(url: string): string {

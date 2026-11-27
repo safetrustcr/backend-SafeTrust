@@ -1,6 +1,7 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { createReservationHandler } from '../create.handler'
+import { runHandler } from '../../__tests__/run-handler'
 import {
   createReservation,
   TenantMismatchError,
@@ -34,10 +35,10 @@ describe('reservations/create.handler', () => {
     const req = { body: {} } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(401)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Unauthorized' }))
   })
 
   it('returns 400 when required fields are missing', async () => {
@@ -48,12 +49,10 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'Missing required fields: apartment_id, check_in_date, check_out_date, total_amount',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Missing required fields: apartment_id, check_in_date, check_out_date, total_amount' }))
   })
 
   it('returns 400 when check_out_date is not after check_in_date', async () => {
@@ -69,12 +68,10 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'check_out_date must be a valid date after check_in_date',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'check_out_date must be a valid date after check_in_date' }))
   })
 
   it('returns 400 when total_amount is invalid', async () => {
@@ -90,12 +87,10 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'total_amount must be greater than zero',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'total_amount must be greater than zero' }))
   })
 
   it('creates reservation successfully through the service', async () => {
@@ -126,7 +121,7 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(201)
     expect(res.json).toHaveBeenCalledWith({ reservation: mockReservation })
@@ -167,7 +162,7 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(201)
     expect(mockedCreateReservation).toHaveBeenCalledWith(
@@ -190,7 +185,7 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(401)
     expect(mockedCreateReservation).not.toHaveBeenCalled()
@@ -211,10 +206,10 @@ describe('reservations/create.handler', () => {
     const res = makeResponse()
 
     mockedCreateReservation.mockRejectedValueOnce(new TenantMismatchError())
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden: tenant mismatch' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Tenant does not match the verified session tenant' }))
     expect(mockedCreateReservation).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: 'safetrust',
@@ -238,10 +233,10 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Failed to create reservation' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Internal server error' }))
     // The service's error message stays in the logs, never in the body.
     expect(JSON.stringify((res.json as jest.Mock).mock.calls)).not.toContain('Reservation service failed')
   })
