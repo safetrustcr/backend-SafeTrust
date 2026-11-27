@@ -2,6 +2,7 @@ import { Response } from 'express'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { logger } from '../../middleware/logger'
 import { syncUser } from '../../repositories/user.repository'
+import { syncClaims } from '../../services/claims'
 import { AuthError } from '../../utils/errors'
 
 /**
@@ -35,9 +36,11 @@ export const syncUserHandler = async (
   }
 
   const user = await syncUser(uid, email)
+  const claimsUpdated = await syncClaims(uid)
 
-  logger.info('auth.sync_user.succeeded', { uid: user.firebase_uid })
+  logger.info('auth.sync_user.succeeded', { uid: user.firebase_uid, claimsUpdated })
   return res.status(200).json({
+    claimsUpdated,
     user: {
       id: user.id,
       email: user.email,

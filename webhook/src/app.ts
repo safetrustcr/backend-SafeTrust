@@ -16,6 +16,7 @@ import {
 
 import routes from './routes'
 import reconciliationRoutes from './routes/reconciliation/sync-escrows.route'
+import claimsWebhookRoutes from './routes/webhooks/sync-claims.route'
 
 const app: Application = express()
 
@@ -64,6 +65,7 @@ app.use(cors(corsOptions(corsPolicy)))
 app.use('/health', healthRateLimit)
 app.use('/api/escrows/initialize', publicRateLimit)
 app.use('/reconciliation', publicRateLimit)
+app.use('/webhooks', publicRateLimit)
 app.use('/api', apiIpRateLimit)
 app.use('/api/auth', authIpRateLimit)
 
@@ -76,6 +78,7 @@ app.use(bindRequestContext)
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/', routes)
 app.use('/reconciliation', reconciliationRoutes)
+app.use('/webhooks', claimsWebhookRoutes)
 
 // Liveness is intentionally independent of external dependencies.
 app.get('/health/live', (_req: Request, res: Response) => {

@@ -1,6 +1,21 @@
 table:
   name: user_roles
   schema: safetrust
+event_triggers:
+  - name: on_user_roles_changed
+    definition:
+      enable_manual: false
+      insert:
+        columns: "*"
+      delete: {}
+    retry_conf:
+      num_retries: 3
+      interval_sec: 10
+      timeout_sec: 60
+    webhook: "{{WEBHOOK_URL}}/webhooks/sync-claims"
+    headers:
+      - name: x-hasura-event-secret
+        value_from_env: HASURA_EVENT_SECRET
 select_permissions:
   - role: guest
     permission:
