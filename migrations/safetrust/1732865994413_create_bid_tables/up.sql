@@ -1,4 +1,5 @@
-CREATE TABLE bid_requests (
+-- Staged in public; 1779300000001 moves both tables to safetrust.
+CREATE TABLE public.bid_requests (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     apartment_id UUID REFERENCES apartments(id) ON DELETE CASCADE,
     tenant_id TEXT REFERENCES users(id) ON DELETE CASCADE,
@@ -21,7 +22,7 @@ CREATE TABLE bid_requests (
     )
 );
 
-CREATE TABLE bid_status_histories (
+CREATE TABLE public.bid_status_histories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     bid_request_id UUID REFERENCES bid_requests(id) ON DELETE CASCADE,
     status TEXT NOT NULL,

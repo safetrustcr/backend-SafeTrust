@@ -1,6 +1,7 @@
 
 -- Create SafeTrust Pricing Overrides Table
-CREATE TABLE pricing_overrides (
+-- Staged in public; 1779300000001 moves it to safetrust.
+CREATE TABLE public.pricing_overrides (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     override_name VARCHAR(100) NOT NULL,
     base_rule_id UUID REFERENCES pricing_rules(id) ON DELETE CASCADE,

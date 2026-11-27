@@ -1,4 +1,5 @@
-CREATE TABLE apartment_images (
+-- Staged in public; 1779300000001 moves it to safetrust.
+CREATE TABLE public.apartment_images (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     apartment_id UUID NOT NULL REFERENCES apartments(id) ON DELETE CASCADE,
     image_url TEXT NOT NULL,
