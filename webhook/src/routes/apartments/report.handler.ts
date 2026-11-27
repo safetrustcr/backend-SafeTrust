@@ -3,6 +3,14 @@ import type { CreateListingReportPayload, ListingReportResponse, ReportCategory 
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { logger } from '../../middleware/logger'
 import { createListingReport } from '../../services/listing-report.service'
+import {
+  AppError,
+  AuthError,
+  ConflictError,
+  NotFoundError,
+  TooManyRequestsError,
+  ValidationError,
+} from '../../utils/errors'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -31,64 +39,58 @@ export const createReportHandler = async (
   res: Response<ReportResponse>
 ): Promise<Response<ReportResponse>> => {
   const reporterId = req.user?.uid
-  if (!reporterId) return res.status(401).json({ error: 'Unauthorized' })
+  if (!reporterId) throw new AuthError('Unauthorized')
 
   const apartmentId = req.params.id
   if (typeof apartmentId !== 'string' || !UUID_RE.test(apartmentId)) {
-    return res.status(400).json({ error: 'INVALID_REPORT' satisfies ReportErrorCode })
+    throw new ValidationError('INVALID_REPORT', { code: 'invalid_report' })
   }
 
   const { category, details, clientOpId } = (req.body || {}) as Partial<CreateListingReportPayload>
 
   if (!category || !REPORT_CATEGORIES.includes(category)) {
-    return res.status(400).json({ error: 'INVALID_REPORT' satisfies ReportErrorCode })
+    throw new ValidationError('INVALID_REPORT', { code: 'invalid_report' })
   }
 
   const normalizedDetails = typeof details === 'string' ? details.trim() : undefined
   if (normalizedDetails && normalizedDetails.length > MAX_DETAILS_LENGTH) {
-    return res.status(400).json({ error: 'INVALID_REPORT' satisfies ReportErrorCode })
+    throw new ValidationError('INVALID_REPORT', { code: 'invalid_report' })
   }
   if (category === 'other' && (!normalizedDetails || normalizedDetails.length < MIN_OTHER_DETAILS_LENGTH)) {
-    return res.status(400).json({ error: 'INVALID_REPORT' satisfies ReportErrorCode })
+    throw new ValidationError('INVALID_REPORT', { code: 'invalid_report' })
   }
 
   if (typeof clientOpId !== 'string' || !UUID_RE.test(clientOpId)) {
-    return res.status(400).json({ error: 'INVALID_REPORT' satisfies ReportErrorCode })
+    throw new ValidationError('INVALID_REPORT', { code: 'invalid_report' })
   }
 
-  try {
-    const result = await createListingReport({
-      apartmentId,
-      reporterId,
-      category,
-      details: normalizedDetails || null,
-      clientOpId,
-    })
-    if (result.kind === 'not-found') return res.status(404).json({ error: 'Apartment not found' })
-    if (result.kind === 'own-listing') {
-      return res.status(400).json({ error: 'CANNOT_REPORT_OWN_LISTING' satisfies ReportErrorCode })
-    }
-    if (result.kind === 'rate-limited') {
-      return res.status(429).json({ error: 'Too many reports. Try again later.' })
-    }
-    if (result.kind === 'operation-reused') return res.status(409).json({ error: 'INVALID_REPORT' })
-    if (result.kind === 'missing-after-conflict') {
-      return res.status(500).json({ error: 'Failed to create report' })
-    }
-
-    // Never log `details` — it may contain personal data.
-    logger.info('apartments.report.created', {
-      reportId: result.report.id,
-      apartmentId,
-      category,
-    })
-
-    return res.status(201).json({ id: result.report.id, status: result.report.status })
-  } catch (error) {
-    const err = error as Error
-    logger.error('apartments.report.failed', { error: err })
-    return res.status(500).json({ error: 'Failed to create report' })
+  const result = await createListingReport({
+    apartmentId,
+    reporterId,
+    category,
+    details: normalizedDetails || null,
+    clientOpId,
+  })
+  if (result.kind === 'not-found') throw new NotFoundError('Apartment not found')
+  if (result.kind === 'own-listing') {
+    throw new ValidationError('CANNOT_REPORT_OWN_LISTING', { code: 'cannot_report_own_listing' })
   }
+  if (result.kind === 'rate-limited') {
+    throw new TooManyRequestsError('Too many reports. Try again later.')
+  }
+  if (result.kind === 'operation-reused') throw new ConflictError('INVALID_REPORT', { code: 'invalid_report' })
+  if (result.kind === 'missing-after-conflict') {
+    throw new AppError('Failed to create report', 500)
+  }
+
+  // Never log `details` — it may contain personal data.
+  logger.info('apartments.report.created', {
+    reportId: result.report.id,
+    apartmentId,
+    category,
+  })
+
+  return res.status(201).json({ id: result.report.id, status: result.report.status })
 }
 
 export default { createReportHandler }
