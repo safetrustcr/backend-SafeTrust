@@ -8,6 +8,30 @@ const crateConfigs = {
         libraryName: 'x402_processor',
         destination: 'index.node',
     },
+    'chunk-processor': {
+        libraryName: 'chunk_processor',
+        destination: 'index.node',
+    },
+    'pg-bulk-upsert': {
+        libraryName: 'pg_bulk_upsert',
+        destination: 'index.node',
+    },
+    'stellar-utils': {
+        libraryName: 'stellar_utils',
+        destination: path.join('native', 'index.node'),
+    },
+    'webhook-verifier': {
+        libraryName: 'webhook_verifier',
+        destination: 'index.node',
+    },
+    'escrow-state-machine': {
+        libraryName: 'escrow_state_machine',
+        destination: 'index.node',
+    },
+    'soroban-reconciler': {
+        libraryName: 'soroban_reconciler',
+        destination: path.join('native', 'index.node'),
+    },
 };
 const cratesDir = path.resolve(__dirname, '..');
 function parseCrateArgument(args) {

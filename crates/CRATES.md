@@ -4,6 +4,14 @@ The workspace has one functional crate, `x402-processor`, plus the
 `safetrust-native-gates` root package that owns its opt-in feature. A bare
 `cargo build` builds only the root package; `npm run build:rust` (webhook)
 builds `x402-processor` explicitly because the x402 Karate suite exercises it.
+The default Cargo workspace `default-members` build includes only the core
+crates (`webhook-verifier`, `stellar-utils`, `chunk-processor`, `pg-bulk-upsert`,
+`escrow-state-machine`). `soroban-reconciler` is excluded from
+`default-members` so `cargo build --manifest-path crates/Cargo.toml` does not
+compile it by default, while `webhook/package.json` (`build:rust` / `copy:crates`)
+and `webhook/Dockerfile` explicitly build and copy its native addon so it is
+available in the webhook image behind its runtime `SOROBAN_VALIDATION_ENABLED`
+gate.
 
 | Crate | Cargo feature | Prerequisite before enabling in production |
 |---|---|---|
@@ -11,6 +19,14 @@ builds `x402-processor` explicitly because the x402 Karate suite exercises it.
 
 ```sh
 cargo build --manifest-path crates/Cargo.toml -p safetrust-native-gates --features x402-processor
+| `soroban-reconciler` | `soroban-reconciler` | Close ESC-02: establish an authoritative on-chain state source. |
+
+Each feature activates the corresponding `optional = true` path dependency.
+For example, explicitly include `soroban-reconciler` in the Cargo workspace build graph with:
+
+```sh
+cargo build --manifest-path crates/Cargo.toml \
+  -p safetrust-native-gates --features soroban-reconciler
 ```
 
 The other crates (`stellar-utils`, `escrow-state-machine`, `webhook-verifier`,

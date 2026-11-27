@@ -1,3 +1,4 @@
+import { runHandler } from '../../__tests__/run-handler'
 'use strict'
 
 import { Request, Response } from 'express'
@@ -36,7 +37,7 @@ describe('syncEscrowsHandler', () => {
       json: jest.fn(),
     } as unknown as Response
 
-    await syncEscrowsHandler(req, res)
+    await runHandler(syncEscrowsHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith(
@@ -78,7 +79,7 @@ describe('syncEscrowsHandler', () => {
       json: jest.fn(),
     } as unknown as Response
 
-    await syncEscrowsHandler(req, res)
+    await runHandler(syncEscrowsHandler, req, res)
 
     expect(reconciliationService.syncEscrowsWithIndexer).toHaveBeenCalledWith(['mock_1'], {
       applyTransitions: true,
@@ -108,14 +109,9 @@ describe('syncEscrowsHandler', () => {
       json: jest.fn(),
     } as unknown as Response
 
-    await syncEscrowsHandler(req, res)
+    await runHandler(syncEscrowsHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        success: false,
-        error: 'Reconciliation failed',
-      })
-    )
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Internal server error' }))
   })
 })

@@ -5,6 +5,7 @@ import { syncWalletHandler } from '../sync-wallet.handler'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import type { SyncWalletPayload } from '@safetrust/types'
 import { syncWallet as query } from '../../../repositories/wallet.repository'
+import { runHandler } from '../../__tests__/run-handler'
 
 jest.mock('../../../repositories/wallet.repository', () => ({ syncWallet: jest.fn() }))
 
@@ -39,10 +40,10 @@ describe('syncWalletHandler', () => {
     const req = makeRequest({ chain_type: 'STELLAR', is_primary: false })
     const res = makeResponse()
 
-    await syncWalletHandler(req, res)
+    await runHandler(syncWalletHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'wallet_address is required' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'wallet_address is required' }))
     expect(query).not.toHaveBeenCalled()
   })
 
@@ -54,12 +55,10 @@ describe('syncWalletHandler', () => {
     })
     const res = makeResponse()
 
-    await syncWalletHandler(req, res)
+    await runHandler(syncWalletHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'chain_type must be one of: ETH, STELLAR, BSC',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'chain_type must be one of: ETH, STELLAR, BSC' }))
     expect(query).not.toHaveBeenCalled()
   })
 
@@ -71,10 +70,10 @@ describe('syncWalletHandler', () => {
     })
     const res = makeResponse()
 
-    await syncWalletHandler(req, res)
+    await runHandler(syncWalletHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'is_primary must be a boolean' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'is_primary must be a boolean' }))
     expect(query).not.toHaveBeenCalled()
   })
 
@@ -86,10 +85,10 @@ describe('syncWalletHandler', () => {
     })
     const res = makeResponse()
 
-    await syncWalletHandler(req, res)
+    await runHandler(syncWalletHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Stellar wallet address' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Invalid Stellar wallet address' }))
     expect(query).not.toHaveBeenCalled()
   })
 
@@ -101,7 +100,7 @@ describe('syncWalletHandler', () => {
     })
     const res = makeResponse()
 
-    await syncWalletHandler(req, res)
+    await runHandler(syncWalletHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'WALLET_CHALLENGE_REQUIRED' }))
@@ -120,10 +119,10 @@ describe('syncWalletHandler', () => {
     })
     const res = makeResponse()
 
-    await syncWalletHandler(req, res)
+    await runHandler(syncWalletHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Failed to sync wallet' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Internal server error' }))
   })
 
   // ── Strkey checks (checksum + Ed25519 public key only) ────────────────────
@@ -136,10 +135,10 @@ describe('syncWalletHandler', () => {
     })
     const res = makeResponse()
 
-    await syncWalletHandler(req, res)
+    await runHandler(syncWalletHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Stellar wallet address' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Invalid Stellar wallet address' }))
     expect(query).not.toHaveBeenCalled()
   })
 
@@ -153,9 +152,9 @@ describe('syncWalletHandler', () => {
     })
     const res = makeResponse()
 
-    await syncWalletHandler(req, res)
+    await runHandler(syncWalletHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Stellar wallet address' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Invalid Stellar wallet address' }))
   })
 })

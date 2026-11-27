@@ -39,7 +39,7 @@ The wallet registry API allows authenticated users to:
 - **Error Codes**:
   - `400 INVALID_STELLAR_ACCOUNT`: Malformed Stellar public key.
   - `400 UNSUPPORTED_STELLAR_ACCOUNT_TYPE`: Multi-signer or contract accounts are rejected.
-  - `503 WALLET_CHALLENGE_NOT_CONFIGURED` / `WALLET_SIGNATURE_VERIFIER_UNAVAILABLE`
+  - `503 Service unavailable`: `error` is `"Service unavailable"`, with machine-readable `code` set to `wallet_challenge_not_configured`, `wallet_signature_verifier_unavailable`, or `stellar_account_lookup_failed`.
 
 ---
 

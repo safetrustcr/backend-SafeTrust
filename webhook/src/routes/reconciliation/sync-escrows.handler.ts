@@ -7,7 +7,7 @@
  */
 
 import { Request, Response } from 'express'
-import { ok, serverError } from '../../utils/response'
+import { ok } from '../../utils/response'
 import {
   fetchEscrowContractIds,
   syncEscrowsWithIndexer,
@@ -71,10 +71,38 @@ export const syncEscrowsHandler = async (
       errors: summary.errors,
       ...(summary.transitions ? { transitions: summary.transitions } : {}),
     })
+  const contractIds = await fetchEscrowContractIds(TENANT_ID)
+  const sync = await syncEscrowsWithIndexer(contractIds, {
+    applyTransitions: true,
+    tenantId: TENANT_ID,
+  })
+  const drift = await validateSorobanDrift(contractIds, NETWORK, {
+    skipStatusCorrectionFor: sync.transitions?.failedContractIds,
+  })
+  const stale = await detectStaleEscrows(STALE_ESCROW_DAYS)
+  const summary = formatReconciliationSummary(
+    sync,
+    drift,
+    stale,
+    Date.now() - startTime,
+    undefined,
+    sync.transitions
+  )
 
-    return ok(res, summary)
-  } catch (fatalError) {
-    logger.error('reconciliation.sync.failed', { error: fatalError })
-    return serverError(res, 'Reconciliation failed')
-  }
+  const level = summary.errors > 0 ? 'warn' : 'info'
+  logger[level]('reconciliation.sync.completed', {
+    durationMs: summary.durationMs,
+    totalEscrows: summary.totalEscrows,
+    chunks: summary.chunks,
+    updated: summary.updated,
+    unchanged: summary.unchanged,
+    skipped: summary.skipped,
+    stale: summary.staleCount,
+    sorobanDrift: summary.sorobanDrift,
+    sorobanCorrected: summary.sorobanCorrected,
+    errors: summary.errors,
+    ...(summary.transitions ? { transitions: summary.transitions } : {}),
+  })
+
+  return ok(res, summary)
 }

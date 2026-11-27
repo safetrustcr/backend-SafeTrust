@@ -100,13 +100,14 @@ describe('app error classification', () => {
     expect(res.status).toBe(500)
     expect(res.body).toEqual({
       success: false,
-      error: 'Reconciliation failed',
+      error: 'Internal server error',
+      code: 'internal_error',
       requestId: res.headers['x-request-id'],
     })
     const text = JSON.stringify(res.body)
     expect(text).not.toMatch(/relation|secret_column|stack|details/)
 
-    const failure = errorSpy.mock.calls.find(([event]) => event === 'reconciliation.sync.failed')
+    const failure = errorSpy.mock.calls.find(([event]) => event === 'http.unhandled_error')
     expect(failure?.[1]).toMatchObject({
       error: expect.objectContaining({ message: 'relation "safetrust.trustless_work_escrows" does not exist' }),
     })
