@@ -83,6 +83,20 @@ export class ServiceUnavailableError extends AppError {
   }
 }
 
+/** An upstream service responded with a 5xx, network error or malformed payload. */
+export class UpstreamError extends AppError {
+  constructor(message = 'Upstream service error', options: AppErrorOptions = {}) {
+    super(message, 502, { code: 'upstream_error', ...options })
+  }
+}
+
+/** An upstream service timed out waiting for a response. */
+export class UpstreamTimeoutError extends AppError {
+  constructor(message = 'Upstream service timed out', options: AppErrorOptions = {}) {
+    super(message, 504, { code: 'upstream_timeout', ...options })
+  }
+}
+
 function defaultCode(statusCode: number): string {
   if (statusCode === 400) return 'validation_error'
   if (statusCode === 401) return 'unauthorized'

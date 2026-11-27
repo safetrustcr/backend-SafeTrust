@@ -46,8 +46,18 @@ function makeEscrow(overrides = {}) {
   };
 }
 
-/** Make https.request return a JSON body — used by the sequential path. */
+/** Make https.request and global.fetch return a JSON body — used by the sequential path. */
 function mockHttpResponse(body: unknown, statusCode = 200) {
+  const isOk = statusCode >= 200 && statusCode < 300;
+  const rawText = typeof body === 'string' ? body : JSON.stringify(body);
+  global.fetch = jest.fn().mockImplementation(async () => ({
+    ok: isOk,
+    status: statusCode,
+    statusText: isOk ? 'OK' : 'Error',
+    text: async () => rawText,
+    json: async () => (typeof body === 'string' ? JSON.parse(body) : body),
+  }));
+
   const { EventEmitter } = require('events');
   const fakeRes = new EventEmitter();
   fakeRes.statusCode = statusCode;
@@ -57,7 +67,7 @@ function mockHttpResponse(body: unknown, statusCode = 200) {
   fakeReq.destroy = jest.fn();
   fakeReq.end = jest.fn(() => {
     process.nextTick(() => {
-      fakeRes.emit('data', typeof body === 'string' ? body : JSON.stringify(body));
+      fakeRes.emit('data', rawText);
       fakeRes.emit('end');
     });
   });
@@ -69,6 +79,8 @@ function mockHttpResponse(body: unknown, statusCode = 200) {
 
 afterEach(() => {
   jest.clearAllMocks();
+  jest.resetAllMocks();
+  delete (global as any).fetch;
   __resetChunkProcessorForTests();
   delete process.env.RUST_CHUNKS_ENABLED;
   delete process.env.CHUNK_CONCURRENCY;
@@ -244,6 +256,20 @@ describe('syncAllChunks', () => {
     const ids = Array.from({ length: 60 }, (_, i) => `ID_${i}`);
 
     let call = 0;
+    global.fetch = jest.fn().mockImplementation(async () => {
+      call += 1;
+      if (call >= 2) {
+        throw new Error('ECONNREFUSED');
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => JSON.stringify({ escrows: [makeEscrow({ contractId: 'ID_0' })] }),
+        json: async () => ({ escrows: [makeEscrow({ contractId: 'ID_0' })] }),
+      };
+    });
+
     const { EventEmitter } = require('events');
     https.request.mockImplementation((_opts: unknown, cb: (response: unknown) => void) => {
       const fakeReq = new EventEmitter();
@@ -292,6 +318,7 @@ describe('syncAllChunks', () => {
     expect(processChunksParallel).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ chunks: 1, updated: 1, unchanged: 0, skipped: 0, errors: [] });
     // The sequential path must not have fired.
+    expect(global.fetch).toBeUndefined();
     expect(https.request).not.toHaveBeenCalled();
   });
 
@@ -303,6 +330,6 @@ describe('syncAllChunks', () => {
 
     const result = await syncAllChunks(['C1']);
     expect(result).toEqual({ chunks: 1, updated: 1, unchanged: 0, skipped: 0, errors: [] });
-    expect(https.request).toHaveBeenCalledTimes(1); // proves sequential ran
+    expect(global.fetch).toHaveBeenCalledTimes(1); // proves sequential ran
   });
 });
