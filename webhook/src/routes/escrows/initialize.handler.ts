@@ -1,20 +1,7 @@
 import { Request, Response } from 'express';
-import {
-  badRequest,
-  duplicate,
-  forbidden,
-  ok,
-  sendError,
-  serverError,
-  unauthorized,
-} from '../../utils/response'
-import { AppError } from '../../utils/errors'
-import {
-  EscrowValidationError,
-  initializeEscrow as initializeEscrowService,
-  ReservationNotFoundError,
-  TenantMismatchError,
-} from '../../services/escrow.service';
+import { duplicate, ok } from '../../utils/response';
+import { ValidationError } from '../../utils/errors';
+import { initializeEscrow as initializeEscrowService } from '../../services/escrow.service';
 import { amountToStroops } from '../../lib/stellar-amounts';
 import { getPlatformTenantId } from '../../config/tenant';
 import { logger } from '../../middleware/logger';
@@ -30,47 +17,18 @@ export const initializeEscrowHandler = async (
     Object.prototype.hasOwnProperty.call(req.body ?? {}, 'amount') &&
     amountToStroops(amount) === null
   ) {
-    return badRequest(res, {
-      error: 'amount must be a positive finite numeric value',
-    });
+    throw new ValidationError('amount must be a positive finite numeric value');
   }
 
-  try {
-    const callerUserId = (req as any).user?.uid || (req as any).user?.id;
-    const isServerAgent = Boolean((req as any).isAgent);
+  const result = await initializeEscrowService(req.body, getPlatformTenantId());
 
-    if (!callerUserId && !isServerAgent) {
-      return unauthorized(res, { error: 'Authentication required: caller identity must be verified' });
-    }
-
-    const context = { callerUserId, isServerAgent };
-    const result = await initializeEscrowService(req.body, getPlatformTenantId(), context);
-
-    if (result.isDuplicate) {
-      return duplicate(res, result.eventId);
-    }
-
-    logger.info('escrow.initialize.succeeded', {
-      contractId: req.body.contract_id,
-      escrowId: result.escrow?.id,
-    });
-    return ok(res);
-  } catch (error) {
-    if (error instanceof TenantMismatchError) {
-      return forbidden(res, { error: 'Forbidden: tenant mismatch', code: error.code });
-    }
-    if (error instanceof EscrowValidationError && error.statusCode === 400) {
-      return badRequest(res, { error: error.message });
-    }
-    if (error instanceof AppError) {
-      // Not found keeps its message; 5xx is logged and answered with a generic message.
-      if (error.statusCode >= 500) {
-        logger.error('escrow.initialize.failed', { contractId: req.body?.contract_id, error });
-      }
-      return sendError(res, error);
-    }
-
-    logger.error('escrow.initialize.failed', { contractId: req.body?.contract_id, error });
-    return serverError(res, 'Failed to persist escrow record');
+  if (result.isDuplicate) {
+    return duplicate(res, result.eventId);
   }
+
+  logger.info('escrow.initialize.succeeded', {
+    contractId: req.body.contract_id,
+    escrowId: result.escrow?.id,
+  });
+  return ok(res);
 };

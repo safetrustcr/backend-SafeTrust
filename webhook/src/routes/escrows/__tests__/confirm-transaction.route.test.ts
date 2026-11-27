@@ -5,6 +5,7 @@ import express from 'express'
 import confirmTransactionRoute from '../confirm-transaction.route'
 import * as confirmationService from '../../../services/confirmation.service'
 import * as escrowService from '../../../services/escrow.service'
+import { errorHandler } from '../../../middleware/error-handler'
 
 jest.mock('firebase-admin/auth', () => ({
   getAuth: jest.fn(),
@@ -49,6 +50,7 @@ describe('POST /api/escrows/confirm-transaction', () => {
       next()
     })
     app.use(confirmTransactionRoute)
+    app.use(errorHandler)
     mockedIsEscrowParty.mockResolvedValue(true)
   })
 
