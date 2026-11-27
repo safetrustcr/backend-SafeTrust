@@ -5,6 +5,15 @@ import { getActiveX402ResourceServer, getX402Config } from '../config/x402'
 
 const paymentMiddlewares = new Map<string, RequestHandler>()
 
+function hasVerifiedSession(req: Request): boolean {
+  const context = req.context
+  return typeof context?.uid === 'string'
+    && context.uid.length > 0
+    && typeof context.tenantId === 'string'
+    && context.tenantId.length > 0
+    && Array.isArray(context.roles)
+}
+
 export function setPropertyPaymentMiddleware(
   middleware: RequestHandler | null,
   routeKey = '*'
@@ -53,7 +62,7 @@ export function x402UnlessAuthenticated(
   routeKey = 'GET /api/v1/properties/search'
 ): RequestHandler {
   return (req: Request, res: Response, next: NextFunction): void => {
-    if (req.context) {
+    if (hasVerifiedSession(req)) {
       next()
       return
     }
