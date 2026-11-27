@@ -155,7 +155,7 @@ export type CancelReservationBody = z.infer<typeof cancelReservationSchema>
 
 export const createEscrowClaimSchema = z.object({
   body: z.string().trim().min(10).max(2000),
-  clientOpId: uuid,
+  clientOpId: databaseUuid,
 }).passthrough()
 export type CreateEscrowClaimBody = z.infer<typeof createEscrowClaimSchema>
 

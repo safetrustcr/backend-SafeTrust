@@ -205,6 +205,15 @@ describe('request validation middleware', () => {
     expect(result.success).toBe(true)
   })
 
+  it('accepts claim operation IDs with any PostgreSQL UUID version and variant bits', () => {
+    const result = createEscrowClaimSchema.safeParse({
+      body: 'A valid claim body',
+      clientOpId: '00000000-0000-0000-0000-000000000001',
+    })
+
+    expect(result.success).toBe(true)
+  })
+
   it('rejects invalid calendar dates in timestamp inputs', () => {
     const result = createBidRequestSchema.safeParse({
       apartment_id: '00000000-0000-0000-0000-000000000001',
