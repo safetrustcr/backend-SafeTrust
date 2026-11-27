@@ -26,7 +26,7 @@
     "lockfile-lint": "5.1.0",
     "nodemon": "^3.1.14",
     "supertest": "^7.3.2",
-    "ts-jest": "^29.4.12",
+    "ts-jest": "^29.4.15",
     "ts-node": "^10.9.0",
     "typescript": "^7.0.2"
   },
