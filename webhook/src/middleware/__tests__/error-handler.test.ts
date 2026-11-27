@@ -2,7 +2,13 @@ import express, { NextFunction, Request, Response } from 'express'
 import request from 'supertest'
 import { bindRequestContext, requestId } from '../logger'
 import { errorHandler, notFoundHandler } from '../error-handler'
-import { ConflictError, ServiceUnavailableError, ValidationError } from '../../utils/errors'
+import {
+  ConflictError,
+  ServiceUnavailableError,
+  UpstreamError,
+  UpstreamTimeoutError,
+  ValidationError,
+} from '../../utils/errors'
 
 function makeApp(throwing: () => unknown) {
   const app = express()
@@ -46,7 +52,9 @@ describe('errorHandler', () => {
   it.each([
     [() => new ValidationError('amount must be positive'), 400, 'validation_error', 'amount must be positive'],
     [() => new ConflictError('escrow already funded'), 409, 'conflict', 'escrow already funded'],
+    [() => new UpstreamError('indexer failed'), 502, 'upstream_error', 'Bad gateway'],
     [() => new ServiceUnavailableError('native addon missing'), 503, 'service_unavailable', 'Service unavailable'],
+    [() => new UpstreamTimeoutError('indexer timed out'), 504, 'upstream_timeout', 'Gateway timeout'],
   ])('maps thrown AppErrors to their status', async (make, status, code, message) => {
     const res = await request(makeApp(make)).post('/boom').send({})
     expect(res.status).toBe(status)

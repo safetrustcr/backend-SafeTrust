@@ -6,6 +6,8 @@ import {
   ForbiddenError,
   NotFoundError,
   ServiceUnavailableError,
+  UpstreamError,
+  UpstreamTimeoutError,
   ValidationError,
 } from '../errors'
 import {
@@ -25,7 +27,9 @@ describe('AppError hierarchy', () => {
     [new ForbiddenError(), 403, 'forbidden'],
     [new NotFoundError(), 404, 'not_found'],
     [new ConflictError('already funded'), 409, 'conflict'],
+    [new UpstreamError('indexer failed'), 502, 'upstream_error'],
     [new ServiceUnavailableError(), 503, 'service_unavailable'],
+    [new UpstreamTimeoutError('indexer timed out'), 504, 'upstream_timeout'],
   ])('%p maps to %i %s', (error, status, code) => {
     expect(error).toBeInstanceOf(AppError)
     expect(classifyError(error)).toMatchObject({ status, code })
