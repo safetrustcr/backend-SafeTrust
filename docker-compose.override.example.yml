@@ -1,0 +1,12 @@
+# Local Postgres access — copy to docker-compose.override.yml (git-ignored):
+#
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#   docker compose up -d
+#
+# Docker Compose picks the override up automatically. The port is bound to
+# 127.0.0.1 only, so the superuser port is still unreachable from the network.
+# Prefer `docker compose exec postgres psql -U postgres` — it needs no port.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"

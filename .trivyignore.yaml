@@ -1,0 +1,16 @@
+# Narrow, path-scoped Trivy exceptions.
+#
+# Kept to a single rule and a single file: do not add repository-wide IDs here.
+# The config scan in .github/workflows/docker-security.yml passes this file
+# explicitly (`trivyignores`), because Trivy only auto-loads the YAML form once
+# the feature leaves experimental status.
+misconfigurations:
+  - id: AVD-DS-0002
+    paths:
+      - "Dockerfile.test"
+    statement: >-
+      The Karate test image runs only via bin/test and writes its reports into
+      ./tests/results, a bind mount that keeps the host checkout's ownership.
+      A fixed non-root UID cannot write that mount on Linux, so the image stays
+      root. This exception covers this file only; AVD-DS-0002 still fails the
+      scan for every other Dockerfile in the repository.

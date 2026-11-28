@@ -1,4 +1,5 @@
 import type { BulkUpsertAddon } from '../reconciliation.types'
+import { readSecret } from '../../config/secrets'
 
 const BULK_UPSERT_MODULE = '../../../../crates/pg-bulk-upsert'
 
@@ -27,7 +28,8 @@ export function isRustBulkUpsertEnabled(): boolean {
 
 export function buildConnectionString(): string {
   const user = process.env.POSTGRES_USER
-  const password = process.env.POSTGRES_PASSWORD
+  // POSTGRES_PASSWORD_FILE (/run/secrets/…) is the production path.
+  const password = readSecret('POSTGRES_PASSWORD')
   if (!user || !password) {
     throw new Error(
       'pg-bulk-upsert requires POSTGRES_USER and POSTGRES_PASSWORD to be set'

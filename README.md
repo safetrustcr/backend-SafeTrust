@@ -65,7 +65,14 @@ cp .env.example .env
 Fill in `.env` before running anything:
 
 ```dotenv
+# Required — no defaults; the stack fails fast without them
 POSTGRES_PASSWORD=your_postgres_password
+
+# Least-privilege runtime roles, created on the first start (see
+# docs/infra/bin-start.md). Use URL-safe passwords: they end up in connection URLs.
+HASURA_DB_PASSWORD=your_hasura_password
+HASURA_METADATA_DB_PASSWORD=your_metadata_password
+WEBHOOK_DB_PASSWORD=your_webhook_password
 
 # Required. Generate a strong random value; never commit a real secret.
 HASURA_ADMIN_SECRET=

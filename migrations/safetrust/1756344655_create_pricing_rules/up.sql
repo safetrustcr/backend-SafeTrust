@@ -1,5 +1,6 @@
 -- Create SafeTrust pricing_rules table
-CREATE TABLE IF NOT EXISTS pricing_rules (
+-- Staged in public; 1779300000001 moves it to safetrust.
+CREATE TABLE IF NOT EXISTS public.pricing_rules (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   rule_name VARCHAR(100) NOT NULL,
   rule_type VARCHAR(50) NOT NULL,       -- BASE_FEE | PERCENTAGE_FEE | GAS_FEE | PLATFORM_FEE

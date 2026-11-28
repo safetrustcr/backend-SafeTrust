@@ -12,12 +12,9 @@ cd "$HASURA_FOLDER" || {
 # Required at runtime — never hardcode a secret in this script.
 : "${HASURA_ADMIN_SECRET:?HASURA_ADMIN_SECRET is required}"
 
-# Note on socat workaround:
-# The original issue (github.com/hasura/graphql-engine/issues/2824) was filed for Hasura v1.x
-# where internal ports only bound to 127.0.0.1. On Hasura v2.x / v2.47.0 with --address 0.0.0.0,
-# both the console (port 9696) and CLI API server (port 9693) bind to all interfaces directly,
-# and the CLI communicates directly with GraphQL Engine via docker networking. Tested and verified
-# on Hasura v2.47.0 / v2.x that the console functions normally without socat port-forwarding proxies.
+# No socat: it was only needed for the Hasura v1.x loopback-port workaround
+# (github.com/hasura/graphql-engine/issues/2824). On v2.47.0 with --address 0.0.0.0
+# the console (9696) and CLI API (9693) bind directly, so it is not installed.
 
 # Start Hasura console with exec for proper signal handling (replaces PID 1)
 echo "[start.sh] Starting Hasura console..."

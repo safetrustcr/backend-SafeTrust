@@ -39,6 +39,7 @@ readonly REPORT_FILE="$RESULTS_DIR/bin-start-report.json"
 readonly LEGACY_TIMINGS_FILE="$RESULTS_DIR/dc-prep-timings.json"
 readonly KEEP_RUN_LOGS=10
 readonly HASURA_MAX_WAIT_SECONDS=120
+readonly POSTGRES_MAX_WAIT_SECONDS=120
 readonly WEBHOOK_MAX_WAIT_SECONDS=20
 readonly REQUIRED_COMMANDS=(docker curl jq yq hasura)
 readonly TENANT_PHASES=(migrations metadata seeds)
@@ -219,6 +220,18 @@ validate_environment() {
     exit 1
   fi
 
+  # Role passwords have no defaults: fail here, before Compose, with a pointer to
+  # the file that documents them. POSTGRES_PASSWORD is the admin/migration role;
+  # hasura, hasura_metadata and webhook are the least-privilege runtime roles.
+  local password_var
+  for password_var in POSTGRES_PASSWORD HASURA_DB_PASSWORD HASURA_METADATA_DB_PASSWORD WEBHOOK_DB_PASSWORD; do
+    if [[ -z "${!password_var:-}" ]]; then
+      echo "❌ Error: ${password_var} is required." >&2
+      echo "   Copy .env.example to .env and set it." >&2
+      exit 1
+    fi
+  done
+
   local tenant available
   for tenant in "${TENANTS[@]}"; do
     if [[ ! -d "metadata/tenants/$tenant" || ! -d "migrations/$tenant" ]]; then
@@ -254,9 +267,66 @@ start_containers() {
     docker compose down
   fi
 
+  # Postgres first. The entrypoint creates the least-privilege roles only when
+  # the data directory is empty, so an existing volume (including a --restart run
+  # over a database initialised before this change) has none of them; Hasura and
+  # the webhook would then start with credentials for roles that do not exist.
+  echo "📦 Starting Postgres..."
+  docker compose up -d --build postgres
+
+  # Wait for the *real* server: the initdb bootstrap server listens on the Unix
+  # socket only, so a TCP probe cannot race the entrypoint's init scripts.
+  local start_ts=$SECONDS
+  until docker compose exec -T postgres \
+      pg_isready -h 127.0.0.1 -p 5432 \
+        -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" >/dev/null 2>&1; do
+    if (( SECONDS - start_ts >= POSTGRES_MAX_WAIT_SECONDS )); then
+      echo "❌ Postgres did not accept connections within ${POSTGRES_MAX_WAIT_SECONDS}s"
+      docker compose logs --tail 50 postgres 2>&1 | sed 's/^/   │ /' || true
+      return 1
+    fi
+    sleep 1
+  done
+
+  # Idempotent (IF NOT EXISTS / ALTER ROLE / GRANT), so this also serves as the
+  # repair step for an existing volume. Passwords stay in sync with .env.
+  echo "🔐 Ensuring database roles (hasura, hasura_metadata, webhook)..."
+  docker compose exec -T postgres bash /docker-entrypoint-initdb.d/01-init-roles.sh
+
   echo "📦 Starting containers..."
   docker compose up -d --build
   end_phase containers
+}
+
+# Migrations run through the Hasura data source, whose role has DML only. This is
+# the single place that opens and closes its DDL window: CREATE on the tenant
+# schemas — and on `public`, where legacy migrations stage tables before moving
+# them — exists only while apply_migrations runs.
+set_migration_ddl() {
+  local action="$1" preposition
+  case "$action" in
+    GRANT) preposition="TO" ;;
+    REVOKE) preposition="FROM" ;;
+    *)
+      echo "❌ Unknown privilege change: ${action}" >&2
+      exit 1
+      ;;
+  esac
+  if ! docker compose exec -T postgres \
+      psql -v ON_ERROR_STOP=1 -q -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" \
+      -c "${action} CREATE ON SCHEMA safetrust, hotel_industry, public ${preposition} hasura" >/dev/null; then
+    echo "❌ Could not set migration DDL privileges (${action}) on the hasura role" >&2
+    exit 1
+  fi
+}
+
+# The window is closed by apply_migrations on success and by on_exit on any
+# failure or interrupt, so a stack that is merely up never keeps the grant.
+close_migration_ddl() {
+  if [[ "${MIGRATION_DDL_OPEN:-false}" == "true" ]]; then
+    set_migration_ddl REVOKE || true
+    MIGRATION_DDL_OPEN=false
+  fi
 }
 
 wait_for_hasura() {
@@ -329,6 +399,8 @@ apply_migrations() {
     skip_tenant_phase migrations
   else
     echo "📂 Applying migrations..."
+    set_migration_ddl GRANT
+    MIGRATION_DDL_OPEN=true
     local tenant
     for tenant in "${TENANTS[@]}"; do
       echo "   ▶ Migrating tenant: $tenant"
@@ -339,6 +411,7 @@ apply_migrations() {
           --database-name "$tenant"
       echo "   ✅ Migrations applied for $tenant ($(fmt_ms "${T_MS[$tenant|migrations]}"))"
     done
+    close_migration_ddl
   fi
   end_phase migrations
   echo ""
@@ -776,6 +849,7 @@ on_exit() {
   local rc=$?
   trap - EXIT INT TERM
   set +e
+  close_migration_ddl
   stop_background_jobs
 
   local key unfinished=failed

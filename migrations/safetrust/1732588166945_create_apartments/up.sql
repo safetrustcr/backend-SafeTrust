@@ -6,7 +6,10 @@ BEGIN
 END;
 $$ language 'plpgsql';
 -- Create apartments table
-CREATE TABLE apartments (
+-- Explicit schema: migrations replay with hasura's search_path (safetrust
+-- first), so this pre-move table must be staged in public for
+-- 1779300000001_migrate_to_safetrust_schema to move it.
+CREATE TABLE public.apartments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
