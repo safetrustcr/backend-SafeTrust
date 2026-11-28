@@ -412,18 +412,15 @@ export async function fundEscrow(
     return {
       id: updated.id,
       contractId: updated.contractId,
-      status: updated.status,
+      status: updated.status as EscrowStatus,
       balance: updated.balance,
     }
   }
 
-  return {
-    id: updated.id,
-    contractId: updated.contractId,
-    status: updated.status as EscrowStatus,
-    balance: updated.balance,
-  }
-}
+  const db = dbOrContractId as Queryable
+  const contractId = contractIdOrAmount as string
+  const amount = amountOrValidStates as number
+  const validStates = maybeValidStates as string[]
 
   const result = await db.query<{
     id: string
@@ -524,11 +521,12 @@ export async function releaseFunds(
       )
     }
 
-  return {
-    id: updated.id,
-    contractId: updated.contractId,
-    status: updated.status as EscrowStatus,
-    balance: updated.balance,
+    return {
+      id: updated.id,
+      contractId: updated.contractId,
+      status: updated.status as EscrowStatus,
+      balance: updated.balance,
+    }
   }
 
   const result = await db.query<{
@@ -547,14 +545,17 @@ export async function releaseFunds(
   )
 
   const updated = result.rows[0]
-  return updated
-    ? {
-        id: updated.id,
-        contractId: updated.contract_id,
-        status: updated.status as EscrowStatus,
-        balance: updated.balance,
-      }
-    : null
+  if (!updated) {
+    throw new StateConflictError(
+      `Escrow cannot transition to completed: contractId '${contractId}' not found or current status not in [${allowedPriorStates.join(', ')}]`
+    )
+  }
+  return {
+    id: updated.id,
+    contractId: updated.contract_id,
+    status: updated.status as EscrowStatus,
+    balance: updated.balance,
+  }
 }
 
 /**

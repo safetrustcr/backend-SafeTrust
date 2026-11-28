@@ -110,7 +110,7 @@ describe('classifyError for non-AppError values', () => {
 
   it('uses a 4xx status from a library error, but only an exposable message', () => {
     expect(classifyError(Object.assign(new Error('Too many requests'), { status: 429, expose: true })))
-      .toEqual({ status: 429, code: 'request_error', message: 'Too many requests' })
+      .toEqual({ status: 429, code: 'too_many_requests', message: 'Too many requests' })
     expect(classifyError(Object.assign(new Error('internal hint'), { statusCode: 422 })).message)
       .toBe('Request could not be processed')
   })

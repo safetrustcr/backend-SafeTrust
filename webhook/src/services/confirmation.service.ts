@@ -6,9 +6,12 @@
  *              and durable PostgreSQL retry mechanism for escrow transactions.
  */
 
+import { Networks, Transaction, FeeBumpTransaction, TransactionBuilder } from '@stellar/stellar-sdk'
 import db, { withTransaction } from './db'
 import { hasuraRequest } from './hasura'
-import { getTrustlessWorkApiKey, getTrustlessWorkApiUrl } from '../lib/source-adapters/tw.adapter'
+import { getTransactionByHash } from '../clients/stellar.client'
+import { sendTransaction, updateIndexerFromTxHash } from '../clients/trustless-work.client'
+import { UpstreamError, UpstreamTimeoutError } from '../utils/upstream-errors'
 import {
   upsertRetryRecord,
   updateRetryRecordStatus,
@@ -21,6 +24,17 @@ export {
   updateRetryRecordStatus,
   fetchPendingRetries,
   type UpsertRetryRecordParams,
+}
+
+/** Describe an upstream failure for the retry record / result error field. */
+function upstreamErrorText(upstream: string, error: unknown): string {
+  if (error instanceof UpstreamTimeoutError) {
+    return `${upstream} timed out after ${error.timeoutMs} ms at ${error.upstreamPath}`
+  }
+  if (error instanceof UpstreamError) {
+    return `${upstream} upstream error at ${error.upstreamPath}: ${error.message}`
+  }
+  return `${upstream} request failed: ${error instanceof Error ? error.message : String(error)}`
 }
 
 // ── Types & Constants ─────────────────────────────────────────────────────────
@@ -111,32 +125,13 @@ export async function verifyStellarTransaction(
     }
   }
 
-  const horizonBase =
-    expectedNetwork === 'mainnet'
-      ? 'https://horizon.stellar.org'
-      : 'https://horizon-testnet.stellar.org'
-
   try {
-    const response = await fetch(`${horizonBase}/transactions/${txHash}`)
-    if (response.status === 404) {
+    const txData = await getTransactionByHash(txHash, expectedNetwork)
+    if (txData === null) {
       return {
         verified: false,
         error: `Transaction not found on Stellar ${expectedNetwork} (pending, expired, or wrong network)`,
       }
-    }
-
-    if (!response.ok) {
-      return {
-        verified: false,
-        error: `Stellar Horizon returned status ${response.status}`,
-      }
-    }
-
-    const txData = (await response.json()) as {
-      successful?: boolean
-      ledger?: number
-      id?: string
-      network?: string
     }
 
     if (txData.successful !== true) {
@@ -165,7 +160,7 @@ export async function verifyStellarTransaction(
 // ── Trustless Work Indexer Synchronization ────────────────────────────────────
 
 /**
- * Calls Trustless Work's indexer/update-from-txHash endpoint.
+ * Calls Trustless Work's PUT /indexer/update-from-txhash endpoint.
  * Guardrail: Only callable for TW-generated XDR contexts!
  */
 export async function updateTWIndexerFromTxHash(
@@ -181,32 +176,13 @@ export async function updateTWIndexerFromTxHash(
     }
   }
 
-  const twBaseUrl = getTrustlessWorkApiUrl()
-  const twApiKey = getTrustlessWorkApiKey()
-
   try {
-    const response = await fetch(`${twBaseUrl}/indexer/update-from-txHash`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
-      },
-      body: JSON.stringify({ txHash, network }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      return {
-        success: false,
-        error: `TW indexer returned status ${response.status}: ${errText}`,
-      }
-    }
-
+    await updateIndexerFromTxHash(txHash, network)
     return { success: true }
   } catch (err) {
     return {
       success: false,
-      error: `TW indexer network error: ${(err as Error).message}`,
+      error: upstreamErrorText('TW indexer', err),
     }
   }
 }
@@ -217,43 +193,47 @@ export async function updateTWIndexerFromTxHash(
 export async function sendTransactionViaTWHelper(
   signedXdr: string,
   network: StellarNetwork
-): Promise<{ success: boolean; txHash?: string; error?: string }> {
-  const twBaseUrl = getTrustlessWorkApiUrl()
-  const twApiKey = getTrustlessWorkApiKey()
-
+): Promise<{ success: boolean; txHash?: string; error?: string; ambiguous?: boolean }> {
   try {
-    const response = await fetch(`${twBaseUrl}/helper/send-transaction`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
-      },
-      body: JSON.stringify({ signedXdr, network }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      return {
-        success: false,
-        error: `TW helper returned status ${response.status}: ${errText}`,
-      }
-    }
-
-    const data = (await response.json()) as { txHash?: string; hash?: string }
-    const txHash = data.txHash || data.hash
+    const { txHash } = await sendTransaction(signedXdr, network)
     if (!txHash) {
+      // The helper answered 2xx, so it may have accepted the transaction.
       return {
         success: false,
+        ambiguous: true,
         error: 'TW helper response did not include transaction hash',
       }
     }
 
     return { success: true, txHash }
   } catch (err) {
+    // A 4xx proves the helper rejected the request. Timeouts, transport
+    // failures and 5xx may have reached the network, so they are ambiguous.
+    const status = err instanceof UpstreamError ? err.upstreamStatus : undefined
+    const rejected = status !== undefined && status >= 400 && status < 500
     return {
       success: false,
-      error: `TW helper network error: ${(err as Error).message}`,
+      ambiguous: !rejected,
+      error: upstreamErrorText('TW helper', err),
     }
+  }
+}
+
+/**
+ * Derive the transaction hash locally from the signed XDR and network
+ * passphrase (never from the helper response). Returns null when the XDR
+ * is malformed, which proves nothing was submitted.
+ */
+export function deriveTxHashFromSignedXdr(
+  signedXdr: string,
+  network: StellarNetwork
+): string | null {
+  try {
+    const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
+    const tx = TransactionBuilder.fromXDR(signedXdr, passphrase)
+    return (tx as Transaction | FeeBumpTransaction).hash().toString('hex')
+  } catch {
+    return null
   }
 }
 
@@ -440,8 +420,47 @@ export async function processHelperSubmission(params: {
     }
   }
 
-  // Submit via TW helper
+  // Derive the hash locally before sending; malformed XDR was never submitted.
+  const derivedHash = deriveTxHashFromSignedXdr(signedXdr, network)
+  if (!derivedHash) {
+    return {
+      success: false,
+      stage: 'xdr_issued',
+      txHash: '',
+      escrowId,
+      action,
+      network,
+      submissionPath: 'helper',
+      error: 'Signed XDR is malformed and cannot be submitted',
+    }
+  }
+
+  // Submit via TW helper (never re-sent; ambiguous failures reconcile by hash)
   const sendRes = await sendTransactionViaTWHelper(signedXdr, network)
+  if (!sendRes.success && sendRes.ambiguous) {
+    const errorMsg = sendRes.error ?? 'TW helper submission outcome unknown'
+    const retryRecord = await upsertRetryRecord({
+      txHash: derivedHash,
+      escrowId,
+      action,
+      network,
+      submissionPath: 'helper',
+      status: 'retrying',
+      attemptCount: 1,
+      lastError: errorMsg,
+    })
+    return {
+      success: false,
+      stage: 'pending_confirmation',
+      txHash: derivedHash,
+      escrowId,
+      action,
+      network,
+      submissionPath: 'helper',
+      retryRecordId: retryRecord.id,
+      error: errorMsg,
+    }
+  }
   if (!sendRes.success || !sendRes.txHash) {
     return {
       success: false,
@@ -455,7 +474,7 @@ export async function processHelperSubmission(params: {
     }
   }
 
-  const txHash = sendRes.txHash
+  const txHash = derivedHash
 
   // Persist pending confirmation and retry record immediately
   const retryRecord = await upsertRetryRecord({

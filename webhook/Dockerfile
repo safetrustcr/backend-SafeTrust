@@ -1,10 +1,11 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM node:24-bookworm-slim AS builder
+FROM node:25-bookworm-slim AS builder
 
 # Rust toolchain for the default-enabled Neon addons.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+# security-reviewed: official rustup installer until #756 removes Rust crates
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
@@ -13,7 +14,7 @@ WORKDIR /app
 
 # 1. Node dependencies first (cached until package.json changes).
 COPY webhook/package*.json ./webhook/
-RUN cd webhook && npm ci
+RUN cd webhook && npm ci --ignore-scripts
 
 # 2. Rust workspace: root manifest + lockfile + crate members at /app so
 #    `cargo build --manifest-path ../crates/Cargo.toml` resolves from webhook.
@@ -29,7 +30,7 @@ COPY webhook/src/ ./webhook/src/
 RUN cd webhook && npm run build
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
-FROM node:24-bookworm-slim AS production
+FROM node:25-bookworm-slim AS production
 
 WORKDIR /app/webhook
 
@@ -37,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 
 COPY webhook/package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts
 
 COPY --from=builder /app/webhook/dist ./dist
 COPY --from=builder /app/crates/webhook-verifier/index.node /app/crates/webhook-verifier/index.node
@@ -59,9 +60,6 @@ COPY --from=builder /app/crates/pg-bulk-upsert/package.json /app/crates/pg-bulk-
 COPY --from=builder /app/crates/escrow-state-machine/index.node /app/crates/escrow-state-machine/index.node
 COPY --from=builder /app/crates/escrow-state-machine/package.json /app/crates/escrow-state-machine/package.json
 COPY --from=builder /app/crates/escrow-state-machine/index.d.ts /app/crates/escrow-state-machine/index.d.ts
-# x402 payment validation is opt-in at runtime but required by the enabled integration tests.
-COPY --from=builder /app/crates/x402-processor/index.node /app/crates/x402-processor/index.node
-COPY --from=builder /app/crates/x402-processor/package.json /app/crates/x402-processor/package.json
 # soroban-reconciler: built by build:rust; still gated at runtime by
 # SOROBAN_VALIDATION_ENABLED and its unvalidated-reader safeguards.
 COPY --from=builder /app/crates/soroban-reconciler/package.json /app/crates/soroban-reconciler/package.json
