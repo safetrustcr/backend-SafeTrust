@@ -15,3 +15,22 @@
     Sync TrustlessWork indexer state into public.trustless_work_escrows every
     15 minutes. Processes contract_ids in chunks of 50 using idempotent upserts
     (IS DISTINCT FROM) so unchanged rows are never written.
+- name: reconciliation_prune_retention
+  webhook: "{{WEBHOOK_URL}}/reconciliation/prune-retention"
+  schedule: "0 3 * * *"
+  include_in_metadata: true
+  payload: {}
+  headers:
+    - name: x-hasura-event-secret
+      value_from_env: HASURA_EVENT_SECRET
+  retry_conf:
+    num_retries: 3
+    timeout_seconds: 120
+    tolerance_seconds: 21600
+    retry_interval_seconds: 60
+  comment: >
+    Daily data-retention cleanup. Calls safetrust.prune_operational_data
+    through POST /reconciliation/prune-retention: deletes finished
+    escrow_confirmation_retries rows and nulls out the payload of old
+    trustless_work_webhook_events rows. Periods come from the webhook's
+    RETENTION_RETRY_DAYS / RETENTION_PAYLOAD_DAYS environment variables.

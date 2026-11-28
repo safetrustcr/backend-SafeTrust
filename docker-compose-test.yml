@@ -24,8 +24,8 @@ services:
     restart: always
     environment:
       # NOTE: TEST_POSTGRES_PASSWORD must be URI-safe (no @, /, :, ?) — see .env.test.example
-      HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
-      PG_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres
+      HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres?sslmode=disable
+      PG_DATABASE_URL: postgres://postgres:${TEST_POSTGRES_PASSWORD:-postgrespassword}@postgres_test:5432/postgres?sslmode=disable
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
       HASURA_GRAPHQL_DEV_MODE: "true"
       HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
@@ -85,6 +85,7 @@ services:
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${TEST_POSTGRES_PASSWORD:-postgrespassword}
+      - POSTGRES_SSL_MODE=disable
       - USE_MOCK_DATA=true
       # The x402 Karate suite exercises the enabled payment gate.
       - X402_ENABLED=true
@@ -132,6 +133,8 @@ services:
         condition: service_completed_successfully
       graphql-engine-test:
         condition: service_healthy
+      verify-hardening:
+        condition: service_completed_successfully
     networks:
       - test-network
 
@@ -148,6 +151,27 @@ services:
     depends_on:
       graphql-engine-test:
         condition: service_healthy
+    networks:
+      - test-network
+
+  verify-hardening:
+    image: postgis/postgis:15-3.3
+    environment:
+      PGPASSWORD: ${TEST_POSTGRES_PASSWORD:-postgrespassword}
+      PGHOST: postgres_test
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGDATABASE: postgres
+      # Bound the check so it cannot hang the pipeline.
+      PGOPTIONS: "-c statement_timeout=30000"
+    volumes:
+      - ./scripts/sql/verify-function-hardening.sql:/verify-function-hardening.sql:ro
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/verify-function-hardening.sql"]
+    depends_on:
+      postgres_test:
+        condition: service_healthy
+      migrate-test:
+        condition: service_completed_successfully
     networks:
       - test-network
 

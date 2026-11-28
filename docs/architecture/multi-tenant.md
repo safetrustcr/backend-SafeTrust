@@ -11,6 +11,7 @@ and the conventions contributors must follow.
 
 - [Why two schemas?](#why-two-schemas)
 - [Schema overview](#schema-overview)
+- [Row-level security decision](#row-level-security-decision)
 - [Three-layer escrow hierarchy](#three-layer-escrow-hierarchy)
 - [Deployment flow](#deployment-flow)
 - [YAML metadata file naming](#yaml-metadata-file-naming)
@@ -62,6 +63,51 @@ PostgreSQL (single instance)
     ├── escrow_transactions             ← hotel-specific escrow log
     └── escrow_transaction_users
 ```
+
+---
+
+## Row-level security decision
+
+**Decision: PostgreSQL row-level security (RLS) is not enabled for now — 0 of
+38 tables carry an RLS policy today.**
+
+Tenants are isolated by schema: `safetrust` and `hotel_industry` are separate
+schemas, each mapped to its own Hasura source, so a query on one schema's
+search path cannot reach the other. After issue #758 that isolation becomes
+physical — each tenant moves to its own database.
+
+Within a tenant, users are separated at the Hasura layer. Row-level rules are
+expressed as Hasura table permissions driven by JWT claims (for example
+`X-Hasura-User-Id`), and the webhook re-checks ownership on every write it
+handles. Every application request reaches Postgres through Hasura or the
+webhook, so those two layers are the enforcement point today; a direct SQL
+connection is not part of the request path.
+
+### Why not RLS yet
+
+- Schema separation (and, after #758, database separation) already gives hard
+  tenant isolation without per-row predicates.
+- The webhook connects with a single privileged role, so RLS policies would not
+  bind it; the webhook's own ownership checks are what constrain writes.
+- Enabling RLS adds policies, role plumbing, and ongoing maintenance that
+  currently buy little beyond the layers above.
+
+### What would have to change to revisit
+
+Reopen this decision if any of the following becomes true:
+
+- Tenant data is co-located in one schema — for example a shared `tenant_id`
+  column instead of separate schemas.
+- The webhook stops connecting as a privileged, RLS-bypassing role and instead
+  issues per-user database sessions.
+- A shared-schema model is adopted, where rows from different tenants live in
+  the same tables and are told apart only by a column.
+
+At that point every table would need RLS enabled, a policy per access role, and
+an operating role that does not bypass RLS.
+
+RLS is defense-in-depth: it can be layered on later without changing the
+schema-split architecture, so this decision is intentionally reversible.
 
 ---
 
