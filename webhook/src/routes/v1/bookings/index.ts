@@ -10,6 +10,7 @@ import { releaseHold } from '../../../repositories/hold.repository'
 import { requireRole } from '../../../middleware/require-role'
 import { requireX402Enabled } from '../../../middleware/x402-feature-gate'
 import { logger } from '../../../middleware/logger'
+import { ServiceUnavailableError } from '../../../utils/errors'
 
 /** Price of a hold in USDC, charged through x402. Not refunded. */
 export const HOLD_PRICE_USDC = 0.01
@@ -76,6 +77,17 @@ function getHoldPaymentMiddleware(): RequestHandler {
 }
 
 function requireHoldX402Payment(req: Request, res: Response, next: NextFunction): void {
+  if (process.env.X402_ENABLED !== 'true') {
+    // Fails closed with a typed 503 so the shared error handler owns the
+    // response shape (Issue #815): route modules never build error bodies.
+    next(
+      new ServiceUnavailableError('x402 payments are disabled', {
+        code: 'feature_unavailable',
+      })
+    )
+    return
+  }
+
   delete req.headers['x-payment']
 
   res.on('finish', () => {
