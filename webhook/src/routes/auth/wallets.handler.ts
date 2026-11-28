@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
-import type { ChainType, ListWalletsResponse, WalletDto } from '@safetrust/types'
+import type { ChainType, ListWalletsResponse, WalletDto } from '../../domain'
 import { logger } from '../../middleware/logger'
 import { listWallets, WalletRow } from '../../repositories/wallet.repository'
 import { makeWalletPrimary, unlinkUserWallet } from '../../services/wallet.service'

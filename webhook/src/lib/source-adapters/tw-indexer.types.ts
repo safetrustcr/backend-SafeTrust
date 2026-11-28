@@ -67,7 +67,7 @@ export interface TwIndexerEscrow {
   fundedBy?: string
   disputeStartedBy?: string
   isActive?: boolean
-  type?: TwEscrowType | string
+  type?: TwEscrowType
   createdAt?: string
   updatedAt?: string
 }

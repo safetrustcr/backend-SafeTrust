@@ -1,5 +1,5 @@
 import { Request, Response } from 'express'
-import type { Apartment, ApartmentListQuery, ApartmentListResponse } from '@safetrust/types'
+import type { Apartment, ApartmentListQuery, ApartmentListResponse } from '../../domain'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { AuthError, NotFoundError, ValidationError } from '../../utils/errors'
 import {

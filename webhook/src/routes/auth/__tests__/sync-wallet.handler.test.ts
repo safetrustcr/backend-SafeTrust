@@ -3,7 +3,7 @@
 import { Response } from 'express'
 import { syncWalletHandler } from '../sync-wallet.handler'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
-import type { SyncWalletPayload } from '@safetrust/types'
+import type { SyncWalletPayload } from '../../../domain'
 import { syncWallet as query } from '../../../repositories/wallet.repository'
 import { runHandler } from '../../__tests__/run-handler'
 

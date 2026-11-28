@@ -45,17 +45,9 @@
  *    immutable and can never be overwritten regardless of incoming sequence number or rank.
  */
 
-export type EscrowStatus =
-  | 'created'
-  | 'pending_funding'
-  | 'funded'
-  | 'active'
-  | 'milestone_approved'
-  | 'completed'
-  | 'disputed'
-  | 'resolved'
-  | 'cancelled'
-  | string
+import { EscrowStatus, isEscrowStatus } from '../domain'
+
+export type { EscrowStatus }
 
 export interface StoredEscrowState {
   id?: string
@@ -115,7 +107,7 @@ try {
  * Canonical transition table defining all legal target statuses reachable from
  * each source status, matching crates/escrow-state-machine/src/transitions.rs.
  */
-export const CANONICAL_TRANSITIONS: Record<string, readonly string[]> = {
+export const CANONICAL_TRANSITIONS: Record<EscrowStatus, readonly EscrowStatus[]> = {
   created: ['funded', 'cancelled'],
   pending_funding: ['created', 'funded', 'cancelled'],
   funded: ['active', 'milestone_approved', 'completed', 'disputed', 'cancelled'],
@@ -160,8 +152,12 @@ export function canTransitionStatus(
     }
   }
 
+  if (!isEscrowStatus(from)) {
+    return false
+  }
+
   const allowed = CANONICAL_TRANSITIONS[from]
-  return allowed ? allowed.includes(to) : false
+  return allowed ? (allowed as readonly string[]).includes(to) : false
 }
 
 /**

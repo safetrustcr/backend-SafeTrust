@@ -49,16 +49,9 @@
 
 import type { EscrowRecord } from '../reconciliation.types'
 import type { TwFlags, TwIndexerEscrow, TwMilestone } from './tw-indexer.types'
+import { EscrowStatus, isEscrowStatus } from '../../domain'
 
-export type DerivedEscrowStatus =
-  | 'created'
-  | 'pending_funding'
-  | 'funded'
-  | 'milestone_approved'
-  | 'disputed'
-  | 'completed'
-  | 'resolved'
-  | 'cancelled'
+export type DerivedEscrowStatus = EscrowStatus
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)

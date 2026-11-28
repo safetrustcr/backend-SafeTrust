@@ -1,6 +1,6 @@
 'use strict'
 
-import { EscrowStatus, EscrowEventType } from '../types/escrow.types'
+import { EscrowStatus, EscrowEventType } from '../domain'
 import { ConflictError } from '../utils/errors'
 
 export class StateConflictError extends ConflictError {
@@ -76,8 +76,8 @@ export function __setEscrowStateMachineBindingsForTests(
  * Delegates to the canonical escrow-state-machine.
  */
 export function getValidPriorStates(
-  to: EscrowStatus | string,
-  event: EscrowEventType | string
+  to: EscrowStatus,
+  event: EscrowEventType
 ): string[] {
   const bindings = loadBindings()
   const raw = bindings.getValidPriorStates(String(to), String(event))
@@ -88,9 +88,9 @@ export function getValidPriorStates(
  * Checks whether transitioning from `from` to `to` via `event` is legal.
  */
 export function validateTransition(
-  from: EscrowStatus | string,
-  to: EscrowStatus | string,
-  event: EscrowEventType | string
+  from: EscrowStatus,
+  to: EscrowStatus,
+  event: EscrowEventType
 ): boolean {
   const bindings = loadBindings()
   return bindings.validateTransition(String(from), String(to), String(event))
@@ -100,9 +100,9 @@ export function validateTransition(
  * Asserts that a state transition is legal. Throws StateConflictError if invalid.
  */
 export function assertValidTransition(
-  from: EscrowStatus | string,
-  to: EscrowStatus | string,
-  event: EscrowEventType | string
+  from: EscrowStatus,
+  to: EscrowStatus,
+  event: EscrowEventType
 ): void {
   const isValid = validateTransition(from, to, event)
   if (!isValid) {

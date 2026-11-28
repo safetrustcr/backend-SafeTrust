@@ -31,6 +31,7 @@ import { isRustBulkUpsertEnabled } from '../lib/native-adapters/rust-upsert.adap
 import { processPendingConfirmationRetries } from './confirmation.service'
 import type { ProcessRetriesSummary } from './confirmation.service'
 import { CANONICAL_TRANSITIONS, canTransitionStatus } from '../lib/escrow-freshness'
+import { EscrowStatus, isEscrowStatus } from '../domain'
 import { executeEscrowLifecycleTransition } from './escrow.service'
 import type { EscrowLifecycleParams } from './escrow.service'
 import { notifyHotelEscrowConversation } from './hotel-conversation-notify'
@@ -65,7 +66,7 @@ export interface ReconciliationTransition {
   contractId: string
   observedStatus: string
   eventType: string
-  targetStatus: string
+  targetStatus: EscrowStatus
   reservationStatus: string
   amount?: number
   notification?: { eventType: string; body: string }
@@ -74,7 +75,7 @@ export interface ReconciliationTransition {
 
 interface ReconciliationTransitionSpec {
   eventType: string
-  targetStatus: string
+  targetStatus: EscrowStatus
   reservationStatus: string
   notification?: { eventType: string; body: string }
 }
@@ -133,7 +134,8 @@ function buildLifecyclePath(from: string, to: string): string[] {
   while (queue.length > 0) {
     const path = queue.shift()!
     const current = path[path.length - 1]
-    for (const next of CANONICAL_TRANSITIONS[current] ?? []) {
+    const nextTransitions = isEscrowStatus(current) ? CANONICAL_TRANSITIONS[current] : []
+    for (const next of nextTransitions ?? []) {
       if (!canTransitionStatus(current, next)) continue
       if (next === to) return [...path.slice(1), next]
       if (!LIFECYCLE_TRANSITION_SPECS[next] || visited.has(next)) continue

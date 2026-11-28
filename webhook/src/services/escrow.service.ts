@@ -3,8 +3,7 @@ import { AppError, ConflictError, NotFoundError, ServiceUnavailableError } from 
 import db, { withTransaction, query } from './db';
 import { getPlatformTenantId } from '../config/tenant';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
-import { EscrowEventType, EscrowStatus } from '../types/escrow.types';
-import { InitializeEscrowPayload } from '@safetrust/types';
+import { EscrowEventType, EscrowStatus, InitializeEscrowPayload } from '../domain';
 import { hasuraTenantRequest, TenantMismatchError } from './tenant-scoped-hasura';
 import {
   findReservationTenantId,
@@ -462,7 +461,7 @@ export async function getBookingByEscrowId(escrowId: string): Promise<{
 export interface EscrowLifecycleParams {
   contractId: string;
   eventType: string;
-  targetStatus: EscrowStatus | string;
+  targetStatus: EscrowStatus;
   reservationStatus: string;
   rawPayload: Record<string, unknown>;
   amount?: number;

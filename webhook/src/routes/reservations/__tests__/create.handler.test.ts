@@ -6,7 +6,7 @@ import {
   createReservation,
   TenantMismatchError,
 } from '../../../services/reservation.service'
-import type { CreateReservationPayload } from '@safetrust/types'
+import type { CreateReservationPayload, Reservation } from '../../../domain'
 
 jest.mock('../../../services/reservation.service', () => {
   const actual = jest.requireActual('../../../services/reservation.service')
@@ -94,7 +94,7 @@ describe('reservations/create.handler', () => {
   })
 
   it('creates reservation successfully through the service', async () => {
-    const mockReservation = {
+    const mockReservation: Reservation = {
       id: 'res-1',
       apartment_id: 'apt-1',
       guest_id: 'guest-123',

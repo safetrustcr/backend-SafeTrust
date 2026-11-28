@@ -2,7 +2,7 @@ import type {
   Apartment,
   ApartmentListQuery,
   ReportCategory,
-} from '@safetrust/types'
+} from '../domain'
 import type { QueryResultRow } from 'pg'
 import { query } from '../services/db'
 import { liveHoldOverlapSql } from './hold.repository'

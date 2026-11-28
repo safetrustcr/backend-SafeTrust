@@ -4,7 +4,7 @@ import type {
   ChainType,
   SyncWalletPayload,
   SyncWalletResponse,
-} from '@safetrust/types'
+} from '../../domain'
 import { logger } from '../../middleware/logger'
 import { syncWallet } from '../../repositories/wallet.repository'
 import { AuthError, ConflictError, ValidationError } from '../../utils/errors'

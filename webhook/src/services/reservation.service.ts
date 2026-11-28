@@ -1,4 +1,4 @@
-import type { Reservation } from '@safetrust/types'
+import type { Reservation } from '../domain'
 import {
   createReservation as createReservationRecord,
   type CreateReservationRecordInput,

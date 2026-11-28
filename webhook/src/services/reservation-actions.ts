@@ -1,13 +1,6 @@
-export type ReservationStatus =
-  | 'pending'
-  | 'escrow_created'
-  | 'funded'
-  | 'checked_in'
-  | 'checked_out'
-  | 'completed'
-  | 'disputed'
-  | 'resolved'
-  | 'cancelled'
+import { ReservationStatus } from '../domain'
+
+export type { ReservationStatus }
 
 export type ReservationAction = 'view' | 'view_contract' | 'cancel'
 
