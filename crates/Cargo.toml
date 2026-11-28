@@ -6,26 +6,10 @@ publish = false
 
 [features]
 default = []
-x402-processor = ["dep:x402-processor"]
-
-[dependencies]
-x402-processor = { path = "x402-processor", optional = true }
-soroban-reconciler = ["dep:soroban-reconciler"]
-
-[dependencies]
-soroban-reconciler = { path = "soroban-reconciler", optional = true }
 
 [workspace]
 resolver = "2"
-members = [
-    "x402-processor",
-    "webhook-verifier",
-    "stellar-utils",
-    "chunk-processor",
-    "pg-bulk-upsert",
-    "escrow-state-machine",
-    "soroban-reconciler",
-]
-# `x402-processor` is opt-in (see CRATES.md), so a bare `cargo build` builds
-# only the feature-gate package.
+# Every native crate has been replaced with TypeScript (#755) or with the
+# official @x402 packages (#767); no member crate remains.
+members = []
 default-members = ["."]

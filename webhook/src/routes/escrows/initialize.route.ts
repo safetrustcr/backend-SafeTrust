@@ -6,6 +6,7 @@ import {
   getX402Config,
   getActiveX402ResourceServer,
 } from '../../config/x402'
+import { ServiceUnavailableError } from '../../utils/errors'
 
 const router = Router()
 
@@ -81,11 +82,13 @@ router.post(
   '/api/escrows/initialize',
   (req: Request, res: Response, next: NextFunction) => {
     if (process.env.X402_ENABLED !== 'true') {
-      res.status(503).json({
-        error: 'Feature Unavailable',
-        feature: 'x402',
-        message: 'x402 payments are disabled',
-      })
+      // Fails closed with a typed 503 so the shared error handler owns the
+      // response shape (Issue #815): route modules never build error bodies.
+      next(
+        new ServiceUnavailableError('x402 payments are disabled', {
+          code: 'feature_unavailable',
+        })
+      )
       return
     }
 

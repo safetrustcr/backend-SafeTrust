@@ -49,8 +49,7 @@ services:
 
   webhook:
     build:
-      # Repo root: the webhook image needs the root Cargo workspace (Cargo.toml,
-      # Cargo.lock, crates/) alongside webhook/, so it cannot build from ./webhook.
+      # Repo root: webhook/Dockerfile copies its sources with repo-root paths.
       context: .
       dockerfile: webhook/Dockerfile
       # Cross-platform layer cache — works on Linux, macOS Docker Desktop,
@@ -98,12 +97,9 @@ services:
       TRUSTLESSWORK_API_KEY: ${TRUSTLESSWORK_API_KEY}
       STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
       X402_ENABLED: ${X402_ENABLED:-false}
-      X402_SETTLE_ENABLED: ${X402_SETTLE_ENABLED:-false}
       X402_FACILITATOR_URL: ${X402_FACILITATOR_URL:-}
       X402_FACILITATOR_API_KEY: ${X402_FACILITATOR_API_KEY:-}
       SAFETRUST_PLATFORM_WALLET: ${SAFETRUST_PLATFORM_WALLET:-G_YOUR_PLATFORM_WALLET_PUBLIC_KEY}
-      # The current Soroban reader fabricates state; keep drift validation off.
-      SOROBAN_VALIDATION_ENABLED: ${SOROBAN_VALIDATION_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy

@@ -122,20 +122,22 @@ describe('wallet ownership challenge handlers', () => {
 
   it('rejects a contract address and a bad-checksum address when issuing a challenge', async () => {
     const contractRes = makeResponse()
-    await createWalletChallengeHandler(
+    await runHandler(
+      createWalletChallengeHandler,
       makeRequest({ wallet_address: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4' }) as never,
       contractRes
     )
     expect(contractRes.status).toHaveBeenCalledWith(400)
-    expect(contractRes.json).toHaveBeenCalledWith({ error: 'UNSUPPORTED_STELLAR_ACCOUNT_TYPE' })
+    expect(contractRes.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'UNSUPPORTED_STELLAR_ACCOUNT_TYPE' }))
 
     const badChecksumRes = makeResponse()
-    await createWalletChallengeHandler(
+    await runHandler(
+      createWalletChallengeHandler,
       makeRequest({ wallet_address: 'GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z' }) as never,
       badChecksumRes
     )
     expect(badChecksumRes.status).toHaveBeenCalledWith(400)
-    expect(badChecksumRes.json).toHaveBeenCalledWith({ error: 'INVALID_STELLAR_ACCOUNT' })
+    expect(badChecksumRes.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'INVALID_STELLAR_ACCOUNT' }))
     expect(createWalletChallenge).not.toHaveBeenCalled()
   })
 

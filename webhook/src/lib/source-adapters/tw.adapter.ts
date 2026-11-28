@@ -1,7 +1,6 @@
-import https from 'https'
-import http from 'http'
 import { logger } from '../../middleware/logger'
 import type { TwIndexerEscrow } from './tw-indexer.types'
+import { fetchEscrowsByContractIds as fetchViaClient } from '../../clients/trustless-work.client'
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 //
@@ -61,58 +60,14 @@ export function buildIndexerUrl(baseUrl: string, contractIds: string[]): string 
   return `${baseUrl}${INDEXER_PATH}?${params.toString()}`
 }
 
-function httpGet(url: string, headers: Record<string, string> = {}): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url)
-    const transport = parsed.protocol === 'https:' ? https : http
-    const apiKey = getTrustlessWorkApiKey()
-
-    const options = {
-      hostname: parsed.hostname,
-      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-      path: `${parsed.pathname}${parsed.search}`,
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(apiKey ? { 'x-api-key': apiKey } : {}),
-        ...headers,
-      },
-    }
-
-    const req = transport.request(options, (res) => {
-      let raw = ''
-      res.setEncoding('utf8')
-      res.on('data', (chunk: string) => { raw += chunk })
-      res.on('end', () => {
-        if (res.statusCode! < 200 || res.statusCode! >= 300) {
-          return reject(
-            new Error(
-              `TrustlessWork API responded with status ${res.statusCode}: ${raw}`
-            )
-          )
-        }
-        try {
-          resolve(JSON.parse(raw))
-        } catch (e) {
-          reject(new Error(`Failed to parse TrustlessWork API response: ${(e as Error).message}`))
-        }
-      })
-    })
-
-    req.on('error', reject)
-    req.setTimeout(30_000, () => {
-      req.destroy(new Error('TrustlessWork API request timed out after 30 s'))
-    })
-    req.end()
-  })
-}
-
 /**
  * Raw V1 indexer escrows for the given contract ids. The caller normalizes
- * them with `normalizeIndexerEscrows` before writing.
+ * them with `normalizeIndexerEscrows` before writing. The HTTP call itself
+ * lives in `clients/trustless-work.client.ts`, with a timeout and typed
+ * upstream errors.
  */
 export async function fetchEscrowsByContractIds(contractIds: string[]): Promise<TwIndexerEscrow[]> {
-  const data = await httpGet(buildIndexerUrl(getTrustlessWorkApiUrl(), contractIds))
+  const data = await fetchViaClient(contractIds)
 
   if (Array.isArray(data)) return data as TwIndexerEscrow[]
   if (data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).escrows)) {

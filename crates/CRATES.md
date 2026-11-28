@@ -1,45 +1,14 @@
 # Native crate build gates
 
-The workspace has one functional crate, `x402-processor`, plus the
-`safetrust-native-gates` root package that owns its opt-in feature. A bare
-`cargo build` builds only the root package; `npm run build:rust` (webhook)
-builds `x402-processor` explicitly because the x402 Karate suite exercises it.
-The default Cargo workspace `default-members` build includes only the core
-crates (`webhook-verifier`, `stellar-utils`, `chunk-processor`, `pg-bulk-upsert`,
-`escrow-state-machine`). `soroban-reconciler` is excluded from
-`default-members` so `cargo build --manifest-path crates/Cargo.toml` does not
-compile it by default, while `webhook/package.json` (`build:rust` / `copy:crates`)
-and `webhook/Dockerfile` explicitly build and copy its native addon so it is
-available in the webhook image behind its runtime `SOROBAN_VALIDATION_ENABLED`
-gate.
-
-| Crate | Cargo feature | Prerequisite before enabling in production |
-|---|---|---|
-| `x402-processor` | `x402-processor` | Close ESC-05: resolve the payment-flow gaps and wire the experimental feature flag. |
-
-```sh
-cargo build --manifest-path crates/Cargo.toml -p safetrust-native-gates --features x402-processor
-| `soroban-reconciler` | `soroban-reconciler` | Close ESC-02: establish an authoritative on-chain state source. |
-
-Each feature activates the corresponding `optional = true` path dependency.
-For example, explicitly include `soroban-reconciler` in the Cargo workspace build graph with:
-
-```sh
-cargo build --manifest-path crates/Cargo.toml \
-  -p safetrust-native-gates --features soroban-reconciler
-```
-
-The other crates (`stellar-utils`, `escrow-state-machine`, `webhook-verifier`,
-`chunk-processor`, `pg-bulk-upsert`, `soroban-reconciler`) were replaced with
-TypeScript in #755. See
+No native crate remains. `stellar-utils`, `escrow-state-machine`,
+`webhook-verifier`, `chunk-processor`, `pg-bulk-upsert` and
+`soroban-reconciler` were replaced with TypeScript in #755, and
+`x402-processor` was replaced with the official `@x402` packages in #767. See
 [docs/architecture/crate-boundaries.md](../docs/architecture/crate-boundaries.md)
 for what replaced each one and how their behavior was checked.
 
-## Missing native modules
-
-Node's loader resolves the package's configured entry point (`index.node`)
-through ordinary `require()`. When the artifact is absent, Node throws
-(normally `MODULE_NOT_FOUND`) and x402 payment validation fails closed.
+The `safetrust-native-gates` root package and the empty workspace are kept so
+a future opt-in crate has a place to land behind a default-off Cargo feature.
 
 ## Cache Management
 

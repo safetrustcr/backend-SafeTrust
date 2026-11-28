@@ -1,10 +1,10 @@
 # Builds the webhook Docker image and smoke-tests, inside the container, the
-# x402-processor Neon addon and the TypeScript modules that replaced the other
-# Rust addons (Stellar wallet checks, HMAC verification, escrow transitions).
+# TypeScript modules that replaced the Rust addons (Stellar wallet checks, HMAC
+# verification, escrow transitions). x402 uses the official @x402 packages, so
+# the image carries no native addon.
 #
-# This is the verification that requires Docker (Debian bookworm glibc
-# toolchain + cargo build, matching the node:24-bookworm-slim image), so it runs
-# for free on GitHub runners instead of locally.
+# This is the verification that requires Docker (the node bookworm-slim
+# image), so it runs for free on GitHub runners instead of locally.
 # A failing build or a broken module will show up directly on the PR.
 name: webhook build
 
@@ -56,11 +56,10 @@ jobs:
       # Runs the compiled dist/ modules with the production node_modules, so it
       # also proves Node 24 can require() the ESM-only dependencies of
       # @stellar/stellar-sdk (Jest transpiles those, the runtime does not).
-      - name: Smoke-test the image's native addon and TypeScript replacements
+      - name: Smoke-test the image's TypeScript replacements
         run: |
           docker run --rm -i -w /app/webhook safetrust-webhook:verify node - <<'EOF'
           const fs = require('node:fs');
-          const x402 = require('/app/crates/x402-processor');
           const wallet = require('./dist/lib/stellar-wallet');
           const hmac = require('./dist/lib/hmac-signature');
           const escrow = require('./dist/lib/escrow-transitions');
@@ -68,8 +67,7 @@ jobs:
           // ed25519 signature of 'Hello, SafeTrust!' by seed [7u8; 32], from the former Rust crate.
           const sig = '1eea5b08a29d119057e2b1ef77e0e9f95f0876664d0e42062788fdc1f5a9a682ca1a74fd425bd780f5058dd0f6f7a12362136505fb8f2ae8fecdd4306148560e';
           const checks = {
-            x402Exports: typeof x402.validateX402Payment === 'function' && typeof x402.buildPaymentRequirement === 'function',
-            onlyX402Remains: fs.readdirSync('/app/crates').join(',') === 'x402-processor',
+            noNativeAddons: !fs.existsSync('/app/crates'),
             validAddress: wallet.isStellarAccountAddress(good) === true,
             badChecksum: wallet.isStellarAccountAddress('GDQERENWDDSQZS7R7WQZKGESDRXL525W65XHIVZO4QPQCHRILIUQ2J7Z') === false,
             signature: wallet.verifyStellarEd25519('Hello, SafeTrust!', sig, good) === true,
@@ -161,9 +159,7 @@ jobs:
   # with jest.mock factories — so Jest runs entirely in-process under
   # testEnvironment: node and never opens a connection.
   #
-  # x402-processor is the only remaining Neon addon. Its Jest suite loads the
-  # compiled binary, so this job builds it before running Jest; the x402
-  # middleware suite injects a fake through the exported test seam.
+  # No Neon addon remains, so the suite needs no Rust toolchain.
   webhook-test:
     runs-on: ubuntu-latest
     permissions:
@@ -179,29 +175,9 @@ jobs:
           cache: npm
           cache-dependency-path: webhook/package-lock.json
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
-
-      - name: Cache Cargo build artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: crates/target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('crates/Cargo.lock') }}
-
       - name: Install Node dependencies
         run: npm ci --ignore-scripts
         working-directory: webhook
-
-      - name: Build the x402-processor addon used by the Jest suite
-        run: |
-          cargo build --release --manifest-path crates/Cargo.toml -p x402-processor
-          node crates/scripts/copy-native.js --crate=x402-processor
-          cargo build --release --manifest-path crates/Cargo.toml \
-            -p webhook-verifier -p escrow-state-machine \
-            -p stellar-utils -p soroban-reconciler
-          for addon in webhook-verifier escrow-state-machine stellar-utils soroban-reconciler; do
-            node crates/scripts/copy-native.js --crate="$addon"
-          done
 
       - name: Type-check
         run: npm --prefix webhook run type-check
