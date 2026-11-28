@@ -128,21 +128,21 @@ describe('POST /api/escrows/confirm-transaction', () => {
     }
   })
 
-  it('sends signed XDR to the V1 helper endpoint without legacy network fields', async () => {
+  it('sends signed XDR and network to the helper endpoint', async () => {
     twFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
       json: async () => ({ txHash }),
     })
 
-    const result = await sendTransactionViaTWHelper('SIGNED_XDR')
+    const result = await sendTransactionViaTWHelper('SIGNED_XDR', 'testnet')
 
     expect(result).toEqual({ success: true, txHash })
     expect(twFetch).toHaveBeenCalledWith(
       'https://dev.api.trustlesswork.com/helper/send-transaction',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ signedXdr: 'SIGNED_XDR' }),
+        body: JSON.stringify({ signedXdr: 'SIGNED_XDR', network: 'testnet' }),
       })
     )
   })
