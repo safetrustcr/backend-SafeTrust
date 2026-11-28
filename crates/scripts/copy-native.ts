@@ -34,14 +34,6 @@ const crateConfigs: Record<string, CrateConfig> = {
     libraryName: 'soroban_reconciler',
     destination: path.join('native', 'index.node'),
   },
-  'x402-processor': {
-    libraryName: 'x402_processor',
-    destination: 'index.node',
-  },
-  'zk-verifier': {
-    libraryName: 'zk_verifier',
-    destination: 'index.node',
-  },
 }
 
 const cratesDir = path.resolve(__dirname, '..')
@@ -144,6 +136,7 @@ function main(): void {
     console.warn(
       `copy-native: warning: native library for ${crateName} was not found; skipping copy`
     )
+    process.exitCode = 1
     return
   }
 

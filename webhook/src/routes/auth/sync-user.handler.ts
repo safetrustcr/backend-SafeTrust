@@ -1,14 +1,8 @@
 import { Response } from 'express'
-import { query } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
-
-interface UserRow {
-  id: string
-  firebase_uid: string
-  email: string
-  last_seen?: Date | string | null
-  updated_at?: Date | string | null
-}
+import { logger } from '../../middleware/logger'
+import { syncUser } from '../../repositories/user.repository'
+import { AuthError } from '../../utils/errors'
 
 /**
  * Compatibility & Reconciliation Policy:
@@ -22,21 +16,6 @@ interface UserRow {
  * by `id = $1 OR firebase_uid = $1`. If no matching row exists, we insert a new user with `id = firebase_uid = $1`.
  * This preserves the `firebase_uid` conflict path and avoids duplicate key constraint violations (HTTP 500).
  */
-const RECONCILE_USER_SQL = `
-  UPDATE safetrust.users
-  SET last_seen = NOW(), email = $2, firebase_uid = $1
-  WHERE id = $1 OR firebase_uid = $1
-  RETURNING id, firebase_uid, email, last_seen
-`
-
-const INSERT_USER_SQL = `
-  INSERT INTO safetrust.users (id, firebase_uid, email, last_seen)
-  VALUES ($1, $1, $2, NOW())
-  ON CONFLICT (id)
-  DO UPDATE SET last_seen = NOW(), email = EXCLUDED.email, firebase_uid = EXCLUDED.firebase_uid
-  RETURNING id, firebase_uid, email, last_seen
-`
-
 export const syncUserHandler = async (
   req: AuthenticatedRequest,
   res: Response
@@ -52,48 +31,18 @@ export const syncUserHandler = async (
       : 'guest')
 
   if (!uid) {
-    return res.status(401).json({ error: 'Unauthorized' })
+    throw new AuthError('Unauthorized')
   }
 
-  try {
-    // 1. Reconcile/update existing row matching either id or firebase_uid
-    const updateResult = await query<UserRow>(RECONCILE_USER_SQL, [uid, email])
-    let user = updateResult.rows[0]
+  const user = await syncUser(uid, email)
 
-    // 2. If no existing row found, insert new record
-    if (!user) {
-      try {
-        const insertResult = await query<UserRow>(INSERT_USER_SQL, [uid, email])
-        user = insertResult.rows[0]
-      } catch (insertError: unknown) {
-        // Fallback for concurrent insert or unique constraint collision on firebase_uid
-        const fallback = await query<UserRow>(
-          `SELECT id, firebase_uid, email, last_seen
-           FROM safetrust.users
-           WHERE id = $1 OR firebase_uid = $1
-           LIMIT 1`,
-          [uid]
-        )
-        if (fallback.rows[0]) {
-          user = fallback.rows[0]
-        } else {
-          throw insertError
-        }
-      }
-    }
-
-    console.log(`[sync-user] user synced - uid: ${user.firebase_uid}`)
-    return res.status(200).json({
-      user: {
-        id: user.id,
-        email: user.email,
-        role,
-        last_seen: user.last_seen ?? user.updated_at,
-      },
-    })
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.error('[sync-user] error:', message)
-    return res.status(500).json({ error: 'Database error' })
-  }
+  logger.info('auth.sync_user.succeeded', { uid: user.firebase_uid })
+  return res.status(200).json({
+    user: {
+      id: user.id,
+      email: user.email,
+      role,
+      last_seen: user.last_seen ?? user.updated_at,
+    },
+  })
 }

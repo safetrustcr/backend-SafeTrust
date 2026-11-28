@@ -4,7 +4,7 @@
 
 -- Idempotency: remove demo bid requests before reinserting
 DELETE FROM safetrust.bid_requests
-WHERE tenant_id IN (
+WHERE bidder_id IN (
     SELECT id FROM safetrust.users
     WHERE firebase_uid = 'demo-tenant-uid-001'
 );
@@ -13,7 +13,7 @@ WHERE tenant_id IN (
 INSERT INTO safetrust.bid_requests (
     id,
     apartment_id,
-    tenant_id,
+    bidder_id,
     current_status,
     proposed_price,
     desired_move_in
@@ -32,7 +32,7 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO safetrust.bid_requests (
     id,
     apartment_id,
-    tenant_id,
+    bidder_id,
     current_status,
     proposed_price,
     desired_move_in

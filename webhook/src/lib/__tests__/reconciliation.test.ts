@@ -20,12 +20,11 @@ jest.mock('../../services/db', () => ({
   query: jest.fn(),
 }));
 
-// ─── Mock Node's built-in https so no real network calls fire ─────────────────
-// Explicit factory (not bare automock): Node's automock of the core `https`
-// module does not reliably replace `request` with a jest.fn on Node 18+, so
-// `https.request.mockImplementation` would throw. The factory guarantees it.
-jest.mock('https', () => ({ request: jest.fn() }));
-const https = require('https');
+// ─── Mock global.fetch so no real network calls fire ──────────────────────────
+// The HTTP boundary moved to the shared fetch client
+// (`clients/http-client.ts`), so the mock seam is `global.fetch`, not Node's
+// `https` module. `mockHttpResponse` installs a jest.fn there; tests read
+// it via `global.fetch` / `mockFetch()` and `jest.clearAllMocks()` resets it.
 
 const db = require('../../services/db');
 const {
@@ -41,43 +40,49 @@ const {
 /**
  * Build a minimal escrow object as the TrustlessWork indexer would return it.
  */
+/** A Trustless Work V1 indexer escrow (GetEscrowsFromIndexerResponse). */
 function makeEscrow(overrides = {}) {
   return {
     contractId: 'CDLZ_TEST_001',
-    status: 'funded',
-    amount: '100.0000000',
-    balance: '0.0000000',
-    escrowType: 'single_release',
-    roles: { marker: 'MARKER', approver: 'APPROVER', releaser: 'RELEASER' },
+    type: 'single-release',
+    amount: 100,
+    balance: 100,
+    fundedBy: 'GGUEST',
+    flags: { approved: false, disputed: false, released: false, resolved: false },
+    milestones: [{ description: 'Check-in', status: 'pending', approved: false }],
+    roles: {
+      approver: 'APPROVER',
+      serviceProvider: 'MARKER',
+      platformAddress: 'PLATFORM',
+      releaseSigner: 'RELEASER',
+      disputeResolver: 'RESOLVER',
+      receiver: 'MARKER',
+    },
     ...overrides,
   };
 }
 
 /**
- * Make `https.request` return a fake response with the given body/statusCode.
+ * Make `global.fetch` resolve with a fake response carrying the given body
+ * and statusCode. The fetch client only touches `ok`, `status`, `json()`
+ * and `text()` on success responses; on error it reads `text()`.
  */
 function mockHttpResponse(body: unknown, statusCode = 200) {
-  const { EventEmitter } = require('events');
-
-  const fakeRes = new EventEmitter();
-  fakeRes.statusCode = statusCode;
-  fakeRes.setEncoding = jest.fn();
-
-  const fakeReq = new EventEmitter();
-  fakeReq.setTimeout = jest.fn();
-  fakeReq.destroy = jest.fn();
-  fakeReq.end = jest.fn(() => {
-    // Emit data + end on the response in the next tick
-    process.nextTick(() => {
-      fakeRes.emit('data', typeof body === 'string' ? body : JSON.stringify(body));
-      fakeRes.emit('end');
-    });
-  });
-
-  https.request.mockImplementation((_opts: unknown, cb: (response: unknown) => void) => {
-    cb(fakeRes);
-    return fakeReq;
-  });
+  const isOk = statusCode >= 200 && statusCode < 300;
+  const mockFetch = jest.fn(async () => ({
+    ok: isOk,
+    status: statusCode,
+    json: async () => {
+      if (typeof body === 'string') {
+        // `response.json()` on a non-JSON string throws, like the real API.
+        throw new SyntaxError(`Unexpected token in JSON at position 0 — body starts with ${JSON.stringify(body.slice(0, 10))}`);
+      }
+      return body;
+    },
+    text: async () => (typeof body === 'string' ? body : JSON.stringify(body ?? '')),
+  }));
+  global.fetch = mockFetch as unknown as typeof fetch;
+  return mockFetch;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -225,7 +230,7 @@ describe('fetchEscrowsByContractIds', () => {
     mockHttpResponse('not-json!!');
 
     await expect(fetchEscrowsByContractIds(['X'])).rejects.toThrow(
-      'Failed to parse'
+      'invalid JSON'
     );
   });
 
@@ -253,6 +258,37 @@ describe('syncChunk', () => {
 
     const result = await syncChunk([escrow.contractId]);
     expect(result).toEqual({ updated: 1, unchanged: 0, skipped: 0 });
+  });
+
+  it('writes the status derived from V1 flags and the V1 role names', async () => {
+    const escrow = makeEscrow({ flags: { released: true } });
+    mockHttpResponse({ escrows: [escrow] });
+    db.query.mockResolvedValue({ rows: [{ contract_id: escrow.contractId, inserted: false }] });
+
+    await syncChunk([escrow.contractId]);
+
+    const [, params] = db.query.mock.calls[0];
+    // contract_id, status, amount, balance, marker, approver, releaser, escrow_type, network
+    expect(params.slice(0, 8)).toEqual([
+      'CDLZ_TEST_001', 'completed', 100, 100, 'MARKER', 'APPROVER', 'RELEASER', 'single_release',
+    ]);
+  });
+
+  it('writes valid records when a sibling record is malformed', async () => {
+    const good = makeEscrow({ contractId: 'GOOD_001' });
+    const broken = makeEscrow({ contractId: 'BROKEN_002', milestones: [null] });
+    mockHttpResponse({ escrows: [good, broken] });
+    db.query.mockResolvedValue({ rows: [{ contract_id: 'GOOD_001', inserted: false }] });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const result = await syncChunk(['GOOD_001', 'BROKEN_002']);
+
+    expect(result).toEqual({ updated: 1, unchanged: 0, skipped: 1 });
+    expect(db.query).toHaveBeenCalledTimes(1);
+    expect(db.query.mock.calls[0][1][0]).toBe('GOOD_001');
+    const logged = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('invalid_indexer_escrow'));
+    expect(JSON.parse(logged!)).toMatchObject({ contractId: 'BROKEN_002', reason: 'milestones[0] is not an object' });
+    warn.mockRestore();
   });
 
   it('counts an unchanged row when RETURNING is empty', async () => {
@@ -297,7 +333,7 @@ describe('syncChunk', () => {
   });
 
   it('skips an escrow missing contractId', async () => {
-    mockHttpResponse({ escrows: [{ status: 'funded' }] }); // no contractId
+    mockHttpResponse({ escrows: [{ flags: {} }] }); // no contractId
 
     const result = await syncChunk(['some-id']);
     expect(result).toEqual({ updated: 0, unchanged: 0, skipped: 1 });
@@ -312,14 +348,9 @@ describe('syncChunk', () => {
   });
 
   it('propagates a thrown error when the HTTP call itself fails', async () => {
-    const { EventEmitter } = require('events');
-    const fakeReq = new EventEmitter();
-    fakeReq.setTimeout = jest.fn();
-    fakeReq.destroy = jest.fn();
-    fakeReq.end = jest.fn(() => {
-      process.nextTick(() => fakeReq.emit('error', new Error('ECONNREFUSED')));
-    });
-    https.request.mockImplementation(() => fakeReq);
+    global.fetch = jest.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
 
     await expect(syncChunk(['X'])).rejects.toThrow('ECONNREFUSED');
   });

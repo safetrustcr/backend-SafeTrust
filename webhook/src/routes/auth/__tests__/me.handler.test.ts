@@ -1,17 +1,24 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { meHandler } from '../me.handler'
-import { query } from '../../../services/db'
+import { listUserRoles as query } from '../../../repositories/user.repository'
+import { errorHandler } from '../../../middleware/error-handler'
 
-jest.mock('../../../services/db', () => ({
-  query: jest.fn(),
-}))
+jest.mock('../../../repositories/user.repository', () => ({ listUserRoles: jest.fn() }))
 
 function makeResponse(): Response {
   const res: Partial<Response> = {}
   res.status = jest.fn().mockReturnValue(res)
   res.json = jest.fn().mockReturnValue(res)
   return res as Response
+}
+
+async function run(handler: (req: any, res: any) => Promise<any>, req: any, res: any) {
+  try {
+    return await handler(req, res)
+  } catch (err) {
+    errorHandler(err, req, res, () => {})
+  }
 }
 
 describe('auth/me.handler', () => {
@@ -23,10 +30,12 @@ describe('auth/me.handler', () => {
     const req = {} as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await meHandler(req, res)
+    await run(meHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(401)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, error: 'Unauthorized' })
+    )
   })
 
   it('reads roles from req.context without querying the database', async () => {
@@ -40,7 +49,7 @@ describe('auth/me.handler', () => {
     } as unknown as AuthenticatedRequest
     const res = makeResponse()
 
-    await meHandler(req, res)
+    await run(meHandler, req, res)
 
     expect(query).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(200)
@@ -80,9 +89,7 @@ describe('auth/me.handler', () => {
   })
 
   it('falls back to database query if roles are not present on context or user', async () => {
-    ;(query as jest.Mock).mockResolvedValueOnce({
-      rows: [{ name: 'admin' }],
-    })
+    ;(query as jest.Mock).mockResolvedValueOnce(['admin'])
 
     const req = {
       user: {
@@ -96,7 +103,7 @@ describe('auth/me.handler', () => {
 
     await meHandler(req, res)
 
-    expect(query).toHaveBeenCalledWith(expect.any(String), ['user-legacy-1'])
+    expect(query).toHaveBeenCalledWith('user-legacy-1')
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({
       user: {

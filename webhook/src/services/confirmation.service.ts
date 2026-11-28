@@ -6,8 +6,36 @@
  *              and durable PostgreSQL retry mechanism for escrow transactions.
  */
 
-import db from './db'
+import { Networks, Transaction, FeeBumpTransaction, TransactionBuilder } from '@stellar/stellar-sdk'
+import db, { withTransaction } from './db'
 import { hasuraRequest } from './hasura'
+import { getTransactionByHash } from '../clients/stellar.client'
+import { sendTransaction, updateIndexerFromTxHash } from '../clients/trustless-work.client'
+import { UpstreamError, UpstreamTimeoutError } from '../utils/upstream-errors'
+import {
+  upsertRetryRecord,
+  updateRetryRecordStatus,
+  fetchPendingRetries,
+  type UpsertRetryRecordParams,
+} from '../repositories/confirmation-retry.repository'
+
+export {
+  upsertRetryRecord,
+  updateRetryRecordStatus,
+  fetchPendingRetries,
+  type UpsertRetryRecordParams,
+}
+
+/** Describe an upstream failure for the retry record / result error field. */
+function upstreamErrorText(upstream: string, error: unknown): string {
+  if (error instanceof UpstreamTimeoutError) {
+    return `${upstream} timed out after ${error.timeoutMs} ms at ${error.upstreamPath}`
+  }
+  if (error instanceof UpstreamError) {
+    return `${upstream} upstream error at ${error.upstreamPath}: ${error.message}`
+  }
+  return `${upstream} request failed: ${error instanceof Error ? error.message : String(error)}`
+}
 
 // ── Types & Constants ─────────────────────────────────────────────────────────
 
@@ -97,32 +125,13 @@ export async function verifyStellarTransaction(
     }
   }
 
-  const horizonBase =
-    expectedNetwork === 'mainnet'
-      ? 'https://horizon.stellar.org'
-      : 'https://horizon-testnet.stellar.org'
-
   try {
-    const response = await fetch(`${horizonBase}/transactions/${txHash}`)
-    if (response.status === 404) {
+    const txData = await getTransactionByHash(txHash, expectedNetwork)
+    if (txData === null) {
       return {
         verified: false,
         error: `Transaction not found on Stellar ${expectedNetwork} (pending, expired, or wrong network)`,
       }
-    }
-
-    if (!response.ok) {
-      return {
-        verified: false,
-        error: `Stellar Horizon returned status ${response.status}`,
-      }
-    }
-
-    const txData = (await response.json()) as {
-      successful?: boolean
-      ledger?: number
-      id?: string
-      network?: string
     }
 
     if (txData.successful !== true) {
@@ -151,7 +160,7 @@ export async function verifyStellarTransaction(
 // ── Trustless Work Indexer Synchronization ────────────────────────────────────
 
 /**
- * Calls Trustless Work's indexer/update-from-txHash endpoint.
+ * Calls Trustless Work's PUT /indexer/update-from-txhash endpoint.
  * Guardrail: Only callable for TW-generated XDR contexts!
  */
 export async function updateTWIndexerFromTxHash(
@@ -167,33 +176,13 @@ export async function updateTWIndexerFromTxHash(
     }
   }
 
-  const twBaseUrl =
-    process.env.TRUSTLESS_WORK_API_URL || 'https://dev.api.trustlesswork.com'
-  const twApiKey = process.env.TRUSTLESS_WORK_API_KEY || ''
-
   try {
-    const response = await fetch(`${twBaseUrl}/indexer/update-from-txHash`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
-      },
-      body: JSON.stringify({ txHash, network }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      return {
-        success: false,
-        error: `TW indexer returned status ${response.status}: ${errText}`,
-      }
-    }
-
+    await updateIndexerFromTxHash(txHash, network)
     return { success: true }
   } catch (err) {
     return {
       success: false,
-      error: `TW indexer network error: ${(err as Error).message}`,
+      error: upstreamErrorText('TW indexer', err),
     }
   }
 }
@@ -204,44 +193,47 @@ export async function updateTWIndexerFromTxHash(
 export async function sendTransactionViaTWHelper(
   signedXdr: string,
   network: StellarNetwork
-): Promise<{ success: boolean; txHash?: string; error?: string }> {
-  const twBaseUrl =
-    process.env.TRUSTLESS_WORK_API_URL || 'https://dev.api.trustlesswork.com'
-  const twApiKey = process.env.TRUSTLESS_WORK_API_KEY || ''
-
+): Promise<{ success: boolean; txHash?: string; error?: string; ambiguous?: boolean }> {
   try {
-    const response = await fetch(`${twBaseUrl}/helper/send-transaction`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(twApiKey ? { 'x-api-key': twApiKey } : {}),
-      },
-      body: JSON.stringify({ signedXdr, network }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      return {
-        success: false,
-        error: `TW helper returned status ${response.status}: ${errText}`,
-      }
-    }
-
-    const data = (await response.json()) as { txHash?: string; hash?: string }
-    const txHash = data.txHash || data.hash
+    const { txHash } = await sendTransaction(signedXdr, network)
     if (!txHash) {
+      // The helper answered 2xx, so it may have accepted the transaction.
       return {
         success: false,
+        ambiguous: true,
         error: 'TW helper response did not include transaction hash',
       }
     }
 
     return { success: true, txHash }
   } catch (err) {
+    // A 4xx proves the helper rejected the request. Timeouts, transport
+    // failures and 5xx may have reached the network, so they are ambiguous.
+    const status = err instanceof UpstreamError ? err.upstreamStatus : undefined
+    const rejected = status !== undefined && status >= 400 && status < 500
     return {
       success: false,
-      error: `TW helper network error: ${(err as Error).message}`,
+      ambiguous: !rejected,
+      error: upstreamErrorText('TW helper', err),
     }
+  }
+}
+
+/**
+ * Derive the transaction hash locally from the signed XDR and network
+ * passphrase (never from the helper response). Returns null when the XDR
+ * is malformed, which proves nothing was submitted.
+ */
+export function deriveTxHashFromSignedXdr(
+  signedXdr: string,
+  network: StellarNetwork
+): string | null {
+  try {
+    const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
+    const tx = TransactionBuilder.fromXDR(signedXdr, passphrase)
+    return (tx as Transaction | FeeBumpTransaction).hash().toString('hex')
+  } catch {
+    return null
   }
 }
 
@@ -253,114 +245,17 @@ export function calculateBackoffMs(attemptCount: number): number {
 }
 
 // ── Database Operations for Retries ───────────────────────────────────────────
-
-export async function upsertRetryRecord(params: {
-  txHash: string
-  escrowId: string
-  action: EscrowAction
-  network: StellarNetwork
-  submissionPath: SubmissionPath
-  status?: RetryStatus
-  lastError?: string | null
-  attemptCount?: number
-  metadata?: Record<string, unknown>
-}): Promise<ConfirmationRetryRecord> {
-  const status = params.status ?? 'retrying'
-  const attemptCount = params.attemptCount ?? 0
-  const nextRetryMs = status === 'retrying' ? calculateBackoffMs(attemptCount) : 0
-
-  const { rows } = await db.query<any>(
-    `
-    INSERT INTO safetrust.escrow_confirmation_retries (
-      tx_hash,
-      escrow_id,
-      escrow_action,
-      network,
-      submission_path,
-      status,
-      attempt_count,
-      max_attempts,
-      next_retry_at,
-      last_error,
-      metadata,
-      tenant_id,
-      updated_at
-    ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8,
-      NOW() + ($9 * INTERVAL '1 millisecond'),
-      $10, $11, 'safetrust', NOW()
-    )
-    ON CONFLICT (tx_hash, escrow_action)
-    DO UPDATE SET
-      status = EXCLUDED.status,
-      last_error = EXCLUDED.last_error,
-      attempt_count = EXCLUDED.attempt_count,
-      next_retry_at = EXCLUDED.next_retry_at,
-      updated_at = NOW()
-    RETURNING
-      id,
-      tx_hash AS "txHash",
-      escrow_id AS "escrowId",
-      escrow_action AS "escrowAction",
-      network,
-      submission_path AS "submissionPath",
-      status,
-      attempt_count AS "attemptCount",
-      max_attempts AS "maxAttempts",
-      next_retry_at AS "nextRetryAt",
-      last_error AS "lastError",
-      metadata,
-      created_at AS "createdAt",
-      updated_at AS "updatedAt"
-    `,
-    [
-      params.txHash,
-      params.escrowId,
-      params.action,
-      params.network,
-      params.submissionPath,
-      status,
-      attemptCount,
-      MAX_ATTEMPTS,
-      nextRetryMs,
-      params.lastError ?? null,
-      JSON.stringify(params.metadata ?? {}),
-    ]
-  )
-
-  return rows[0]
-}
-
-export async function updateRetryRecordStatus(
-  id: string,
-  status: RetryStatus,
-  attemptCount: number,
-  lastError: string | null
-): Promise<void> {
-  const nextRetryMs = status === 'retrying' ? calculateBackoffMs(attemptCount) : 0
-
-  await db.query(
-    `
-    UPDATE safetrust.escrow_confirmation_retries
-    SET
-      status = $1,
-      attempt_count = $2,
-      last_error = $3,
-      next_retry_at = NOW() + ($4 * INTERVAL '1 millisecond'),
-      updated_at = NOW()
-    WHERE id = $5
-    `,
-    [status, attemptCount, lastError, nextRetryMs, id]
-  )
-}
+// Handled by confirmation-retry.repository.ts and re-exported above.
 
 // ── Local Database Promotion ──────────────────────────────────────────────────
 
 /**
  * Promotes local PostgreSQL records once both ledger confirmation and TW indexing succeed.
  * Strictly separates deployment from funding:
- *  - deploy: sets status = 'created' (NOT 'funded'), sets tx_hash, network.
- *  - fund: sets status = 'funded', updates balance = amount, sets tx_hash, network.
+ *  - deploy: sets status = 'created' (NOT 'funded'), sets tx_hash, network on trustless_work_escrows.
+ *  - fund: sets status = 'funded', updates balance = amount, sets tx_hash, network on trustless_work_escrows.
+ * Status, balance and ledger freshness are written ONLY to trustless_work_escrows.
+ * In the same transaction (withTransaction), writes/updates the signed transaction on escrow_transactions.
  */
 export async function promoteEscrowStatus(
   escrowId: string,
@@ -368,61 +263,134 @@ export async function promoteEscrowStatus(
   txHash: string,
   network: StellarNetwork
 ): Promise<void> {
-  if (action === 'deploy') {
-    // Check if contract exists in trustless_work_escrows
-    await db.query(
-      `
-      UPDATE safetrust.trustless_work_escrows
-      SET
-        status = 'created',
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
+  const runner = db.withTransaction ?? withTransaction
+  await runner(async (client) => {
+    let updateResult: { rows: any[] }
+    if (action === 'deploy') {
+      updateResult = await client.query(
+        `
+        UPDATE safetrust.trustless_work_escrows
+        SET
+          status = 'created',
+          tx_hash = $1,
+          network = $2,
+          updated_at = NOW()
+        WHERE contract_id = $3
+        RETURNING id, tenant_id, contract_id, amount, marker, approver
+        `,
+        [txHash, network, escrowId]
+      )
+    } else if (action === 'fund') {
+      updateResult = await client.query(
+        `
+        UPDATE safetrust.trustless_work_escrows
+        SET
+          status = 'funded',
+          balance = amount,
+          tx_hash = $1,
+          network = $2,
+          updated_at = NOW()
+        WHERE contract_id = $3
+        RETURNING id, tenant_id, contract_id, amount, marker, approver
+        `,
+        [txHash, network, escrowId]
+      )
+    } else {
+      updateResult = { rows: [] }
+    }
 
-    await db.query(
-      `
-      UPDATE safetrust.escrow_transactions
-      SET
-        status = 'deploying',
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3 OR engagement_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
-  } else if (action === 'fund') {
-    await db.query(
-      `
-      UPDATE safetrust.trustless_work_escrows
-      SET
-        status = 'funded',
-        balance = amount,
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
+    const escrowRow = updateResult?.rows?.[0]
+    const internalEscrowId = escrowRow?.id
+    const tenantId = escrowRow?.tenant_id ?? 'safetrust'
 
-    await db.query(
-      `
-      UPDATE safetrust.escrow_transactions
-      SET
-        status = 'funded',
-        tx_hash = $1,
-        network = $2,
-        updated_at = NOW()
-      WHERE contract_id = $3 OR engagement_id = $3
-      `,
-      [txHash, network, escrowId]
-    )
-  }
+    if (internalEscrowId) {
+      const updateTx = await client.query(
+        `
+        WITH target_tx AS (
+          SELECT id
+          FROM safetrust.escrow_transactions
+          WHERE escrow_id = $2
+            AND (
+              tx_hash = $1
+              OR (tx_hash IS NULL AND kind = $3 AND status IN ('pending_signature', 'submitted'))
+            )
+          ORDER BY (tx_hash = $1) DESC, created_at DESC
+          LIMIT 1
+        )
+        UPDATE safetrust.escrow_transactions et
+        SET
+          status = 'confirmed',
+          tx_hash = COALESCE(et.tx_hash, $1),
+          updated_at = NOW()
+        FROM target_tx
+        WHERE et.id = target_tx.id
+        RETURNING et.id
+        `,
+        [txHash, internalEscrowId, action]
+      )
+
+      if (updateTx?.rows && updateTx.rows.length === 0) {
+        await client.query(
+          `
+          INSERT INTO safetrust.escrow_transactions (
+            escrow_id,
+            kind,
+            tx_hash,
+            status,
+            contract_id,
+            engagement_id,
+            sender_address,
+            receiver_address,
+            amount,
+            tenant_id,
+            created_at,
+            updated_at
+          ) VALUES ($1, $2, $3, 'confirmed', $4, $5, $6, $7, $8, $9, NOW(), NOW())
+          ON CONFLICT (escrow_id, kind, tx_hash)
+            WHERE tx_hash IS NOT NULL
+          DO UPDATE SET
+            status = EXCLUDED.status,
+            updated_at = NOW()
+          `,
+          [
+            internalEscrowId,
+            action,
+            txHash,
+            escrowRow.contract_id ?? escrowId,
+            `eng_${internalEscrowId}`,
+            escrowRow.approver ?? '',
+            escrowRow.marker ?? '',
+            escrowRow.amount ?? 0,
+            tenantId
+          ]
+        )
+      }
+    } else {
+      await client.query(
+        `
+        WITH target_tx AS (
+          SELECT id
+          FROM safetrust.escrow_transactions
+          WHERE escrow_id = (SELECT id FROM safetrust.trustless_work_escrows WHERE contract_id = $2 LIMIT 1)
+            AND (
+              tx_hash = $1
+              OR (tx_hash IS NULL AND kind = $3 AND status IN ('pending_signature', 'submitted'))
+            )
+          ORDER BY (tx_hash = $1) DESC, created_at DESC
+          LIMIT 1
+        )
+        UPDATE safetrust.escrow_transactions et
+        SET
+          status = 'confirmed',
+          tx_hash = COALESCE(et.tx_hash, $1),
+          updated_at = NOW()
+        FROM target_tx
+        WHERE et.id = target_tx.id
+        `,
+        [txHash, escrowId, action]
+      )
+    }
+  })
 }
 
 // ── Main Confirmation Workflows ───────────────────────────────────────────────
@@ -452,8 +420,47 @@ export async function processHelperSubmission(params: {
     }
   }
 
-  // Submit via TW helper
+  // Derive the hash locally before sending; malformed XDR was never submitted.
+  const derivedHash = deriveTxHashFromSignedXdr(signedXdr, network)
+  if (!derivedHash) {
+    return {
+      success: false,
+      stage: 'xdr_issued',
+      txHash: '',
+      escrowId,
+      action,
+      network,
+      submissionPath: 'helper',
+      error: 'Signed XDR is malformed and cannot be submitted',
+    }
+  }
+
+  // Submit via TW helper (never re-sent; ambiguous failures reconcile by hash)
   const sendRes = await sendTransactionViaTWHelper(signedXdr, network)
+  if (!sendRes.success && sendRes.ambiguous) {
+    const errorMsg = sendRes.error ?? 'TW helper submission outcome unknown'
+    const retryRecord = await upsertRetryRecord({
+      txHash: derivedHash,
+      escrowId,
+      action,
+      network,
+      submissionPath: 'helper',
+      status: 'retrying',
+      attemptCount: 1,
+      lastError: errorMsg,
+    })
+    return {
+      success: false,
+      stage: 'pending_confirmation',
+      txHash: derivedHash,
+      escrowId,
+      action,
+      network,
+      submissionPath: 'helper',
+      retryRecordId: retryRecord.id,
+      error: errorMsg,
+    }
+  }
   if (!sendRes.success || !sendRes.txHash) {
     return {
       success: false,
@@ -467,7 +474,7 @@ export async function processHelperSubmission(params: {
     }
   }
 
-  const txHash = sendRes.txHash
+  const txHash = derivedHash
 
   // Persist pending confirmation and retry record immediately
   const retryRecord = await upsertRetryRecord({
@@ -645,26 +652,7 @@ export async function processPendingConfirmationRetries(): Promise<ProcessRetrie
   }
 
   // Fetch retries ready to execute
-  const { rows } = await db.query<any>(
-    `
-    SELECT
-      id,
-      tx_hash AS "txHash",
-      escrow_id AS "escrowId",
-      escrow_action AS "escrowAction",
-      network,
-      submission_path AS "submissionPath",
-      status,
-      attempt_count AS "attemptCount",
-      max_attempts AS "maxAttempts",
-      last_error AS "lastError"
-    FROM safetrust.escrow_confirmation_retries
-    WHERE status = 'retrying'
-      AND next_retry_at <= NOW()
-    ORDER BY next_retry_at ASC
-    LIMIT 50
-    `
-  )
+  const rows = await fetchPendingRetries(50)
 
   if (rows.length === 0) {
     return summary

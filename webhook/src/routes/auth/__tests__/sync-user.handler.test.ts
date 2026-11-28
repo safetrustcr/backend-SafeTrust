@@ -1,11 +1,10 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { syncUserHandler } from '../sync-user.handler'
-import { query } from '../../../services/db'
+import { runHandler } from '../../__tests__/run-handler'
+import { syncUser } from '../../../repositories/user.repository'
 
-jest.mock('../../../services/db', () => ({
-  query: jest.fn(),
-}))
+jest.mock('../../../repositories/user.repository', () => ({ syncUser: jest.fn() }))
 
 function makeResponse(): Response {
   const res: Partial<Response> = {}
@@ -23,10 +22,10 @@ describe('auth/sync-user.handler', () => {
     const req = {} as AuthenticatedRequest
     const res = makeResponse()
 
-    await syncUserHandler(req, res)
+    await runHandler(syncUserHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(401)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Unauthorized' }))
   })
 
   it('reconciles and updates existing user matching id or firebase_uid without querying information_schema', async () => {
@@ -37,9 +36,7 @@ describe('auth/sync-user.handler', () => {
       last_seen: new Date('2026-10-21T06:00:00.000Z'),
     }
 
-    ;(query as jest.Mock).mockResolvedValueOnce({
-      rows: [mockUser],
-    })
+    ;(syncUser as jest.Mock).mockResolvedValueOnce(mockUser)
 
     const req = {
       context: {
@@ -57,14 +54,9 @@ describe('auth/sync-user.handler', () => {
     } as AuthenticatedRequest
     const res = makeResponse()
 
-    await syncUserHandler(req, res)
+    await runHandler(syncUserHandler, req, res)
 
-    expect(query).toHaveBeenCalledTimes(1)
-    const [sqlQuery, params] = (query as jest.Mock).mock.calls[0]
-    expect(sqlQuery).toContain('UPDATE safetrust.users')
-    expect(sqlQuery).toContain('WHERE id = $1 OR firebase_uid = $1')
-    expect(sqlQuery).not.toContain('information_schema')
-    expect(params).toEqual(['firebase-user-123', 'user@example.com'])
+    expect(syncUser).toHaveBeenCalledWith('firebase-user-123', 'user@example.com')
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({
@@ -85,9 +77,7 @@ describe('auth/sync-user.handler', () => {
       last_seen: new Date('2026-10-21T06:00:00.000Z'),
     }
 
-    ;(query as jest.Mock).mockResolvedValueOnce({
-      rows: [legacyUser],
-    })
+    ;(syncUser as jest.Mock).mockResolvedValueOnce(legacyUser)
 
     const req = {
       context: {
@@ -99,9 +89,9 @@ describe('auth/sync-user.handler', () => {
     } as AuthenticatedRequest
     const res = makeResponse()
 
-    await syncUserHandler(req, res)
+    await runHandler(syncUserHandler, req, res)
 
-    expect(query).toHaveBeenCalledTimes(1)
+    expect(syncUser).toHaveBeenCalledWith('firebase-user-456', 'legacy@example.com')
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({
       user: {
@@ -121,10 +111,7 @@ describe('auth/sync-user.handler', () => {
       last_seen: new Date('2026-10-21T06:00:00.000Z'),
     }
 
-    // 1st call (UPDATE): 0 rows found
-    ;(query as jest.Mock).mockResolvedValueOnce({ rows: [] })
-    // 2nd call (INSERT): row created
-    ;(query as jest.Mock).mockResolvedValueOnce({ rows: [newUser] })
+    ;(syncUser as jest.Mock).mockResolvedValueOnce(newUser)
 
     const req = {
       context: {
@@ -136,15 +123,9 @@ describe('auth/sync-user.handler', () => {
     } as AuthenticatedRequest
     const res = makeResponse()
 
-    await syncUserHandler(req, res)
+    await runHandler(syncUserHandler, req, res)
 
-    expect(query).toHaveBeenCalledTimes(2)
-    const [updateSql] = (query as jest.Mock).mock.calls[0]
-    const [insertSql, insertParams] = (query as jest.Mock).mock.calls[1]
-
-    expect(updateSql).toContain('UPDATE safetrust.users')
-    expect(insertSql).toContain('INSERT INTO safetrust.users')
-    expect(insertParams).toEqual(['new-user-789', 'new@example.com'])
+    expect(syncUser).toHaveBeenCalledWith('new-user-789', 'new@example.com')
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith({
@@ -158,7 +139,7 @@ describe('auth/sync-user.handler', () => {
   })
 
   it('returns 500 when database error occurs', async () => {
-    ;(query as jest.Mock).mockRejectedValueOnce(new Error('Connection failure'))
+    ;(syncUser as jest.Mock).mockRejectedValueOnce(new Error('Connection failure'))
 
     const req = {
       context: {
@@ -170,9 +151,9 @@ describe('auth/sync-user.handler', () => {
     } as AuthenticatedRequest
     const res = makeResponse()
 
-    await syncUserHandler(req, res)
+    await runHandler(syncUserHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Database error' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Internal server error' }))
   })
 })

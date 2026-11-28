@@ -80,6 +80,18 @@ HASURA_EVENT_SECRET=your_event_secret
 > ⚠️ `HASURA_GRAPHQL_JWT_SECRET` must be valid JSON with a key of at least 32 characters. `start` will fail if this is malformed.
 >
 > ⚠️ `HASURA_ADMIN_SECRET` is required and has no default. `bin/start`, the webhook, and the metadata scripts fail closed when it is missing. In CI and production, inject it from the GitHub Actions secret store or your cloud secret manager instead of `.env`.
+>
+> When running the webhook with `NODE_ENV=production`, also provide
+> `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY`.
+> Compose forwards these values to the webhook; keep the private key in your
+> secret manager rather than committing it.
+
+The webhook exposes `/health/live` for process liveness and `/health/ready`
+for Firebase and PostgreSQL readiness. PostgreSQL connection acquisition and
+query timeouts are configurable with `DB_CONNECTION_TIMEOUT_MS` (default
+`5000`) and `DB_QUERY_TIMEOUT_MS` (default `30000`). Native Rust modules are
+loaded only when their corresponding operations run; they do not gate liveness
+or readiness.
 
 ### 2. 🔮 Start everything
 
@@ -93,20 +105,22 @@ bin/start tenant-name tenant-name
 | Step | Action |
 | --- | --- |
 | 1 | Start `postgres`, `graphql-engine`, `webhook` containers |
-| 2 | Poll `GET /healthz` until Hasura is ready (up to 3 min) |
-| 3 | Build and deploy tenant metadata for all tenants |
-| 4 | Apply all migrations per tenant |
-| 5 | Reload Hasura metadata |
-| 6 | Apply seed data per tenant in parallel, with one transaction per seed file |
+| 2 | Poll `GET /healthz` until Hasura is ready (up to 2 min) |
+| 3 | Register a Hasura database source per tenant |
+| 4 | Apply migrations per tenant, one tenant at a time |
+| 5 | Build and deploy tenant metadata, all tenants in parallel |
+| 6 | Reload Hasura metadata |
+| 7 | Apply seeds per tenant with `hasura seed apply` |
+| 8 | Check Hasura, PostgreSQL and the webhook, then print one `DEPLOYMENT SUMMARY` |
 
-Seed files are applied directly with PostgreSQL and `ON_ERROR_STOP=1`. Each file
-is wrapped in `BEGIN`/`COMMIT`, so a failed file rolls back completely; the two
-independent tenants run concurrently. Seed inserts use conflict-safe or
-stable-key cleanup patterns, making `bin/start` safe to rerun without
-`docker compose down -v`.
+The summary shows each tenant's time per phase and status, the shared steps,
+the total time and the health checks. Every run also writes per-tenant logs to
+`tests/results/bin-start/<run-id>/` and a JSON report to
+`tests/results/bin-start-report.json`. See [bin/start](docs/infra/bin-start.md)
+for the summary format, `--verbose`, and troubleshooting.
 
-Set `SEED_CHUNK_SIZE` in `.env` to tune the configured seed batch size (default
-`500`).
+Seed inserts use conflict-safe or stable-key cleanup patterns, making
+`bin/start` safe to rerun without `docker compose down -v`.
 
 **Target a specific tenant:**
 
@@ -266,7 +280,7 @@ In-depth guides live in [`docs/`](docs/README.md).
 
 | Document | What it covers |
 |---|---|
-| [SafeTrust Schema Migration Strategy](docs/migrations/safetrust-schema-migration.md) | Why SafeTrust tables moved from `public` to the `safetrust` schema, plus the deployment and rollback sequences |
+| [SafeTrust Schema Migration Strategy](docs/history/safetrust-schema-migration.md) | Historical reference for moving SafeTrust tables from `public` to the `safetrust` schema, plus deployment and rollback sequences |
 
 ---
 

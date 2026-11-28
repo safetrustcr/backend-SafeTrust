@@ -330,17 +330,215 @@ pub fn validate_rpc_contract_response(
     validate_response_shape(result, contract_id)
 }
 
+// ─── Trustless Work V1 indexer normalization ──────────────────────────────────
+//
+// The V1 `get-escrow-by-contract-ids` response has no `status` field: lifecycle
+// state lives in `flags` (single-release) or per-milestone `flags`
+// (multi-release). These functions turn a V1 record into the shape
+// `validate_response_shape` checks, so contract identity, the status allowlist
+// and exact stroop parsing still apply. The derivation mirrors
+// webhook/src/lib/source-adapters/tw-indexer.normalize.ts; keep them in sync.
+
+fn json_flag(flags: Option<&serde_json::Value>, name: &str) -> bool {
+    flags.and_then(|f| f.get(name)).and_then(|b| b.as_bool()) == Some(true)
+}
+
+fn is_funded(record: &serde_json::Value) -> bool {
+    let positive_balance = match record.get("balance") {
+        Some(serde_json::Value::Number(n)) => n.as_f64().map_or(false, |b| b > 0.0),
+        Some(serde_json::Value::String(s)) => s.trim().parse::<f64>().map_or(false, |b| b > 0.0),
+        _ => false,
+    };
+    let funded_by = record
+        .get("fundedBy")
+        .and_then(|f| f.as_str())
+        .map_or(false, |f| !f.is_empty());
+    positive_balance || funded_by
+}
+
+fn milestone_approved(m: &serde_json::Value) -> bool {
+    m.get("approved").and_then(|a| a.as_bool()) == Some(true) || json_flag(m.get("flags"), "approved")
+}
+
+/// Reject structures the derivation would otherwise have to guess about.
+fn validate_tw_v1_structure(record: &serde_json::Value) -> Result<Vec<&serde_json::Value>, String> {
+    if !record.is_object() {
+        return Err("Unrecognized response shape: V1 escrow is not an object".to_string());
+    }
+    for key in ["flags", "roles", "trustline"] {
+        if let Some(v) = record.get(key) {
+            if !v.is_null() && !v.is_object() {
+                return Err(format!("Unrecognized response shape: '{}' is not an object", key));
+            }
+        }
+    }
+    let milestones = match record.get("milestones") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(serde_json::Value::Array(items)) => items.iter().collect(),
+        Some(_) => return Err("Unrecognized response shape: 'milestones' is not an array".to_string()),
+    };
+    for (index, m) in milestones.iter().enumerate() {
+        if !m.is_object() {
+            return Err(format!("Unrecognized response shape: milestones[{}] is not an object", index));
+        }
+        if let Some(f) = m.get("flags") {
+            if !f.is_null() && !f.is_object() {
+                return Err(format!(
+                    "Unrecognized response shape: milestones[{}].flags is not an object",
+                    index
+                ));
+            }
+        }
+    }
+    Ok(milestones)
+}
+
+/// SafeTrust lifecycle status for a Trustless Work V1 indexer record.
+pub fn derive_tw_v1_status(record: &serde_json::Value) -> Result<&'static str, String> {
+    let milestones = validate_tw_v1_structure(record)?;
+    let multi = record.get("type").and_then(|t| t.as_str()) == Some("multi-release");
+
+    if multi && !milestones.is_empty() {
+        let settled = |m: &&serde_json::Value| {
+            json_flag(m.get("flags"), "released") || json_flag(m.get("flags"), "resolved")
+        };
+        if milestones.iter().all(settled) {
+            let any_resolved = milestones.iter().any(|m| json_flag(m.get("flags"), "resolved"));
+            return Ok(if any_resolved { "resolved" } else { "completed" });
+        }
+        if milestones
+            .iter()
+            .any(|m| json_flag(m.get("flags"), "disputed") && !json_flag(m.get("flags"), "resolved"))
+        {
+            return Ok("disputed");
+        }
+        if milestones
+            .iter()
+            .any(|m| milestone_approved(m) || json_flag(m.get("flags"), "released"))
+        {
+            return Ok("milestone_approved");
+        }
+        return Ok(if is_funded(record) { "funded" } else { "created" });
+    }
+
+    let flags = record.get("flags");
+    if json_flag(flags, "resolved") {
+        return Ok("resolved");
+    }
+    if json_flag(flags, "released") {
+        return Ok("completed");
+    }
+    if json_flag(flags, "disputed") {
+        return Ok("disputed");
+    }
+    if milestones.iter().any(|m| milestone_approved(m)) {
+        return Ok("milestone_approved");
+    }
+    Ok(if is_funded(record) { "funded" } else { "created" })
+}
+
+/// V1 `balance` (token units) as an exact decimal string, so
+/// `parse_exact_stroops` reads it as units rather than guessing.
+fn tw_v1_balance_decimal(record: &serde_json::Value) -> Result<String, String> {
+    let raw = match record.get("balance") {
+        Some(serde_json::Value::Number(n)) => n.to_string(),
+        Some(serde_json::Value::String(s)) => s.trim().to_string(),
+        _ => {
+            // Never fall back to the configured `amount`: that is not the balance.
+            return Err(
+                "Unrecognized response shape: V1 escrow has no 'balance' (request it with validateOnChain=true)"
+                    .to_string(),
+            );
+        }
+    };
+    if raw.is_empty() || raw.contains(['e', 'E']) {
+        return Err(format!("Unrecognized response shape: unsupported balance '{}'", raw));
+    }
+    Ok(if raw.contains('.') { raw } else { format!("{}.0", raw) })
+}
+
+/// Normalize a Trustless Work V1 indexer response for `validate_response_shape`.
+///
+/// Picks the record whose `contractId` matches (else the first, so identity
+/// validation reports the mismatch). A record that already carries a string
+/// `status` (pre-V1 shape) is returned unchanged.
+pub fn normalize_tw_v1_response(
+    val: &serde_json::Value,
+    expected_contract_id: &str,
+) -> Result<serde_json::Value, String> {
+    let records: Option<&Vec<serde_json::Value>> = val
+        .as_array()
+        .or_else(|| val.get("escrows").and_then(|e| e.as_array()));
+    let record = match records {
+        Some(list) => match list
+            .iter()
+            .find(|r| r.get("contractId").and_then(|c| c.as_str()) == Some(expected_contract_id))
+            .or_else(|| list.first())
+        {
+            Some(r) => r,
+            // Empty list: let validate_response_shape report "not found".
+            None => return Ok(val.clone()),
+        },
+        None => val,
+    };
+
+    if record.get("status").map_or(false, |s| s.is_string()) {
+        return Ok(record.clone());
+    }
+
+    let status = derive_tw_v1_status(record)?;
+    let balance = tw_v1_balance_decimal(record)?;
+    let roles = record.get("roles");
+    let role = |name: &str| {
+        roles
+            .and_then(|r| r.get(name))
+            .and_then(|v| v.as_str())
+            .map(|s| serde_json::Value::String(s.to_string()))
+            .unwrap_or(serde_json::Value::Null)
+    };
+
+    let mut normalized = serde_json::json!({
+        "contractId": record.get("contractId").cloned().unwrap_or(serde_json::Value::Null),
+        "status": status,
+        "balance": balance,
+        "roles": {
+            "marker": role("serviceProvider"),
+            "approver": role("approver"),
+            "releaser": role("releaseSigner"),
+        },
+    });
+    if let Some(symbol) = record
+        .get("trustline")
+        .and_then(|t| t.get("symbol"))
+        .and_then(|s| s.as_str())
+    {
+        normalized["assetCode"] = serde_json::Value::String(symbol.to_string());
+    }
+    Ok(normalized)
+}
+
+/// First non-empty value among the given environment variables.
+fn env_first(names: &[&str]) -> Option<String> {
+    names
+        .iter()
+        .filter_map(|name| env::var(name).ok())
+        .map(|value| value.trim().to_string())
+        .find(|value| !value.is_empty())
+}
+
 /// Query escrow state using Trustless Work API (authoritative structured indexer).
 pub fn query_escrow_state_from_tw_api(
     contract_id: &str,
     network: &str,
 ) -> Result<SorobanEscrowState, String> {
-    let base_url = env::var("TRUSTLESS_WORK_API_URL")
-        .unwrap_or_else(|_| "https://dev.api.trustlesswork.com".to_string());
-    let api_key = env::var("TRUSTLESS_WORK_API_KEY").unwrap_or_default();
+    // Same names and precedence as webhook/src/lib/source-adapters/tw.adapter.ts:
+    // TRUSTLESSWORK_* (what docker-compose passes), then the legacy spelling.
+    let base_url = env_first(&["TRUSTLESSWORK_API_URL", "TRUSTLESS_WORK_API_URL"])
+        .unwrap_or_else(|| "https://dev.api.trustlesswork.com".to_string());
+    let api_key = env_first(&["TRUSTLESSWORK_API_KEY", "TRUSTLESS_WORK_API_KEY"]).unwrap_or_default();
 
     let url = format!(
-        "{}/helper/get-escrows-by-contract-ids?contractIds={}",
+        "{}/helper/get-escrow-by-contract-ids?contractIds={}&validateOnChain=true",
         base_url.trim_end_matches('/'),
         contract_id
     );
@@ -380,7 +578,10 @@ pub fn query_escrow_state_from_tw_api(
         .into_json()
         .map_err(|e| format!("Unrecognized response shape: failed to parse JSON: {}", e))?;
 
-    let mut state = validate_response_shape(&json_resp, contract_id)?;
+    // The V1 response carries flags, not a status: normalize it, then run the
+    // same identity, status and exact-balance validation as before.
+    let normalized = normalize_tw_v1_response(&json_resp, contract_id)?;
+    let mut state = validate_response_shape(&normalized, contract_id)?;
     state.network = Some(network.to_string());
     Ok(state)
 }

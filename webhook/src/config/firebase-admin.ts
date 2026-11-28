@@ -1,8 +1,16 @@
 import { initializeApp, cert, getApp, type ServiceAccount } from 'firebase-admin/app'
 
 /**
- * Initializes Firebase Admin with service account credentials when fully configured.
- * In non-production, missing env vars skip init so mock-token tests can run without Firebase.
+ * Firebase Admin initialization.
+ *
+ * Credential strategy: explicit service-account configuration via the
+ * FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY env vars.
+ * (Application Default Credentials are not used, so deployments are explicit
+ * about which service account authenticates token verification.)
+ *
+ * In production, missing configuration throws so the process fails at startup
+ * rather than producing misleading 401 responses at request time.
+ * In non-production, missing configuration is skipped so mock-token tests can run.
  */
 export function initializeFirebaseAdmin(): void {
   let defaultAppExists: boolean

@@ -1,6 +1,6 @@
 -- SafeTrust demo seed users
 -- id must be TEXT (Firebase UID format), not UUID
--- On conflict: skip — safe for repeated seed apply runs
+-- Role assignments are seeded separately in user_roles.
 
 INSERT INTO safetrust.users (
     id,

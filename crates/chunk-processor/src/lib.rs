@@ -26,9 +26,10 @@
 //!   network/parse failure (it only throws for a caller bug, e.g. malformed
 //!   `chunksJson`, matching the previous JS behaviour of surfacing bad input).
 //! * **Lossless pass-through** — escrow objects are returned to JS *verbatim* as
-//!   parsed JSON (`serde_json::Value`), so the existing UPSERT keeps writing
-//!   every field it did before (`amount`, `roles.{marker,approver,releaser}`,
-//!   `escrowType`, …). The DB layer is intentionally left in JavaScript.
+//!   parsed JSON (`serde_json::Value`) in the Trustless Work V1 indexer shape
+//!   (`flags`, `milestones`, `roles.{serviceProvider,releaseSigner,…}`, `type`).
+//!   JavaScript normalizes them (`normalizeIndexerEscrow`) before the UPSERT, so
+//!   both sync paths share one mapping. The DB layer stays in JavaScript.
 //! * **Response-shape tolerance** — the indexer may return `{ "escrows": [...] }`
 //!   or a bare `[...]`; both are accepted, exactly like `fetchEscrowsByContractIds`.
 
@@ -41,9 +42,19 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
-/// Path segment appended to the TrustlessWork base URL. Kept in sync with
-/// `fetchEscrowsByContractIds` in `webhook/src/lib/reconciliation.js`.
-const INDEXER_PATH: &str = "/helper/get-escrows-by-contract-ids";
+/// Trustless Work V1 indexer read. Kept in sync with `fetchEscrowsByContractIds`
+/// in `webhook/src/lib/source-adapters/tw.adapter.ts`.
+const INDEXER_PATH: &str = "/helper/get-escrow-by-contract-ids";
+
+/// Query for one chunk: one `contractIds` pair per id (the parameter is a
+/// `string[]`), plus `validateOnChain=true` so the indexer checks its copy
+/// against the contract before answering.
+fn indexer_query(chunk: &[String]) -> Vec<(&'static str, String)> {
+    let mut query: Vec<(&'static str, String)> =
+        chunk.iter().map(|id| ("contractIds", id.clone())).collect();
+    query.push(("validateOnChain", "true".to_string()));
+    query
+}
 
 /// Result of processing a single chunk. Serialised into the JSON array returned
 /// to JavaScript. `escrows` carries the raw indexer objects so the JS UPSERT is
@@ -142,7 +153,7 @@ async fn fetch_chunk(
     let mut request = client
         .get(&url)
         .timeout(timeout) // reqwest per-request timeout (whole request incl. body)
-        .query(&[("contractIds", chunk.join(","))]);
+        .query(&indexer_query(chunk));
 
     // Match the JS helper: only send x-api-key when a key is configured.
     if !api_key.is_empty() {
@@ -386,11 +397,24 @@ mod tests {
     fn builds_indexer_url_tolerating_trailing_slash() {
         assert_eq!(
             build_url("https://api.example.com"),
-            "https://api.example.com/helper/get-escrows-by-contract-ids"
+            "https://api.example.com/helper/get-escrow-by-contract-ids"
         );
         assert_eq!(
             build_url("https://api.example.com/"),
-            "https://api.example.com/helper/get-escrows-by-contract-ids"
+            "https://api.example.com/helper/get-escrow-by-contract-ids"
+        );
+    }
+
+    #[test]
+    fn sends_each_contract_id_and_validates_on_chain() {
+        let chunk = vec!["CA1".to_string(), "CB2".to_string()];
+        assert_eq!(
+            indexer_query(&chunk),
+            vec![
+                ("contractIds", "CA1".to_string()),
+                ("contractIds", "CB2".to_string()),
+                ("validateOnChain", "true".to_string()),
+            ]
         );
     }
 

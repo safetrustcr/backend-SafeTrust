@@ -18,7 +18,7 @@ INSERT INTO safetrust.trustless_work_escrows (
   500.00,
   500.00,
   'USDC',
-  'safetrust',
+  'test-ana-safetrust',
   '2026-10-15 09:00:00+00'
 );
 
@@ -35,7 +35,7 @@ INSERT INTO safetrust.trustless_work_escrows (
   250.00,
   250.00,
   'XLM',
-  'safetrust',
+  'test-ana-safetrust',
   '2026-10-15 11:30:00+00'
 );
 
@@ -52,6 +52,6 @@ INSERT INTO safetrust.trustless_work_escrows (
   150.00,
   0.00,
   'EURC',
-  'safetrust',
+  'test-ana-safetrust',
   '2026-10-15 14:00:00+00'
 );

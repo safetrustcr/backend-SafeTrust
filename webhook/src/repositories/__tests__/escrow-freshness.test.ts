@@ -30,7 +30,7 @@ import {
   updateEscrowWithFreshness,
   applyEscrowFreshnessUpdate,
 } from '../escrow.repository'
-import { reconcileEscrowAtomic } from '../../lib/reconciliation'
+import * as dbService from '../../services/db'
 
 describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
   // ─── 1. Out-of-order delivery ──────────────────────────────────────────────
@@ -515,7 +515,7 @@ describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
 
   // ─── 9. Database atomic transaction execution ─────────────────────────────
   describe('9. Database atomic transaction execution (updateEscrowWithFreshness)', () => {
-    it('executes atomic BEGIN -> SELECT FOR UPDATE -> UPDATE -> COMMIT pattern', async () => {
+    it('executes SELECT FOR UPDATE -> UPDATE on provided client without taking over transaction lifecycle', async () => {
       const queryLog: string[] = []
       const fakeClient = {
         query: jest.fn(async (sql: string, params?: any[]) => {
@@ -551,10 +551,10 @@ describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
       )
 
       expect(outcome.type).toBe('WRITE')
-      expect(queryLog).toContain('BEGIN')
+      expect(queryLog).not.toContain('BEGIN')
+      expect(queryLog).not.toContain('COMMIT')
       expect(queryLog).toContain('SELECT')
       expect(queryLog).toContain('UPDATE')
-      expect(queryLog).toContain('COMMIT')
 
       const selectCall = fakeClient.query.mock.calls.find((c: any) =>
         c[0].includes('FOR UPDATE')
@@ -574,7 +574,7 @@ describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
       ])
     })
 
-    it('rejects stale snapshot and commits without writing', async () => {
+    it('rejects stale snapshot without writing and does not commit caller transaction', async () => {
       const queryLog: string[] = []
       const fakeClient = {
         query: jest.fn(async (sql: string) => {
@@ -610,10 +610,47 @@ describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
       )
 
       expect(outcome.type).toBe('REJECT_STALE')
-      expect(queryLog).toContain('BEGIN')
+      expect(queryLog).not.toContain('BEGIN')
+      expect(queryLog).not.toContain('COMMIT')
       expect(queryLog).toContain('SELECT')
       expect(queryLog).not.toContain('UPDATE')
-      expect(queryLog).toContain('COMMIT')
+    })
+
+    it('runs within withTransaction when no client is supplied', async () => {
+      const mockTxClient = {
+        query: jest.fn(async (sql: string) => {
+          if (sql.includes('FOR UPDATE')) {
+            return {
+              rows: [
+                {
+                  id: 'uuid-1',
+                  contract_id: 'C_STANDALONE',
+                  status: 'created',
+                  balance: '0.0000000',
+                  ledger_seq: 100n,
+                  network: 'testnet',
+                },
+              ],
+            }
+          }
+          return { rows: [] }
+        }),
+      }
+      const withTxSpy = jest.spyOn(dbService, 'withTransaction').mockImplementation(async (fn: any) => {
+        return fn(mockTxClient as any)
+      })
+
+      const outcome = await updateEscrowWithFreshness('C_STANDALONE', {
+        status: 'funded',
+        balance: '250.0000000',
+        ledgerSeq: 110n,
+        network: 'testnet',
+      })
+
+      expect(withTxSpy).toHaveBeenCalled()
+      expect(outcome.type).toBe('WRITE')
+      expect(mockTxClient.query).toHaveBeenCalledWith(expect.stringContaining('FOR UPDATE'), ['C_STANDALONE'])
+      withTxSpy.mockRestore()
     })
 
     it('rejects observation when stored row does not exist rather than creating placeholder identity', async () => {

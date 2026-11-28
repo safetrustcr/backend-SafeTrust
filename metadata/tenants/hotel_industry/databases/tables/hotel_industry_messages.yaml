@@ -62,7 +62,6 @@ insert_permissions:
                 _eq: X-Hasura-User-Id
       set:
         sender_id: X-Hasura-User-Id
-        tenant_id: X-Hasura-Tenant-Id
       columns:
         - conversation_id
         - body
@@ -77,7 +76,6 @@ insert_permissions:
                 _eq: X-Hasura-User-Id
       set:
         sender_id: X-Hasura-User-Id
-        tenant_id: X-Hasura-Tenant-Id
       columns:
         - conversation_id
         - body

@@ -1,12 +1,21 @@
 import { Response } from 'express'
 import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import { createReservationHandler } from '../create.handler'
-import { hasuraRequest } from '../../../services/hasura'
+import { runHandler } from '../../__tests__/run-handler'
+import {
+  createReservation,
+  TenantMismatchError,
+} from '../../../services/reservation.service'
 import type { CreateReservationPayload } from '@safetrust/types'
 
-jest.mock('../../../services/hasura', () => ({
-  hasuraRequest: jest.fn(),
-}))
+jest.mock('../../../services/reservation.service', () => {
+  const actual = jest.requireActual('../../../services/reservation.service')
+  return { ...actual, createReservation: jest.fn() }
+})
+
+const mockedCreateReservation = createReservation as jest.MockedFunction<
+  typeof createReservation
+>
 
 const SESSION = { uid: 'guest-123', tenantId: 'safetrust', roles: ['guest'] }
 
@@ -26,10 +35,10 @@ describe('reservations/create.handler', () => {
     const req = { body: {} } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(401)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Unauthorized' }))
   })
 
   it('returns 400 when required fields are missing', async () => {
@@ -40,12 +49,10 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'Missing required fields: apartment_id, check_in_date, check_out_date, total_amount',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Missing required fields: apartment_id, check_in_date, check_out_date, total_amount' }))
   })
 
   it('returns 400 when check_out_date is not after check_in_date', async () => {
@@ -61,12 +68,10 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'check_out_date must be a valid date after check_in_date',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'check_out_date must be a valid date after check_in_date' }))
   })
 
   it('returns 400 when total_amount is invalid', async () => {
@@ -82,15 +87,13 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'total_amount must be greater than zero',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'total_amount must be greater than zero' }))
   })
 
-  it('creates reservation successfully via Hasura', async () => {
+  it('creates reservation successfully through the service', async () => {
     const mockReservation = {
       id: 'res-1',
       apartment_id: 'apt-1',
@@ -103,9 +106,7 @@ describe('reservations/create.handler', () => {
       created_at: '2026-08-24T00:00:00Z',
     }
 
-    ;(hasuraRequest as jest.Mock).mockResolvedValueOnce({
-      insert_reservations_one: mockReservation,
-    })
+    mockedCreateReservation.mockResolvedValueOnce(mockReservation)
 
     const req = {
       user: { uid: 'guest-123' },
@@ -115,23 +116,38 @@ describe('reservations/create.handler', () => {
         check_in_date: '2026-09-01',
         check_out_date: '2026-09-05',
         total_amount: 500,
+        tenant_id: 'safetrust',
       },
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(201)
     expect(res.json).toHaveBeenCalledWith({ reservation: mockReservation })
 
-    // The tenant written is the session tenant, never a literal or body value.
-    const [, variables] = (hasuraRequest as jest.Mock).mock.calls[0]
-    expect(variables.object.tenant_id).toBe('safetrust')
+    expect(mockedCreateReservation).toHaveBeenCalledWith({
+      tenantId: 'safetrust',
+      requestedTenantId: 'safetrust',
+      guestId: 'guest-123',
+      apartmentId: 'apt-1',
+      checkInDate: '2026-09-01',
+      checkOutDate: '2026-09-05',
+      totalAmount: 500,
+      assetCode: 'USDC',
+    })
   })
 
   it('writes the tenant from req.context.tenantId', async () => {
-    ;(hasuraRequest as jest.Mock).mockResolvedValueOnce({
-      insert_reservations_one: { id: 'res-2' },
+    mockedCreateReservation.mockResolvedValueOnce({
+      id: 'res-2',
+      apartment_id: 'apt-1',
+      guest_id: 'guest-123',
+      status: 'pending',
+      check_in_date: '2026-09-01',
+      check_out_date: '2026-09-05',
+      total_amount: 500,
+      asset_code: 'USDC',
     })
 
     const req = {
@@ -146,11 +162,15 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(201)
-    const [, variables] = (hasuraRequest as jest.Mock).mock.calls[0]
-    expect(variables.object.tenant_id).toBe('tenant-b')
+    expect(mockedCreateReservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-b',
+        requestedTenantId: undefined,
+      })
+    )
   })
 
   it('returns 401 when the request has no session tenant', async () => {
@@ -165,10 +185,10 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(401)
-    expect(hasuraRequest).not.toHaveBeenCalled()
+    expect(mockedCreateReservation).not.toHaveBeenCalled()
   })
 
   it('returns 403 when the body names a different tenant', async () => {
@@ -185,15 +205,21 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    mockedCreateReservation.mockRejectedValueOnce(new TenantMismatchError())
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden: tenant mismatch' })
-    expect(hasuraRequest).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Tenant does not match the verified session tenant' }))
+    expect(mockedCreateReservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'safetrust',
+        requestedTenantId: 'hotel_industry',
+      })
+    )
   })
 
-  it('returns 500 when Hasura request fails', async () => {
-    ;(hasuraRequest as jest.Mock).mockRejectedValueOnce(new Error('Hasura connection failed'))
+  it('returns 500 when reservation creation fails', async () => {
+    mockedCreateReservation.mockRejectedValueOnce(new Error('Reservation service failed'))
 
     const req = {
       user: { uid: 'guest-123' },
@@ -207,12 +233,11 @@ describe('reservations/create.handler', () => {
     } as AuthenticatedRequest & { body: CreateReservationPayload }
     const res = makeResponse()
 
-    await createReservationHandler(req, res)
+    await runHandler(createReservationHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'Internal server error',
-      details: 'Hasura connection failed',
-    })
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Internal server error' }))
+    // The service's error message stays in the logs, never in the body.
+    expect(JSON.stringify((res.json as jest.Mock).mock.calls)).not.toContain('Reservation service failed')
   })
 })

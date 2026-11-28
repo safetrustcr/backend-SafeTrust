@@ -32,10 +32,11 @@ function canonicalize(value: unknown): string {
   return JSON.stringify(value) ?? 'null'
 }
 
-function getEventIdentity(
+export function getWebhookEventIdentity(
   contractId: string,
   eventType: string,
-  payload: unknown
+  payload: unknown,
+  tenantId: string = TENANT_ID
 ): string {
   // Existing Trustless Work payload types and the event table expose no single
   // provider ID; use recognized IDs when present, otherwise hash the full event.
@@ -61,7 +62,7 @@ function getEventIdentity(
       : `payload:${canonicalize(payload)}`
 
   return createHash('sha256')
-    .update(canonicalize([TENANT_ID, contractId, eventType, sourceIdentity]))
+    .update(canonicalize([tenantId, contractId, eventType, sourceIdentity]))
     .digest('hex')
 }
 
@@ -74,7 +75,7 @@ export async function logAndCheckWebhookEvent(
   payload: unknown
 ): Promise<WebhookEventResult> {
   const client = await pool.connect()
-  const eventIdentity = getEventIdentity(contractId, eventType, payload)
+  const eventIdentity = getWebhookEventIdentity(contractId, eventType, payload)
 
   try {
     await client.query('BEGIN')
@@ -135,7 +136,7 @@ export async function processWebhookEvent<T>(
   process: (client: PoolClient) => Promise<T | null>
 ): Promise<ProcessedWebhookEventResult<T>> {
   const client = await pool.connect()
-  const eventIdentity = getEventIdentity(contractId, eventType, payload)
+  const eventIdentity = getWebhookEventIdentity(contractId, eventType, payload)
 
   try {
     await client.query('BEGIN')

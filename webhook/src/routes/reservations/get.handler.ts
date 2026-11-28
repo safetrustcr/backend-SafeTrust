@@ -5,6 +5,7 @@ import {
   ReservationDto,
   toReservationDto,
 } from '../../services/reservation-actions'
+import { AuthError, NotFoundError, ValidationError } from '../../utils/errors'
 
 type GetReservationResponse =
   | ReservationDto
@@ -16,27 +17,21 @@ export const getReservationHandler = async (
 ): Promise<Response<GetReservationResponse>> => {
   const userId = req.context?.uid || req.user?.uid
   if (!userId) {
-    return res.status(401).json({ error: 'Unauthorized' })
+    throw new AuthError('Unauthorized')
   }
 
   const { id } = req.params
-  if (!id) {
-    return res.status(400).json({ error: 'Missing reservation id' })
+  if (typeof id !== 'string' || !id) {
+    throw new ValidationError('Missing reservation id')
   }
 
-  try {
-    const reservation = await findReservationById(id)
+  const reservation = await findReservationById(id)
 
-    // 404 when caller is neither guest nor owner (same response as doesn't exist)
-    if (!reservation || (reservation.guest_id !== userId && reservation.owner_id !== userId)) {
-      return res.status(404).json({ error: 'Reservation not found' })
-    }
-
-    const dto = toReservationDto(reservation, userId)
-    return res.status(200).json(dto)
-  } catch (error) {
-    const err = error as Error
-    console.error('[reservations/get] ❌ error:', err.message)
-    return res.status(500).json({ error: 'Internal server error' })
+  // 404 when caller is neither guest nor owner (same response as doesn't exist)
+  if (!reservation || (reservation.guest_id !== userId && reservation.owner_id !== userId)) {
+    throw new NotFoundError('Reservation not found')
   }
+
+  const dto = toReservationDto(reservation, userId)
+  return res.status(200).json(dto)
 }

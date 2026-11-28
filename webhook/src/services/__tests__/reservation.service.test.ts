@@ -31,24 +31,44 @@ describe('reservation.service createReservation', () => {
   })
 
   it('writes the session tenant into the insert payload', async () => {
-    const reservation = { id: 'res-1', status: 'pending' }
-    mockedHasuraRequest.mockResolvedValueOnce({ insert_reservations_one: reservation })
+    mockedHasuraRequest.mockResolvedValueOnce({
+      insert_safetrust_reservations_one: {
+        id: 'res-1',
+        apartmentId: 'apt-1',
+        guestId: 'guest-123',
+        status: 'pending',
+        checkInDate: '2026-09-01',
+        checkOutDate: '2026-09-05',
+        totalAmount: 500,
+        assetCode: 'USDC',
+        escrowId: null,
+        tenantId: 'tenant-a',
+      },
+    })
 
     const result = await createReservation(input({ tenantId: 'tenant-a' }))
 
-    expect(result).toEqual(reservation)
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 'res-1',
+        apartment_id: 'apt-1',
+        tenant_id: 'tenant-a',
+      })
+    )
     const [, variables] = mockedHasuraRequest.mock.calls[0]
     expect(variables).toEqual({
       object: expect.objectContaining({
-        tenant_id: 'tenant-a',
-        guest_id: 'guest-123',
+        tenantId: 'tenant-a',
+        guestId: 'guest-123',
         status: 'pending',
       }),
     })
   })
 
   it('accepts a client tenant that matches the session tenant', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({ insert_reservations_one: { id: 'res-1' } })
+    mockedHasuraRequest.mockResolvedValueOnce({
+      insert_safetrust_reservations_one: null,
+    })
 
     await createReservation(input({ requestedTenantId: 'safetrust' }))
 
@@ -72,7 +92,9 @@ describe('reservation.service createReservation', () => {
   })
 
   it('logs total_amount as a non-billable quote', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({ insert_reservations_one: { id: 'res-1' } })
+    mockedHasuraRequest.mockResolvedValueOnce({
+      insert_safetrust_reservations_one: null,
+    })
 
     await createReservation(input())
 

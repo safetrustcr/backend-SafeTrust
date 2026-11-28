@@ -1,26 +1,17 @@
+import { runHandler } from '../../__tests__/run-handler'
 'use strict'
 
 import { Request, Response } from 'express'
-import db from '../../../services/db'
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { syncAllChunks, findStaleEscrows } = require('../../../lib/reconciliation')
+import * as reconciliationService from '../../../services/reconciliation.service'
 
 process.env.SOROBAN_VALIDATION_ENABLED = 'false'
 
-jest.mock('../../../services/db', () => ({
-  query: jest.fn(),
-}))
-
-jest.mock('../../../services/hasura', () => ({
-  hasuraRequest: jest.fn(),
-}))
-
-jest.mock('../../../lib/reconciliation', () => ({
-  chunkArray: jest.fn((arr) => [arr]),
-  syncAllChunks: jest.fn(),
-  syncChunk: jest.fn(),
-  findStaleEscrows: jest.fn(),
-  CHUNK_SIZE: 50,
+jest.mock('../../../services/reconciliation.service', () => ({
+  ...jest.requireActual('../../../services/reconciliation.service'),
+  fetchEscrowContractIds: jest.fn(),
+  syncEscrowsWithIndexer: jest.fn(),
+  validateSorobanDrift: jest.fn(),
+  detectStaleEscrows: jest.fn(),
 }))
 
 describe('syncEscrowsHandler', () => {
@@ -29,20 +20,35 @@ describe('syncEscrowsHandler', () => {
   beforeEach(async () => {
     jest.clearAllMocks()
     process.env.SOROBAN_VALIDATION_ENABLED = 'false'
+    ;(reconciliationService.fetchEscrowContractIds as jest.Mock).mockResolvedValue([])
+    ;(reconciliationService.syncEscrowsWithIndexer as jest.Mock).mockResolvedValue({
+      totalEscrows: 0,
+      chunks: 0,
+      updated: 0,
+      unchanged: 0,
+      skipped: 0,
+      errors: [],
+    })
+    ;(reconciliationService.validateSorobanDrift as jest.Mock).mockResolvedValue({
+      enabled: false,
+      drift: 0,
+      corrected: 0,
+      unresolved: 0,
+      errors: [],
+    })
+    ;(reconciliationService.detectStaleEscrows as jest.Mock).mockResolvedValue([])
     const module = await import('../sync-escrows.handler')
     syncEscrowsHandler = module.syncEscrowsHandler
   })
 
   it('returns 200 with zero counts when no escrows are found', async () => {
-    ;(db.query as jest.Mock).mockResolvedValueOnce({ rows: [] })
-
     const req = {} as Request
     const res = {
       status: jest.fn().mockReturnThis(),
       json: jest.fn(),
     } as unknown as Response
 
-    await syncEscrowsHandler(req, res)
+    await runHandler(syncEscrowsHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith(
@@ -59,25 +65,25 @@ describe('syncEscrowsHandler', () => {
   })
 
   it('processes chunks successfully when SOROBAN_VALIDATION_ENABLED is false', async () => {
-    ;(db.query as jest.Mock).mockResolvedValueOnce({
-      rows: [
-        {
-          contract_id: 'mock_1',
-          status: 'ACTIVE',
-          balance: '100',
-          marker: 'm',
-          approver: 'a',
-        },
-      ],
-    })
-    syncAllChunks.mockResolvedValueOnce({
+    ;(reconciliationService.fetchEscrowContractIds as jest.Mock).mockResolvedValueOnce([
+      'mock_1',
+    ])
+    ;(reconciliationService.syncEscrowsWithIndexer as jest.Mock).mockResolvedValueOnce({
+      totalEscrows: 1,
       chunks: 1,
       updated: 1,
       unchanged: 0,
       skipped: 0,
       errors: [],
+      transitions: {
+        detected: 1,
+        applied: 0,
+        duplicates: 0,
+        failed: 1,
+        errors: ['mock_1: mirror unavailable'],
+        failedContractIds: ['mock_1'],
+      },
     })
-    findStaleEscrows.mockResolvedValueOnce([])
 
     const req = {} as Request
     const res = {
@@ -85,7 +91,17 @@ describe('syncEscrowsHandler', () => {
       json: jest.fn(),
     } as unknown as Response
 
-    await syncEscrowsHandler(req, res)
+    await runHandler(syncEscrowsHandler, req, res)
+
+    expect(reconciliationService.syncEscrowsWithIndexer).toHaveBeenCalledWith(['mock_1'], {
+      applyTransitions: true,
+      tenantId: 'safetrust',
+    })
+    expect(reconciliationService.validateSorobanDrift).toHaveBeenCalledWith(
+      ['mock_1'],
+      'testnet',
+      { skipStatusCorrectionFor: ['mock_1'] }
+    )
 
     expect(res.status).toHaveBeenCalledWith(200)
     expect(res.json).toHaveBeenCalledWith(
@@ -103,7 +119,9 @@ describe('syncEscrowsHandler', () => {
   })
 
   it('handles fatal database error with 500 status', async () => {
-    ;(db.query as jest.Mock).mockRejectedValueOnce(new Error('DB connection failed'))
+    ;(reconciliationService.fetchEscrowContractIds as jest.Mock).mockRejectedValueOnce(
+      new Error('DB connection failed')
+    )
 
     const req = {} as Request
     const res = {
@@ -111,14 +129,9 @@ describe('syncEscrowsHandler', () => {
       json: jest.fn(),
     } as unknown as Response
 
-    await syncEscrowsHandler(req, res)
+    await runHandler(syncEscrowsHandler, req, res)
 
     expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        success: false,
-        error: 'Reconciliation failed',
-      })
-    )
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: 'Internal server error' }))
   })
 })

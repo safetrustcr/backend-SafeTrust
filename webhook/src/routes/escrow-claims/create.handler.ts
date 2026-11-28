@@ -1,17 +1,19 @@
 'use strict'
 
 import { Response } from 'express'
-import { pool } from '../../services/db'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
-import {
-  CLAIM_RATE_LIMIT,
-  EscrowClaimRow,
-  countRecent,
-  findByOpId,
-  findParticipation,
-  insert,
-} from '../../repositories/escrow-claims.repository'
+import { EscrowClaimRow } from '../../repositories/escrow-claims.repository'
+import { createEscrowClaim } from '../../services/escrow-claims.service'
 import { UUID_PATTERN } from './validation'
+import { logger } from '../../middleware/logger'
+import {
+  AppError,
+  AuthError,
+  ConflictError,
+  NotFoundError,
+  TooManyRequestsError,
+  ValidationError,
+} from '../../utils/errors'
 
 const MIN_BODY = 10
 const MAX_BODY = 2000
@@ -39,82 +41,48 @@ export const createClaimHandler = async (
     typeof clientOpId !== 'string' ||
     !UUID_PATTERN.test(clientOpId)
   ) {
-    return res.status(400).json({ error: 'INVALID_CLAIM_REQUEST' })
+    throw new ValidationError('INVALID_CLAIM_REQUEST', { code: 'invalid_claim_request' })
   }
 
   const text = typeof body === 'string' ? body.trim() : ''
   const length = Array.from(text).length
   if (length < MIN_BODY || length > MAX_BODY) {
-    return res.status(400).json({ error: 'INVALID_CLAIM_BODY' })
+    throw new ValidationError('INVALID_CLAIM_BODY', { code: 'invalid_claim_body' })
   }
 
   const uid = req.user?.uid
   if (!uid) {
-    return res.status(401).json({ error: 'UNAUTHORIZED' })
+    throw new AuthError('UNAUTHORIZED', { code: 'unauthorized' })
   }
 
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    await client.query("SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))", [uid, escrowId])
-
-    const participation = await findParticipation(client, escrowId, uid, true)
-    if (!participation) {
-      await client.query('ROLLBACK')
-      return res.status(404).json({ error: 'ESCROW_NOT_FOUND' })
+  const result = await createEscrowClaim({
+    escrowId,
+    authorId: uid,
+    body: text,
+    clientOpId,
+  })
+  if (result.kind === 'not-participant') {
+    throw new NotFoundError('ESCROW_NOT_FOUND', { code: 'escrow_not_found' })
+  }
+  if (result.kind === 'already-used') {
+    if (result.claim.escrow_id !== escrowId) {
+      throw new ConflictError('CLIENT_OP_ID_REUSED', { code: 'client_op_id_reused' })
     }
-
-    const existing = await findByOpId(client, uid, clientOpId)
-    if (existing) {
-      await client.query('ROLLBACK')
-      if (existing.escrow_id !== escrowId) {
-        return res.status(409).json({ error: 'CLIENT_OP_ID_REUSED' })
-      }
-      return res.status(200).json(toResponse(existing))
-    }
-
-    if (participation.status !== 'completed') {
-      await client.query('ROLLBACK')
-      return res.status(409).json({ error: 'ESCROW_NOT_RELEASED' })
-    }
-
-    if ((await countRecent(client, uid, escrowId)) >= CLAIM_RATE_LIMIT) {
-      await client.query('ROLLBACK')
-      res.set('Retry-After', RETRY_AFTER_SECONDS)
-      return res.status(429).json({ error: 'CLAIM_RATE_LIMITED' })
-    }
-
-    const created = await insert(client, {
-      escrowId,
-      reservationId: participation.reservationId,
-      authorId: uid,
-      body: text,
-      clientOpId,
+    return res.status(200).json(toResponse(result.claim))
+  }
+  if (result.kind === 'not-released') {
+    throw new ConflictError('ESCROW_NOT_RELEASED', { code: 'escrow_not_released' })
+  }
+  if (result.kind === 'rate-limited') {
+    res.set('Retry-After', RETRY_AFTER_SECONDS)
+    throw new TooManyRequestsError('CLAIM_RATE_LIMITED', {
+      code: 'claim_rate_limited',
+      headers: { 'Retry-After': RETRY_AFTER_SECONDS },
     })
-    if (!created) {
-      const raced = await findByOpId(client, uid, clientOpId)
-      await client.query('ROLLBACK')
-      if (raced && raced.escrow_id === escrowId) {
-        return res.status(200).json(toResponse(raced))
-      }
-      if (raced) {
-        return res.status(409).json({ error: 'CLIENT_OP_ID_REUSED' })
-      }
-      console.error('createClaimHandler: claim missing after insert conflict')
-      return res.status(500).json({ error: 'INTERNAL_ERROR' })
-    }
-
-    await client.query('COMMIT')
-    return res.status(201).json(toResponse(created))
-  } catch (err) {
-    try {
-      await client.query('ROLLBACK')
-    } catch {
-      // connection already unusable; release below discards it
-    }
-    console.error('createClaimHandler error:', err)
-    return res.status(500).json({ error: 'INTERNAL_ERROR' })
-  } finally {
-    client.release()
   }
+  if (result.kind === 'conflict-without-row') {
+    logger.error('escrow_claims.create.missing_after_conflict')
+    throw new AppError('INTERNAL_ERROR', 500)
+  }
+  return res.status(201).json(toResponse(result.claim))
 }

@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { getAuth } from "firebase-admin/auth";
 import db from "../services/db";
 import { getPlatformTenantId } from "../config/tenant";
+import { logger } from './logger'
 
 export interface RequestContext {
   uid: string;
@@ -89,8 +90,14 @@ export async function authMiddleware(
     };
   } else {
     try {
-      decodedToken = await getAuth().verifyIdToken(idToken);
+      decodedToken = await getAuth().verifyIdToken(idToken, true);
     } catch (error) {
+      // Distinguish a missing Firebase app (server misconfiguration) from an invalid token.
+      if (error instanceof Error && /no default app/i.test(error.message)) {
+        logger.error('auth.firebase_not_initialized', { error });
+        res.status(500).json({ error: "Internal Server Error", message: "Authentication service unavailable" });
+        return;
+      }
       res.status(401).json({ error: "Unauthorized", message: "Invalid or expired token" });
       return;
     }

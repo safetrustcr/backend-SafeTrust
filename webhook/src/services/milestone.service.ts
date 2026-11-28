@@ -1,4 +1,5 @@
 import { hasuraRequest } from './hasura';
+import { AppError, NotFoundError } from '../utils/errors';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
@@ -18,19 +19,16 @@ export interface EscrowLookupResult {
 
 // ── Errors ─────────────────────────────────────────────────────────────────────
 
-export class MilestoneValidationError extends Error {
-  readonly statusCode: number;
+export class MilestoneValidationError extends AppError {
   constructor(message: string, statusCode = 400) {
-    super(message);
+    super(message, statusCode, { code: 'milestone_validation_error' });
     this.name = 'MilestoneValidationError';
-    this.statusCode = statusCode;
   }
 }
 
-export class EscrowNotFoundError extends Error {
-  readonly statusCode = 404;
+export class EscrowNotFoundError extends NotFoundError {
   constructor(message: string) {
-    super(message);
+    super(message, { code: 'escrow_not_found' });
     this.name = 'EscrowNotFoundError';
   }
 }
@@ -44,10 +42,9 @@ export class EscrowStateConflictError extends StateConflictError {
   }
 }
 
-export class MilestoneNotFoundError extends Error {
-  readonly statusCode = 404;
+export class MilestoneNotFoundError extends NotFoundError {
   constructor(message: string) {
-    super(message);
+    super(message, { code: 'milestone_not_found' });
     this.name = 'MilestoneNotFoundError';
   }
 }
