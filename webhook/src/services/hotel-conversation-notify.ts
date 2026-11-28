@@ -1,6 +1,6 @@
 'use strict'
 
-import { query } from './db'
+import { hotelQuery } from './db'
 import { sendHotelConversationMessage } from './hotel-conversation.service'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -47,7 +47,11 @@ class NotificationTimeoutError extends Error {
 export async function resolveHotelEscrowParties(
   contractId: string
 ): Promise<HotelEscrowParties | null> {
-  const result = await query<{
+  // Hotel escrows are rows of hotel_industry.escrow_transactions (they carry
+  // reservation_id; safetrust.escrow_transactions has no such column), so the
+  // whole lookup stays inside the hotel_industry database. A contract id that
+  // only exists in safetrust is not a hotel escrow and resolves to null.
+  const result = await hotelQuery<{
     reservation_id:        string
     escrow_transaction_id: string
     apartment_id:          string
@@ -60,9 +64,7 @@ export async function resolveHotelEscrowParties(
        r.apartment_id,
        host_u.id       AS host_id,
        guest_u.id      AS guest_id
-     FROM safetrust.trustless_work_escrows twe
-     JOIN safetrust.escrow_transactions et
-       ON et.escrow_id = twe.id
+     FROM hotel_industry.escrow_transactions et
      JOIN hotel_industry.reservations res
        ON et.reservation_id = res.id
      JOIN hotel_industry.rooms r
@@ -76,6 +78,8 @@ export async function resolveHotelEscrowParties(
        ON guest_etu.escrow_transaction_id = et.id
       AND UPPER(guest_etu.role) IN ('RENTER', 'GUEST')
      LEFT JOIN hotel_industry.users guest_u
+       ON guest_u.email = guest_etu.user_email
+     WHERE et.contract_id = $1
        ON guest_u.id = guest_etu.user_id
      WHERE twe.contract_id = $1
      LIMIT 1`,

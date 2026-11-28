@@ -16,7 +16,7 @@ function positiveIntegerFromEnv(name: string, defaultValue: number): number {
 }
 
 // Fail fast - never use hardcoded credentials in production
-const requiredEnvVars = ['POSTGRES_HOST', 'POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD']
+const requiredEnvVars = ['POSTGRES_HOST', 'POSTGRES_USER', 'POSTGRES_PASSWORD']
 for (const key of requiredEnvVars) {
   if (!process.env[key] && process.env.NODE_ENV === 'production') {
     throw new Error(`Missing required environment variable: ${key}`)
@@ -26,18 +26,35 @@ for (const key of requiredEnvVars) {
 const connectionTimeoutMillis = positiveIntegerFromEnv('DB_CONNECTION_TIMEOUT_MS', 5_000)
 const query_timeout = positiveIntegerFromEnv('DB_QUERY_TIMEOUT_MS', 30_000)
 
-export const pool = new Pool({
-  host:     process.env.POSTGRES_HOST     ?? 'localhost',
-  port:     parseInt(process.env.POSTGRES_PORT ?? '5432', 10),
-  database: process.env.POSTGRES_DB       ?? 'postgres',
-  user:     process.env.POSTGRES_USER     ?? 'postgres',
-  password: process.env.POSTGRES_PASSWORD ?? 'postgrespassword',
-  connectionTimeoutMillis,
-  query_timeout,
-})
+// One database per tenant. POSTGRES_DB is accepted as a legacy fallback for the
+// safetrust database so existing deployments keep working until they migrate.
+export const SAFETRUST_DB = process.env.POSTGRES_SAFETRUST_DB ?? process.env.POSTGRES_DB ?? 'safetrust'
+export const HOTEL_INDUSTRY_DB = process.env.POSTGRES_HOTEL_INDUSTRY_DB ?? 'hotel_industry'
+
+function createTenantPool(database: string): Pool {
+  return new Pool({
+    host:     process.env.POSTGRES_HOST     ?? 'localhost',
+    port:     parseInt(process.env.POSTGRES_PORT ?? '5432', 10),
+    database,
+    user:     process.env.POSTGRES_USER     ?? 'postgres',
+    password: process.env.POSTGRES_PASSWORD ?? 'postgrespassword',
+    connectionTimeoutMillis,
+    query_timeout,
+  })
+}
+
+/** Pool for the `safetrust` tenant database. */
+export const pool = createTenantPool(SAFETRUST_DB)
+
+/** Pool for the `hotel_industry` tenant database. */
+export const hotelPool = createTenantPool(HOTEL_INDUSTRY_DB)
 
 pool.on('error', (err: Error) => {
-  console.error('[db] Unexpected error on idle database client:', err)
+  console.error('[db] Unexpected error on idle safetrust database client:', err)
+})
+
+hotelPool.on('error', (err: Error) => {
+  console.error('[db] Unexpected error on idle hotel_industry database client:', err)
 })
 
 export interface Queryable {
@@ -66,7 +83,28 @@ export async function connect(): Promise<PoolClient> {
 export async function withTransaction<T>(
   fn: (client: PoolClient) => Promise<T>
 ): Promise<T> {
-  const client = await connect()
+  return runInTransaction(pool, fn)
+}
+
+/** Same as withTransaction, on the hotel_industry database. */
+export async function withHotelTransaction<T>(
+  fn: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  return runInTransaction(hotelPool, fn)
+}
+
+export async function hotelQuery<T extends QueryResultRow = Record<string, unknown>>(
+  text: string,
+  params?: unknown[]
+): Promise<QueryResult<T>> {
+  return hotelPool.query<T>(text, params)
+}
+
+async function runInTransaction<T>(
+  targetPool: Pool,
+  fn: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await targetPool.connect()
   let releaseError: Error | undefined
   try {
     await client.query('BEGIN')
@@ -88,4 +126,4 @@ export async function withTransaction<T>(
   }
 }
 
-export default { query, connect, pool, withTransaction }
+export default { query, connect, pool, withTransaction, hotelPool, hotelQuery, withHotelTransaction }

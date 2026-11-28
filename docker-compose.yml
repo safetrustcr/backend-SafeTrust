@@ -4,6 +4,7 @@ services:
     restart: always
     volumes:
       - db_data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
@@ -25,6 +26,13 @@ services:
     environment:
       HASURA_GRAPHQL_METADATA_DATABASE_URL: >-
         postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      # One database per tenant (see docs/architecture/multi-tenant.md).
+      SAFETRUST_DATABASE_URL: >-
+        postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/safetrust
+      HOTEL_INDUSTRY_DATABASE_URL: >-
+        postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/hotel_industry
+      HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+      HASURA_GRAPHQL_DEV_MODE: "true"
       PG_DATABASE_URL: >-
         postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
       HASURA_GRAPHQL_ENABLE_CONSOLE: ${HASURA_GRAPHQL_ENABLE_CONSOLE:-false}
@@ -85,7 +93,8 @@ services:
       HEALTH_RATE_LIMIT_MAX: ${HEALTH_RATE_LIMIT_MAX:-600}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_SAFETRUST_DB: safetrust
+      POSTGRES_HOTEL_INDUSTRY_DB: hotel_industry
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       HASURA_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:?HASURA_ADMIN_SECRET must be set in .env or the environment}
