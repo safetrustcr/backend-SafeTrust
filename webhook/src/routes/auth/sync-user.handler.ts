@@ -2,6 +2,7 @@ import { Response } from 'express'
 import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { logger } from '../../middleware/logger'
 import { syncUser } from '../../repositories/user.repository'
+import { AuthError } from '../../utils/errors'
 
 /**
  * Compatibility & Reconciliation Policy:
@@ -30,24 +31,18 @@ export const syncUserHandler = async (
       : 'guest')
 
   if (!uid) {
-    return res.status(401).json({ error: 'Unauthorized' })
+    throw new AuthError('Unauthorized')
   }
 
-  try {
-    const user = await syncUser(uid, email)
+  const user = await syncUser(uid, email)
 
-    logger.info('auth.sync_user.succeeded', { uid: user.firebase_uid })
-    return res.status(200).json({
-      user: {
-        id: user.id,
-        email: user.email,
-        role,
-        last_seen: user.last_seen ?? user.updated_at,
-      },
-    })
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error)
-    logger.error('auth.sync_user.failed', { error: message })
-    return res.status(500).json({ error: 'Database error' })
-  }
+  logger.info('auth.sync_user.succeeded', { uid: user.firebase_uid })
+  return res.status(200).json({
+    user: {
+      id: user.id,
+      email: user.email,
+      role,
+      last_seen: user.last_seen ?? user.updated_at,
+    },
+  })
 }

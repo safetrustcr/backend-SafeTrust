@@ -7,7 +7,7 @@ import {
   ReservationDto,
   toReservationDto,
 } from '../../services/reservation-actions'
-import { logger } from '../../middleware/logger'
+import { AuthError, ValidationError } from '../../utils/errors'
 
 type ListReservationsResponse =
   | { reservations: ReservationDto[] }
@@ -19,7 +19,7 @@ export const listReservationsHandler = async (
 ): Promise<Response<ListReservationsResponse>> => {
   const userId = req.context?.uid || req.user?.uid
   if (!userId) {
-    return res.status(401).json({ error: 'Unauthorized' })
+    throw new AuthError('Unauthorized')
   }
 
   const { role, limit, offset, page } = req.query
@@ -29,9 +29,7 @@ export const listReservationsHandler = async (
     if (role === 'guest' || role === 'host') {
       parsedRole = role
     } else {
-      return res.status(400).json({
-        error: "Invalid role parameter. Must be 'guest', 'host' or 'both'",
-      })
+      throw new ValidationError("Invalid role parameter. Must be 'guest', 'host' or 'both'")
     }
   }
 
@@ -52,14 +50,8 @@ export const listReservationsHandler = async (
     }
   }
 
-  try {
-    const rows = await findReservationsByParty(userId, parsedRole, parsedLimit, parsedOffset)
-    const reservations = rows.map((row) => toReservationDto(row, userId))
+  const rows = await findReservationsByParty(userId, parsedRole, parsedLimit, parsedOffset)
+  const reservations = rows.map((row) => toReservationDto(row, userId))
 
-    return res.status(200).json({ reservations })
-  } catch (error) {
-    const err = error as Error
-    logger.error('reservations.list.failed', { error: err })
-    return res.status(500).json({ error: 'Internal server error' })
-  }
+  return res.status(200).json({ reservations })
 }
