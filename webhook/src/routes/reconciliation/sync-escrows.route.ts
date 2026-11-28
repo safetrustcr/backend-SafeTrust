@@ -16,6 +16,7 @@
 
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
 import { syncEscrowsHandler } from './sync-escrows.handler'
+import { pruneRetentionHandler } from './prune-retention.handler'
 import { logger } from '../../middleware/logger'
 
 const router = Router()
@@ -49,5 +50,14 @@ export function hasuraSecretGuard(req: Request, res: Response, next: NextFunctio
  * @access Server-to-server (Hasura cron trigger)
  */
 router.post('/sync-escrows', hasuraSecretGuard, syncEscrowsHandler as unknown as RequestHandler)
+
+/**
+ * @route  POST /reconciliation/prune-retention
+ * @desc   Triggered by a daily Hasura cron job. Deletes finished
+ *         escrow_confirmation_retries rows and nulls out the payload of old
+ *         trustless_work_webhook_events rows (see docs/infra/backups.md).
+ * @access Server-to-server (Hasura cron trigger)
+ */
+router.post('/prune-retention', hasuraSecretGuard, pruneRetentionHandler as unknown as RequestHandler)
 
 export default router

@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# bin/restore — restore a dump produced by bin/backup.
+#
+# Restoring is destructive: pg_restore runs with --clean --if-exists, dropping
+# and recreating schema objects in the target database. To avoid an accidental
+# production restore, the script refuses to run unless ALLOW_RESTORE=yes is set.
+#
+# Usage:
+#   bin/restore <path-to-dump> [--help]
+#
+# Environment (all optional, with defaults):
+#   POSTGRES_HOST      → PGHOST     (default localhost)
+#   POSTGRES_PORT      → PGPORT     (default 5433)
+#   POSTGRES_USER      → PGUSER     (default postgres)
+#   POSTGRES_DB        → PGDATABASE (default postgres)
+#   POSTGRES_PASSWORD  → PGPASSWORD (required, no default)
+#   ALLOW_RESTORE      must be "yes" to confirm a non-production target
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
+
+DUMP_PATH=""
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/restore <path-to-dump> [--help]
+
+Restore a pg_dump (-Fc) backup produced by bin/backup into the configured
+database. If a <path-to-dump>.sha256 sidecar exists, its checksum is verified
+before restoring and the restore is refused on mismatch.
+
+Options:
+  -h, --help   Show this help.
+
+Environment:
+  POSTGRES_HOST      Postgres host      (default: localhost)
+  POSTGRES_PORT      Postgres port      (default: 5433)
+  POSTGRES_USER      Postgres user      (default: postgres)
+  POSTGRES_DB        Database name      (default: postgres)
+  POSTGRES_PASSWORD  Postgres password  (required)
+  ALLOW_RESTORE      Set to "yes" to confirm the target is NOT production.
+
+Example:
+  ALLOW_RESTORE=yes bin/restore ./backups/safetrust-20261128T120000Z.dump
+USAGE
+}
+
+die() {
+  echo "❌ Error: $*" >&2
+  exit 1
+}
+
+# Source .env so POSTGRES_* values are visible, without requiring it.
+load_env() {
+  if [[ -f .env ]]; then
+    set -a
+    # shellcheck disable=SC1091 # optional local env file
+    . ./.env
+    set +a
+  fi
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage; exit 0 ;;
+      -*) die "unknown option: $1 (try 'bin/restore --help')" ;;
+      *)
+        if [[ -n "$DUMP_PATH" ]]; then
+          die "unexpected extra argument: $1 (try 'bin/restore --help')"
+        fi
+        DUMP_PATH="$1"
+        ;;
+    esac
+    shift
+  done
+}
+
+resolve_config() {
+  export PGHOST="${POSTGRES_HOST:-localhost}"
+  export PGPORT="${POSTGRES_PORT:-5433}"
+  export PGUSER="${POSTGRES_USER:-postgres}"
+  export PGDATABASE="${POSTGRES_DB:-postgres}"
+  export PGPASSWORD="${POSTGRES_PASSWORD:-}"
+}
+
+validate() {
+  if [[ -z "$PGPASSWORD" ]]; then
+    echo "❌ Error: PGPASSWORD is empty." >&2
+    echo "   Set POSTGRES_PASSWORD in .env or the environment before restoring." >&2
+    exit 1
+  fi
+  if ! command -v pg_restore >/dev/null 2>&1; then
+    echo "❌ Error: pg_restore is not installed." >&2
+    echo "   Install the PostgreSQL 15 client (e.g. postgresql-client-15) and retry." >&2
+    exit 1
+  fi
+}
+
+# Verify the sidecar checksum when present; warn and continue when absent.
+verify_checksum() {
+  local dump="$1" dir base sidecar
+  dir="$(cd "$(dirname "$dump")" && pwd)"
+  base="$(basename "$dump")"
+  sidecar="$dump.sha256"
+
+  if [[ ! -f "$sidecar" ]]; then
+    echo "⚠️  No checksum sidecar at $sidecar; skipping integrity verification." >&2
+    return 0
+  fi
+
+  echo "🔐 Verifying checksum for $base..."
+  if command -v sha256sum >/dev/null 2>&1; then
+    if ! ( cd "$dir" && sha256sum -c "$base.sha256" ); then
+      die "checksum verification failed for $base; refusing to restore."
+    fi
+  elif command -v shasum >/dev/null 2>&1; then
+    if ! ( cd "$dir" && shasum -a 256 -c "$base.sha256" ); then
+      die "checksum verification failed for $base; refusing to restore."
+    fi
+  else
+    die "neither sha256sum nor shasum is available; cannot verify $sidecar."
+  fi
+}
+
+main() {
+  parse_args "$@"
+
+  if [[ -z "$DUMP_PATH" ]]; then
+    usage
+    exit 1
+  fi
+
+  load_env
+  resolve_config
+  validate
+
+  if [[ ! -f "$DUMP_PATH" ]]; then
+    die "dump file not found: $DUMP_PATH"
+  fi
+
+  verify_checksum "$DUMP_PATH"
+
+  if [[ "${ALLOW_RESTORE:-}" != "yes" ]]; then
+    echo "❌ Refusing to restore: this operation is destructive." >&2
+    echo "   pg_restore runs with --clean --if-exists, dropping and recreating" >&2
+    echo "   schema objects in database '$PGDATABASE' on ${PGHOST}:${PGPORT}." >&2
+    echo "   Set ALLOW_RESTORE=yes to confirm the target is NOT production." >&2
+    exit 1
+  fi
+
+  echo "♻️  Restoring $DUMP_PATH"
+  echo "   Into: ${PGHOST}:${PGPORT}/${PGDATABASE} (user ${PGUSER})"
+
+  pg_restore --no-owner --clean --if-exists -d "$PGDATABASE" "$DUMP_PATH"
+
+  echo "✅ Restore complete."
+  echo "👉 Next steps:"
+  echo "   bin/start safetrust hotel_industry   # reapply migrations, metadata and seeds"
+  echo "   bin/test                             # run the API test suite"
+}
+
+main "$@"

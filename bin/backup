@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# bin/backup — logical backup of the SafeTrust PostgreSQL database.
+#
+# Both tenants (safetrust and hotel_industry) are schemas in one physical
+# database, so a single pg_dump covers both. The dump is written in custom
+# format (-Fc) and paired with a .sha256 sidecar so bin/restore can verify it.
+#
+# Usage:
+#   bin/backup [--help]
+#
+# Environment (all optional, with defaults):
+#   POSTGRES_HOST            → PGHOST     (default localhost)
+#   POSTGRES_PORT            → PGPORT     (default 5433)
+#   POSTGRES_USER            → PGUSER     (default postgres)
+#   POSTGRES_DB              → PGDATABASE (default postgres)
+#   POSTGRES_PASSWORD        → PGPASSWORD (required, no default)
+#   BACKUP_DIR               destination directory (default ./backups)
+#   BACKUP_RETENTION_DAYS    delete dumps older than N days (optional)
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/backup [--help]
+
+Take a logical pg_dump (-Fc) backup of both tenant schemas
+(safetrust, hotel_industry) and write a matching .sha256 checksum sidecar.
+
+Options:
+  -h, --help   Show this help.
+
+Environment:
+  POSTGRES_HOST           Postgres host       (default: localhost)
+  POSTGRES_PORT           Postgres port       (default: 5433)
+  POSTGRES_USER           Postgres user       (default: postgres)
+  POSTGRES_DB             Database name       (default: postgres)
+  POSTGRES_PASSWORD       Postgres password   (required)
+  BACKUP_DIR              Output directory    (default: ./backups)
+  BACKUP_RETENTION_DAYS   Delete dumps older than N days (optional)
+
+Example:
+  POSTGRES_PASSWORD=secret bin/backup
+USAGE
+}
+
+die() {
+  echo "❌ Error: $*" >&2
+  exit 1
+}
+
+# Source .env so POSTGRES_* / BACKUP_* values are visible, without requiring it.
+load_env() {
+  if [[ -f .env ]]; then
+    set -a
+    # shellcheck disable=SC1091 # optional local env file
+    . ./.env
+    set +a
+  fi
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage; exit 0 ;;
+      -*) die "unknown option: $1 (try 'bin/backup --help')" ;;
+      *)  die "unexpected argument: $1 (try 'bin/backup --help')" ;;
+    esac
+    shift
+  done
+}
+
+resolve_config() {
+  export PGHOST="${POSTGRES_HOST:-localhost}"
+  export PGPORT="${POSTGRES_PORT:-5433}"
+  export PGUSER="${POSTGRES_USER:-postgres}"
+  export PGDATABASE="${POSTGRES_DB:-postgres}"
+  export PGPASSWORD="${POSTGRES_PASSWORD:-}"
+  BACKUP_DIR="${BACKUP_DIR:-./backups}"
+}
+
+validate() {
+  if [[ -z "$PGPASSWORD" ]]; then
+    echo "❌ Error: PGPASSWORD is empty." >&2
+    echo "   Set POSTGRES_PASSWORD in .env or the environment before backing up." >&2
+    exit 1
+  fi
+  if ! command -v pg_dump >/dev/null 2>&1; then
+    echo "❌ Error: pg_dump is not installed." >&2
+    echo "   Install the PostgreSQL 15 client (e.g. postgresql-client-15) and retry." >&2
+    exit 1
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+    die "neither sha256sum nor shasum is available; cannot write a checksum sidecar."
+  fi
+}
+
+# Write <file>.sha256 using the checksum tool available on this host.
+write_checksum() {
+  local file="$1" dir base
+  dir="$(cd "$(dirname "$file")" && pwd)"
+  base="$(basename "$file")"
+  if command -v sha256sum >/dev/null 2>&1; then
+    ( cd "$dir" && sha256sum "$base" ) > "$dir/$base.sha256"
+  else
+    ( cd "$dir" && shasum -a 256 "$base" ) > "$dir/$base.sha256"
+  fi
+}
+
+# Delete .dump and .dump.sha256 files older than BACKUP_RETENTION_DAYS days.
+prune_old_backups() {
+  local days="${BACKUP_RETENTION_DAYS:-}"
+  if [[ -z "$days" ]]; then
+    return 0
+  fi
+  if ! [[ "$days" =~ ^[0-9]+$ ]] || (( days <= 0 )); then
+    echo "⚠️  BACKUP_RETENTION_DAYS='$days' is not a positive integer; skipping retention." >&2
+    return 0
+  fi
+  echo "🧹 Removing backups older than ${days} day(s) in $BACKUP_DIR..."
+  find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.dump' -mtime +"$days" -delete
+  find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.dump.sha256' -mtime +"$days" -delete
+}
+
+main() {
+  parse_args "$@"
+  load_env
+  resolve_config
+  validate
+
+  mkdir -p "$BACKUP_DIR"
+
+  local timestamp dump_name dump_path
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  dump_name="safetrust-${timestamp}.dump"
+  dump_path="$BACKUP_DIR/$dump_name"
+
+  echo "📦 Backing up safetrust + hotel_industry"
+  echo "   From: ${PGHOST}:${PGPORT}/${PGDATABASE} (user ${PGUSER})"
+  echo "   To:   $dump_path"
+
+  pg_dump -Fc --no-owner --schema=safetrust --schema=hotel_industry -f "$dump_path"
+
+  write_checksum "$dump_path"
+
+  echo "✅ Dump written:    $dump_path"
+  echo "✅ Checksum written: $dump_path.sha256"
+
+  prune_old_backups
+
+  echo ""
+  echo "👉 To restore into a non-production target:"
+  echo "   ALLOW_RESTORE=yes bin/restore \"$dump_path\""
+}
+
+main "$@"

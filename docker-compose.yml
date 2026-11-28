@@ -23,10 +23,11 @@ services:
       - "${HASURA_PORT:-8080}:8080"
     restart: always
     environment:
+      # sslmode mirrors POSTGRES_SSL_MODE so Hasura and the webhook agree on TLS.
       HASURA_GRAPHQL_METADATA_DATABASE_URL: >-
-        postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+        postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres?sslmode=${POSTGRES_SSL_MODE:-disable}
       PG_DATABASE_URL: >-
-        postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+        postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres?sslmode=${POSTGRES_SSL_MODE:-disable}
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
       HASURA_GRAPHQL_DEV_MODE: "true"
       HASURA_GRAPHQL_ENABLED_LOG_TYPES: >-
@@ -87,6 +88,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-postgres}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # disable | require | verify-full. Defaults to disable on the local Compose
+      # network; production must use require or verify-full.
+      POSTGRES_SSL_MODE: ${POSTGRES_SSL_MODE:-disable}
+      POSTGRES_SSL_CA_FILE: ${POSTGRES_SSL_CA_FILE:-}
+      POSTGRES_SSL_ALLOW_DISABLE_HOSTS: ${POSTGRES_SSL_ALLOW_DISABLE_HOSTS:-}
       HASURA_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:?HASURA_ADMIN_SECRET must be set in .env or the environment}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
       FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}

@@ -85,6 +85,7 @@ const routes: RouteCase[] = [
   { method: 'GET', path: '/health/live', public: true },
   { method: 'POST', path: '/api/escrows/initialize', public: true },
   { method: 'POST', path: '/reconciliation/sync-escrows', public: true },
+  { method: 'POST', path: '/reconciliation/prune-retention', public: true },
   { method: 'POST', path: '/api/escrows/confirm-transaction', roles: ['guest', 'host', 'admin'] },
   { method: 'POST', path: '/api/auth/sync-wallet', roles: ['guest', 'host', 'admin'] },
   { method: 'POST', path: '/api/auth/wallet/challenge', roles: ['guest', 'host', 'admin'] },
@@ -374,13 +375,14 @@ describe('public route boundary', () => {
       join(__dirname, '..', 'reconciliation', 'sync-escrows.route.ts'),
       'utf8'
     )
-    expect(declaredPaths(reconciliation)).toEqual(['/sync-escrows'])
+    expect(declaredPaths(reconciliation)).toEqual(['/sync-escrows', '/prune-retention'])
   })
 
   it('requires role middleware on every write route except the public allowlist', () => {
     const publicWrites = new Set([
       'escrows/initialize.route.ts:/api/escrows/initialize',
       'reconciliation/sync-escrows.route.ts:/sync-escrows',
+      'reconciliation/sync-escrows.route.ts:/prune-retention',
     ])
     const violations = routeSourceFiles(join(__dirname, '..'))
       .flatMap((file) => {
