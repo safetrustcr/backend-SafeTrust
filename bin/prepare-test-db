@@ -1,6 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+WITH_SEEDS=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --with-seeds)
+      WITH_SEEDS=true
+      shift
+      ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: bin/prepare-test-db [--with-seeds]
+
+Options:
+  --with-seeds  Apply seed data for both test tenants after migrations.
+  -h, --help    Show this help.
+USAGE
+      exit 0
+      ;;
+    *)
+      echo "[migrate-test] Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
 ENDPOINT="${HASURA_GRAPHQL_ENDPOINT:-http://graphql-engine-test:8080}"
 ADMIN_SECRET="${HASURA_ADMIN_SECRET:-${HASURA_GRAPHQL_ADMIN_SECRET:?Hasura admin secret is required}}"
 for ((attempt=0; ; attempt++)); do
@@ -81,5 +106,12 @@ curl -fsS -X POST "$ENDPOINT/v1/metadata" \
   -H "X-Hasura-Admin-Secret: $ADMIN_SECRET" \
   -H 'Content-Type: application/json' \
   -d '{"type":"reload_metadata","args":{}}' >/dev/null
+
+if [[ "$WITH_SEEDS" == "true" ]]; then
+  for tenant in safetrust hotel_industry; do
+    echo "[migrate-test] Applying seeds for tenant: $tenant"
+    hasura seed apply --database-name "$tenant" --endpoint "$ENDPOINT" --admin-secret "$ADMIN_SECRET"
+  done
+fi
 
 echo "[migrate-test] Test database preparation complete!"

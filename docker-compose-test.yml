@@ -148,7 +148,7 @@ services:
       HASURA_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
       HASURA_GRAPHQL_ADMIN_SECRET: ${TEST_ADMIN_SECRET:?Set TEST_ADMIN_SECRET or run bin/test}
     working_dir: /app
-    command: ["bash", "bin/prepare-test-db"]
+    command: ["bash", "bin/prepare-test-db", "--with-seeds"]
     depends_on:
       graphql-engine-test:
         condition: service_healthy

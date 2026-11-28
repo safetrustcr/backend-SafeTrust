@@ -7,10 +7,15 @@
 # A failing build or a broken addon will show up directly on the PR.
 name: webhook build
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     paths:
       - 'webhook/src/**'
+      - 'webhook/tests/**'
       - 'webhook/tsconfig*.json'
       - 'webhook/package*.json'
       - 'webhook/Dockerfile'
@@ -23,6 +28,7 @@ on:
   pull_request:
     paths:
       - 'webhook/src/**'
+      - 'webhook/tests/**'
       - 'webhook/tsconfig*.json'
       - 'webhook/package*.json'
       - 'webhook/Dockerfile'
