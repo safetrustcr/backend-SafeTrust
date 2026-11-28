@@ -19,12 +19,6 @@ type ProcessChunksArgs = Parameters<typeof import('../../../../crates/chunk-proc
 
 jest.mock('../../services/db', () => ({ query: jest.fn() }));
 
-// Explicit factory (not bare automock): guarantees `https.request` is a mock fn
-// across Node versions — Node's automock of the core `https` module does not
-// reliably replace `request` with a jest.fn.
-jest.mock('https', () => ({ request: jest.fn() }));
-const https = require('https');
-
 const db = require('../../services/db');
 const {
   upsertEscrows,
@@ -46,25 +40,34 @@ function makeEscrow(overrides = {}) {
   };
 }
 
-/** Make https.request return a JSON body — used by the sequential path. */
+/** Make `global.fetch` resolve with a fake response carrying the given body. */
 function mockHttpResponse(body: unknown, statusCode = 200) {
-  const { EventEmitter } = require('events');
-  const fakeRes = new EventEmitter();
-  fakeRes.statusCode = statusCode;
-  fakeRes.setEncoding = jest.fn();
-  const fakeReq = new EventEmitter();
-  fakeReq.setTimeout = jest.fn();
-  fakeReq.destroy = jest.fn();
-  fakeReq.end = jest.fn(() => {
-    process.nextTick(() => {
-      fakeRes.emit('data', typeof body === 'string' ? body : JSON.stringify(body));
-      fakeRes.emit('end');
-    });
+  const isOk = statusCode >= 200 && statusCode < 300;
+  const mockFetch = jest.fn(async () => ({
+    ok: isOk,
+    status: statusCode,
+    json: async () => body,
+    text: async () => (typeof body === 'string' ? body : JSON.stringify(body ?? '')),
+  }));
+  global.fetch = mockFetch as unknown as typeof fetch;
+  return mockFetch;
+}
+
+/** Make `global.fetch` reject (transport failure) from the Nth call onwards. */
+function mockFetchRejectFrom(failFromCall: number, message = 'ECONNREFUSED') {
+  let call = 0;
+  const mockFetch = jest.fn(async () => {
+    call += 1;
+    if (call >= failFromCall) throw new Error(message);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ escrows: [makeEscrow({ contractId: 'ID_0' })] }),
+      text: async () => JSON.stringify({ escrows: [makeEscrow({ contractId: 'ID_0' })] }),
+    };
   });
-  https.request.mockImplementation((_opts: unknown, cb: (response: unknown) => void) => {
-    cb(fakeRes);
-    return fakeReq;
-  });
+  global.fetch = mockFetch as unknown as typeof fetch;
+  return mockFetch;
 }
 
 afterEach(() => {
@@ -243,32 +246,7 @@ describe('syncAllChunks', () => {
     // 60 ids → 2 chunks of [50, 10]. First chunk OK, second chunk HTTP-fails.
     const ids = Array.from({ length: 60 }, (_, i) => `ID_${i}`);
 
-    let call = 0;
-    const { EventEmitter } = require('events');
-    https.request.mockImplementation((_opts: unknown, cb: (response: unknown) => void) => {
-      const fakeReq = new EventEmitter();
-      fakeReq.setTimeout = jest.fn();
-      fakeReq.destroy = jest.fn();
-      call += 1;
-      if (call >= 2) {
-        // Second chunk: emit a request error → syncChunk rejects → isolated.
-        fakeReq.end = jest.fn(() =>
-          process.nextTick(() => fakeReq.emit('error', new Error('ECONNREFUSED')))
-        );
-        return fakeReq;
-      }
-      const fakeRes = new EventEmitter();
-      fakeRes.statusCode = 200;
-      fakeRes.setEncoding = jest.fn();
-      fakeReq.end = jest.fn(() =>
-        process.nextTick(() => {
-          fakeRes.emit('data', JSON.stringify({ escrows: [makeEscrow({ contractId: 'ID_0' })] }));
-          fakeRes.emit('end');
-        })
-      );
-      cb(fakeRes);
-      return fakeReq;
-    });
+    mockFetchRejectFrom(2);
     db.query.mockResolvedValue({ rows: [{ contract_id: 'ID_0' }] });
 
     const result = await syncAllChunks(ids);
@@ -292,7 +270,7 @@ describe('syncAllChunks', () => {
     expect(processChunksParallel).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ chunks: 1, updated: 1, unchanged: 0, skipped: 0, errors: [] });
     // The sequential path must not have fired.
-    expect(https.request).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it('falls back to sequential when the flag is on but the addon is missing', async () => {
@@ -303,6 +281,6 @@ describe('syncAllChunks', () => {
 
     const result = await syncAllChunks(['C1']);
     expect(result).toEqual({ chunks: 1, updated: 1, unchanged: 0, skipped: 0, errors: [] });
-    expect(https.request).toHaveBeenCalledTimes(1); // proves sequential ran
+    expect(global.fetch).toHaveBeenCalledTimes(1); // proves sequential ran
   });
 });
