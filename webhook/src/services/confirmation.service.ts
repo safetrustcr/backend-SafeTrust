@@ -262,9 +262,9 @@ export async function promoteEscrowStatus(
   action: EscrowAction,
   txHash: string,
   network: StellarNetwork
-): Promise<void> {
+): Promise<boolean> {
   const runner = db.withTransaction ?? withTransaction
-  await runner(async (client) => {
+  return await runner(async (client) => {
     let updateResult: { rows: any[] }
     if (action === 'deploy') {
       updateResult = await client.query(
@@ -276,6 +276,7 @@ export async function promoteEscrowStatus(
           network = $2,
           updated_at = NOW()
         WHERE contract_id = $3
+          AND status != 'untrusted'
         RETURNING id, tenant_id, contract_id, amount, marker, approver
         `,
         [txHash, network, escrowId]
@@ -291,6 +292,7 @@ export async function promoteEscrowStatus(
           network = $2,
           updated_at = NOW()
         WHERE contract_id = $3
+          AND status != 'untrusted'
         RETURNING id, tenant_id, contract_id, amount, marker, approver
         `,
         [txHash, network, escrowId]
@@ -302,6 +304,19 @@ export async function promoteEscrowStatus(
     const escrowRow = updateResult?.rows?.[0]
     const internalEscrowId = escrowRow?.id
     const tenantId = escrowRow?.tenant_id ?? 'safetrust'
+
+    if (!internalEscrowId) {
+      const checkRow = await client.query(
+        `SELECT id, status FROM safetrust.trustless_work_escrows WHERE contract_id = $1`,
+        [escrowId]
+      )
+      if (checkRow?.rows?.[0]?.status === 'untrusted') {
+        console.warn(
+          `[promoteEscrowStatus] Escrow ${escrowId} is quarantined as untrusted; status update blocked.`
+        )
+        return false
+      }
+    }
 
     if (internalEscrowId) {
       const updateTx = await client.query(
@@ -390,7 +405,275 @@ export async function promoteEscrowStatus(
         [txHash, escrowId, action]
       )
     }
+    return Boolean(internalEscrowId)
   })
+}
+
+export interface XdrValidationResult {
+  valid: boolean
+  error?: string
+  sourceAccount?: string
+  targetContractId?: string
+  functionName?: string
+}
+
+export const AUTHORIZED_ESCROW_FUNCTIONS = new Set([
+  'initialize',
+  'fund',
+  'approve',
+  'change_milestone_status',
+  'change_status',
+  'release',
+  'dispute',
+  'resolve',
+  'transfer',
+  'deposit',
+  'withdraw',
+])
+
+/**
+ * Validates a signed Stellar transaction XDR against network passphrase,
+ * allowed operations, expected contract address, action, source accounts,
+ * and smart contract function names.
+ */
+export function validateSignedXdr(
+  signedXdr: string,
+  network: StellarNetwork,
+  expectedContractId?: string,
+  action?: EscrowAction,
+  expectedSourceAccounts?: string[]
+): XdrValidationResult {
+  if (!signedXdr || typeof signedXdr !== 'string') {
+    return { valid: false, error: 'Signed XDR is required and must be a string' }
+  }
+
+  try {
+    const passphrase =
+      network === 'mainnet'
+        ? Networks.PUBLIC
+        : Networks.TESTNET
+
+    let tx: any
+    try {
+      tx = TransactionBuilder.fromXDR(signedXdr, passphrase)
+    } catch (parseErr) {
+      return {
+        valid: false,
+        error: `Failed to decode signed XDR for network ${network}: ${(parseErr as Error).message}`,
+      }
+    }
+
+    const sourceAccount = tx.source
+    if (!sourceAccount || !StrKey.isValidEd25519PublicKey(sourceAccount)) {
+      return { valid: false, error: 'Signed XDR source account is invalid' }
+    }
+
+    // Validate transaction source against expected booking parties if specified
+    if (expectedSourceAccounts && expectedSourceAccounts.length > 0) {
+      const isAllowed = expectedSourceAccounts.some(
+        (acc) => acc && acc.trim() === sourceAccount.trim()
+      )
+      if (!isAllowed) {
+        return {
+          valid: false,
+          error: `Unauthorized transaction source: account ${sourceAccount} does not match expected booking parties`,
+        }
+      }
+    }
+
+    if (!tx.operations || tx.operations.length === 0) {
+      return { valid: false, error: 'Signed XDR contains no operations' }
+    }
+
+    const effectiveAction = action ?? 'fund'
+    const PERMITTED_OPS_BY_ACTION: Record<string, string[]> = {
+      deploy: ['invokeHostFunction'],
+      fund: ['invokeHostFunction', 'payment'],
+      release: ['invokeHostFunction'],
+      refund: ['invokeHostFunction'],
+      resolve: ['invokeHostFunction'],
+    }
+    const permittedOps = PERMITTED_OPS_BY_ACTION[effectiveAction] ?? ['invokeHostFunction', 'payment']
+
+    for (const op of tx.operations) {
+      if (!permittedOps.includes(op.type)) {
+        return {
+          valid: false,
+          error: `Security violation: unauthorized operation "${op.type}" for action "${effectiveAction}"`,
+        }
+      }
+
+      if (
+        op.type === 'setOptions' ||
+        op.type === 'accountMerge' ||
+        op.type === 'inflation' ||
+        op.type === 'manageData' ||
+        op.type === 'clawback'
+      ) {
+        return {
+          valid: false,
+          error: `Security violation: unauthorized operation "${op.type}" in signed XDR`,
+        }
+      }
+
+      if (op.type === 'invokeHostFunction') {
+        const func = op.func as any
+        if (!func) {
+          return { valid: false, error: 'Malformed invokeHostFunction operation: missing func' }
+        }
+
+        const funcType =
+          typeof func.switch === 'function'
+            ? func.switch()?.name
+            : typeof func.type === 'string'
+              ? func.type
+              : (func.type?.name ?? '')
+        const isInvoke =
+          funcType === 'hostFunctionTypeInvokeContract' ||
+          (typeof func.arm === 'function' && func.arm() === 'invokeContract') ||
+          !!func.invokeContract
+
+        if (isInvoke) {
+          const invokeArgs =
+            typeof func.invokeContract === 'function'
+              ? func.invokeContract()
+              : (func.invokeContract ?? (func.value ? (typeof func.value === 'function' ? func.value() : func.value) : null))
+          if (!invokeArgs) {
+            return { valid: false, error: 'Malformed invokeContract args in host function' }
+          }
+
+          let invokedContractAddress = ''
+          try {
+            const rawContractAddr =
+              typeof invokeArgs.contractAddress === 'function'
+                ? invokeArgs.contractAddress()
+                : (invokeArgs.contractAddress ?? invokeArgs.contract_address)
+            if (rawContractAddr) {
+              invokedContractAddress = Address.fromScAddress(rawContractAddr).toString()
+            }
+          } catch {
+            // ignore address decoding error
+          }
+
+          // Enforce expected escrow binding
+          if (
+            expectedContractId &&
+            expectedContractId.startsWith('C') &&
+            invokedContractAddress &&
+            invokedContractAddress !== expectedContractId
+          ) {
+            return {
+              valid: false,
+              error: `Contract address mismatch: expected ${expectedContractId}, observed ${invokedContractAddress}`,
+            }
+          }
+
+          const rawFnName =
+            typeof invokeArgs.functionName === 'function'
+              ? invokeArgs.functionName()
+              : (invokeArgs.functionName ?? invokeArgs.function_name)
+          const fnName = rawFnName ? rawFnName.toString().trim() : ''
+          if (fnName && !AUTHORIZED_ESCROW_FUNCTIONS.has(fnName.toLowerCase())) {
+            return {
+              valid: false,
+              error: `Unauthorized contract function invocation: "${fnName}"`,
+              functionName: fnName,
+            }
+          }
+
+          // Validate requested action against invoked function
+          if (action === 'fund') {
+            const fundFns = ['fund', 'deposit', 'approve']
+            if (fnName && !fundFns.includes(fnName.toLowerCase())) {
+              return {
+                valid: false,
+                error: `Action mismatch: action "${action}" cannot invoke contract function "${fnName}"`,
+                functionName: fnName,
+              }
+            }
+          } else if (action === 'deploy') {
+            const deployFns = ['deploy', 'initialize', 'init', 'create']
+            if (fnName && !deployFns.includes(fnName.toLowerCase())) {
+              return {
+                valid: false,
+                error: `Action mismatch: action "${action}" cannot invoke contract function "${fnName}"`,
+                functionName: fnName,
+              }
+            }
+          }
+        } else {
+          return {
+            valid: false,
+            error: `Unsupported host function type: "${funcType}"`,
+          }
+        }
+      } else if (op.type === 'payment') {
+        if (effectiveAction === 'deploy') {
+          return {
+            valid: false,
+            error: `Action mismatch: payment operation cannot be used for "deploy" action`,
+          }
+        }
+        if (expectedContractId && expectedContractId.startsWith('C')) {
+          return {
+            valid: false,
+            error: `Action mismatch: contract escrow ${expectedContractId} cannot be funded with classic payment operation`,
+          }
+        }
+        if (
+          expectedContractId &&
+          expectedContractId.startsWith('G') &&
+          op.destination !== expectedContractId
+        ) {
+          return {
+            valid: false,
+            error: `Payment destination mismatch: expected ${expectedContractId}, observed ${op.destination}`,
+          }
+        }
+      }
+    }
+
+    // Reject envelopes with no signatures
+    if (!tx.signatures || tx.signatures.length === 0) {
+      return {
+        valid: false,
+        error: 'Signed XDR contains no signatures',
+      }
+    }
+
+    let hasValidSig = false
+    const txHash = tx.hash()
+    for (const sig of tx.signatures) {
+      const rawSig =
+        typeof sig.signature === 'function'
+          ? sig.signature()
+          : (sig.signature?.value || sig.signature)
+      if (rawSig && sourceAccount) {
+        try {
+          const keypair = Keypair.fromPublicKey(sourceAccount)
+          if (keypair.verify(txHash, rawSig)) {
+            hasValidSig = true
+            break
+          }
+        } catch {
+          // Check next signature
+        }
+      }
+    }
+    if (!hasValidSig) {
+      return {
+        valid: false,
+        error: `Transaction signature is invalid for network ${network}`,
+      }
+    }
+
+    return { valid: true, sourceAccount }
+  } catch (err) {
+    return {
+      valid: false,
+      error: `Error validating signed XDR: ${(err as Error).message}`,
+    }
+  }
 }
 
 // ── Main Confirmation Workflows ───────────────────────────────────────────────
@@ -404,6 +687,7 @@ export async function processHelperSubmission(params: {
   action: EscrowAction
   network: StellarNetwork
   isTWGenerated?: boolean
+  expectedSourceAccounts?: string[]
 }): Promise<ConfirmationResult> {
   const { signedXdr, escrowId, action, network } = params
 
@@ -491,7 +775,9 @@ export async function processHelperSubmission(params: {
   const ledgerRes = await verifyStellarTransaction(txHash, network)
   if (!ledgerRes.verified) {
     const errorMsg = ledgerRes.error ?? 'Ledger confirmation failed'
-    await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
+    if (retryRecord?.id) {
+      await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
+    }
     return {
       success: false,
       stage: 'pending_confirmation',
@@ -500,14 +786,16 @@ export async function processHelperSubmission(params: {
       action,
       network,
       submissionPath: 'helper',
-      retryRecordId: retryRecord.id,
+      retryRecordId: retryRecord?.id,
       error: errorMsg,
     }
   }
 
   // Promote SafeTrust DB record
   await promoteEscrowStatus(escrowId, action, txHash, network)
-  await updateRetryRecordStatus(retryRecord.id, 'completed', 1, null)
+  if (retryRecord?.id) {
+    await updateRetryRecordStatus(retryRecord.id, 'completed', 1, null)
+  }
 
   return {
     success: true,
@@ -580,10 +868,12 @@ export async function processExternalSubmission(params: {
   if (!ledgerRes.verified) {
     const errorMsg = ledgerRes.error ?? 'Ledger verification failed'
     // If the failure is terminal (e.g. failed on-ledger or format error), mark dead letter
-    if (ledgerRes.successful === false) {
-      await updateRetryRecordStatus(retryRecord.id, 'dead_letter', 1, errorMsg)
-    } else {
-      await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
+    if (retryRecord?.id) {
+      if (ledgerRes.successful === false) {
+        await updateRetryRecordStatus(retryRecord.id, 'dead_letter', 1, errorMsg)
+      } else {
+        await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
+      }
     }
 
     return {
@@ -594,7 +884,7 @@ export async function processExternalSubmission(params: {
       action,
       network,
       submissionPath: 'external',
-      retryRecordId: retryRecord.id,
+      retryRecordId: retryRecord?.id,
       error: errorMsg,
     }
   }
@@ -603,7 +893,9 @@ export async function processExternalSubmission(params: {
   const twRes = await updateTWIndexerFromTxHash(txHash, network, isTWGenerated)
   if (!twRes.success) {
     const errorMsg = twRes.error ?? 'TW indexer synchronization failed'
-    await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
+    if (retryRecord?.id) {
+      await updateRetryRecordStatus(retryRecord.id, 'retrying', 1, errorMsg)
+    }
     return {
       success: false,
       stage: 'ledger_confirmed',
@@ -612,7 +904,7 @@ export async function processExternalSubmission(params: {
       action,
       network,
       submissionPath: 'external',
-      retryRecordId: retryRecord.id,
+      retryRecordId: retryRecord?.id,
       ledger: ledgerRes.ledger,
       error: errorMsg,
     }
@@ -620,6 +912,9 @@ export async function processExternalSubmission(params: {
 
   // 6. Both ledger_confirmed and tw_indexed succeeded -> promote SafeTrust DB record
   await promoteEscrowStatus(escrowId, action, txHash, network)
+  if (retryRecord?.id) {
+    await updateRetryRecordStatus(retryRecord.id, 'completed', 1, null)
+  }
   await updateRetryRecordStatus(retryRecord.id, 'completed', 1, null)
 
   return {

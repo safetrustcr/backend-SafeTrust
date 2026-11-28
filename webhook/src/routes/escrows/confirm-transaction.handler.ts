@@ -7,6 +7,7 @@
  */
 
 import { Request, Response } from 'express'
+import { getStellarNetwork } from '../../config/stellar'
 import {
   processHelperSubmission,
   processExternalSubmission,
@@ -32,13 +33,20 @@ export async function confirmTransactionHandler(
   req: Request<{}, {}, ConfirmTransactionPayload>,
   res: Response
 ): Promise<Response> {
+  const serverNetwork = getStellarNetwork()
+  if (req.body.network && req.body.network !== serverNetwork) {
+    throw new ValidationError(
+      `Network mismatch: client requested "${req.body.network}" but server operates on "${serverNetwork}"`
+    )
+  }
+
   const {
     submissionPath = 'external',
     txHash,
     signedXdr,
     escrowId,
     action,
-    network = (process.env.STELLAR_NETWORK as StellarNetwork) || 'testnet',
+    network = serverNetwork,
     isTWGenerated = true,
     signingOnly = false,
   } = req.body

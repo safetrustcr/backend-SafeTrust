@@ -2,6 +2,7 @@
 export enum EscrowStatus {
   Created = 'created',
   PendingFunding = 'pending_funding',
+  PartiallyFunded = 'partially_funded',
   Funded = 'funded',
   Active = 'active',
   MilestoneApproved = 'milestone_approved',
@@ -9,6 +10,7 @@ export enum EscrowStatus {
   Disputed = 'disputed',
   Resolved = 'resolved',
   Cancelled = 'cancelled',
+  Untrusted = 'untrusted',
 }
 
 /** Milestone identifiers emitted by the escrow contract. */

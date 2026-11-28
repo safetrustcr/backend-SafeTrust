@@ -34,6 +34,15 @@ import { CANONICAL_TRANSITIONS, canTransitionStatus } from '../lib/escrow-freshn
 import { executeEscrowLifecycleTransition } from './escrow.service'
 import type { EscrowLifecycleParams } from './escrow.service'
 import { notifyHotelEscrowConversation } from './hotel-conversation-notify'
+import { query } from './db'
+import { amountToStroops } from '../lib/stellar-amounts'
+import {
+  verifyEscrowForReservation,
+  recordEscrowVerificationEvent,
+  getReservationVerificationData,
+  markEscrowUntrusted,
+} from './escrow-verification'
+import { getStellarConfig } from '../config/stellar'
 import type {
   ChunkResult,
   ChunkSyncResult,
@@ -44,7 +53,7 @@ import type {
   UpsertResult,
 } from '../lib/reconciliation.types'
 
-export { isRustBulkUpsertEnabled, setSorobanReconcilerAddon }
+export { isRustBulkUpsertEnabled, setSorobanReconcilerAddon, markEscrowUntrusted }
 
 export const CHUNK_SIZE = 50
 
@@ -68,6 +77,7 @@ export interface ReconciliationTransition {
   targetStatus: string
   reservationStatus: string
   amount?: number
+  balance?: number | string
   notification?: { eventType: string; body: string }
   observedLedgerSeq?: string | null
 }
@@ -175,6 +185,7 @@ export function detectReconciliationTransitions(
         targetStatus: spec.targetStatus,
         reservationStatus: spec.reservationStatus,
         amount: transitionAmount(targetStatus, record),
+        balance: record.balance,
         notification: spec.notification,
         observedLedgerSeq: seq,
       })
@@ -182,6 +193,219 @@ export function detectReconciliationTransitions(
   }
 
   return transitions
+}
+
+function parseStroopsAllowZero(value: unknown): bigint | null {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0) return null
+    if (value === 0) return 0n
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (/^0+(\.0+)?$/.test(trimmed)) return 0n
+  }
+  if (value === 0n) return 0n
+  const stroopStr = amountToStroops(value)
+  if (stroopStr !== null) return BigInt(stroopStr)
+  return null
+}
+
+export interface OnChainVerificationResult {
+  verified: boolean
+  error?: string
+  mismatchType?: 'balance_mismatch' | 'booking_mismatch' | 'unavailable'
+}
+
+export async function verifyOnChainEscrowTransition(
+  contractId: string,
+  targetStatus: string,
+  expectedAmount?: number,
+  tenantId: string = 'safetrust',
+  indexerBalance?: number | string
+): Promise<OnChainVerificationResult> {
+  const config = getStellarConfig()
+  const network = config.network === 'mainnet' ? 'mainnet' : 'testnet'
+
+  let onChainStroops: bigint | null = null
+
+  if (hasSorobanReconciler()) {
+    try {
+      const rawJson = querySorobanEscrow(contractId, network)
+      const sorobanData: any = rawJson ? JSON.parse(rawJson) : null
+      if (!sorobanData) {
+        return {
+          verified: false,
+          error: `Failed to query on-chain Soroban escrow data for ${contractId}`,
+          mismatchType: 'unavailable',
+        }
+      }
+
+      onChainStroops = parseStroopsAllowZero(sorobanData.balance)
+      if (onChainStroops === null) {
+        return {
+          verified: false,
+          error: `Invalid on-chain balance observation: ${sorobanData.balance}`,
+          mismatchType: 'balance_mismatch',
+        }
+      }
+    } catch (err) {
+      return {
+        verified: false,
+        error: `Error querying on-chain Soroban escrow: ${(err as Error).message}`,
+        mismatchType: 'unavailable',
+      }
+    }
+  }
+
+  try {
+    const escrowRes = await query<{
+      id: string
+      amount: number
+      balance: number
+      marker: string
+      approver: string
+      releaser: string
+      resolver: string | null
+      asset_code: string | null
+      asset_issuer: string | null
+      escrow_metadata: Record<string, unknown> | null
+    }>(
+      `SELECT id, amount, balance, marker, approver, releaser, resolver,
+              asset_code, asset_issuer, escrow_metadata
+       FROM safetrust.trustless_work_escrows
+       WHERE contract_id = $1 AND tenant_id = $2
+       LIMIT 1`,
+      [contractId, tenantId]
+    )
+
+    if (!escrowRes.rows || !escrowRes.rows[0]) {
+      return {
+        verified: false,
+        error: `Escrow record not found in database for contract ${contractId}`,
+        mismatchType: 'unavailable',
+      }
+    }
+
+    const row = escrowRes.rows[0]
+
+    // Use transition.amount when it is valid and present; otherwise use the stored deposit (row.amount)
+    const depositAmount =
+      expectedAmount !== undefined && expectedAmount > 0 ? expectedAmount : row.amount
+    const depositStroopsStr = amountToStroops(depositAmount)
+    if (!depositStroopsStr) {
+      return {
+        verified: false,
+        error: `Invalid escrow deposit amount: ${depositAmount}`,
+        mismatchType: 'unavailable',
+      }
+    }
+    const depositStroops = BigInt(depositStroopsStr)
+
+    // Compare on-chain and indexer balances for protected transitions (funded, completed, resolved)
+    const effectiveIndexerBal = indexerBalance !== undefined ? indexerBalance : row.balance
+    const indexerStroops = parseStroopsAllowZero(effectiveIndexerBal)
+    if (indexerStroops === null) {
+      return {
+        verified: false,
+        error: `Unable to parse indexer balance: ${effectiveIndexerBal}`,
+        mismatchType: 'unavailable',
+      }
+    }
+
+    if (onChainStroops !== null && onChainStroops !== indexerStroops) {
+      return {
+        verified: false,
+        error: `Balance disagreement between on-chain (${onChainStroops} stroops) and indexer (${indexerStroops} stroops)`,
+        mismatchType: 'balance_mismatch',
+      }
+    }
+
+    // If targetStatus is 'funded', ensure neither the on-chain nor indexer balance can be below deposit
+    if (targetStatus === 'funded') {
+      if (onChainStroops !== null && onChainStroops < depositStroops) {
+        return {
+          verified: false,
+          error: `On-chain balance (${onChainStroops} stroops) is less than required deposit (${depositStroops} stroops)`,
+          mismatchType: 'balance_mismatch',
+        }
+      }
+      if (indexerStroops < depositStroops) {
+        return {
+          verified: false,
+          error: `Indexer balance (${indexerStroops} stroops) is less than required deposit (${depositStroops} stroops)`,
+          mismatchType: 'balance_mismatch',
+        }
+      }
+    }
+
+    const resData = await query<{ id: string }>(
+      `SELECT id
+       FROM safetrust.reservations
+       WHERE escrow_id = $1 AND tenant_id = $2
+       LIMIT 1`,
+      [row.id, tenantId]
+    )
+
+    if (!resData.rows || !resData.rows[0]) {
+      return {
+        verified: false,
+        error: `No booking reservation linked to escrow ${row.id}`,
+        mismatchType: 'booking_mismatch',
+      }
+    }
+
+    const reservationTarget = await getReservationVerificationData(resData.rows[0].id)
+    if (!reservationTarget) {
+      return {
+        verified: false,
+        error: `Could not load reservation verification target for ${resData.rows[0].id}`,
+        mismatchType: 'unavailable',
+      }
+    }
+
+    const meta = (row.escrow_metadata ?? {}) as Record<string, unknown>
+    const observedPlatform = (meta.platformAddress ?? meta.platform_address ?? row.releaser) as string | undefined
+    const observedTokenContract = (meta.token_contract_id ?? meta.tokenContractId ?? null) as string | null
+    const independentEngagementId = (meta.engagementId ?? meta.engagement_id ?? meta.reservation_id ?? null) as string | null
+
+    const verification = verifyEscrowForReservation(
+      {
+        id: row.id,
+        contract_id: contractId,
+        amount: row.amount,
+        marker: row.marker,
+        approver: row.approver,
+        releaser: row.releaser,
+        resolver: row.resolver,
+        platformAddress: observedPlatform,
+        asset_code: row.asset_code ?? 'USDC',
+        asset_issuer: row.asset_issuer,
+        token_contract_id: observedTokenContract,
+        engagementId: independentEngagementId,
+      },
+      reservationTarget,
+      {
+        phase: 'reconciliation',
+      }
+    )
+
+    if (!verification.valid) {
+      return {
+        verified: false,
+        error: `Booking verification failed: ${verification.mismatches.join('; ')}`,
+        mismatchType: 'booking_mismatch',
+      }
+    }
+  } catch (dbErr) {
+    return {
+      verified: false,
+      error: `Database error during verification: ${(dbErr as Error).message}`,
+      mismatchType: 'unavailable',
+    }
+  }
+
+  return { verified: true }
 }
 
 export interface ApplyReconciliationTransitionsOptions {
@@ -213,6 +437,67 @@ export async function applyReconciliationTransitions(
 
   for (const transition of transitions) {
     try {
+      // Independent on-chain balance & booking verification for money-moving transitions
+      if (['funded', 'completed', 'resolved'].includes(transition.targetStatus)) {
+        const onChainCheck = await verifyOnChainEscrowTransition(
+          transition.contractId,
+          transition.targetStatus,
+          transition.amount,
+          tenantId,
+          transition.balance
+        )
+
+        if (!onChainCheck.verified) {
+          if (onChainCheck.mismatchType === 'balance_mismatch') {
+            // Issue #832: Alert on balance disagreement, leave escrow state unchanged in DB (do NOT mark untrusted)
+            logger.warn('reconciliation.balance_disagreement_alert', {
+              contractId: transition.contractId,
+              targetStatus: transition.targetStatus,
+              error: onChainCheck.error,
+            })
+            await recordEscrowVerificationEvent({
+              contractId: transition.contractId,
+              result: 'balance_disagreement' as any,
+              mismatches: [onChainCheck.error ?? 'balance disagreement'],
+              tenantId,
+            })
+            summary.failed++
+            summary.errors.push(`${transition.contractId}: balance_disagreement - ${onChainCheck.error}`)
+            summary.failedContractIds.push(transition.contractId)
+            options.onFailed?.(transition.contractId, new Error(onChainCheck.error ?? 'balance disagreement'))
+            continue
+          } else if (onChainCheck.mismatchType === 'booking_mismatch') {
+            // Booking or contract role/asset mismatch: mark untrusted
+            logger.error('reconciliation.booking_verification_failed', {
+              contractId: transition.contractId,
+              targetStatus: transition.targetStatus,
+              error: onChainCheck.error,
+            })
+            await markEscrowUntrusted(
+              transition.contractId,
+              onChainCheck.error ?? 'Booking verification failed',
+              tenantId
+            )
+            summary.failed++
+            summary.errors.push(`${transition.contractId}: untrusted - ${onChainCheck.error}`)
+            summary.failedContractIds.push(transition.contractId)
+            options.onFailed?.(transition.contractId, new Error(onChainCheck.error ?? 'booking mismatch'))
+            continue
+          } else {
+            // Verification unavailable (transient DB error, query failure, etc.) - leave unchanged
+            logger.warn('reconciliation.verification_unavailable', {
+              contractId: transition.contractId,
+              error: onChainCheck.error,
+            })
+            summary.failed++
+            summary.errors.push(`${transition.contractId}: verification_unavailable - ${onChainCheck.error}`)
+            summary.failedContractIds.push(transition.contractId)
+            options.onFailed?.(transition.contractId, new Error(onChainCheck.error ?? 'verification unavailable'))
+            continue
+          }
+        }
+      }
+
       const result = await execute({
         contractId: transition.contractId,
         eventType: transition.eventType,

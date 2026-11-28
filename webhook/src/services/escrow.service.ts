@@ -16,8 +16,15 @@ import {
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
 import { amountToStroops } from '../lib/stellar-amounts';
+import {
+  verifyEscrowForReservation,
+  getReservationVerificationData,
+  recordEscrowVerificationEvent,
+  markEscrowUntrusted,
+  VerificationContext,
+} from './escrow-verification';
 
-export { TenantMismatchError };
+export { TenantMismatchError, VerificationContext };
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -36,7 +43,7 @@ export interface EscrowInitPayload {
   asset_code: string;
   asset_issuer: string | null;
   reservation_id: string | null;
-  booking_metadata: { reservation_id?: string; [key: string]: unknown } | null;
+  booking_metadata: { reservation_id?: string;[key: string]: unknown } | null;
   raw: InitializeEscrowPayload;
 }
 
@@ -49,6 +56,14 @@ export interface TrustlessWorkEscrow {
   status: string;
   createdAt: string;
   tenantId?: string;
+  amount?: number | string;
+  marker?: string;
+  approver?: string;
+  releaser?: string;
+  resolver?: string | null;
+  assetCode?: string;
+  assetIssuer?: string | null;
+  escrowMetadata?: Record<string, unknown> | null;
 }
 
 // ── Validation error ───────────────────────────────────────────────────────────
@@ -152,7 +167,7 @@ export function validateEscrowInitializationPayload(
     reservation_id = null,
     booking_metadata = null,
   } = (body as InitializeEscrowPayload) ?? {};
-  
+
   // 1 — Required fields
   if (
     !contract_id ||
@@ -181,6 +196,28 @@ export function validateEscrowInitializationPayload(
     throw new EscrowValidationError(
       `escrow_type must be one of: ${validTypes.join(', ')}`
     );
+  }
+
+  // Check for conflicting aliases if multiple identifiers are supplied
+  const rawObj = (body as Record<string, unknown>) ?? {};
+  const resIdAlias = rawObj.reservation_id as string | undefined;
+  const bookingResId = (rawObj.booking_metadata as Record<string, unknown> | undefined)?.reservation_id as string | undefined;
+  const rawEngagementId = rawObj.engagementId as string | undefined;
+  const rawEngagement_id = rawObj.engagement_id as string | undefined;
+
+  if (rawEngagementId && rawEngagement_id && rawEngagementId !== rawEngagement_id) {
+    throw new EscrowValidationError('Conflicting engagementId and engagement_id in payload');
+  }
+  const engagementAlias = rawEngagementId ?? rawEngagement_id;
+
+  if (resIdAlias && bookingResId && resIdAlias !== bookingResId) {
+    throw new EscrowValidationError('Conflicting reservation_id and booking_metadata.reservation_id in payload');
+  }
+  if (resIdAlias && engagementAlias && resIdAlias !== engagementAlias) {
+    throw new EscrowValidationError('Conflicting reservation_id and engagementId in payload');
+  }
+  if (bookingResId && engagementAlias && bookingResId !== engagementAlias) {
+    throw new EscrowValidationError('Conflicting booking_metadata.reservation_id and engagementId in payload');
   }
 
   return {
@@ -221,9 +258,22 @@ export async function persistEscrow(
         status
         createdAt
         tenantId
+        amount
+        marker
+        approver
+        releaser
+        resolver
+        assetCode
+        assetIssuer
+        escrowMetadata
       }
     }
   `;
+
+  const tokenContractId =
+    (payload.raw as any)?.token_contract_id ??
+    (payload.raw as any)?.tokenContractId ??
+    null;
 
   const data = await hasuraTenantRequest<{
     insert_trustless_work_escrows_one?: TrustlessWorkEscrow;
@@ -314,8 +364,10 @@ export async function linkReservationToEscrow(
 ): Promise<void> {
   await linkEscrowToReservation(reservationId, escrowId, tenantId);
 
+  const safeReservationId = String(reservationId).replace(/[\r\n\t]/g, '');
+  const safeEscrowId = String(escrowId).replace(/[\r\n\t]/g, '');
   console.log(
-    `[escrow.service] Reservation linked — reservationId: ${reservationId}, escrowId: ${escrowId}`
+    `[escrow.service] Reservation linked — reservationId: ${safeReservationId}, escrowId: ${safeEscrowId}`
   );
 }
 
@@ -325,7 +377,8 @@ export async function linkReservationToEscrow(
  */
 export async function initializeEscrow(
   body: unknown,
-  tenantId: string
+  tenantId: string,
+  context?: VerificationContext
 ): Promise<{ isDuplicate: boolean; eventId: string; escrow?: TrustlessWorkEscrow }> {
   const payload = validateEscrowInitializationPayload(body);
   const { isDuplicate, eventId, processed } = await logAndCheckWebhookEvent(
@@ -342,6 +395,10 @@ export async function initializeEscrow(
   }
 
   const reservationId = payload.reservation_id ?? payload.booking_metadata?.reservation_id;
+  if (context?.callerUserId && !context.isServerAgent && !reservationId) {
+    throw new EscrowValidationError('reservation_id is required for guest escrow initialization');
+  }
+
   const escrowTenantId = reservationId
     ? await resolveReservationTenant(reservationId, tenantId)
     : tenantId;
@@ -357,7 +414,96 @@ export async function initializeEscrow(
   }
 
   if (reservationId) {
-    await linkReservationToEscrow(reservationId, escrow.id, escrowTenantId);
+    const reservationData = await getReservationVerificationData(reservationId);
+    if (reservationData) {
+      const meta = (escrow.escrowMetadata ?? payload.raw ?? {}) as Record<string, unknown>;
+      const bookingMeta = (meta.booking_metadata as Record<string, unknown> | undefined) ?? {};
+      const metaEngagementId = typeof meta.engagementId === 'string' ? meta.engagementId.trim() : '';
+      const metaEngagement_id = typeof meta.engagement_id === 'string' ? meta.engagement_id.trim() : '';
+      const metaReservationId = typeof meta.reservation_id === 'string' ? meta.reservation_id.trim() : '';
+      const bookingResId = typeof bookingMeta.reservation_id === 'string' ? bookingMeta.reservation_id.trim() : '';
+
+      const identifiers = [metaEngagementId, metaEngagement_id, metaReservationId, bookingResId].filter(
+        (id) => Boolean(id)
+      );
+
+      if (new Set(identifiers).size > 1) {
+        throw new EscrowValidationError('Conflicting engagement identifiers in metadata');
+      }
+
+      const authoritativeEngagementId = identifiers[0] || null;
+
+      // Verify the persisted escrow record before linking to reservation
+      const verification = verifyEscrowForReservation(
+        {
+          id: escrow.id,
+          contract_id: escrow.contractId,
+          amount: escrow.amount ?? payload.amount,
+          marker: escrow.marker ?? payload.marker,
+          approver: escrow.approver ?? payload.approver,
+          releaser: escrow.releaser ?? payload.releaser,
+          resolver: escrow.resolver ?? null,
+          asset_code: escrow.assetCode ?? payload.asset_code,
+          asset_issuer: escrow.assetIssuer ?? payload.asset_issuer,
+          token_contract_id:
+            (meta.token_contract_id as string | undefined) ??
+            (meta.tokenContractId as string | undefined) ??
+            (payload.raw as any)?.token_contract_id ??
+            (payload.raw as any)?.tokenContractId ??
+            null,
+          engagementId: authoritativeEngagementId,
+        },
+        reservationData,
+        context
+      );
+
+      if (!verification.valid) {
+        await recordEscrowVerificationEvent({
+          escrowId: escrow.id,
+          reservationId,
+          contractId: escrow.contractId,
+          result: 'mismatch',
+          mismatches: verification.mismatches,
+          tenantId: escrowTenantId,
+        });
+
+        // Mark untrusted and emit operator alert for data mismatches (leave caller auth failures unchanged)
+        const isCallerAuthOnly = verification.mismatches.every((m) =>
+          m.includes('is not the reservation guest')
+        );
+        if (!isCallerAuthOnly) {
+          console.error('[escrow.service] OPERATOR ALERT: Escrow data mismatches reservation, marking untrusted', {
+            contractId: escrow.contractId,
+            escrowId: escrow.id,
+            reservationId,
+            mismatches: verification.mismatches,
+          });
+          await markEscrowUntrusted(
+            escrow.contractId,
+            `Initialization verification failed: ${verification.mismatches.join('; ')}`,
+            escrowTenantId
+          );
+        }
+
+        throw new EscrowValidationError(
+          `Escrow verification failed for reservation ${reservationId}: ${verification.mismatches.join('; ')}`
+        );
+      }
+    } else if (context?.callerUserId && !context.isServerAgent) {
+      throw new ReservationNotFoundError(reservationId);
+    }
+
+    if (reservationData?.status !== 'escrow_created' || reservationData?.escrow_id !== escrow.id) {
+      await linkReservationToEscrow(reservationId, escrow.id, escrowTenantId);
+    }
+    await recordEscrowVerificationEvent({
+      escrowId: escrow.id,
+      reservationId,
+      contractId: escrow.contractId,
+      result: 'valid',
+      mismatches: [],
+      tenantId: escrowTenantId,
+    });
   }
 
   await markWebhookEventProcessed(eventId);

@@ -49,9 +49,11 @@
 
 import type { EscrowRecord } from '../reconciliation.types'
 import type { TwFlags, TwIndexerEscrow, TwMilestone } from './tw-indexer.types'
+import { amountToStroops } from '../stellar-amounts'
 
 export type DerivedEscrowStatus =
   | 'created'
+  | 'partially_funded'
   | 'pending_funding'
   | 'funded'
   | 'milestone_approved'
@@ -59,6 +61,7 @@ export type DerivedEscrowStatus =
   | 'completed'
   | 'resolved'
   | 'cancelled'
+  | 'untrusted'
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -86,8 +89,97 @@ function isMultiRelease(escrow: TwIndexerEscrow): boolean {
 }
 
 function isFunded(escrow: TwIndexerEscrow): boolean {
-  const balance = toNumber(escrow.balance)
-  return (balance !== null && balance > 0) || Boolean(escrow.fundedBy)
+  return evaluateFundingStatus(escrow) === 'funded'
+}
+
+/**
+ * Computes exact configured amount in stroops without passing decimal strings through Number.
+ * Sums milestone stroops using BigInt for multi-release escrows.
+ */
+export function configuredAmountStroops(escrow: TwIndexerEscrow): bigint | null {
+  if (isMultiRelease(escrow)) {
+    const milestones = milestonesOf(escrow)
+    if (milestones.length > 0) {
+      let sum = 0n
+      for (const m of milestones) {
+        if (m.amount !== undefined && m.amount !== null && m.amount !== '') {
+          const s = amountToStroops(m.amount)
+          if (s === null) return null
+          sum += BigInt(s)
+        } else {
+          // A multi-release escrow with any missing, null, or empty milestone amount
+          // cannot use the remaining amounts' partial sum as its funding target.
+          return null
+        }
+      }
+      if (sum > 0n) {
+        return sum
+      }
+      return null
+    }
+  }
+
+  if (escrow.amount !== undefined && escrow.amount !== null && escrow.amount !== '') {
+    const s = amountToStroops(escrow.amount)
+    return s !== null ? BigInt(s) : null
+  }
+
+  return null
+}
+
+export function evaluateFundingStatus(
+  escrow: TwIndexerEscrow
+): 'funded' | 'partially_funded' | 'created' {
+  const targetStroops = configuredAmountStroops(escrow)
+
+  // Require a valid positive target amount before entering the funded path
+  if (targetStroops === null || targetStroops <= 0n) {
+    return 'created'
+  }
+
+  let balanceStroops: bigint | null = null
+  const rawBalance = escrow.balance
+  if (rawBalance !== undefined && rawBalance !== null && rawBalance !== '') {
+    const trimmed = typeof rawBalance === 'string' ? rawBalance.trim() : rawBalance
+    if (
+      trimmed === 0 ||
+      trimmed === '0' ||
+      (typeof trimmed === 'string' && /^0+(\.0+)?$/.test(trimmed))
+    ) {
+      balanceStroops = 0n
+    } else {
+      const s = amountToStroops(rawBalance)
+      if (s !== null) {
+        balanceStroops = BigInt(s)
+      }
+    }
+  }
+
+  // If balance was not read by indexer snapshot, fundedBy alone never produces the funded state;
+  // return a non-funded state for unread balances until an authoritative balance observation confirms the target deposit.
+  if (balanceStroops === null) {
+    if (Boolean(escrow.fundedBy)) {
+      return 'partially_funded'
+    }
+    return 'created'
+  }
+
+  if (balanceStroops <= 0n) {
+    if (Boolean(escrow.fundedBy)) {
+      return 'partially_funded'
+    }
+    return 'created'
+  }
+
+  if (balanceStroops >= targetStroops) {
+    return 'funded'
+  }
+
+  if (balanceStroops > 0n && balanceStroops < targetStroops) {
+    return 'partially_funded'
+  }
+
+  return 'created'
 }
 
 function milestoneApproved(milestone: TwMilestone): boolean {
@@ -105,7 +197,10 @@ function deriveSingleReleaseStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus
   if (flags.released) return 'completed'
   if (flags.disputed) return 'disputed'
   if (milestonesOf(escrow).some(milestoneApproved)) return 'milestone_approved'
-  return isFunded(escrow) ? 'funded' : 'created'
+  const funding = evaluateFundingStatus(escrow)
+  if (funding === 'funded') return 'funded'
+  if (funding === 'partially_funded') return 'partially_funded'
+  return 'created'
 }
 
 /** Exact SafeTrust compatibility mapping for the four escrow-level V1 flags. */
@@ -132,7 +227,10 @@ function deriveMultiReleaseStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus 
   if (milestones.some((m) => milestoneApproved(m) || flags(m).released === true)) {
     return 'milestone_approved'
   }
-  return isFunded(escrow) ? 'funded' : 'created'
+  const funding = evaluateFundingStatus(escrow)
+  if (funding === 'funded') return 'funded'
+  if (funding === 'partially_funded') return 'partially_funded'
+  return 'created'
 }
 
 /** Lifecycle status for a V1 indexer escrow (see the table at the top). */
@@ -146,6 +244,10 @@ export function deriveEscrowStatus(escrow: TwIndexerEscrow): DerivedEscrowStatus
 
 /** Single-release: the configured amount. Multi-release: the sum of milestone amounts. */
 export function configuredAmount(escrow: TwIndexerEscrow): number {
+  const stroops = configuredAmountStroops(escrow)
+  if (stroops !== null) {
+    return Number(stroops) / 10_000_000
+  }
   if (!isMultiRelease(escrow)) return toNumber(escrow.amount) ?? 0
   const total = milestonesOf(escrow).reduce((sum, m) => sum + (toNumber(m.amount) ?? 0), 0)
   return total > 0 ? total : toNumber(escrow.amount) ?? 0
