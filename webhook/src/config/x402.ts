@@ -16,6 +16,11 @@ export interface X402Context {
   payer?: string | null
   amountUsdc: number
   network: string
+  /**
+   * Raw X-Payment header that was verified for this request. Set by the
+   * booking-fee gate so the fee can be settled and receipted idempotently.
+   */
+  paymentHeader?: string
 }
 
 declare global {
@@ -26,6 +31,13 @@ declare global {
   }
 }
 
+/**
+ * Bounded cache of payers seen by the resource server, consumed by routes that
+ * only carry the payment payload. Entries are dropped on consumption; the cap
+ * keeps a long-lived process from accumulating proofs that are never consumed
+ * (every hold and booking verification lands here).
+ */
+const MAX_VERIFIED_PAYERS = 100
 const verifiedPayers = new Map<string, string | null>()
 
 export function consumeVerifiedPayer(paymentSignatureHeader: string | undefined): string | null {
@@ -168,10 +180,17 @@ export function buildX402ResourceServer(
   const server = new x402ResourceServer(facilitatorClient)
   server.register(network, new ExactStellarScheme())
   server.onAfterVerify(async (ctx) => {
-    if (ctx.result.isValid) {
-      const key = JSON.stringify(ctx.paymentPayload.payload ?? null)
-      verifiedPayers.set(key, ctx.result.payer ?? null)
+    if (!ctx.result.isValid) return
+    const key = JSON.stringify(ctx.paymentPayload.payload ?? null)
+    // Re-inserting keeps the entry recent; the oldest key is evicted first
+    // (Map preserves insertion order).
+    verifiedPayers.delete(key)
+    while (verifiedPayers.size >= MAX_VERIFIED_PAYERS) {
+      const oldest = verifiedPayers.keys().next().value
+      if (oldest === undefined) break
+      verifiedPayers.delete(oldest)
     }
+    verifiedPayers.set(key, ctx.result.payer ?? null)
   })
 
   // Seed default supported response so requirements can always be generated

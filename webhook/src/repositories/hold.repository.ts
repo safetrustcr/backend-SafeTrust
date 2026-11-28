@@ -1,6 +1,9 @@
 import type { PoolClient } from 'pg'
 import { query, withTransaction } from '../services/db'
 import { ConflictError, NotFoundError, ForbiddenError, ValidationError } from '../utils/errors'
+import { calculateQuote } from '../services/quote'
+import { hasSorobanReconciler, querySorobanEscrow } from '../lib/source-adapters/soroban.adapter'
+import { logger } from '../middleware/logger'
 
 export const HOLD_DURATION_MS = 10 * 60 * 1000
 export const MAX_ACTIVE_HOLDS_PER_USER = 3
@@ -98,7 +101,6 @@ export async function createHold(input: CreateHoldInput): Promise<HoldRow & { pr
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
       `booking_holds:${input.tenantId}:${input.userId}`,
     ])
-
     const live = await client.query<{ n: string }>(
       `SELECT COUNT(*) AS n FROM safetrust.booking_holds
         WHERE user_id = $1 AND tenant_id = $2
@@ -124,11 +126,8 @@ export async function createHold(input: CreateHoldInput): Promise<HoldRow & { pr
       throw new ConflictError('Dates are not available', { code: 'dates_unavailable' })
     }
 
-    const nights = Math.max(
-      1,
-      Math.round((Date.parse(input.checkOut) - Date.parse(input.checkIn)) / 86_400_000)
-    )
-    const priceTotal = (Number(apartment.price) * nights).toFixed(2)
+    const quote = calculateQuote(apartment, input.checkIn, input.checkOut)
+    const priceTotal = quote.total
 
     try {
       const inserted = await client.query<HoldRow>(
@@ -171,6 +170,21 @@ export async function activateHold(holdId: string): Promise<boolean> {
   return (result.rowCount ?? 0) > 0
 }
 
+/** Load a hold for a tenant, with the fields a paid retry validates. */
+export async function findHoldById(
+  holdId: string,
+  tenantId: string
+): Promise<HoldRow | undefined> {
+  const found = await query<HoldRow>(
+    `SELECT id, tenant_id, apartment_id, user_id, check_in, check_out, guests, status,
+            quote_total, quote_deposit, asset_code, payer_address, expires_at
+       FROM safetrust.booking_holds
+      WHERE id = $1 AND tenant_id = $2`,
+    [holdId, tenantId]
+  )
+  return found.rows[0]
+}
+
 /** Release a hold whose payment failed. The fee, if any, is not refunded. */
 export async function releasePendingHold(holdId: string): Promise<void> {
   await query(
@@ -193,19 +207,246 @@ export async function releaseHold(holdId: string, userId: string, tenantId: stri
   if (hold.status !== 'active' && hold.status !== 'pending_payment') {
     throw new ConflictError(`Hold is already ${hold.status}`, { code: 'hold_not_live' })
   }
-  await query(
+  const released = await query(
     `UPDATE safetrust.booking_holds
         SET status = 'released', updated_at = NOW()
       WHERE id = $1 AND status IN ('pending_payment', 'active')`,
     [holdId]
   )
+  if ((released.rowCount ?? 0) === 0) {
+    throw new ConflictError('Hold is no longer live', { code: 'hold_not_live' })
+  }
+}
+
+export type EscrowFundingState = 'funded' | 'unfunded' | 'unknown'
+
+export interface EscrowFundingTarget {
+  contractId: string | null
+  network: string | null
+}
+
+/** Live on-chain funding check used before an unfunded reservation is cancelled. */
+export type EscrowFundingChecker = (
+  target: EscrowFundingTarget
+) => Promise<EscrowFundingState>
+
+const DEFAULT_STELLAR_NETWORK = 'testnet'
+
+/**
+ * Default on-chain funding check, backed by the same soroban-reconciler native
+ * addon the reconciliation service uses (`querySorobanEscrow`).
+ *
+ * Returns `unknown` whenever the live state cannot be read (addon missing, RPC
+ * or network error, malformed payload) so the caller treats it as unverifiable
+ * and preserves the reservation instead of risking a funded deposit.
+ */
+export const checkEscrowFundingOnChain: EscrowFundingChecker = async ({
+  contractId,
+  network,
+}) => {
+  // No contract was ever linked, so there is nothing on-chain to protect.
+  if (!contractId) return 'unfunded'
+
+  if (!hasSorobanReconciler()) {
+    logger.warn('hold.onchain_funding_check_unavailable', { contractId })
+    return 'unknown'
+  }
+
+  try {
+    const raw = querySorobanEscrow(contractId, network || DEFAULT_STELLAR_NETWORK)
+    const onChain = JSON.parse(raw) as {
+      status?: string
+      balance?: number | string | null
+    }
+    const balance = Number(onChain?.balance ?? 0)
+    if (
+      onChain?.status === 'funded' ||
+      onChain?.status === 'completed' ||
+      (Number.isFinite(balance) && balance > 0)
+    ) {
+      return 'funded'
+    }
+    return 'unfunded'
+  } catch (error) {
+    logger.warn('hold.onchain_funding_check_failed', {
+      contractId,
+      error: (error as Error).message,
+    })
+    return 'unknown'
+  }
+}
+
+let escrowFundingChecker: EscrowFundingChecker = checkEscrowFundingOnChain
+
+/** Test seam: install a checker, or pass null to restore the on-chain default. */
+export function setEscrowFundingChecker(checker: EscrowFundingChecker | null): void {
+  escrowFundingChecker = checker ?? checkEscrowFundingOnChain
+}
+
+export interface UnfundedReservationCandidate {
+  reservation_id: string
+  contract_id: string | null
+  network: string | null
+  escrow_status: string | null
+}
+
+interface LockedReservation {
+  reservation_id: string
+  reservation_status: string
+  escrow_id: string | null
+}
+
+interface LockedEscrow {
+  contract_id: string | null
+  network: string | null
+  status: string | null
 }
 
 /**
- * Expire holds past expires_at, and release pending_payment holds whose
- * payment was never confirmed. Returns the number of holds changed.
+ * Cancel reservations created from a hold whose deposit escrow was never
+ * funded, as soon as the hold deadline passes.
+ *
+ * The reservation stays `escrow_created` while the agent signs and submits the
+ * fund transaction; if it never does, cancelling frees the dates for others.
+ *
+ * Before cancelling, the escrow's live on-chain funding state is verified with
+ * `escrowFundingChecker`. A reservation is preserved when its escrow is funded
+ * (or completed) in the database, when the on-chain balance is non-zero, or
+ * when the live check cannot establish the state (RPC/network error). Funded
+ * deposits are therefore never cancelled or double-booked by the sweep.
+ *
+ * Each candidate is cancelled in its own transaction that holds
+ * `FOR NO KEY UPDATE` locks on the reservation and its escrow, re-checks both
+ * statuses under the lock, and then re-confirms the on-chain state. A funding
+ * update that commits before those locks are taken is therefore observed and
+ * wins; one that arrives later waits for the sweep to commit and then sees the
+ * cancelled reservation.
+ */
+export async function cancelUnfundedReservationsForExpiredHolds(): Promise<number> {
+  const candidates = await query<UnfundedReservationCandidate>(
+    `SELECT r.id::text AS reservation_id,
+            e.contract_id,
+            e.network,
+            e.status AS escrow_status
+       FROM safetrust.reservations r
+       JOIN safetrust.booking_holds h ON h.id = r.booking_hold_id
+       LEFT JOIN safetrust.trustless_work_escrows e ON e.id = r.escrow_id
+      WHERE r.status = 'escrow_created'
+        AND h.expires_at <= NOW()`
+  )
+
+  let cancelled = 0
+  for (const candidate of candidates.rows) {
+    // Cheap early exit; the authoritative check happens again under the lock.
+    if (candidate.escrow_status === 'funded' || candidate.escrow_status === 'completed') {
+      continue
+    }
+
+    const didCancel = await withTransaction(async (client: PoolClient) => {
+      // Lock the reservation row before its escrow row: any concurrent escrow
+      // funding update either landed before this lock or waits for the commit.
+      const lockedReservation = await client.query<LockedReservation>(
+        `SELECT r.id::text AS reservation_id,
+                r.status AS reservation_status,
+                r.escrow_id::text AS escrow_id
+           FROM safetrust.reservations r
+          WHERE r.id = $1
+            AND r.status = 'escrow_created'
+            AND EXISTS (
+              SELECT 1
+                FROM safetrust.booking_holds h
+               WHERE h.id = r.booking_hold_id
+                 AND h.expires_at <= NOW()
+            )
+          FOR NO KEY UPDATE OF r`,
+        [candidate.reservation_id]
+      )
+      const reservation = lockedReservation.rows[0]
+      if (!reservation || reservation.reservation_status !== 'escrow_created') {
+        return false
+      }
+
+      let escrow: LockedEscrow | undefined
+      if (reservation.escrow_id) {
+        const lockedEscrow = await client.query<LockedEscrow>(
+          `SELECT contract_id, network, status
+             FROM safetrust.trustless_work_escrows
+            WHERE id = $1
+            FOR NO KEY UPDATE`,
+          [reservation.escrow_id]
+        )
+        escrow = lockedEscrow.rows[0]
+      }
+
+      // An escrow funded or completed while this candidate waited for the lock
+      // must win over the sweep.
+      if (escrow?.status === 'funded' || escrow?.status === 'completed') {
+        return false
+      }
+
+      // A linked escrow is authoritative: its contract and network are checked
+      // together, so a reservation linked on one network is never verified
+      // against the candidate scan's different contract or network. With no
+      // linked escrow row there is nothing on-chain to read, so the candidate
+      // values are the only ones available. A linked escrow with no network
+      // cannot be checked at all, and is treated as unverifiable.
+      let fundingState: EscrowFundingState
+      if (escrow && !escrow.network) {
+        // Linked, but on no known network: the escrow cannot be read on-chain.
+        logger.warn('hold.onchain_funding_check_unknown_network', {
+          contractId: escrow.contract_id,
+          reservationId: reservation.reservation_id,
+        })
+        fundingState = 'unknown'
+      } else {
+        try {
+          fundingState = await escrowFundingChecker(
+            escrow
+              ? { contractId: escrow.contract_id, network: escrow.network }
+              : { contractId: candidate.contract_id, network: candidate.network }
+          )
+        } catch (error) {
+          // A transient check failure must not free dates a deposit may hold.
+          logger.warn('hold.onchain_funding_check_threw', {
+            contractId: candidate.contract_id,
+            reservationId: candidate.reservation_id,
+            error: (error as Error).message,
+          })
+          fundingState = 'unknown'
+        }
+      }
+
+      if (fundingState !== 'unfunded') return false
+
+      const updated = await client.query(
+        `UPDATE safetrust.reservations
+            SET status = 'cancelled',
+                cancelled_at = NOW(),
+                cancelled_by = NULL,
+                cancel_reason = 'hold_expired',
+                updated_at = NOW()
+          WHERE id = $1
+            AND status = 'escrow_created'`,
+        [reservation.reservation_id]
+      )
+      return (updated.rowCount ?? 0) > 0
+    })
+
+    if (didCancel) cancelled += 1
+  }
+
+  return cancelled
+}
+
+/**
+ * Expire holds past expires_at, release pending_payment holds whose payment
+ * was never confirmed, and cancel reservations left unfunded by a lapsed hold.
+ * Returns the number of holds and reservations changed.
  */
 export async function expireHolds(): Promise<number> {
+  // Holds are lapsed first. The cancellation sweep then runs against a table
+  // whose expired holds are already terminal, while its own eligibility test
+  // stays on `booking_holds.expires_at`, which this ordering does not change.
   const expired = await query(
     `UPDATE safetrust.booking_holds
         SET status = 'expired', updated_at = NOW()
@@ -218,5 +459,154 @@ export async function expireHolds(): Promise<number> {
         AND created_at <= NOW() - ($1 || ' milliseconds')::interval`,
     [String(PENDING_PAYMENT_TIMEOUT_MS)]
   )
-  return (expired.rowCount ?? 0) + (stuck.rowCount ?? 0)
+  const cancelled = await cancelUnfundedReservationsForExpiredHolds()
+  return (expired.rowCount ?? 0) + (stuck.rowCount ?? 0) + cancelled
+}
+
+export interface ConvertHoldResult {
+  reservation_id: string
+  booking_hold_id: string
+  apartment_id: string
+  guest_id: string
+  check_in_date: Date
+  check_out_date: Date
+  total_amount: string
+  quote_deposit: string
+  asset_code: string
+  status: string
+}
+
+/**
+ * Atomically convert an active booking hold into a reservation.
+ * Repeated requests for the same hold return the existing reservation.
+ */
+export async function convertHoldToReservation(
+  holdId: string,
+  userId: string,
+  tenantId: string
+): Promise<ConvertHoldResult> {
+  return withTransaction(async (client: PoolClient) => {
+    const result = await client.query<{
+      id: string
+      tenant_id: string
+      apartment_id: string
+      user_id: string
+      check_in: Date
+      check_out: Date
+      status: string
+      quote_total: string
+      quote_deposit: string
+      asset_code: string
+      expires_at: Date
+      reservation_id: string | null
+      reservation_status: string | null
+      is_expired: boolean
+    }>(
+      `SELECT h.id, h.tenant_id, h.apartment_id, h.user_id,
+              h.check_in, h.check_out, h.status,
+              h.quote_total, h.quote_deposit, h.asset_code,
+              h.expires_at,
+              r.id AS reservation_id,
+              r.status AS reservation_status,
+              (h.expires_at <= clock_timestamp()) AS is_expired
+         FROM safetrust.booking_holds h
+         LEFT JOIN safetrust.reservations r
+           ON r.booking_hold_id = h.id
+        WHERE h.id = $1 AND h.tenant_id = $2
+        FOR UPDATE OF h`,
+      [holdId, tenantId]
+    )
+
+    const hold = result.rows[0]
+    if (!hold) throw new NotFoundError('Hold not found')
+    if (hold.user_id !== userId) {
+      throw new ForbiddenError('Not your hold')
+    }
+
+    // Idempotency: a converted hold must return its original reservation.
+    if (hold.status === 'converted') {
+      if (!hold.reservation_id) {
+        throw new ConflictError(
+          'Hold is converted but its reservation is missing',
+          { code: 'hold_reservation_missing' }
+        )
+      }
+
+      return {
+        reservation_id: hold.reservation_id,
+        booking_hold_id: hold.id,
+        apartment_id: hold.apartment_id,
+        guest_id: hold.user_id,
+        check_in_date: hold.check_in,
+        check_out_date: hold.check_out,
+        total_amount: hold.quote_total,
+        quote_deposit: hold.quote_deposit,
+        asset_code: hold.asset_code,
+        status: hold.reservation_status ?? 'pending',
+      }
+    }
+
+    if (hold.status !== 'active') {
+      throw new ConflictError(`Hold is ${hold.status}`, {
+        code: 'hold_not_active',
+      })
+    }
+
+    if (hold.is_expired) {
+      throw new ConflictError('Hold has expired', {
+        code: 'hold_expired',
+      })
+    }
+
+    if (Number(hold.quote_total) <= 0) {
+      throw new ValidationError('Booking total must be greater than zero')
+    }
+
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO safetrust.reservations
+         (apartment_id, guest_id, booking_hold_id,
+          check_in_date, check_out_date, total_amount,
+          asset_code, status, tenant_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)
+       RETURNING id`,
+      [
+        hold.apartment_id,
+        hold.user_id,
+        hold.id,
+        hold.check_in,
+        hold.check_out,
+        hold.quote_total,
+        hold.asset_code,
+        hold.tenant_id,
+      ]
+    )
+
+    const reservationId = inserted.rows[0].id
+
+    const updated = await client.query(
+      `UPDATE safetrust.booking_holds
+          SET status = 'converted', updated_at = NOW()
+        WHERE id = $1 AND status = 'active'`,
+      [hold.id]
+    )
+
+    if (updated.rowCount !== 1) {
+      throw new ConflictError('Hold could not be converted', {
+        code: 'hold_conversion_failed',
+      })
+    }
+
+    return {
+      reservation_id: reservationId,
+      booking_hold_id: hold.id,
+      apartment_id: hold.apartment_id,
+      guest_id: hold.user_id,
+      check_in_date: hold.check_in,
+      check_out_date: hold.check_out,
+      total_amount: hold.quote_total,
+      quote_deposit: hold.quote_deposit,
+      asset_code: hold.asset_code,
+      status: 'pending',
+    }
+  })
 }

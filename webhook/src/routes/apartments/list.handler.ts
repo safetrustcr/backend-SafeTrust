@@ -88,7 +88,7 @@ export const listApartments = async (
 
   // Dates held by someone else (pending_payment or active) are unavailable.
   let stay: { checkIn: string; checkOut: string } | undefined
-  if (checkIn || checkOut) {
+  if (checkIn !== undefined || checkOut !== undefined) {
     const dateRe = /^\d{4}-\d{2}-\d{2}$/
     if (
       typeof checkIn !== 'string' || typeof checkOut !== 'string' ||

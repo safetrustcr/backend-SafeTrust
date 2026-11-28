@@ -210,6 +210,80 @@ describe('Confirmation Service - Issue #660', () => {
       expect(mockFetch).not.toHaveBeenCalled()
       expect(mockedDbQuery).not.toHaveBeenCalled()
     })
+
+    it('dead-letters the retry and returns a terminal stage when the transaction failed on-ledger', async () => {
+      const mockFetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ txHash: VALID_TX_HASH }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ successful: false, ledger: 987654 }),
+        })
+
+      global.fetch = mockFetch
+      const signed = buildSignedXdr()
+
+      mockedDbQuery
+        .mockResolvedValueOnce({ rows: [{ id: 'retry-dead-1', status: 'retrying' }] } as any)
+        .mockResolvedValueOnce({ rows: [] } as any) // updateRetryRecordStatus -> dead_letter
+
+      const result = await processHelperSubmission({
+        signedXdr: signed.xdr,
+        escrowId: ESCROW_ID,
+        action: 'fund',
+        network: 'testnet',
+      })
+
+      expect(result.success).toBe(false)
+      // A terminal stage makes the route answer 400 instead of 202.
+      expect(result.stage).toBe('dead_letter')
+      expect(result.retryRecordId).toBe('retry-dead-1')
+      expect(mockedDbQuery).toHaveBeenLastCalledWith(
+        expect.stringContaining('UPDATE safetrust.escrow_confirmation_retries'),
+        ['dead_letter', 1, expect.stringContaining('failed'), 0, 'retry-dead-1']
+      )
+    })
+
+    it('keeps an unconfirmed transaction retryable and reports pending_confirmation', async () => {
+      const mockFetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ txHash: VALID_TX_HASH }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          json: async () => ({}),
+        })
+
+      global.fetch = mockFetch
+      const signed = buildSignedXdr()
+
+      mockedDbQuery
+        .mockResolvedValueOnce({ rows: [{ id: 'retry-pending-1', status: 'retrying' }] } as any)
+        .mockResolvedValueOnce({ rows: [] } as any) // updateRetryRecordStatus -> retrying
+
+      const result = await processHelperSubmission({
+        signedXdr: signed.xdr,
+        escrowId: ESCROW_ID,
+        action: 'fund',
+        network: 'testnet',
+      })
+
+      expect(result.success).toBe(false)
+      expect(result.stage).toBe('pending_confirmation')
+      expect(mockedDbQuery).toHaveBeenLastCalledWith(
+        expect.stringContaining('UPDATE safetrust.escrow_confirmation_retries'),
+        ['retrying', 1, expect.any(String), expect.any(Number), 'retry-pending-1']
+      )
+    })
   })
 
   // ── 3. External submission path (Path B) ──────────────────────────────────

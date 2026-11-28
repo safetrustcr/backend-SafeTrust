@@ -3,19 +3,81 @@ import { AuthenticatedRequest } from '../../../middleware/auth.middleware'
 import {
   activateHold,
   createHold,
+  findHoldById,
   releaseHold,
   releasePendingHold,
 } from '../../../repositories/hold.repository'
-import { AuthError, ValidationError } from '../../../utils/errors'
+import { logger } from '../../../middleware/logger'
+import { findSettledHoldFee, settleBookingFee } from '../../../services/x402-settlement.service'
+import {
+  AuthError,
+  ConflictError,
+  PaymentRequiredError,
+  ServiceUnavailableError,
+  ValidationError,
+} from '../../../utils/errors'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+/** Activation attempts after the hold fee settled, before deferring recovery. */
+const HOLD_ACTIVATION_ATTEMPTS = 3
 
 function parseDate(value: unknown, field: string): string {
   if (typeof value !== 'string' || !DATE_RE.test(value) || Number.isNaN(Date.parse(value))) {
     throw new ValidationError(`${field} must be a date in YYYY-MM-DD format`)
   }
   return value
+}
+
+function toDateOnly(value: Date | string): string {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10)
+}
+
+/**
+ * The hold fee is settled but the hold could not be activated. Nothing is
+ * released: the paid hold stays pending_payment and the same hold id/payment
+ * proof can resume it, reusing the settled receipt instead of charging again.
+ */
+function activationPending(): ServiceUnavailableError {
+  // 5xx bodies never expose the message, so the retry contract is carried by a
+  // stable code plus Retry-After: retry this request with the same payment
+  // proof, which resumes the paid hold instead of charging it again.
+  return new ServiceUnavailableError(
+    'Hold fee settled but the hold is not active yet; retry with the same payment proof',
+    { code: 'hold_activation_pending', headers: { 'Retry-After': '5' } }
+  )
+}
+
+/**
+ * True only when the failure proves nothing was charged for this hold. When the
+ * outcome is unknown (facilitator timeout, ledger write failure, settlement in
+ * flight) the guest may have paid, so the hold must survive for recovery.
+ */
+function isConfirmedNonPayment(error: unknown): boolean {
+  if (error instanceof PaymentRequiredError) return true
+  // The proof paid for a different hold: this one was never charged.
+  return error instanceof ConflictError && error.code === 'settlement_hold_mismatch'
+}
+
+function sendHold(
+  res: Response,
+  hold: {
+    id: string
+    expires_at: Date | string
+    quote_deposit: string
+    asset_code: string
+  },
+  total: string
+): void {
+  res.status(201).json({
+    hold_id: hold.id,
+    expires_at: new Date(hold.expires_at).toISOString(),
+    quote: {
+      total,
+      deposit: Number(hold.quote_deposit).toFixed(2),
+      asset: hold.asset_code,
+    },
+  })
 }
 
 export async function createHoldHandler(
@@ -43,6 +105,78 @@ export async function createHoldHandler(
       throw new ValidationError('guests must be a positive integer')
     }
 
+    // Retry of a paid hold: the same proof is already bound to the hold this
+    // request created earlier, whose activation did not complete. Resume it
+    // instead of creating a second hold, which settlement would reject as
+    // settlement_hold_mismatch.
+    const payment = req.x402
+    if (payment?.paymentHeader) {
+      const settledHold = await findSettledHoldFee(
+        payment.paymentHeader,
+        payment.amountUsdc
+      )
+      if (settledHold) {
+        const existing = await findHoldById(settledHold.holdId, ctx.tenantId)
+        // Property ids compare case-insensitively: the same UUID may arrive
+        // upper-cased from a client, and it must still match the paid hold.
+        const sameHold =
+          existing !== undefined &&
+          existing.user_id === ctx.uid &&
+          existing.apartment_id.toLowerCase() === propertyId.toLowerCase() &&
+          toDateOnly(existing.check_in) === checkIn &&
+          toDateOnly(existing.check_out) === checkOut &&
+          existing.guests === guests
+
+        if (!existing || !sameHold) {
+          throw new ConflictError('Payment proof was already used for a different hold', {
+            code: 'settlement_hold_mismatch',
+          })
+        }
+
+        // A lapsed hold cannot be resumed or re-activated, even when its fee
+        // was settled: the dates it blocked are free again for other guests.
+        if (
+          existing.status === 'expired' ||
+          new Date(existing.expires_at).getTime() <= Date.now()
+        ) {
+          throw new ConflictError('Hold has expired', { code: 'hold_expired' })
+        }
+
+        if (existing.status === 'pending_payment') {
+          if (!(await activateHold(existing.id))) {
+            // Activation can lose a race with the expiry sweep or with another
+            // retry: re-read before deciding, instead of reporting a pending
+            // activation for a hold that just became active or expired.
+            const current = await findHoldById(existing.id, ctx.tenantId)
+            const live =
+              current !== undefined &&
+              new Date(current.expires_at).getTime() > Date.now()
+
+            if (current?.status === 'active' && live) {
+              sendHold(res, current, current.quote_total)
+              return
+            }
+            if (!current || current.status === 'expired' || !live) {
+              throw new ConflictError('Hold has expired', { code: 'hold_expired' })
+            }
+            if (current.status !== 'pending_payment') {
+              throw new ConflictError(`Hold is ${current.status}`, {
+                code: 'hold_not_active',
+              })
+            }
+
+            logger.error('booking.hold_activation_pending', { holdId: existing.id })
+            throw activationPending()
+          }
+        } else if (existing.status !== 'active') {
+          throw new ConflictError(`Hold is ${existing.status}`, { code: 'hold_not_active' })
+        }
+
+        sendHold(res, existing, existing.quote_total)
+        return
+      }
+    }
+
     // Written as pending_payment first; the hold only blocks dates for others
     // as a live hold, and becomes active once the payment is confirmed.
     const hold = await createHold({
@@ -56,35 +190,56 @@ export async function createHoldHandler(
     })
     holdId = hold.id
 
-    // requireX402Payment only lets the request through after the facilitator
-    // verified the payment (req.x402 is set), so reaching here means paid.
-    if (!req.x402) {
+    // requireX402Payment only verifies the payment authorization; funds move
+    // only when settlement is confirmed. Charge the hold fee before the hold
+    // becomes live, and never leave a live hold behind an unpaid request.
+    if (!payment?.paymentHeader) {
       await releasePendingHold(hold.id)
       throw new ValidationError('x402 payment missing')
     }
-    let activated: boolean
+
     try {
-      activated = await activateHold(hold.id)
-    } catch (activationError) {
-      // Free the pending hold so a retry is not blocked; keep the original error.
-      await releasePendingHold(hold.id).catch(() => undefined)
-      throw activationError
+      await settleBookingFee({
+        paymentHeader: payment.paymentHeader,
+        amountUsdc: payment.amountUsdc,
+        payer: payment.payer,
+        network: payment.network,
+        purpose: 'hold_fee',
+        holdId: hold.id,
+      })
+    } catch (error) {
+      // Only a confirmed non-payment frees the dates. If the outcome is unknown
+      // the guest may have been charged, so the hold is kept and the same proof
+      // can resume it; releasing it would erase the only record of that payment.
+      if (isConfirmedNonPayment(error)) {
+        await releasePendingHold(hold.id)
+      }
+      throw error
+    }
+
+    // The fee is settled from here on. Releasing the hold on an activation
+    // failure would destroy the only record of a paid booking, so activation is
+    // retried and the hold is left pending_payment for recovery with the same
+    // hold id and payment proof.
+    let activated = false
+    let lastActivationError: unknown
+    for (let attempt = 0; attempt < HOLD_ACTIVATION_ATTEMPTS && !activated; attempt++) {
+      try {
+        activated = await activateHold(hold.id)
+        lastActivationError = undefined
+      } catch (error) {
+        lastActivationError = error
+      }
     }
     if (!activated) {
-      throw new ValidationError('Hold expired before payment was confirmed')
+      logger.error('booking.hold_activation_pending', {
+        holdId: hold.id,
+        error: lastActivationError,
+      })
+      throw activationPending()
     }
 
-    res.locals.activatedHold = { id: hold.id, userId: ctx.uid, tenantId: ctx.tenantId }
-
-    res.status(201).json({
-      hold_id: hold.id,
-      expires_at: new Date(hold.expires_at).toISOString(),
-      quote: {
-        total: hold.price_total,
-        deposit: Number(hold.quote_deposit).toFixed(2),
-        asset: hold.asset_code,
-      },
-    })
+    sendHold(res, hold, hold.price_total)
   } catch (error) {
     next(error)
   }

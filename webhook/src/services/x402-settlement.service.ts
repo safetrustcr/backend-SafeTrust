@@ -1,0 +1,392 @@
+'use strict'
+
+import crypto from 'crypto'
+import db, { Queryable } from './db'
+import { logger } from '../middleware/logger'
+import {
+  getX402Engine,
+  X402SettlementResult,
+} from '../middleware/x402-payment.middleware'
+import {
+  ConflictError,
+  PaymentRequiredError,
+  ServiceUnavailableError,
+} from '../utils/errors'
+
+/**
+ * How long a `pending` settlement row blocks a retry. A row older than this is
+ * assumed to belong to a crashed or timed-out request and may be attempted
+ * again; the facilitator deduplicates on the signed payload.
+ */
+export const SETTLEMENT_PENDING_TIMEOUT_MS = 120_000
+
+export interface X402SettlementInput {
+  /** Raw X-Payment header from the request. */
+  paymentHeader: string
+  amountUsdc: number
+  payer?: string | null
+  network?: string
+  purpose?: string
+  /**
+   * Hold this settlement pays for, when the payment buys a booking hold. It is
+   * persisted so a payment proof can never be reused for a different hold.
+   */
+  holdId?: string | null
+}
+
+export interface X402SettlementReceipt {
+  idempotencyKey: string
+  transactionHash: string | null
+  /** True when a previously confirmed settlement was reused. */
+  reused: boolean
+  /**
+   * Reservation this proof already paid for. Set for direct (non-hold)
+   * bookings, where one settled proof may authorize at most one reservation.
+   */
+  reservationId: string | null
+}
+
+interface SettlementRow {
+  status: string
+  tx_hash: string | null
+  hold_id: string | null
+  reservation_id: string | null
+  updated_at: Date | string
+}
+
+/**
+ * Stable key for a payment attempt: the same signed header always maps to the
+ * same settlement record, so retries reuse the confirmed result.
+ */
+export function settlementIdempotencyKey(
+  paymentHeader: string,
+  amountUsdc: number
+): string {
+  return crypto
+    .createHash('sha256')
+    .update(`${amountUsdc.toFixed(2)}:${paymentHeader}`)
+    .digest('hex')
+}
+
+async function findSettlement(
+  idempotencyKey: string,
+  client: Queryable = db
+): Promise<SettlementRow | undefined> {
+  const result = await client.query<SettlementRow>(
+    `SELECT status, tx_hash, hold_id, reservation_id, updated_at
+       FROM safetrust.x402_settlements
+      WHERE idempotency_key = $1`,
+    [idempotencyKey]
+  )
+  return result.rows[0]
+}
+
+export interface SettledBookingFeeBinding {
+  idempotencyKey: string
+  reservationId: string
+}
+
+export interface SettledHoldFeeBinding {
+  idempotencyKey: string
+  holdId: string
+}
+
+/**
+ * Resolve a direct (hold-less) payment proof that already settled, without
+ * charging again.
+ *
+ * Callers check this before the eligibility gate: a retry of a booking whose
+ * escrow deployment or XDR issuance was interrupted must resume its own
+ * reservation, whose `escrow_created` row overlaps the dates being retried,
+ * instead of being rejected as `dates_unavailable`.
+ *
+ * Returns undefined when the proof has not settled, or when it settled a hold:
+ * hold bindings are owned by `settleBookingFee`, which reports them as
+ * `settlement_hold_mismatch`.
+ */
+export async function findSettledBookingFee(
+  paymentHeader: string,
+  amountUsdc: number
+): Promise<SettledBookingFeeBinding | undefined> {
+  const idempotencyKey = settlementIdempotencyKey(paymentHeader, amountUsdc)
+  const row = await findSettlement(idempotencyKey)
+  if (row?.status !== 'settled' || row.hold_id || !row.reservation_id) return undefined
+  return { idempotencyKey, reservationId: row.reservation_id }
+}
+
+/**
+ * Resolve a hold fee that already settled for this proof, without charging
+ * again. Lets a retried hold request resume the paid hold whose activation did
+ * not complete, instead of creating a second hold that settlement itself would
+ * reject as `settlement_hold_mismatch`.
+ */
+export async function findSettledHoldFee(
+  paymentHeader: string,
+  amountUsdc: number
+): Promise<SettledHoldFeeBinding | undefined> {
+  const idempotencyKey = settlementIdempotencyKey(paymentHeader, amountUsdc)
+  const row = await findSettlement(idempotencyKey)
+  if (row?.status !== 'settled' || !row.hold_id) return undefined
+  return { idempotencyKey, holdId: row.hold_id }
+}
+
+/**
+ * Record which reservation a settled (non-hold) payment proof paid for.
+ *
+ * A proof authorizes at most one reservation: binding is a one-time write, and
+ * an attempt to bind the same proof to a second reservation is a conflict.
+ */
+export async function bindSettlementToReservation(
+  idempotencyKey: string,
+  reservationId: string,
+  /**
+   * Transaction that inserted the reservation. Passing it makes the bind
+   * atomic with the insert: a proof already bound elsewhere rolls the
+   * reservation back instead of leaving it behind unpayable.
+   */
+  client: Queryable = db
+): Promise<void> {
+  const updated = await client.query(
+    `UPDATE safetrust.x402_settlements
+        SET reservation_id = $2, updated_at = NOW()
+      WHERE idempotency_key = $1
+        AND status = 'settled'
+        AND reservation_id IS NULL`,
+    [idempotencyKey, reservationId]
+  )
+
+  if ((updated.rowCount ?? 0) > 0) return
+
+  const current = await findSettlement(idempotencyKey, client)
+  if (current?.reservation_id && current.reservation_id !== reservationId) {
+    throw new ConflictError(
+      'Payment proof was already used for a different reservation',
+      { code: 'settlement_reservation_mismatch' }
+    )
+  }
+}
+
+function isFreshPending(row: SettlementRow | undefined): boolean {
+  if (!row || row.status !== 'pending') return false
+  const updatedAt = new Date(row.updated_at).getTime()
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt < SETTLEMENT_PENDING_TIMEOUT_MS
+}
+
+/**
+ * A payment proof is bound to the hold it paid for. Reusing it for another
+ * hold — or for a hold-less booking when it already bought a hold — is a
+ * conflict.
+ */
+function assertHoldBinding(row: SettlementRow, holdId: string | null | undefined): void {
+  if (!holdId) {
+    if (row.hold_id) {
+      throw new ConflictError('Payment proof was already used for a hold', {
+        code: 'settlement_hold_mismatch',
+      })
+    }
+    return
+  }
+  if (row.hold_id !== holdId) {
+    throw new ConflictError('Payment proof was already used for a different hold', {
+      code: 'settlement_hold_mismatch',
+    })
+  }
+}
+
+/**
+ * Mark an attempt failed, but only for the claim that still owns the row. A
+ * request that lost the row to a takeover has a stale claim token, so it can
+ * never overwrite the newer attempt's outcome.
+ */
+async function markFailed(
+  idempotencyKey: string,
+  reason: string,
+  claimToken: string
+): Promise<void> {
+  try {
+    await db.query(
+      `UPDATE safetrust.x402_settlements
+          SET status = 'failed', error = $2, updated_at = NOW()
+        WHERE idempotency_key = $1
+          AND claim_token = $3
+          AND status <> 'settled'`,
+      [idempotencyKey, reason, claimToken]
+    )
+  } catch (error) {
+    logger.error('x402.settlement_persist_failed', { idempotencyKey, error })
+  }
+}
+
+/**
+ * Verify-and-settle the booking fee synchronously and persist the outcome.
+ *
+ * - A previously `settled` payment returns its stored hash without charging again,
+ *   provided it settled the same hold.
+ * - A fresh `pending` row (another request in flight) is a conflict.
+ * - Any failure is persisted and surfaced as an error, so the caller never
+ *   reports a booking as paid when settlement is unconfirmed.
+ */
+export async function settleBookingFee(
+  input: X402SettlementInput
+): Promise<X402SettlementReceipt> {
+  const idempotencyKey = settlementIdempotencyKey(input.paymentHeader, input.amountUsdc)
+  const purpose = input.purpose ?? 'booking_fee'
+  const holdId = input.holdId ?? null
+  const existing = await findSettlement(idempotencyKey)
+
+  if (existing?.status === 'settled') {
+    assertHoldBinding(existing, holdId)
+    logger.info('x402.settlement_reused', { idempotencyKey, purpose })
+    return {
+      idempotencyKey,
+      transactionHash: existing.tx_hash,
+      reused: true,
+      reservationId: existing.reservation_id,
+    }
+  }
+
+  if (isFreshPending(existing)) {
+    throw new ConflictError('Payment settlement is already in progress', {
+      code: 'settlement_pending',
+    })
+  }
+
+  // Ownership token for this attempt: only the holder may later mark the row
+  // failed, so a request that was superseded cannot record a stale outcome.
+  let claimToken: string | undefined
+
+  if (existing) {
+    // An unsettled row may adopt this hold, but never a different one.
+    if (holdId && existing.hold_id && existing.hold_id !== holdId) {
+      throw new ConflictError('Payment proof was already used for a different hold', {
+        code: 'settlement_hold_mismatch',
+      })
+    }
+    // Conditional claim: only take over a row that is not settled and is not a
+    // fresh pending attempt. Checking the affected row count makes the claim
+    // atomic, so two concurrent retries cannot both settle.
+    const claimed = await db.query<{ claim_token: string }>(
+      `UPDATE safetrust.x402_settlements
+          SET status = 'pending',
+              error = NULL,
+              attempts = attempts + 1,
+              hold_id = COALESCE($3, hold_id),
+              claim_token = gen_random_uuid(),
+              updated_at = NOW()
+        WHERE idempotency_key = $1
+          AND status <> 'settled'
+          AND (status <> 'pending'
+               OR updated_at <= NOW() - ($2 || ' milliseconds')::interval)
+        RETURNING claim_token`,
+      [idempotencyKey, String(SETTLEMENT_PENDING_TIMEOUT_MS), holdId]
+    )
+
+    if ((claimed.rowCount ?? 0) === 0) {
+      // Someone else won the claim, or the row settled in the meantime.
+      const current = await findSettlement(idempotencyKey)
+      if (current?.status === 'settled') {
+        assertHoldBinding(current, holdId)
+        logger.info('x402.settlement_reused', { idempotencyKey, purpose })
+        return {
+          idempotencyKey,
+          transactionHash: current.tx_hash,
+          reused: true,
+          reservationId: current.reservation_id,
+        }
+      }
+      throw new ConflictError('Payment settlement is already in progress', {
+        code: 'settlement_pending',
+      })
+    }
+
+    claimToken = claimed.rows[0]?.claim_token
+  } else {
+    const inserted = await db.query<{ id: string; claim_token: string }>(
+      `INSERT INTO safetrust.x402_settlements
+         (idempotency_key, purpose, amount_usdc, network, payer_address, hold_id, status, attempts)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending', 1)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING id, claim_token`,
+      [
+        idempotencyKey,
+        purpose,
+        input.amountUsdc,
+        input.network ?? null,
+        input.payer ?? null,
+        holdId,
+      ]
+    )
+    if ((inserted.rowCount ?? 0) === 0) {
+      const concurrent = await findSettlement(idempotencyKey)
+      if (concurrent?.status === 'settled') {
+        assertHoldBinding(concurrent, holdId)
+        return {
+          idempotencyKey,
+          transactionHash: concurrent.tx_hash,
+          reused: true,
+          reservationId: concurrent.reservation_id,
+        }
+      }
+      throw new ConflictError('Payment settlement is already in progress', {
+        code: 'settlement_pending',
+      })
+    }
+
+    claimToken = inserted.rows[0]?.claim_token
+  }
+
+  if (!claimToken) {
+    // Defensive: without a token the attempt cannot record any outcome, so it
+    // must not call the facilitator and charge a guest it cannot attribute.
+    throw new ServiceUnavailableError('x402 settlement could not claim the payment')
+  }
+
+  const engine = getX402Engine()
+  if (!engine?.settleX402Payment) {
+    const reason = 'x402 settlement processor is unavailable'
+    await markFailed(idempotencyKey, reason, claimToken)
+    throw new ServiceUnavailableError(reason)
+  }
+
+  let outcome: X402SettlementResult
+  try {
+    // Verification and the facilitator settlement round-trip both happen here;
+    // the promise resolves only once settlement is confirmed.
+    outcome = await engine.settleX402Payment(input.paymentHeader, input.amountUsdc)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    await markFailed(idempotencyKey, reason, claimToken)
+    logger.error('x402.settlement_error', { idempotencyKey, purpose, error })
+    throw new ServiceUnavailableError('x402 settlement failed')
+  }
+
+  if (!outcome.settled) {
+    const reason = outcome.error ?? 'x402 settlement was declined'
+    await markFailed(idempotencyKey, reason, claimToken)
+    logger.warn('x402.settlement_declined', { idempotencyKey, purpose, reason })
+    throw new PaymentRequiredError(reason, { code: 'settlement_failed' })
+  }
+
+  const transactionHash = outcome.transaction_hash ?? null
+  await db.query(
+    `UPDATE safetrust.x402_settlements
+        SET status = 'settled',
+            tx_hash = $2,
+            payer_address = COALESCE($3, payer_address),
+            network = COALESCE($4, network),
+            hold_id = COALESCE($5, hold_id),
+            error = NULL,
+            updated_at = NOW()
+      WHERE idempotency_key = $1`,
+    [
+      idempotencyKey,
+      transactionHash,
+      input.payer ?? null,
+      input.network || outcome.network || null,
+      holdId,
+    ]
+  )
+
+  logger.info('x402.settled', { idempotencyKey, purpose, transactionHash })
+  return { idempotencyKey, transactionHash, reused: false, reservationId: null }
+}
