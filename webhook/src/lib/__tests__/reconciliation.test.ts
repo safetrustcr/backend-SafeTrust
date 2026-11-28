@@ -20,12 +20,11 @@ jest.mock('../../services/db', () => ({
   query: jest.fn(),
 }));
 
-// ─── Mock Node's built-in https so no real network calls fire ─────────────────
-// Explicit factory (not bare automock): Node's automock of the core `https`
-// module does not reliably replace `request` with a jest.fn on Node 18+, so
-// `https.request.mockImplementation` would throw. The factory guarantees it.
-jest.mock('https', () => ({ request: jest.fn() }));
-const https = require('https');
+// ─── Mock global.fetch so no real network calls fire ──────────────────────────
+// The HTTP boundary moved to the shared fetch client
+// (`clients/http-client.ts`), so the mock seam is `global.fetch`, not Node's
+// `https` module. `mockHttpResponse` installs a jest.fn there; tests read
+// it via `global.fetch` / `mockFetch()` and `jest.clearAllMocks()` resets it.
 
 const db = require('../../services/db');
 const {
@@ -64,30 +63,26 @@ function makeEscrow(overrides = {}) {
 }
 
 /**
- * Make `https.request` return a fake response with the given body/statusCode.
+ * Make `global.fetch` resolve with a fake response carrying the given body
+ * and statusCode. The fetch client only touches `ok`, `status`, `json()`
+ * and `text()` on success responses; on error it reads `text()`.
  */
 function mockHttpResponse(body: unknown, statusCode = 200) {
-  const { EventEmitter } = require('events');
-
-  const fakeRes = new EventEmitter();
-  fakeRes.statusCode = statusCode;
-  fakeRes.setEncoding = jest.fn();
-
-  const fakeReq = new EventEmitter();
-  fakeReq.setTimeout = jest.fn();
-  fakeReq.destroy = jest.fn();
-  fakeReq.end = jest.fn(() => {
-    // Emit data + end on the response in the next tick
-    process.nextTick(() => {
-      fakeRes.emit('data', typeof body === 'string' ? body : JSON.stringify(body));
-      fakeRes.emit('end');
-    });
-  });
-
-  https.request.mockImplementation((_opts: unknown, cb: (response: unknown) => void) => {
-    cb(fakeRes);
-    return fakeReq;
-  });
+  const isOk = statusCode >= 200 && statusCode < 300;
+  const mockFetch = jest.fn(async () => ({
+    ok: isOk,
+    status: statusCode,
+    json: async () => {
+      if (typeof body === 'string') {
+        // `response.json()` on a non-JSON string throws, like the real API.
+        throw new SyntaxError(`Unexpected token in JSON at position 0 — body starts with ${JSON.stringify(body.slice(0, 10))}`);
+      }
+      return body;
+    },
+    text: async () => (typeof body === 'string' ? body : JSON.stringify(body ?? '')),
+  }));
+  global.fetch = mockFetch as unknown as typeof fetch;
+  return mockFetch;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -235,7 +230,7 @@ describe('fetchEscrowsByContractIds', () => {
     mockHttpResponse('not-json!!');
 
     await expect(fetchEscrowsByContractIds(['X'])).rejects.toThrow(
-      'Failed to parse'
+      'invalid JSON'
     );
   });
 
@@ -353,14 +348,9 @@ describe('syncChunk', () => {
   });
 
   it('propagates a thrown error when the HTTP call itself fails', async () => {
-    const { EventEmitter } = require('events');
-    const fakeReq = new EventEmitter();
-    fakeReq.setTimeout = jest.fn();
-    fakeReq.destroy = jest.fn();
-    fakeReq.end = jest.fn(() => {
-      process.nextTick(() => fakeReq.emit('error', new Error('ECONNREFUSED')));
-    });
-    https.request.mockImplementation(() => fakeReq);
+    global.fetch = jest.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
 
     await expect(syncChunk(['X'])).rejects.toThrow('ECONNREFUSED');
   });

@@ -6,7 +6,7 @@ import {
   getX402Config,
   getActiveX402ResourceServer,
 } from '../../config/x402'
-import { requireX402Enabled } from '../../middleware/x402-payment.middleware'
+import { ServiceUnavailableError } from '../../utils/errors'
 
 const router = Router()
 
@@ -80,8 +80,18 @@ export function setPaymentMiddleware(mw: RequestHandler | null): void {
 
 router.post(
   '/api/escrows/initialize',
-  requireX402Enabled,
   (req: Request, res: Response, next: NextFunction) => {
+    if (process.env.X402_ENABLED !== 'true') {
+      // Fails closed with a typed 503 so the shared error handler owns the
+      // response shape (Issue #815): route modules never build error bodies.
+      next(
+        new ServiceUnavailableError('x402 payments are disabled', {
+          code: 'feature_unavailable',
+        })
+      )
+      return
+    }
+
     // The paid path trusts only PAYMENT-SIGNATURE (x402 v2).
     // Discard legacy x-payment so it cannot satisfy the payment gate.
     delete req.headers['x-payment']
