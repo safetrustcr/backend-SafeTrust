@@ -1,4 +1,4 @@
--- seeds/hotel_industry/1778100000001_hotel_conversations_seed.sql
+-- seeds/hotel_industry/1778300000000_hotel_conversations_seed.sql
 
 DO $$
 DECLARE
@@ -20,7 +20,7 @@ BEGIN
   SELECT r.id, u.id
     INTO v_res1_id, v_guest1_id
     FROM hotel_industry.reservations r
-    JOIN hotel_industry.rooms rm ON rm.room_id = r.room_id
+    JOIN hotel_industry.rooms rm ON rm.id = r.room_id
     JOIN hotel_industry.hotels h ON h.id = rm.hotel_id
     JOIN hotel_industry.users_wallets w ON w.wallet_address = r.wallet_address
     JOIN hotel_industry.users u ON u.id = w.user_id
@@ -32,7 +32,7 @@ BEGIN
   SELECT r.id, u.id
     INTO v_res2_id, v_guest2_id
     FROM hotel_industry.reservations r
-    JOIN hotel_industry.rooms rm ON rm.room_id = r.room_id
+    JOIN hotel_industry.rooms rm ON rm.id = r.room_id
     JOIN hotel_industry.hotels h ON h.id = rm.hotel_id
     JOIN hotel_industry.users_wallets w ON w.wallet_address = r.wallet_address
     JOIN hotel_industry.users u ON u.id = w.user_id
@@ -40,7 +40,7 @@ BEGIN
       AND rm.room_number = '101'
       AND r.check_in = '2024-08-28 15:00:00+00';
 
-  -- Fixed escrow transaction: contract-2 (CONFIRMED)
+  -- Fixed escrow transaction: contract-2 (FUNDED)
   SELECT id INTO v_escrow_id
     FROM hotel_industry.escrow_transactions
     WHERE contract_id = 'contract-2';
