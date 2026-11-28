@@ -1,31 +1,43 @@
 import { readdirSync, readFileSync } from 'fs'
 import { join, relative } from 'path'
 
-// The admin Hasura client bypasses role permissions, so route handlers must
-// reach it only through service-layer methods (ARCH-A11 / #713).
+// The webhook must talk to PostgreSQL only through SQL repositories (`db/pool`),
+// never by sending GraphQL requests to Hasura or using the Hasura admin secret.
 
-const ROUTES_DIR = join(__dirname, '..')
-const ADMIN_CLIENT_MODULE = /(['"])[./]*(?:[^'"]*\/)?services\/(?:hasura|tenant-scoped-hasura)\1/
+const SRC_DIR = join(__dirname, '..', '..')
 
-function routeSourceFiles(dir: string): string[] {
+const FORBIDDEN_HASURA_PATTERNS = [
+  /(['"])[./]*(?:[^'"]*\/)?services\/(?:hasura|tenant-scoped-hasura)\1/,
+  /\bhasuraRequest\b/,
+  /\bhasuraTenantRequest\b/,
+  /x-hasura-admin-secret/i,
+  /\/v1\/graphql\b/,
+  /\bHASURA_ADMIN_SECRET\b/,
+  /\bHASURA_GRAPHQL_ADMIN_SECRET\b/,
+]
+
+function productionSourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const fullPath = join(dir, entry.name)
     if (entry.isDirectory()) {
-      return entry.name === '__tests__' ? [] : routeSourceFiles(fullPath)
+      return entry.name === '__tests__' ? [] : productionSourceFiles(fullPath)
     }
-    return /\.ts$/.test(entry.name) ? [fullPath] : []
+    return /\.ts$/.test(entry.name) && !/\.test\.ts$/.test(entry.name) ? [fullPath] : []
   })
 }
 
-describe('admin Hasura client boundary', () => {
-  it('finds route sources to check', () => {
-    expect(routeSourceFiles(ROUTES_DIR).length).toBeGreaterThan(0)
+describe('single data-access path boundary (no Hasura GraphQL)', () => {
+  it('finds production source files under webhook/src to check', () => {
+    expect(productionSourceFiles(SRC_DIR).length).toBeGreaterThan(0)
   })
 
-  it('is not imported by any route handler or route module', () => {
-    const offenders = routeSourceFiles(ROUTES_DIR)
-      .filter((file) => ADMIN_CLIENT_MODULE.test(readFileSync(file, 'utf8')))
-      .map((file) => relative(ROUTES_DIR, file))
+  it('forbids sending GraphQL to Hasura or using the admin secret anywhere under webhook/src', () => {
+    const offenders = productionSourceFiles(SRC_DIR)
+      .filter((file) => {
+        const content = readFileSync(file, 'utf8')
+        return FORBIDDEN_HASURA_PATTERNS.some((pattern) => pattern.test(content))
+      })
+      .map((file) => relative(SRC_DIR, file))
 
     expect(offenders).toEqual([])
   })

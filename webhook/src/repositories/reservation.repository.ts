@@ -1,7 +1,13 @@
-import { hasuraTenantRequest } from '../services/tenant-scoped-hasura'
-import { query } from '../services/db'
+import { query } from '../db/pool'
 import { PoolClient } from 'pg'
 import type { Reservation } from '@safetrust/types'
+import { TenantMismatchError } from '../utils/errors'
+
+function assertVerifiedTenant(tenantId: string): void {
+  if (typeof tenantId !== 'string' || tenantId.length === 0) {
+    throw new TenantMismatchError('A verified tenant is required for this write')
+  }
+}
 
 /**
  * `reservation.total_amount` disposition: NON-BINDING QUOTE.
@@ -47,69 +53,73 @@ export interface CreateReservationRecordInput {
   assetCode: string
 }
 
-const CREATE_RESERVATION_MUTATION = `
-  mutation CreateReservation($object: safetrust_reservations_insert_input!) {
-    insert_safetrust_reservations_one(object: $object) {
-      id
-      apartmentId
-      guestId
-      status
-      checkInDate
-      checkOutDate
-      totalAmount
-      assetCode
-      escrowId
-      createdAt
-      tenantId
-    }
-  }
-`
-
 export async function createReservation(
   input: CreateReservationRecordInput
 ): Promise<Reservation | null> {
-  const data = await hasuraTenantRequest<{
-    insert_safetrust_reservations_one: {
-      id: string
-      apartmentId: string
-      guestId: string
-      status: string
-      checkInDate: string
-      checkOutDate: string
-      totalAmount: number
-      assetCode: string
-      escrowId: string | null
-      createdAt?: string
-      tenantId: string
-    } | null
-  }>(input.tenantId, CREATE_RESERVATION_MUTATION, {
-    object: {
-      tenantId: input.tenantId,
-      apartmentId: input.apartmentId,
-      guestId: input.guestId,
-      checkInDate: input.checkInDate,
-      checkOutDate: input.checkOutDate,
-      totalAmount: input.totalAmount,
-      assetCode: input.assetCode,
-      status: 'pending',
-    },
-  })
+  assertVerifiedTenant(input.tenantId)
 
-  const reservation = data?.insert_safetrust_reservations_one
+  const result = await query<{
+    id: string
+    apartment_id: string
+    guest_id: string
+    status: string
+    check_in_date: string | Date
+    check_out_date: string | Date
+    total_amount: number | string
+    asset_code: string
+    escrow_id: string | null
+    created_at?: string | Date
+    tenant_id: string
+  }>(
+    `INSERT INTO safetrust.reservations (
+       tenant_id,
+       apartment_id,
+       guest_id,
+       check_in_date,
+       check_out_date,
+       total_amount,
+       asset_code,
+       status
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+     RETURNING
+       id,
+       apartment_id,
+       guest_id,
+       status,
+       check_in_date,
+       check_out_date,
+       total_amount,
+       asset_code,
+       escrow_id,
+       created_at,
+       tenant_id`,
+    [
+      input.tenantId,
+      input.apartmentId,
+      input.guestId,
+      input.checkInDate,
+      input.checkOutDate,
+      input.totalAmount,
+      input.assetCode,
+    ]
+  )
+
+  const reservation = result.rows[0]
   if (!reservation) return null
 
   return {
     id: reservation.id,
-    apartment_id: reservation.apartmentId,
-    guest_id: reservation.guestId,
+    apartment_id: reservation.apartment_id,
+    guest_id: reservation.guest_id,
     status: reservation.status,
-    check_in_date: reservation.checkInDate,
-    check_out_date: reservation.checkOutDate,
-    total_amount: reservation.totalAmount,
-    asset_code: reservation.assetCode,
-    escrow_id: reservation.escrowId,
-    created_at: reservation.createdAt,
-    tenant_id: reservation.tenantId,
+    check_in_date: reservation.check_in_date instanceof Date ? reservation.check_in_date.toISOString() : reservation.check_in_date,
+    check_out_date: reservation.check_out_date instanceof Date ? reservation.check_out_date.toISOString() : reservation.check_out_date,
+    total_amount: Number(reservation.total_amount),
+    asset_code: reservation.asset_code,
+    escrow_id: reservation.escrow_id,
+    created_at: reservation.created_at instanceof Date ? reservation.created_at.toISOString() : reservation.created_at,
+    tenant_id: reservation.tenant_id,
   }
 }
 
@@ -133,35 +143,21 @@ export async function linkEscrowToReservation(
   escrowId: string,
   tenantId: string
 ): Promise<void> {
-  const mutation = `
-    mutation LinkEscrowToReservation($reservationId: uuid!, $escrowId: uuid!, $tenantId: String!) {
-      update_reservations: update_safetrust_reservations(
-        where: {
-          id: { _eq: $reservationId }
-          tenantId: { _eq: $tenantId }
-        }
-        _set: {
-          escrowId: $escrowId,
-          status: "escrow_created",
-          updatedAt: "now()"
-        }
-      ) {
-        affected_rows
-      }
-    }
-  `
+  assertVerifiedTenant(tenantId)
 
-  const data = await hasuraTenantRequest<{
-    update_reservations?: { affected_rows: number }
-  }>(tenantId, mutation, {
-    reservationId,
-    escrowId,
-    tenantId,
-  })
+  const result = await query(
+    `UPDATE safetrust.reservations
+     SET escrow_id = $1,
+         status = 'escrow_created',
+         updated_at = NOW()
+     WHERE id = $2
+       AND tenant_id = $3`,
+    [escrowId, reservationId, tenantId]
+  )
 
   // No row means the reservation is missing or belongs to another tenant.
   // Throw so the caller leaves the webhook event unprocessed for a retry.
-  if (!data?.update_reservations?.affected_rows) {
+  if (!result.rowCount) {
     throw new Error(
       `Reservation ${reservationId} was not linked: no matching reservation for tenant ${tenantId}`
     )
@@ -176,39 +172,24 @@ export async function mirrorReservationStatus(
   tenantId: string,
   client?: TransactionClient
 ): Promise<void> {
+  assertVerifiedTenant(tenantId)
+
+  const sql = `
+    UPDATE safetrust.reservations
+    SET
+      status = $1,
+      updated_at = NOW()
+    WHERE escrow_id = $2
+      AND tenant_id = $3
+  `
+  const params = [status, escrowId, tenantId]
+
   if (client) {
-    await client.query(
-      `
-        UPDATE safetrust.reservations
-        SET
-          status = $1,
-          updated_at = NOW()
-        WHERE escrow_id = $2
-          AND tenant_id = $3
-      `,
-      [status, escrowId, tenantId]
-    )
+    await client.query(sql, params)
     return
   }
 
-  const mutation = `
-    mutation MirrorStatusToReservation($escrowId: uuid!, $status: String!, $tenantId: String!) {
-      update_reservations: update_safetrust_reservations(
-        where: {
-          escrowId: { _eq: $escrowId }
-          tenantId: { _eq: $tenantId }
-        }
-        _set: {
-          status: $status
-          updatedAt: "now()"
-        }
-      ) {
-        returning { id status }
-      }
-    }
-  `
-
-  await hasuraTenantRequest(tenantId, mutation, { escrowId, status, tenantId })
+  await query(sql, params)
 }
 
 export async function mirrorReservationStatusInTransaction(

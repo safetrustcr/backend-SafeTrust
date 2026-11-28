@@ -1,6 +1,6 @@
 'use strict'
 
-import { withTransaction } from './db'
+import { withTransaction } from '../db/pool'
 import {
   HotelMessage,
   insertHotelMessage,

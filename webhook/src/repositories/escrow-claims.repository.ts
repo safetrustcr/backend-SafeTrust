@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg'
-import { connect, pool } from '../services/db'
+import { connect, pool } from '../db/pool'
 
 export interface EscrowClaimRow {
   id: string

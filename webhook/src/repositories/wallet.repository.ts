@@ -1,6 +1,6 @@
 import type { PoolClient, QueryResultRow } from 'pg'
 import type { ChainType } from '@safetrust/types'
-import { connect, query } from '../services/db'
+import { connect, query } from '../db/pool'
 
 export interface WalletRow extends QueryResultRow {
   wallet_address: string

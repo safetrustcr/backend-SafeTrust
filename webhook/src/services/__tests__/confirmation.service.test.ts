@@ -14,7 +14,7 @@ import {
   MAX_ATTEMPTS,
 } from '../confirmation.service'
 import { assertSignedXdrCannotAdvanceStatus, EscrowValidationError } from '../escrow.service'
-import db from '../db'
+import db from '../../db/pool'
 import { Account, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk'
 
 function buildSignedXdr(): { xdr: string; hash: string } {
@@ -30,7 +30,7 @@ function buildSignedXdr(): { xdr: string; hash: string } {
   return { xdr: tx.toXDR(), hash: tx.hash().toString('hex') }
 }
 
-jest.mock('../db', () => {
+jest.mock('../../db/pool', () => {
   const query = jest.fn()
   return {
     query,

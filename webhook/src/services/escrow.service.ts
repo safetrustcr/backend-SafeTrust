@@ -1,11 +1,11 @@
 import { PoolClient } from 'pg';
-import { AppError, ConflictError, NotFoundError, ServiceUnavailableError } from '../utils/errors';
-import db, { withTransaction, query } from './db';
+import { AppError, ConflictError, NotFoundError, ServiceUnavailableError, TenantMismatchError } from '../utils/errors';
+import db, { withTransaction, query } from '../db/pool';
 import { getPlatformTenantId } from '../config/tenant';
 import { mirrorReservationStatus } from '../repositories/reservation.repository';
 import { EscrowEventType, EscrowStatus } from '../types/escrow.types';
 import { InitializeEscrowPayload } from '@safetrust/types';
-import { hasuraTenantRequest, TenantMismatchError } from './tenant-scoped-hasura';
+import { upsertEscrow } from '../repositories/escrow.repository';
 import {
   findReservationTenantId,
   linkEscrowToReservation,
@@ -200,57 +200,38 @@ export function validateEscrowInitializationPayload(
 }
 
 /**
- * Insert a new escrow record into trustless_work_escrows via Hasura.
+ * Insert a new escrow record into trustless_work_escrows via SQL repository.
  * Returns the created escrow record.
  */
 export async function persistEscrow(
   payload: EscrowInitPayload,
   tenantId: string
 ): Promise<TrustlessWorkEscrow> {
-  const mutation = `
-    mutation InitializeEscrow($object: trustless_work_escrows_insert_input!) {
-      insert_trustless_work_escrows_one(
-        object: $object
-        on_conflict: {
-          constraint: trustless_work_escrows_contract_id_key
-          update_columns: [contractId]
-        }
-      ) {
-        id
-        contractId
-        status
-        createdAt
-        tenantId
-      }
-    }
-  `;
+  if (typeof tenantId !== 'string' || tenantId.length === 0) {
+    throw new TenantMismatchError('A verified tenant is required for this write');
+  }
 
-  const data = await hasuraTenantRequest<{
-    insert_trustless_work_escrows_one?: TrustlessWorkEscrow;
-  }>(tenantId, mutation, {
-    object: {
-      contractId: payload.contract_id,
-      marker: payload.marker,
-      approver: payload.approver,
-      releaser: payload.releaser,
-      resolver: payload.resolver,
-      escrowType: payload.escrow_type,
-      status: 'created',
-      assetCode: payload.asset_code,
-      assetIssuer: payload.asset_issuer,
-      amount: payload.amount,
-      balance: 0,
-      tenantId,
-      escrowMetadata: buildInitialEscrowMetadata(payload)
-    },
+  const escrow = await upsertEscrow({
+    contractId: payload.contract_id,
+    marker: payload.marker,
+    approver: payload.approver,
+    releaser: payload.releaser,
+    resolver: payload.resolver,
+    escrowType: payload.escrow_type,
+    status: 'created',
+    assetCode: payload.asset_code,
+    assetIssuer: payload.asset_issuer,
+    amount: Number(payload.amount),
+    balance: 0,
+    tenantId,
+    escrowMetadata: buildInitialEscrowMetadata(payload),
   });
 
-  const escrow = data.insert_trustless_work_escrows_one;
   if (!escrow) {
     throw new Error('Failed to insert escrow record');
   }
 
-  return escrow;
+  return escrow as TrustlessWorkEscrow;
 }
 
 function buildInitialEscrowMetadata(payload: EscrowInitPayload): Record<string, unknown> {

@@ -3,7 +3,7 @@ import {
   createReservation as createReservationRecord,
   type CreateReservationRecordInput,
 } from '../repositories/reservation.repository'
-import { TenantMismatchError } from './tenant-scoped-hasura'
+import { TenantMismatchError } from '../utils/errors'
 
 export { TenantMismatchError }
 

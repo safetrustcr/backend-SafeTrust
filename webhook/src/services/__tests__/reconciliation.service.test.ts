@@ -1,7 +1,6 @@
 'use strict'
 
-import db from '../db'
-import { hasuraRequest } from '../hasura'
+import db from '../../db/pool'
 import {
   fetchEscrowsByContractIds,
 
@@ -21,12 +20,8 @@ import {
   DriftSummary,
 } from '../reconciliation.service'
 
-jest.mock('../db', () => ({
+jest.mock('../../db/pool', () => ({
   query: jest.fn(),
-}))
-
-jest.mock('../hasura', () => ({
-  hasuraRequest: jest.fn(),
 }))
 
 jest.mock('../../lib/source-adapters/tw.adapter', () => ({
@@ -283,7 +278,7 @@ describe('reconciliation.service', () => {
 
       expect(mockQueryEscrowStateBatch).toHaveBeenCalledWith('c1', 'testnet')
       // Auto-correction is disabled by default — Hasura mutation is NEVER called
-      expect(hasuraRequest).not.toHaveBeenCalled()
+      expect(db.query).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE safetrust.trustless_work_escrows'), expect.anything())
       expect(result).toEqual({
         enabled: true,
         drift: 1,
@@ -334,18 +329,14 @@ describe('reconciliation.service', () => {
           },
         ],
       })
-      ;(hasuraRequest as jest.Mock).mockResolvedValueOnce({ affected_rows: 1 })
+      ;(db.query as jest.Mock).mockResolvedValueOnce({ rowCount: 1 })
 
       const result = await validateSorobanDrift(['c1'], 'testnet')
 
       expect(mockQueryEscrowStateBatch).toHaveBeenCalledWith('c1', 'testnet')
-      expect(hasuraRequest).toHaveBeenCalledWith(
-        expect.stringContaining('mutation CorrectDriftFromSoroban'),
-        {
-          contractId: 'c1',
-          status: 'COMPLETED',
-          balance: 0,
-        }
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE safetrust.trustless_work_escrows'),
+        ['COMPLETED', 0, 'c1']
       )
       expect(result).toEqual({
         enabled: true,
@@ -397,17 +388,20 @@ describe('reconciliation.service', () => {
           },
         ],
       })
-      ;(hasuraRequest as jest.Mock).mockResolvedValueOnce({ affected_rows: 1 })
+      ;(db.query as jest.Mock).mockResolvedValueOnce({ rowCount: 1 })
 
       const result = await validateSorobanDrift(['c1'], 'testnet', {
         skipStatusCorrectionFor: ['c1'],
       })
 
-      const [mutation, variables] = (hasuraRequest as jest.Mock).mock.calls[0]
-      expect(mutation).not.toContain('$status')
-      expect(mutation).not.toContain('status:')
-      expect(mutation).toContain('balance:')
-      expect(variables).toEqual({ contractId: 'c1', balance: 0.5 })
+      const updateCall = (db.query as jest.Mock).mock.calls.find(([q]: [string]) =>
+        q.includes('UPDATE safetrust.trustless_work_escrows')
+      )
+      expect(updateCall).toBeDefined()
+      const [sql, params] = updateCall
+      expect(sql).not.toContain('status =')
+      expect(sql).toContain('balance =')
+      expect(params).toEqual([0.5, 'c1'])
       expect(result).toEqual({
         enabled: true,
         drift: 1,
@@ -445,7 +439,7 @@ describe('reconciliation.service', () => {
 
       const result = await validateSorobanDrift(['c1'], 'testnet')
 
-      expect(hasuraRequest).not.toHaveBeenCalled()
+      expect(db.query).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE safetrust.trustless_work_escrows'), expect.anything())
       expect(result.drift).toBe(1)
       expect(result.corrected).toBe(0)
     })
@@ -491,7 +485,7 @@ describe('reconciliation.service', () => {
       )
 
       expect(result).toEqual({ drifted: 0, corrected: 0, unresolved: 1 })
-      expect(hasuraRequest).not.toHaveBeenCalled()
+      expect(db.query).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE safetrust.trustless_work_escrows'), expect.anything())
     })
 
     it('never auto-corrects or mutates DB when adapter fails or getHealth alone is returned (AC 1 & 9)', async () => {
@@ -517,7 +511,7 @@ describe('reconciliation.service', () => {
       )
 
       // Verifies getHealth alone NEVER triggers status, balance, or participant updates
-      expect(hasuraRequest).not.toHaveBeenCalled()
+      expect(db.query).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE safetrust.trustless_work_escrows'), expect.anything())
       expect(result.corrected).toBe(0)
       expect(result.unresolved).toBe(1)
     })

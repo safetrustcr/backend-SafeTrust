@@ -1,8 +1,8 @@
 'use strict';
 
-// Mock hasura service before imports.
-jest.mock('../../services/hasura', () => ({
-  hasuraRequest: jest.fn(),
+// Mock escrow repository before imports.
+jest.mock('../../repositories/escrow.repository', () => ({
+  getEscrowByContractId: jest.fn(),
 }));
 
 const mockedClient = {
@@ -10,7 +10,7 @@ const mockedClient = {
   release: jest.fn(),
 };
 
-jest.mock('../../services/db', () => ({
+jest.mock('../../db/pool', () => ({
   connect: jest.fn(async () => mockedClient),
   withTransaction: jest.fn(async (fn: (client: any) => Promise<any>) => {
     await mockedClient.query('BEGIN');
@@ -47,9 +47,11 @@ import {
   EscrowStateConflictError,
   MilestoneNotFoundError,
 } from '../../services/milestone.service';
-import { hasuraRequest } from '../../services/hasura';
+import { getEscrowByContractId } from '../../repositories/escrow.repository';
 
-const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>;
+const mockedGetEscrowByContractId = getEscrowByContractId as jest.MockedFunction<
+  typeof getEscrowByContractId
+>;
 
 // ── validateApproveMilestonePayload ────────────────────────────────────────────
 
@@ -119,21 +121,20 @@ describe('lookupEscrowByContractId', () => {
   });
 
   it('returns the escrowId when found', async () => {
-    mockedHasuraRequest.mockResolvedValue({
-      trustless_work_escrows: [{ id: 'escrow-uuid-1' }],
+    mockedGetEscrowByContractId.mockResolvedValue({
+      id: 'escrow-uuid-1',
+      contractId: 'contract-1',
+      status: 'funded',
     });
 
     const result = await lookupEscrowByContractId('contract-1');
 
     expect(result.escrowId).toBe('escrow-uuid-1');
-    expect(mockedHasuraRequest).toHaveBeenCalledWith(
-      expect.stringContaining('GetEscrowId'),
-      expect.objectContaining({ contractId: 'contract-1' })
-    );
+    expect(mockedGetEscrowByContractId).toHaveBeenCalledWith('contract-1');
   });
 
   it('throws EscrowNotFoundError (404) when no escrow is found', async () => {
-    mockedHasuraRequest.mockResolvedValue({ trustless_work_escrows: [] });
+    mockedGetEscrowByContractId.mockResolvedValue(null);
 
     let caught: unknown;
     try {
@@ -146,22 +147,20 @@ describe('lookupEscrowByContractId', () => {
     expect((caught as EscrowNotFoundError).message).toBe('Escrow not found');
   });
 
-  it('throws EscrowNotFoundError when trustless_work_escrows is undefined', async () => {
-    mockedHasuraRequest.mockResolvedValue({});
+  it('throws EscrowNotFoundError when repository returns null', async () => {
+    mockedGetEscrowByContractId.mockResolvedValue(null);
 
     await expect(lookupEscrowByContractId('contract-1')).rejects.toBeInstanceOf(
       EscrowNotFoundError
     );
   });
 
-  it('propagates Hasura errors upward', async () => {
-    const err = Object.assign(new Error('Hasura request failed'), {
-      details: [{ message: 'connection timeout' }],
-    });
-    mockedHasuraRequest.mockRejectedValue(err);
+  it('propagates repository errors upward', async () => {
+    const err = new Error('Database request failed');
+    mockedGetEscrowByContractId.mockRejectedValue(err);
 
     await expect(lookupEscrowByContractId('contract-1')).rejects.toThrow(
-      'Hasura request failed'
+      'Database request failed'
     );
   });
 });

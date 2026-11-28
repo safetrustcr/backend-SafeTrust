@@ -3,23 +3,17 @@ import {
   insertHotelMessage,
   upsertHotelConversation,
 } from '../../repositories/hotel-conversation.repository'
-import { withTransaction } from '../db'
+import { withTransaction } from '../../db/pool'
 
 const mockClient = { query: jest.fn() }
 
-jest.mock('../db', () => ({
+jest.mock('../../db/pool', () => ({
   withTransaction: jest.fn(async (fn: (client: unknown) => Promise<unknown>) => fn(mockClient)),
 }))
 
 jest.mock('../../repositories/hotel-conversation.repository', () => ({
   upsertHotelConversation: jest.fn(),
   insertHotelMessage: jest.fn(),
-}))
-
-jest.mock('../hasura', () => ({
-  hasuraRequest: jest.fn(() => {
-    throw new Error('the conversation service must not use the admin Hasura client')
-  }),
 }))
 
 const mockedUpsert = upsertHotelConversation as jest.MockedFunction<typeof upsertHotelConversation>

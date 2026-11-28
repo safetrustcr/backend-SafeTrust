@@ -16,7 +16,7 @@ export {};
  */
 
 // ─── Mock the DB service before requiring the module under test ───────────────
-jest.mock('../../services/db', () => ({
+jest.mock('../../db/pool', () => ({
   query: jest.fn(),
 }));
 
@@ -26,7 +26,7 @@ jest.mock('../../services/db', () => ({
 // `https` module. `mockHttpResponse` installs a jest.fn there; tests read
 // it via `global.fetch` / `mockFetch()` and `jest.clearAllMocks()` resets it.
 
-const db = require('../../services/db');
+const db = require('../../db/pool');
 const {
   chunkArray,
   syncChunk,

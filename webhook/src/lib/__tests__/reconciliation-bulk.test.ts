@@ -16,9 +16,9 @@ type BulkUpsertArgs = Parameters<typeof import('../../../../crates/pg-bulk-upser
  * test seam so these run with zero Rust build.
  */
 
-jest.mock('../../services/db', () => ({ query: jest.fn() }));
+jest.mock('../../db/pool', () => ({ query: jest.fn() }));
 
-const db = require('../../services/db');
+const db = require('../../db/pool');
 const {
   upsertEscrows,
   upsertEscrowsBulk,

@@ -16,7 +16,7 @@ import {
 } from '../../services/escrow.service'
 import { StaleStateError, StateConflictError } from '../../lib/escrow-transitions'
 import { MilestoneNotFoundError, MilestoneValidationError } from '../../services/milestone.service'
-import { TenantMismatchError } from '../../services/tenant-scoped-hasura'
+import { TenantMismatchError } from '../errors'
 
 describe('AppError hierarchy', () => {
   it.each([

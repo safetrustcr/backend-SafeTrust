@@ -1,4 +1,4 @@
-import { pool } from './db'
+import { pool } from '../db/pool'
 import { logger } from '../middleware/logger'
 import { findUserByUid } from '../repositories/user.repository'
 import {

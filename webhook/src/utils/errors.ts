@@ -54,6 +54,13 @@ export class ForbiddenError extends AppError {
   }
 }
 
+export class TenantMismatchError extends ForbiddenError {
+  constructor(message = 'Tenant does not match the verified session tenant') {
+    super(message, { code: 'tenant_mismatch' })
+    this.name = 'TenantMismatchError'
+  }
+}
+
 export class NotFoundError extends AppError {
   constructor(message = 'Not found', options: AppErrorOptions = {}) {
     super(message, 404, { code: 'not_found', ...options })

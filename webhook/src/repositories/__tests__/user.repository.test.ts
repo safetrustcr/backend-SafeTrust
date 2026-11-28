@@ -1,7 +1,7 @@
-import { query } from '../../services/db'
+import { query } from '../../db/pool'
 import { syncUser } from '../user.repository'
 
-jest.mock('../../services/db', () => ({ query: jest.fn() }))
+jest.mock('../../db/pool', () => ({ query: jest.fn() }))
 
 describe('syncUser repository', () => {
   beforeEach(() => jest.clearAllMocks())

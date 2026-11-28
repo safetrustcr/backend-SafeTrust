@@ -1,4 +1,4 @@
-import { pool } from '../db'
+import { pool } from '../../db/pool'
 import {
   clearPrimaryWallets,
   deleteWalletChallenge,
@@ -13,7 +13,7 @@ import {
 } from '../../repositories/wallet.repository'
 import { makeWalletPrimary, unlinkUserWallet, verifyWalletChallenge } from '../wallet.service'
 
-jest.mock('../db', () => ({ pool: { connect: jest.fn() } }))
+jest.mock('../../db/pool', () => ({ pool: { connect: jest.fn() } }))
 jest.mock('../../repositories/wallet.repository', () => ({
   clearPrimaryWallets: jest.fn(),
   deleteWalletChallenge: jest.fn(),

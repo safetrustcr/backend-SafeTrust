@@ -1,11 +1,11 @@
 import { createReservation, TenantMismatchError } from '../reservation.service'
-import { hasuraRequest } from '../hasura'
+import { query } from '../../db/pool'
 
-jest.mock('../hasura', () => ({
-  hasuraRequest: jest.fn(),
+jest.mock('../../db/pool', () => ({
+  query: jest.fn(),
 }))
 
-const mockedHasuraRequest = hasuraRequest as jest.MockedFunction<typeof hasuraRequest>
+const mockedQuery = query as jest.MockedFunction<typeof query>
 
 function input(overrides: Record<string, unknown> = {}) {
   return {
@@ -31,20 +31,23 @@ describe('reservation.service createReservation', () => {
   })
 
   it('writes the session tenant into the insert payload', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      insert_safetrust_reservations_one: {
-        id: 'res-1',
-        apartmentId: 'apt-1',
-        guestId: 'guest-123',
-        status: 'pending',
-        checkInDate: '2026-09-01',
-        checkOutDate: '2026-09-05',
-        totalAmount: 500,
-        assetCode: 'USDC',
-        escrowId: null,
-        tenantId: 'tenant-a',
-      },
-    })
+    mockedQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'res-1',
+          apartment_id: 'apt-1',
+          guest_id: 'guest-123',
+          status: 'pending',
+          check_in_date: '2026-09-01',
+          check_out_date: '2026-09-05',
+          total_amount: 500,
+          asset_code: 'USDC',
+          escrow_id: null,
+          tenant_id: 'tenant-a',
+        },
+      ],
+      rowCount: 1,
+    } as any)
 
     const result = await createReservation(input({ tenantId: 'tenant-a' }))
 
@@ -55,24 +58,25 @@ describe('reservation.service createReservation', () => {
         tenant_id: 'tenant-a',
       })
     )
-    const [, variables] = mockedHasuraRequest.mock.calls[0]
-    expect(variables).toEqual({
-      object: expect.objectContaining({
-        tenantId: 'tenant-a',
-        guestId: 'guest-123',
-        status: 'pending',
-      }),
-    })
+    const [sql, params] = mockedQuery.mock.calls[0]
+    expect(sql).toContain('INSERT INTO safetrust.reservations')
+    expect(params).toEqual([
+      'tenant-a',
+      'apt-1',
+      'guest-123',
+      '2026-09-01',
+      '2026-09-05',
+      500,
+      'USDC',
+    ])
   })
 
   it('accepts a client tenant that matches the session tenant', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      insert_safetrust_reservations_one: null,
-    })
+    mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any)
 
     await createReservation(input({ requestedTenantId: 'safetrust' }))
 
-    expect(mockedHasuraRequest).toHaveBeenCalledTimes(1)
+    expect(mockedQuery).toHaveBeenCalledTimes(1)
   })
 
   it('rejects a mismatched tenant at the service layer without writing', async () => {
@@ -80,7 +84,7 @@ describe('reservation.service createReservation', () => {
       createReservation(input({ tenantId: 'safetrust', requestedTenantId: 'hotel_industry' }))
     ).rejects.toBeInstanceOf(TenantMismatchError)
 
-    expect(mockedHasuraRequest).not.toHaveBeenCalled()
+    expect(mockedQuery).not.toHaveBeenCalled()
   })
 
   it('rejects a missing session tenant without writing', async () => {
@@ -88,13 +92,11 @@ describe('reservation.service createReservation', () => {
       TenantMismatchError
     )
 
-    expect(mockedHasuraRequest).not.toHaveBeenCalled()
+    expect(mockedQuery).not.toHaveBeenCalled()
   })
 
   it('logs total_amount as a non-billable quote', async () => {
-    mockedHasuraRequest.mockResolvedValueOnce({
-      insert_safetrust_reservations_one: null,
-    })
+    mockedQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any)
 
     await createReservation(input())
 

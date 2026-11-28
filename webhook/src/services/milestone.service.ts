@@ -1,10 +1,10 @@
-import { hasuraRequest } from './hasura';
+import { getEscrowByContractId } from '../repositories/escrow.repository';
 import { AppError, NotFoundError } from '../utils/errors';
 import {
   logAndCheckWebhookEvent,
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
-import { withTransaction } from './db';
+import { withTransaction } from '../db/pool';
 import {
   getValidPriorStates,
   StateConflictError,
@@ -79,24 +79,12 @@ export function validateApproveMilestonePayload(
 export async function lookupEscrowByContractId(
   contractId: string
 ): Promise<EscrowLookupResult> {
-  const query = `
-    query GetEscrowId($contractId: String!) {
-      trustless_work_escrows(where: { contractId: { _eq: $contractId } }) {
-        id
-      }
-    }
-  `;
-
-  const data = await hasuraRequest<{
-    trustless_work_escrows?: Array<{ id: string }>;
-  }>(query, { contractId });
-
-  const escrowId = data.trustless_work_escrows?.[0]?.id;
-  if (!escrowId) {
+  const escrow = await getEscrowByContractId(contractId);
+  if (!escrow?.id) {
     throw new EscrowNotFoundError('Escrow not found');
   }
 
-  return { escrowId };
+  return { escrowId: escrow.id };
 }
 
 /**

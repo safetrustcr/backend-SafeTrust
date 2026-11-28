@@ -9,7 +9,7 @@
  *   RECONCILIATION_DB_TEST=true POSTGRES_HOST=localhost POSTGRES_PORT=5433 \
  *   POSTGRES_PASSWORD=... npx jest reconciliation.repository.integration
  */
-import db, { pool } from '../../services/db'
+import db, { pool } from '../../db/pool'
 import { upsertEscrows } from '../reconciliation.repository'
 import type { EscrowRecord } from '../../lib/reconciliation.types'
 

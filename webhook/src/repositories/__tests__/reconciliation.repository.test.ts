@@ -1,8 +1,8 @@
-jest.mock('../../services/db', () => ({ query: jest.fn() }))
+jest.mock('../../db/pool', () => ({ query: jest.fn() }))
 
 import { upsertEscrows } from '../reconciliation.repository'
 
-const db = require('../../services/db')
+const db = require('../../db/pool')
 
 describe('reconciliation repository', () => {
   beforeEach(() => {

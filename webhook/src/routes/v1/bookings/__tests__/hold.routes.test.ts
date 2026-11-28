@@ -3,7 +3,7 @@ import request from 'supertest'
 import { FacilitatorClient } from '@x402/core/server'
 
 const mockQuery = jest.fn()
-jest.mock('../../../../services/db', () => ({
+jest.mock('../../../../db/pool', () => ({
   query: (...a: unknown[]) => mockQuery(...a),
   withTransaction: jest.fn(),
 }))

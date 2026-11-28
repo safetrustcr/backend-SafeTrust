@@ -30,7 +30,7 @@ import {
   updateEscrowWithFreshness,
   applyEscrowFreshnessUpdate,
 } from '../escrow.repository'
-import * as dbService from '../../services/db'
+import * as dbService from '../../db/pool'
 
 describe('Escrow Freshness & Invariant Enforcement (Issue #661)', () => {
   // ─── 1. Out-of-order delivery ──────────────────────────────────────────────
