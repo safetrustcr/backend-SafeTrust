@@ -231,7 +231,7 @@ export function deriveTxHashFromSignedXdr(
   try {
     const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET
     const tx = TransactionBuilder.fromXDR(signedXdr, passphrase)
-    return (tx as Transaction | FeeBumpTransaction).hash().toString('hex')
+    return Buffer.from((tx as Transaction | FeeBumpTransaction).hash()).toString('hex')
   } catch {
     return null
   }

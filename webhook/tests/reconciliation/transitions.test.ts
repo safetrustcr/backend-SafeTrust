@@ -10,7 +10,7 @@ import {
 import { notifyHotelEscrowConversation } from '../../src/services/hotel-conversation-notify'
 import {
   fetchEscrowTransitionStates,
-  upsertEscrowBatch,
+  upsertEscrows,
 } from '../../src/repositories/reconciliation.repository'
 import { mirrorReservationStatus } from '../../src/repositories/reservation.repository'
 import { fetchEscrowsByContractIds } from '../../src/lib/source-adapters/tw.adapter'
@@ -34,7 +34,7 @@ jest.mock('../../src/repositories/reservation.repository', () => ({
 
 jest.mock('../../src/repositories/reconciliation.repository', () => ({
   fetchEscrowTransitionStates: jest.fn(),
-  upsertEscrowBatch: jest.fn(),
+  upsertEscrows: jest.fn(),
 }))
 
 jest.mock('../../src/lib/source-adapters/tw.adapter', () => ({
@@ -52,7 +52,7 @@ jest.mock('../../src/services/hotel-conversation-notify', () => ({
 const executeMock = executeEscrowLifecycleTransition as unknown as jest.Mock
 const notifyMock = notifyHotelEscrowConversation as unknown as jest.Mock
 const statesMock = fetchEscrowTransitionStates as unknown as jest.Mock
-const upsertMock = upsertEscrowBatch as unknown as jest.Mock
+const upsertMock = upsertEscrows as unknown as jest.Mock
 const adapterMock = fetchEscrowsByContractIds as unknown as jest.Mock
 const mirrorMock = mirrorReservationStatus as unknown as jest.Mock
 const txMock = withTransaction as unknown as jest.Mock

@@ -5,8 +5,9 @@
 > this checkout has not yet been migrated to this contract.
 
 SafeTrust connects a Next.js frontend, an Express backend, Hasura, PostgreSQL,
-and the Stellar blockchain through Trustless Work. Rust crates handle
-security-critical and performance-critical operations via Neon bindings.
+and the Stellar blockchain through Trustless Work. The backend is TypeScript;
+the only native code left is the quarantined `x402-processor` Neon addon (see
+[Rust crates in SafeTrust](./rust-crates.md)).
 
 ## System diagram
 
@@ -25,7 +26,7 @@ flowchart TD
 
     subgraph SafeTrust Backend
         BE[Express API\nNode.js TypeScript]
-        RC[Rust Crates\nNeon Bindings]
+        RC[x402-processor\nNeon addon, X402_ENABLED]
         HG[Hasura GraphQL\nv2.47.0]
     end
 
@@ -143,7 +144,7 @@ for the polling implementation.
 ```mermaid
 flowchart LR
     subgraph safetrustcr org
-        BE[backend-SafeTrust\nExpress + Hasura + Rust]
+        BE[backend-SafeTrust\nExpress + Hasura]
         FE[frontend-SafeTrust\nNext.js 14 dApp]
         DA[dApp-SafeTrust\nFreighter integration]
         LA[landing-SafeTrust\nMarketing site]

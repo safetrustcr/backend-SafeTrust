@@ -27,17 +27,6 @@ jest.mock('../../services/db', () => ({
   }),
 }));
 
-// Mock the native escrow-state-machine Neon addon — it requires a compiled
-// Rust binary which is not present in the unit-test environment.
-// The mock returns the same JSON string the real addon would return for
-// 'milestone_approved' so that tests are deterministic.
-jest.mock('../../../../crates/escrow-state-machine', () => ({
-  getValidPriorStates: jest.fn((_to: string, _event: string) => {
-    // Real output from the Rust state machine for milestone_approved / milestone.approved
-    return '["active","funded"]';
-  }),
-}), { virtual: true });
-
 import {
   validateApproveMilestonePayload,
   lookupEscrowByContractId,

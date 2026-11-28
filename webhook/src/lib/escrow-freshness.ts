@@ -45,6 +45,14 @@
  *    immutable and can never be overwritten regardless of incoming sequence number or rank.
  */
 
+import {
+  ESCROW_STATUSES,
+  PENDING_STATUSES,
+  TERMINAL_STATUSES,
+  canTransition,
+  isEscrowStatus,
+} from './escrow-transitions'
+
 export type EscrowStatus =
   | 'created'
   | 'pending_funding'
@@ -92,7 +100,7 @@ export type FreshnessOutcome =
 export function isTerminalStatus(status: string | null | undefined): boolean {
   if (!status) return false
   const s = status.trim().toLowerCase()
-  return s === 'completed' || s === 'resolved' || s === 'cancelled'
+  return isEscrowStatus(s) && TERMINAL_STATUSES.includes(s)
 }
 
 /**
@@ -101,31 +109,23 @@ export function isTerminalStatus(status: string | null | undefined): boolean {
 export function isPendingStatus(status: string | null | undefined): boolean {
   if (!status) return false
   const s = status.trim().toLowerCase()
-  return s === 'created' || s === 'pending_funding'
-}
-
-let nativeStateMachine: any = null
-try {
-  nativeStateMachine = require('../../../crates/escrow-state-machine')
-} catch {
-  // Addon not available, using canonical TS table
+  return isEscrowStatus(s) && PENDING_STATUSES.includes(s)
 }
 
 /**
- * Canonical transition table defining all legal target statuses reachable from
- * each source status, matching crates/escrow-state-machine/src/transitions.rs.
+ * Legal target statuses reachable from each source status, excluding the
+ * idempotent `from === to` case. Derived from the one transition table in
+ * `escrow-transitions.ts`, so the freshness evaluator and the reconciliation
+ * UPSERT guard cannot drift from the escrow service.
  */
-export const CANONICAL_TRANSITIONS: Record<string, readonly string[]> = {
-  created: ['funded', 'cancelled'],
-  pending_funding: ['created', 'funded', 'cancelled'],
-  funded: ['active', 'milestone_approved', 'completed', 'disputed', 'cancelled'],
-  active: ['milestone_approved', 'disputed'],
-  milestone_approved: ['completed', 'disputed'],
-  disputed: ['resolved', 'cancelled'],
-  completed: [],
-  resolved: [],
-  cancelled: [],
-} as const
+export const CANONICAL_TRANSITIONS: Readonly<Record<string, readonly string[]>> = Object.freeze(
+  Object.fromEntries(
+    ESCROW_STATUSES.map((from) => [
+      from,
+      Object.freeze(ESCROW_STATUSES.filter((to) => to !== from && canTransition(from, to))),
+    ])
+  )
+)
 
 /**
  * Validates whether transitioning from `fromStatus` to `toStatus` is legal
@@ -151,17 +151,9 @@ export function canTransitionStatus(
   // Same status is always valid (idempotent)
   if (from === to) return true
 
-  // Delegate to native state machine if loaded
-  if (nativeStateMachine && typeof nativeStateMachine.canTransition === 'function') {
-    try {
-      return nativeStateMachine.canTransition(from, to)
-    } catch {
-      // Fall through to canonical table
-    }
-  }
-
-  const allowed = CANONICAL_TRANSITIONS[from]
-  return allowed ? allowed.includes(to) : false
+  // Unknown statuses are never a legal transition.
+  if (!isEscrowStatus(from) || !isEscrowStatus(to)) return false
+  return canTransition(from, to)
 }
 
 /**
@@ -220,8 +212,8 @@ export function parseLedgerSeq(val: bigint | number | string | null | undefined)
 }
 
 /**
- * Core freshness evaluation logic applied in both pg-bulk-upsert (Rust)
- * and TypeScript paths (reconciliation, repository).
+ * Core freshness evaluation logic. The reconciliation UPSERT
+ * (`repositories/reconciliation.repository.ts`) enforces the same rules in SQL.
  */
 export function evaluateFreshness(
   stored: StoredEscrowState | null | undefined,
@@ -234,7 +226,7 @@ export function evaluateFreshness(
   // Case 0: New record (no stored row yet).
   // An unversioned observation (no ledger_seq) cannot create an initial
   // confirmed/terminal record — only pending records may be created unversioned.
-  // Mirrors the Rust evaluator (`evaluate_observation`, stored == None branch).
+  // The reconciliation UPSERT applies the same admission rule in SQL.
   if (!stored) {
     if (incomingSeq === null && !isPendingStatus(incomingStatusNorm)) {
       return {

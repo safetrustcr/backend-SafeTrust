@@ -2,8 +2,7 @@
  * Maps a Trustless Work V1 indexer escrow onto the record the reconciliation
  * UPSERT writes (`safetrust.trustless_work_escrows`).
  *
- * Both sync paths (sequential TypeScript fetch and the parallel Rust
- * chunk-processor) return raw indexer JSON; this is the single mapping.
+ * The indexer fetch returns raw indexer JSON; this is the single mapping.
  *
  * ── Status derivation ───────────────────────────────────────────────────────
  * The V1 indexer has no `status` field. Escrow-level V1 flags use this exact

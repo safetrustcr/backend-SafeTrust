@@ -1,30 +1,6 @@
 import db from '../services/db'
-import {
-  assertBulkUpsertAvailable,
-  bulkUpsertWithRust,
-  buildConnectionString,
-  isRustBulkUpsertEnabled,
-} from '../lib/native-adapters/rust-upsert.adapter'
 import { CANONICAL_TRANSITIONS, balancesEqual } from '../lib/escrow-freshness'
-import type {
-  BulkUpsertResult,
-  EscrowRecord,
-  ReconciliationEscrowRow,
-  UpsertResult,
-} from '../lib/reconciliation.types'
-
-interface BulkUpsertRow {
-  contract_id: string
-  status: string
-  amount: string
-  balance: string
-  marker: string
-  approver: string
-  releaser: string
-  escrow_type: string
-  ledger_seq: string | null
-  network: string | null
-}
+import type { EscrowRecord, UpsertResult } from '../lib/reconciliation.types'
 
 const SQL_TRANSITION_RULES = Object.entries(CANONICAL_TRANSITIONS)
   .filter(([, targets]) => targets.length > 0)
@@ -36,8 +12,8 @@ const SQL_TRANSITION_RULES = Object.entries(CANONICAL_TRANSITIONS)
   )
   .join(' OR\n        ')
 
-// Unversioned snapshot (no ledger_seq). Admission matches pg-bulk-upsert's
-// evaluate_observation: a snapshot with a confirmed status may not CREATE a
+// Unversioned snapshot (no ledger_seq). Admission matches evaluateFreshness
+// (lib/escrow-freshness.ts): a snapshot with a confirmed status may not CREATE a
 // row, but when the row exists it always reaches ON CONFLICT, where the stored
 // status (created / pending_funding only), transition, network and balance
 // guards decide. Filtering on the incoming status alone would drop a `funded`
@@ -202,15 +178,6 @@ export async function fetchEscrowContractIds(
   return rows.map((row) => row.contract_id)
 }
 
-export async function fetchSorobanEscrowRows(): Promise<ReconciliationEscrowRow[]> {
-  const { rows } = await db.query<ReconciliationEscrowRow>(
-    `SELECT contract_id, id, status, balance, marker, approver
-       FROM safetrust.trustless_work_escrows
-      WHERE tenant_id = 'safetrust'`
-  )
-  return rows
-}
-
 export interface ReconciliationTransitionStateRow {
   contract_id: string
   id: string
@@ -308,67 +275,6 @@ export async function upsertEscrows(escrows: EscrowRecord[]): Promise<UpsertResu
   }
 
   return { updated, unchanged, skipped }
-}
-
-export async function upsertEscrowsBulk(escrows: EscrowRecord[]): Promise<UpsertResult> {
-  assertBulkUpsertAvailable()
-
-  let skipped = 0
-  const valid: EscrowRecord[] = []
-  for (const escrow of escrows) {
-    if (!escrow?.contractId) {
-      console.warn('[reconciliation] ⚠️  Skipping escrow without contractId:', escrow)
-      skipped++
-      continue
-    }
-    valid.push(escrow)
-  }
-
-  if (valid.length === 0) {
-    return { updated: 0, unchanged: 0, skipped }
-  }
-
-  const updates: BulkUpsertRow[] = valid.map((escrow) => {
-    const seq = escrow.ledgerSeq ?? escrow.ledger_seq
-    return {
-      contract_id: escrow.contractId,
-      status: escrow.status ?? 'created',
-      amount: String(escrow.amount ?? 0),
-      balance: String(escrow.balance ?? 0),
-      marker: escrow.roles?.marker ?? '',
-      approver: escrow.roles?.approver ?? '',
-      releaser: escrow.roles?.releaser ?? '',
-      escrow_type: escrow.escrowType ?? 'single_release',
-      ledger_seq: seq == null ? null : typeof seq === 'bigint' ? seq.toString() : String(seq),
-      network: escrow.network ?? null,
-    }
-  })
-
-  const resultJson = await bulkUpsertWithRust(
-    JSON.stringify(updates),
-    buildConnectionString()
-  )
-  const result: BulkUpsertResult = JSON.parse(resultJson)
-
-  return {
-    updated: result.rows_affected,
-    unchanged: result.unchanged,
-    skipped,
-  }
-}
-
-export async function upsertEscrowBatch(escrows: EscrowRecord[]): Promise<UpsertResult> {
-  if (!isRustBulkUpsertEnabled() || escrows.length === 0) {
-    return upsertEscrows(escrows)
-  }
-  try {
-    return await upsertEscrowsBulk(escrows)
-  } catch (err) {
-    console.error(
-      `[reconciliation] ⚠️  Bulk upsert failed, using row-by-row: ${(err as Error).message}`
-    )
-    return upsertEscrows(escrows)
-  }
 }
 
 export async function findStaleEscrows(staleDays = 7): Promise<string[]> {

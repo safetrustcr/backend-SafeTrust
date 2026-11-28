@@ -17,8 +17,8 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | [Multi-Tenant Architecture](architecture/multi-tenant.md) | Two-tenant isolation model (`safetrust` and `hotel_industry`), schema routing, and RBAC rules |
 | [Safetrust Permissions](architecture/safetrust-permissions.md) | Role-scoped Hasura permissions (`guest`, `host`, `admin`) across `safetrust` tables and actions |
 | [SafeTrust Schema Normalization](architecture/safetrust-normalization.md) | Canonical ownership for users, apartments, pricing overrides, and bid request facts |
-| [Rust Crates in SafeTrust](architecture/rust-crates.md) | High-assurance native extensions via Neon bindings for cryptography and blockchain operations |
-| [Crate Boundaries](architecture/crate-boundaries.md) | Consumers, exports, fallbacks, dispositions, and quarantine gates for all eight Rust crates |
+| [Rust Crates in SafeTrust](architecture/rust-crates.md) | The TypeScript and official `@x402` packages that replaced every Rust crate |
+| [Crate Boundaries](architecture/crate-boundaries.md) | The x402 eligibility gate and the record of each crate removal |
 | [Escrow Claims API](architecture/escrow-claims-api.md) | Request and response contract, error codes, idempotency and rate limit for claims on released escrows |
 | [Reservations API](architecture/reservations-api.md) | Lifecycle, allowed actions computation, read endpoints, and safe cancellation protocol |
 | [Wallet Registry API](architecture/wallets-api.md) | Verified wallet management lifecycle (list, unlink, and atomic set-primary endpoints) |
@@ -30,7 +30,7 @@ For setup and day-to-day commands, start with the [root README](../README.md).
 | Document | Description |
 |---|---|
 | [Escrow Lifecycle](stellar/escrow-lifecycle.md) | Full TrustlessWork Stellar smart contract state machine, retry mechanics, and fund, approve, release, and dispute/resolve flows |
-| [Escrow State Source & Reconciliation](stellar/reconciliation.md) | Polling architecture, Trustless Work V1 indexer endpoint, status derivation, field mapping, and Soroban adapter validation |
+| [Escrow State Source & Reconciliation](stellar/reconciliation.md) | Polling architecture, Trustless Work V1 indexer endpoint, status derivation, field mapping, and the boundary for a future on-chain check |
 | [x402 Protocol](stellar/x402-protocol.md) | Agentic payments on Stellar using Soroban authorization entries and USDC SEP-41 |
 
 ### 📊 Analytics

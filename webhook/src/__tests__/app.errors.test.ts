@@ -6,11 +6,6 @@ import request from 'supertest'
 
 jest.mock('firebase-admin/auth', () => ({ getAuth: jest.fn() }))
 
-jest.mock('../../../crates/stellar-utils', () => ({
-  validateStellarAddress: jest.fn(() => true),
-  verifyStellarEd25519: jest.fn(() => false),
-}), { virtual: true })
-
 jest.mock('../repositories/reconciliation.repository', () => ({
   ...jest.requireActual('../repositories/reconciliation.repository'),
   fetchEscrowContractIds: jest.fn(),

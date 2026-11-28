@@ -6,34 +6,10 @@ publish = false
 
 [features]
 default = []
-soroban-reconciler = ["dep:soroban-reconciler"]
-
-[dependencies]
-soroban-reconciler = { path = "soroban-reconciler", optional = true }
 
 [workspace]
 resolver = "2"
-members = [
-    "webhook-verifier",
-    "stellar-utils",
-    "chunk-processor",
-    "pg-bulk-upsert",
-    "escrow-state-machine",
-    "soroban-reconciler",
-]
-default-members = [
-    "webhook-verifier",
-    "stellar-utils",
-    "chunk-processor",
-    "pg-bulk-upsert",
-    "escrow-state-machine",
-]
-
-[workspace.dependencies]
-neon       = { version = "0.10", default-features = false, features = ["napi-6"] }
-serde      = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio      = { version = "1", features = ["full"] }
-reqwest    = { version = "0.12", features = ["json"] }
-hex        = "0.4"
-base64     = "0.22"
+# Every native crate has been replaced with TypeScript (#755) or with the
+# official @x402 packages (#767); no member crate remains.
+members = []
+default-members = ["."]

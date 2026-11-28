@@ -7,7 +7,7 @@ Feature: POST /api/auth/sync-wallet
     * def testUid = 'owner-123'
     # Real, checksum-valid Stellar address (generated). The previous fixture
     # 'GDQEREN...J7Z' was fabricated and now fails the strkey checksum
-    # validation performed by the Rust stellar-utils addon.
+    # validation performed with @stellar/stellar-sdk (lib/stellar-wallet.ts).
     * def stellarAddress = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
     # ETH address for testing non-STELLAR chain (STELLAR now requires challenge-verify flow)
     * def ethAddress = '0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B'

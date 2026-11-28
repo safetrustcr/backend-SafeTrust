@@ -16,12 +16,10 @@ graph LR
 | File | Responsibility |
 |---|---|
 | `webhook/src/lib/source-adapters/tw.adapter.ts` | Configuration, request URL, sequential fetch |
-| `crates/chunk-processor` | Parallel fetch of the same URL (`RUST_CHUNKS_ENABLED=true`) |
 | `webhook/src/lib/source-adapters/tw-indexer.types.ts` | V1 response type |
-| `webhook/src/lib/source-adapters/tw-indexer.normalize.ts` | Mapping onto table columns (both paths) |
+| `webhook/src/lib/source-adapters/tw-indexer.normalize.ts` | Mapping onto table columns |
 | `webhook/src/repositories/reconciliation.repository.ts` | Guarded UPSERT |
-| `webhook/src/services/reconciliation.service.ts` | Reconciliation orchestration and optional Soroban drift monitor |
-| `crates/soroban-reconciler` | Optional Soroban RPC / V1 drift reader (`SOROBAN_VALIDATION_ENABLED`) |
+| `webhook/src/services/reconciliation.service.ts` | Reconciliation orchestration and lifecycle transitions |
 
 ---
 
@@ -31,8 +29,6 @@ graph LR
 |---|---|---|
 | `TRUSTLESSWORK_API_URL` | `https://dev.api.trustlesswork.com` | V1 API base URL; mainnet is `https://api.trustlesswork.com` |
 | `TRUSTLESSWORK_API_KEY` | empty | Sent as `x-api-key` |
-| `SOROBAN_VALIDATION_ENABLED` | `false` | Enables optional drift monitoring in `sync-escrows` |
-| `SOROBAN_AUTO_CORRECT_ENABLED` | `false` | Must stay disabled unless authorized drift correction is enabled |
 
 `TRUSTLESSWORK_API_URL` and `TRUSTLESSWORK_API_KEY` are passed by `docker-compose.yml`.
 The legacy `TRUSTLESS_WORK_API_URL` / `TRUSTLESS_WORK_API_KEY` spelling is still
@@ -122,10 +118,13 @@ ledger sequence may only update escrows that are still `created` or
 - Later transitions (`funded` → `milestone_approved`, `completed`, `disputed`,
   or `resolved`) require a version token (such as a newer ledger sequence) or
   explicit transaction confirmation before polling can advance them.
-- Both the TypeScript repository (`reconciliation.repository.ts`) and the Rust
-  bulk path (`crates/pg-bulk-upsert`) enforce the same guarded UPSERT rules,
-  verified against PostgreSQL by `reconciliation.repository.integration.test.ts`
+- The guarded UPSERT in `reconciliation.repository.ts` applies the same rules
+  as `evaluateFreshness` (`webhook/src/lib/escrow-freshness.ts`), verified
+  against PostgreSQL by `reconciliation.repository.integration.test.ts`
   (opt-in with `RECONCILIATION_DB_TEST=true`).
+- Chunks are fetched one after another and each escrow is written with its own
+  UPSERT. The opt-in Rust parallel-fetch and bulk-UPSERT paths were removed in
+  #755.
 
 ---
 
@@ -175,57 +174,39 @@ or `mock_`/`test_` shortcuts for contract state.
    identity (`getNetwork`) and ledger presence (`getLedgerEntries`).
 3. **Fail-closed guarantees ("Preserve Last Confirmed"):** If an external source
    is unavailable, times out, reports a missing contract, or fails validation,
-   existing PostgreSQL rows are preserved untouched, the contract is counted as
-   `unresolved`, and automatic DB correction remains off by default
-   (`SOROBAN_AUTO_CORRECT_ENABLED=false`).
+   existing PostgreSQL rows are preserved untouched; nothing is corrected
+   automatically.
 
 ---
 
-## 6. Adapter Validation Boundary (`soroban-reconciler`)
+## 6. On-chain drift check (removed)
 
-When the optional drift check (`SOROBAN_VALIDATION_ENABLED=true`) runs,
-`crates/soroban-reconciler` reads the V1 endpoint, applies the status derivation
-table in §3 via `normalize_tw_v1_response`, requires the V1 `balance` (never
-substituting configured `amount`), and enforces four validation stages:
+The optional Soroban drift check, the `soroban-reconciler` crate behind it, and
+the `SOROBAN_VALIDATION_ENABLED`, `SOROBAN_AUTO_CORRECT_ENABLED` and
+`SOROBAN_RPC_URL` settings were removed in #755. The check was never enabled,
+and its reader fabricated state (Security Review Finding F1). See
+[Crate Boundaries](../architecture/crate-boundaries.md).
 
-```mermaid
-flowchart LR
-    subgraph soroban-reconciler adapter
-        V1["V1: validate shape<br/>and status enum"]
-        V2["V2: check network<br/>and contract StrKey"]
-        V3["V3: enforce exact<br/>Stroop amounts"]
-        V4["V4: bounded 5s<br/>request timeout"]
-    end
-    SRC["Stellar RPC<br/>or TW API"] --> V1
-    V1 --> V2
-    V2 --> V3
-    V3 --> V4
-    V4 -->|"pass"| OUT["confirmed escrow state"]
-    V4 -->|"fail"| ERR["explicit error<br/>no fallback invention"]
-```
+If an on-chain check is needed later (ESC-02), write it in TypeScript with
+`@stellar/stellar-sdk/rpc`, against the boundary in §5. It must:
 
-- **V1 — Response shape:** Requires `contractId`, `status` (within the 9-state
-  allowlist), and `balance`/`amount`; rejects empty arrays, nulls, and bare
+- **Validate the response shape:** require `contractId`, a `status` within the
+  9-state allowlist, and `balance`; reject empty arrays, nulls, and bare
   `getHealth` payloads.
-- **V2 — Network and StrKey identity:** Contract IDs must be valid 56-character
-  base32 Stellar Contract StrKeys (`C...`, SEP-23 + CRC16-XMODEM); `mock_` /
-  `test_` shortcuts are rejected; network passphrases (`testnet` vs `mainnet`)
-  must match or fail with `NetworkMismatch`.
-- **V3 — Exact Stroop amounts:** Balances convert to exact 7-decimal integer
-  Stroops (`10^7` Stroops = 1 token unit) and compare via `db_stroops !=
-  on_chain_stroops`. Negative values and >7 decimal places are rejected.
-- **V4 — Bounded timeout:** All network calls enforce a strict 5-second timeout.
+- **Check network and StrKey identity:** accept only valid 56-character
+  Stellar contract StrKeys (`C...`), reject `mock_` / `test_` shortcuts, and
+  fail when the network passphrase does not match.
+- **Compare exact amounts:** convert balances to integer stroops (`10^7` per
+  token unit) and compare exactly; reject negative values and more than 7
+  decimal places.
+- **Bound every call:** time out network calls after 5 seconds.
 
 ---
 
 ## 7. Verification
 
-1. **Rust adapter tests (`crates/soroban-reconciler`):** Cover `getHealth`
-   rejection, `mock_`/`test_` rejection, `NetworkMismatch`, malformed payloads,
-   exact Stroop arithmetic, bounded 5s timeouts, and end-to-end testnet fixtures.
-2. **Webhook reconciliation tests (`webhook/src/services`, `webhook/src/repositories`):**
-   Verify `validateSorobanDrift` preserves confirmed DB state when
-   auto-correction is disabled, `runSorobanValidation` isolates per-contract
-   errors into `unresolved`, and guarded UPSERT rules protect confirmed rows.
-3. **Builds & type-checking:** `npm --prefix webhook run build:rust` and
-   `npm --prefix webhook run type-check` pass with zero errors.
+1. **Webhook reconciliation tests (`webhook/src/services`, `webhook/src/repositories`,
+   `webhook/tests/reconciliation`):** Verify that guarded UPSERT rules protect
+   confirmed rows and that polling applies lifecycle transitions.
+2. **Type-checking:** `npm --prefix webhook run type-check` passes with zero
+   errors.

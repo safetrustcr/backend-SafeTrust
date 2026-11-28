@@ -6,8 +6,8 @@ This document describes the full escrow lifecycle: canonical state machine, stri
 
 | Concern | Source of truth |
 |---|---|
-| Valid states | [`crates/escrow-state-machine/src/states.rs`](../../crates/escrow-state-machine/src/states.rs) (`EscrowStatus`) |
-| Valid transitions | [`crates/escrow-state-machine/src/transitions.rs`](../../crates/escrow-state-machine/src/transitions.rs) (`transition_table()`) |
+| Valid states | [`webhook/src/types/escrow.types.ts`](../../webhook/src/types/escrow.types.ts) (`EscrowStatus`) |
+| Valid transitions | [`webhook/src/lib/escrow-transitions.ts`](../../webhook/src/lib/escrow-transitions.ts) (`getTransitionTable()`) |
 | Persisted escrow values | [`migrations/safetrust/1731909059420_create_trustless_work_escrows/up.sql`](../../migrations/safetrust/1731909059420_create_trustless_work_escrows/up.sql) |
 | Retry & tx confirmation schema | [`migrations/safetrust/1793000000000_create_escrow_confirmation_retries/up.sql`](../../migrations/safetrust/1793000000000_create_escrow_confirmation_retries/up.sql) |
 | Confirmation Engine | [`webhook/src/services/confirmation.service.ts`](../../webhook/src/services/confirmation.service.ts) |
@@ -295,7 +295,7 @@ An unsigned XDR or wallet signature alone never promotes escrow status.
    - **Unversioned reconciliation polling cannot advance a `funded` escrow to `milestone_approved`:** The V1 indexer snapshot omits `ledger_seq`, so the freshness policy in `webhook/src/lib/escrow-freshness.ts` rejects unversioned updates to confirmed (`funded`) rows, `LIFECYCLE_TRANSITION_SPECS` in `webhook/src/services/reconciliation.service.ts` does not register `milestone_approved`, and `webhook/src/services/confirmation.service.ts` handles only `deploy` and `fund` actions.
    - **Implementation paths that write `milestone_approved`:**
      - **Milestone service (`webhook/src/services/milestone.service.ts`):** `approveMilestone` and `approveMilestoneAndUpdateReservation` (alongside the separate `approveMilestone` helper in `webhook/src/repositories/escrow.repository.ts`) atomically mark the `safetrust.escrow_milestones` row `approved`, update `safetrust.trustless_work_escrows.status` to `milestone_approved`, and mirror `checked_in`/`checked_out` to `safetrust.reservations`. This service is **not** currently wired to an HTTP route or cron trigger in this checkout (invoked only in tests after legacy callbacks were removed in #769).
-     - **Versioned snapshot UPSERT (`upsertEscrows` / `pg-bulk-upsert`):** When a snapshot carries a newer `ledger_seq` (or stored `ledger_seq` is `NULL`), reconciliation derives `milestone_approved` from an approved milestone flag (single-release) or any approved/released milestone (multi-release) and updates escrow-level status without modifying `escrow_milestones` or `reservations`.
+     - **Versioned snapshot UPSERT (`upsertEscrows`):** When a snapshot carries a newer `ledger_seq` (or stored `ledger_seq` is `NULL`), reconciliation derives `milestone_approved` from an approved milestone flag (single-release) or any approved/released milestone (multi-release) and updates escrow-level status without modifying `escrow_milestones` or `reservations`.
    - See [reconciliation.md](./reconciliation.md) for status derivation and freshness rules.
 
 ### Release Funds

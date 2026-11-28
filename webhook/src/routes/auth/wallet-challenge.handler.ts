@@ -4,6 +4,7 @@ import { AuthenticatedRequest } from '../../middleware/auth.middleware'
 import { logger } from '../../middleware/logger'
 import { createWalletChallenge } from '../../repositories/wallet.repository'
 import { verifyWalletChallenge } from '../../services/wallet.service'
+import { isStellarAccountAddress as isStellarAccount, verifyStellarEd25519 } from '../../lib/stellar-wallet'
 import {
   AuthError,
   ConflictError,
@@ -13,29 +14,11 @@ import {
 
 const TENANT_ID = 'safetrust'
 const CHALLENGE_TTL_MS = 5 * 60 * 1000
-const VALID_STELLAR_ADDRESS = /^G[A-Z2-7]{55}$/
-
-interface StellarUtils {
-  validateStellarAddress(address: string): boolean
-  verifyStellarEd25519(message: string, signature: string, address: string): boolean
-}
-
-let stellarUtils: StellarUtils | null = null
-try {
-  stellarUtils = require('../../../../crates/stellar-utils') as StellarUtils
-} catch {
-  // Fail closed during verification when the native Ed25519 verifier is unavailable.
-}
 
 function getWalletConfig(): { domain: string; network: string } | null {
   const domain = process.env.WALLET_CHALLENGE_DOMAIN?.trim().toLowerCase()
   if (!domain) return null
   return { domain, network: process.env.STELLAR_NETWORK ?? 'testnet' }
-}
-
-function isStellarAccount(address: unknown): address is string {
-  if (typeof address !== 'string' || !VALID_STELLAR_ADDRESS.test(address)) return false
-  return stellarUtils?.validateStellarAddress(address) ?? false
 }
 
 async function isSingleSignerAccount(address: string, network: string): Promise<boolean> {
@@ -94,9 +77,6 @@ export async function createWalletChallengeHandler(
   }
   const config = getWalletConfig()
   if (!config) throw new ServiceUnavailableError('WALLET_CHALLENGE_NOT_CONFIGURED', { code: 'wallet_challenge_not_configured' })
-  if (!stellarUtils?.verifyStellarEd25519) {
-    throw new ServiceUnavailableError('WALLET_SIGNATURE_VERIFIER_UNAVAILABLE', { code: 'wallet_signature_verifier_unavailable' })
-  }
 
   try {
     if (!await isSingleSignerAccount(address, config.network)) {
@@ -146,8 +126,6 @@ export async function verifyWalletChallengeHandler(
     throw new ValidationError('INVALID_WALLET_CHALLENGE_REQUEST', { code: 'invalid_wallet_challenge_request' })
   }
   if (typeof is_primary !== 'boolean') throw new ValidationError('INVALID_IS_PRIMARY', { code: 'invalid_is_primary' })
-  if (!stellarUtils?.verifyStellarEd25519) throw new ServiceUnavailableError('WALLET_SIGNATURE_VERIFIER_UNAVAILABLE', { code: 'wallet_signature_verifier_unavailable' })
-  const verifySignature = stellarUtils.verifyStellarEd25519.bind(stellarUtils)
   const config = getWalletConfig()
   if (!config) throw new ServiceUnavailableError('WALLET_CHALLENGE_NOT_CONFIGURED', { code: 'wallet_challenge_not_configured' })
 
@@ -158,7 +136,7 @@ export async function verifyWalletChallengeHandler(
       signature,
       isPrimary: is_primary,
       context: { tenant: TENANT_ID, domain: config.domain, network: config.network },
-      verifySignature,
+      verifySignature: verifyStellarEd25519,
       makeMessage: challengeMessage,
     })
     switch (result.kind) {

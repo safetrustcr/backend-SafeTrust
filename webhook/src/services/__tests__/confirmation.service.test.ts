@@ -27,7 +27,7 @@ function buildSignedXdr(): { xdr: string; hash: string } {
     .setTimeout(0)
     .build()
   tx.sign(kp)
-  return { xdr: tx.toXDR(), hash: tx.hash().toString('hex') }
+  return { xdr: tx.toXDR(), hash: Buffer.from(tx.hash()).toString('hex') }
 }
 
 jest.mock('../db', () => {

@@ -16,6 +16,7 @@ import {
   markWebhookEventProcessed,
 } from '../repositories/webhook-event.repository';
 import { amountToStroops } from '../lib/stellar-amounts';
+import { getValidPriorStates } from '../lib/escrow-transitions';
 
 export { TenantMismatchError };
 
@@ -589,13 +590,8 @@ export async function executeEscrowLifecycleTransition(
     }
 
     // 6 — Prior-state guard: verify current state is legal for this transition
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
-      getValidPriorStates: (to: string, event: string) => string;
-    };
     const allowedStates: string[] =
-      validPriorStates ??
-      JSON.parse(getValidPriorStates(targetStatus, eventType) as string);
+      validPriorStates ?? getValidPriorStates(targetStatus, eventType);
 
     if (!allowedStates.includes(currentStatus)) {
       throw new EscrowStateConflictError(
@@ -653,13 +649,7 @@ export async function fundEscrowTransactional(
   amount: number,
   rawPayload: Record<string, unknown>
 ): Promise<EscrowLifecycleResult> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
-    getValidPriorStates: (to: string, event: string) => string;
-  };
-  const validStates: string[] = JSON.parse(
-    getValidPriorStates(EscrowStatus.Funded, EscrowEventType.Funded) as string
-  );
+  const validStates = getValidPriorStates(EscrowStatus.Funded, EscrowEventType.Funded);
 
   return executeEscrowLifecycleTransition({
     contractId,
@@ -680,12 +670,9 @@ export async function releaseFundsTransactional(
   contractId: string,
   rawPayload: Record<string, unknown>
 ): Promise<EscrowLifecycleResult> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { getValidPriorStates } = require('../../../crates/escrow-state-machine') as {
-    getValidPriorStates: (to: string, event: string) => string;
-  };
-  const validStates: string[] = JSON.parse(
-    getValidPriorStates(EscrowStatus.Completed, EscrowEventType.FundsReleased) as string
+  const validStates = getValidPriorStates(
+    EscrowStatus.Completed,
+    EscrowEventType.FundsReleased
   );
 
   return executeEscrowLifecycleTransition({
