@@ -14,8 +14,10 @@ Feature: Reconciliation — POST /reconciliation/sync-escrows
   Background:
     * url webhookUrl
     # No Firebase auth — this route is server-to-server (Hasura cron trigger).
-    # The shared secret is optional; leave the header absent for dev/test.
-    * configure headers = { 'Content-Type': 'application/json' }
+    # The shared secret comes from karate-config.js (TEST_EVENT_SECRET in the
+    # test stack, default test-event-secret) and must match the webhook's
+    # HASURA_EVENT_SECRET; the guard rejects any call without it.
+    * configure headers = { 'Content-Type': 'application/json', 'x-hasura-event-secret': '#(eventSecret)' }
 
   # ───────────────────────────────────────────────────────────────────────────
   # Scenario 1: Happy path — endpoint responds 200 with correct JSON shape
@@ -62,19 +64,28 @@ Feature: Reconciliation — POST /reconciliation/sync-escrows
     Then status 404
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Scenario 4: Secret guard — when HASURA_EVENT_SECRET is set, wrong secret
-  #             returns 401  (only meaningful if the server has a secret set)
+  # Scenario 4: Secret guard — wrong secret returns 401
   # ───────────────────────────────────────────────────────────────────────────
-  Scenario: Wrong event secret returns 401 when guard is active
+  Scenario: Wrong event secret returns 401
     Given path '/reconciliation/sync-escrows'
     And header x-hasura-event-secret = 'wrong-secret-value'
     When method POST
-    # If HASURA_EVENT_SECRET is NOT set in the server env the guard is
-    # disabled and the response will be 200 — both are acceptable in dev.
-    Then assert responseStatus == 200 || responseStatus == 401
+    Then status 401
+    And match response.error == 'Unauthorized: invalid event secret'
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Scenario 5: No-escrows path — empty table returns 200 with zero counts
+  # Scenario 5: Secret guard — missing secret header returns 401
+  # ───────────────────────────────────────────────────────────────────────────
+  Scenario: Missing event secret returns 401
+    Given path '/reconciliation/sync-escrows'
+    # Drop the Background secret header for this call only.
+    * configure headers = { 'Content-Type': 'application/json' }
+    When method POST
+    Then status 401
+    And match response.error == 'Unauthorized: invalid event secret'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Scenario 6: No-escrows path — empty table returns 200 with zero counts
   #             (run this only if you can guarantee an empty table in CI)
   # ───────────────────────────────────────────────────────────────────────────
   @ignore

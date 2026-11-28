@@ -4,7 +4,8 @@
 #
 # Phases:
 #   containers → Hasura health → database sources → migrations →
-#   metadata (all tenants in parallel) → metadata reload → seeds → health checks
+#   metadata (all tenants in parallel) → metadata reload → cron triggers →
+#   seeds → health checks
 #
 # Ends with one DEPLOYMENT SUMMARY covering every tenant (per-phase timings,
 # status, Hasura/Postgres/webhook health) and writes:
@@ -199,6 +200,10 @@ load_env() {
   HASURA_PORT="${HASURA_PORT:-8080}"
   POSTGRES_PORT="${POSTGRES_PORT:-5433}"
   WEBHOOK_PORT="${WEBHOOK_PORT:-3000}"
+  # Address Hasura calls for the reconciliation cron trigger. Hasura runs
+  # inside the Compose network, so this must be the in-network webhook
+  # address (same default as docker-compose.yml), not localhost.
+  WEBHOOK_URL="${WEBHOOK_URL:-http://safetrust-webhook:${WEBHOOK_PORT}}"
   HASURA_ENDPOINT="http://localhost:${HASURA_PORT}"
 }
 
@@ -216,6 +221,15 @@ validate_environment() {
   if [[ -z "$HASURA_ADMIN_SECRET" ]]; then
     echo "❌ Error: HASURA_ADMIN_SECRET is required." >&2
     echo "   Set it in .env or export it before running bin/start." >&2
+    exit 1
+  fi
+
+  # The reconciliation cron trigger sends this as x-hasura-event-secret. A
+  # trigger created while Hasura cannot resolve the secret could never
+  # authenticate, so fail before any container starts.
+  if [[ -z "${HASURA_EVENT_SECRET:-}" ]]; then
+    echo "❌ Error: HASURA_EVENT_SECRET is required." >&2
+    echo "   Set it in .env (see .env.example) or export it before running bin/start." >&2
     exit 1
   fi
 
@@ -419,6 +433,55 @@ reload_metadata() {
   echo ""
 }
 
+# One platform-wide cron trigger, not per tenant: the handler loops over
+# every tenant that owns escrow rows, so the trigger is created once here,
+# after metadata is applied and reloaded. The trigger is created with
+# replace: false first; if Hasura reports already-exists, the call is
+# retried with replace: true, so re-running bin/start replaces the trigger
+# instead of creating a duplicate, while any other error still fails the
+# run, mirroring how register_sources() treats its already-exists case.
+# The definition comes from metadata/base/cron_triggers.yaml; only
+# {{WEBHOOK_URL}} is resolved here (Hasura resolves value_from_env:
+# HASURA_EVENT_SECRET from its own environment when the trigger fires).
+register_cron_triggers() {
+  begin_phase cron_triggers
+  echo "⏰ Registering reconciliation cron trigger..."
+
+  local trigger payload response code
+  trigger=$(yq -o json e '.[0]' metadata/base/cron_triggers.yaml | jq -c \
+    --arg webhook_base "${WEBHOOK_URL:-http://safetrust-webhook:${WEBHOOK_PORT:-3000}}" \
+    '.webhook |= sub("\\{\\{WEBHOOK_URL\\}\\}"; $webhook_base)') || {
+    echo "❌ Failed to read metadata/base/cron_triggers.yaml" >&2
+    return 1
+  }
+
+  payload=$(jq -cn --argjson trigger "$trigger" '{type:"create_cron_trigger", args:($trigger + {replace: false})}')
+  response=$(hasura_metadata "$payload")
+  code=$(jq -r 'if type == "object" and has("error") then (.code // "error") else "ok" end' <<< "$response" 2>/dev/null || echo "invalid-response")
+  case "$code" in
+    ok) echo "   ✅ Cron trigger registered: reconciliation_sync_escrows (every 15 minutes)" ;;
+    already-exists)
+      echo "   ℹ️  Cron trigger already exists: reconciliation_sync_escrows (replacing)"
+      payload=$(jq -cn --argjson trigger "$trigger" '{type:"create_cron_trigger", args:($trigger + {replace: true})}')
+      response=$(hasura_metadata "$payload")
+      code=$(jq -r 'if type == "object" and has("error") then (.code // "error") else "ok" end' <<< "$response" 2>/dev/null || echo "invalid-response")
+      case "$code" in
+        ok) echo "   ✅ Cron trigger replaced: reconciliation_sync_escrows (every 15 minutes)" ;;
+        *)
+          echo "   ❌ Failed to replace cron trigger: $response" >&2
+          return 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "   ❌ Failed to register cron trigger: $response" >&2
+      return 1
+      ;;
+  esac
+  end_phase cron_triggers
+  echo ""
+}
+
 apply_seeds() {
   begin_phase seeds
   if [[ "$RESTART_CONTAINERS" == "true" ]]; then
@@ -457,6 +520,7 @@ run_health_checks() {
 
   local metadata tenant counts
   metadata=$(hasura_metadata '{"type":"export_metadata","args":{}}' 2>/dev/null || true)
+  HEALTH[cron_triggers]=$(jq -r '(.metadata // .).cron_triggers // [] | length' <<< "$metadata" 2>/dev/null || echo "unknown")
   for tenant in "${TENANTS[@]}"; do
     counts=$(jq -r --arg source "$tenant" '
       (.metadata // .).sources[]? | select(.name == $source) | [
@@ -558,6 +622,10 @@ print_health() {
     echo "    Hasura           ❌ not responding on ${HASURA_ENDPOINT}/healthz"
   fi
 
+  if [[ -n "${HEALTH[cron_triggers]:-}" && "${HEALTH[cron_triggers]}" != "unknown" ]]; then
+    echo "    Cron triggers   ${HEALTH[cron_triggers]} registered"
+  fi
+
   if [[ "${HEALTH[postgres]}" == "ok" ]]; then
     echo "    PostgreSQL       ✅ accepting connections (localhost:${POSTGRES_PORT})"
   else
@@ -622,8 +690,8 @@ print_summary() {
   done
   echo "  $rule"
 
-  printf '  %-18s containers %s · Hasura health %s · sources %s · metadata reload %s\n' "Shared steps" \
-    "$(shared_cell containers)" "$(shared_cell hasura_health)" "$(shared_cell sources)" "$(shared_cell reload)"
+  printf '  %-18s containers %s · Hasura health %s · sources %s · metadata reload %s · cron triggers %s\n' "Shared steps" \
+    "$(shared_cell containers)" "$(shared_cell hasura_health)" "$(shared_cell sources)" "$(shared_cell reload)" "$(shared_cell cron_triggers)"
 
   if [[ "${#TENANTS[@]}" -gt 1 && -n "${PHASE_MS[metadata]:-}" ]]; then
     local work=0
@@ -673,7 +741,7 @@ write_report() {
   done
 
   local shared_json='{}' key
-  for key in containers hasura_health sources migrations metadata reload seeds health; do
+  for key in containers hasura_health sources migrations metadata reload cron_triggers seeds health; do
     if [[ -n "${PHASE_MS[$key]:-}" ]]; then
       shared_json=$(jq -c --arg key "$key" --argjson ms "${PHASE_MS[$key]}" '. + {($key): $ms}' <<< "$shared_json")
     fi
@@ -688,8 +756,10 @@ write_report() {
       --arg live "${HEALTH[webhook_live]}" \
       --arg ready "${HEALTH[webhook_ready]}" \
       --arg not_ready "${HEALTH[webhook_not_ready]}" \
+      --arg cron_triggers "${HEALTH[cron_triggers]:-}" \
       '{hasura_healthy: ($hasura == "ok"),
         inconsistent_metadata_objects: ($inconsistent | tonumber? // null),
+        cron_triggers_registered: ($cron_triggers | tonumber? // null),
         postgres_ready: ($postgres == "ok"),
         webhook_live_status: ($live | tonumber? // null),
         webhook_ready_status: ($ready | tonumber? // null),
@@ -821,6 +891,7 @@ main() {
   apply_migrations
   deploy_metadata
   reload_metadata
+  register_cron_triggers
   apply_seeds
   run_health_checks
   CURRENT_PHASE="done"

@@ -10,8 +10,11 @@
  * validated here to prevent unauthorised calls.
  *
  * If HASURA_EVENT_SECRET is not set in the environment, any caller can invoke
- * the endpoint — this is acceptable in development but MUST be configured in
- * production.
+ * the endpoint — but only in non-production. The webhook refuses to start
+ * with NODE_ENV=production when the secret is missing (see
+ * requireHasuraEventSecret in services/hasura.ts, called from server.ts),
+ * so a production deployment can never serve this endpoint unauthenticated.
+ * Local development sets the secret in webhook/.env.example / .env.
  */
 
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
@@ -21,7 +24,7 @@ import { AuthError } from '../../utils/errors'
 
 const router = Router()
 
-// ─── Optional: shared-secret guard for Hasura cron trigger ───────────────────
+// ─── Shared-secret guard for Hasura cron trigger ───────────────────────────
 /**
  * Validates the `x-hasura-event-secret` header when HASURA_EVENT_SECRET is
  * set. Returns 401 if the secret does not match.

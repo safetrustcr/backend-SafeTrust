@@ -136,7 +136,7 @@ describe('reconciliation.service', () => {
       // Raw indexer rows are normalized before the write (tw-indexer.normalize.ts).
       expect(upsertEscrowBatch).toHaveBeenCalledWith([
         expect.objectContaining({ contractId: 'c1', status: 'created', escrowType: 'single_release' }),
-      ])
+      ], 'safetrust')
 
       expect(result).toEqual({
         totalEscrows: 3,
@@ -536,7 +536,7 @@ describe('reconciliation.service', () => {
 
       const result = await detectStaleEscrows()
 
-      expect(reconciliationRepository.findStaleEscrows).toHaveBeenCalledWith(7)
+      expect(reconciliationRepository.findStaleEscrows).toHaveBeenCalledWith(7, 'safetrust')
 
       expect(result).toEqual(['stale_1', 'stale_2'])
     })
@@ -551,9 +551,27 @@ describe('reconciliation.service', () => {
 
       const result = await detectStaleEscrows(30)
 
-      expect(reconciliationRepository.findStaleEscrows).toHaveBeenCalledWith(30)
+      expect(reconciliationRepository.findStaleEscrows).toHaveBeenCalledWith(30, 'safetrust')
 
       expect(result).toEqual(['stale_old'])
+    })
+
+    it('passes a non-default tenant through to findStaleEscrows', async () => {
+      jest
+
+        .spyOn(reconciliationRepository, 'findStaleEscrows')
+
+        .mockResolvedValueOnce(['hotel_stale'])
+
+
+      const result = await detectStaleEscrows(7, 'hotel_industry')
+
+      expect(reconciliationRepository.findStaleEscrows).toHaveBeenCalledWith(
+        7,
+        'hotel_industry'
+      )
+
+      expect(result).toEqual(['hotel_stale'])
     })
 
     it('handles empty stale list', async () => {

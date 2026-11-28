@@ -34,7 +34,8 @@ services:
         startup, http-log, webhook-log, websocket-log, query-log
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:?HASURA_ADMIN_SECRET must be set in .env or the environment}
       HASURA_GRAPHQL_JWT_SECRET: ${HASURA_GRAPHQL_JWT_SECRET}
-      WEBHOOK_URL: ${WEBHOOK_URL:-http://safetrust-webhook:3000}
+      HASURA_EVENT_SECRET: ${HASURA_EVENT_SECRET:?HASURA_EVENT_SECRET must be set in .env or the environment}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://safetrust-webhook:${WEBHOOK_PORT:-3000}}
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,6 +90,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       HASURA_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:?HASURA_ADMIN_SECRET must be set in .env or the environment}
+      # Shared secret the Hasura reconciliation cron trigger sends as
+      # `x-hasura-event-secret`; the webhook checks it on every call.
+      HASURA_EVENT_SECRET: ${HASURA_EVENT_SECRET:?HASURA_EVENT_SECRET must be set in .env or the environment}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
       FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
       FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}

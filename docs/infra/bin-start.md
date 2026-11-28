@@ -9,9 +9,10 @@ flowchart TD
     D --> E[Apply migrations\nhasura migrate apply × N tenants]
     E --> F[Deploy metadata\nsetup-tenant.sh × N tenants, in parallel]
     F --> G[Reload metadata\nhasura metadata reload]
-    G --> H[Apply seeds\nhasura seed apply × N tenants]
-    H --> I[Health checks\nHasura · Postgres · webhook]
-    I --> J([DEPLOYMENT SUMMARY\nlogs + JSON report])
+    G --> H[Register cron triggers\ncreate_cron_trigger\ncreate, replace if exists]
+    H --> I[Apply seeds\nhasura seed apply × N tenants]
+    I --> J[Health checks\nHasura · Postgres · webhook]
+    J --> K([DEPLOYMENT SUMMARY\nlogs + JSON report])
 ```
 
 ## Prerequisites
@@ -50,7 +51,7 @@ or are interrupted with Ctrl+C:
   safetrust               1.9s       24.4s        1.3s       27.8s   ✅ ready
   hotel_industry          1.4s       21.2s        1.3s       24.1s   ✅ ready
   ────────────────────────────────────────────────────────────────────────
-  Shared steps       containers 15.3s · Hasura health 0.0s · sources 0.1s · metadata reload 1.7s
+  Shared steps       containers 15.3s · Hasura health 0.0s · sources 0.1s · metadata reload 1.7s · cron triggers 0.2s
   Metadata deploy    24.4s wall-clock for 45.7s of work across 2 tenants (parallel)
   Total time         48.1s
   Logs               tests/results/bin-start/20261114-230449/
@@ -58,6 +59,7 @@ or are interrupted with Ctrl+C:
   ────────────────────────────────────────────────────────────────────────
   Health
     Hasura           ✅ healthy · ✅ metadata consistent
+    Cron triggers    1 registered
     PostgreSQL       ✅ accepting connections (localhost:5433)
     Webhook          ✅ live · ⚠️  not ready: firebase unavailable (HTTP 503)
     safetrust        23 tables · 14 with select perms · 16 relationships · 7 functions · 6 function perms
@@ -74,7 +76,37 @@ or are interrupted with Ctrl+C:
   must report no inconsistent metadata objects. The tenant lines count what
   Hasura actually has, so a permission that was never applied shows up here.
   The webhook line names any dependency `/health/ready` reports as down; with
-  empty `FIREBASE_*` values in `.env`, `firebase` is expected to be down.
+  empty `FIREBASE_*` values in `.env`, `firebase` is expected to be down. The
+  cron-triggers line counts the registered cron triggers (see below).
+
+## Reconciliation cron trigger (every 15 minutes)
+
+Reconciliation is the only way escrow state reaches SafeTrust since #769:
+`POST /reconciliation/sync-escrows` reads Trustless Work and applies funded,
+completed, disputed and other transitions. The trigger that calls it is
+platform-wide — one trigger for all tenants, not one per tenant — and
+`bin/start` creates it once, after the metadata reload. The handler then
+runs the sync once per tenant that owns escrow rows (discovered from
+`safetrust.trustless_work_escrows`), so non-default tenants such as
+`hotel_industry` are reconciled too:
+
+- **Definition**: `metadata/base/cron_triggers.yaml`
+  (`reconciliation_sync_escrows`, schedule `*/15 * * * *`, header
+  `x-hasura-event-secret` from `HASURA_EVENT_SECRET`).
+- **Creation**: `bin/start` sends `create_cron_trigger` to the Hasura metadata
+  API with `replace: false` first, resolving `{{WEBHOOK_URL}}` to the
+  in-network webhook address (`http://safetrust-webhook:3000` by default). If
+  Hasura reports the trigger already exists, it retries with `replace: true`,
+  so re-running `bin/start` replaces the trigger instead of creating a
+  duplicate.
+- **Secret**: `HASURA_EVENT_SECRET` must be set in `.env` (see `.env.example`);
+  `bin/start` fails before starting any container when it is missing. The
+  same value is passed to the Hasura service (so the trigger can send the
+  header) and to the webhook (so the route can check it).
+- **Verification**: after a run, the DEPLOYMENT SUMMARY health section reports
+  how many cron triggers are registered, and `export_metadata` lists
+  `reconciliation_sync_escrows`. The Hasura console shows a successful
+  invocation within 15 minutes of the run.
 
 ## Logs and reports
 

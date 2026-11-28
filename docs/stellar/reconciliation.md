@@ -229,3 +229,51 @@ flowchart LR
    errors into `unresolved`, and guarded UPSERT rules protect confirmed rows.
 3. **Builds & type-checking:** `npm --prefix webhook run build:rust` and
    `npm --prefix webhook run type-check` pass with zero errors.
+
+---
+
+## 8. Reconciliation Schedule and Authentication
+
+Since #769, polling is the only way escrow state reaches SafeTrust: the
+Trustless Work indexer is the primary source (section 5), and reconciliation
+is what pulls it into `public.trustless_work_escrows`. That polling only
+happens on a schedule, and only for authenticated callers:
+
+```mermaid
+flowchart LR
+    A["Hasura cron trigger<br/>reconciliation_sync_escrows<br/>every 15 minutes"] -->|POST /reconciliation/sync-escrows<br/>x-hasura-event-secret| B["Webhook"]
+    B -->|missing or wrong secret| C["401 Unauthorized"]
+    B -->|correct secret| D["GET /helper/get-escrow-by-contract-ids<br/>Trustless Work, chunks of 50"]
+    D --> E["Apply transitions · mirror reservations · notify"]
+```
+
+### Where the trigger is created
+
+The trigger is platform-wide — one trigger for all tenants, not one per
+tenant — so it is created once, by `bin/start` after the metadata reload
+(see `docs/infra/bin-start.md`). The definition lives in
+`metadata/base/cron_triggers.yaml`; `bin/start` sends `create_cron_trigger`
+with `replace: false` first, resolving `{{WEBHOOK_URL}}` to the in-network
+webhook address, and retries with `replace: true` only when Hasura reports
+the trigger already exists, so re-running `bin/start` replaces the trigger
+instead of creating a duplicate. One trigger does not mean one tenant: the
+handler runs the sync once per tenant that owns escrow rows, discovered
+from `safetrust.trustless_work_escrows` (`fetchTenantIds`), so escrows
+owned by non-default tenants such as `hotel_industry` are reconciled too.
+Exporting the metadata after a run shows the trigger.
+
+### Fail closed
+
+- The webhook route (`webhook/src/routes/reconciliation/sync-escrows.route.ts`)
+  returns 401 for a missing or wrong `x-hasura-event-secret` whenever
+  `HASURA_EVENT_SECRET` is configured.
+- The webhook refuses to start with `NODE_ENV=production` when
+  `HASURA_EVENT_SECRET` is missing (see `requireHasuraEventSecret` in
+  `webhook/src/services/hasura.ts`), so a production deployment can never
+  serve the endpoint unauthenticated.
+- In non-production the guard stays open when the secret is unset, so local
+  development works with it unset; local setups that set it (see
+  `webhook/.env.example` and `.env.example`) are already protected. Set the
+  same value in `.env` — Hasura needs it to send the header, the webhook
+  needs it to check the header, and `bin/start` fails before starting any
+  container when it is missing.

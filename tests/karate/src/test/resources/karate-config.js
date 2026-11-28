@@ -8,6 +8,10 @@ function fn() {
     if (!adminSecret) {
         throw new Error('HASURA_ADMIN_SECRET is required to run Karate tests');
     }
+    // Shared secret the reconciliation scenarios send as
+    // `x-hasura-event-secret`. The test webhook reads the same value from
+    // TEST_EVENT_SECRET (docker-compose-test.yml default: test-event-secret).
+    var eventSecret = java.lang.System.getenv('HASURA_EVENT_SECRET') || 'test-event-secret';
     // Basic configuration
     var endpoints = {
         baseUrl: karate.properties['baseUrl'] || 'http://graphql-engine-test:8080/v1/graphql',
@@ -71,13 +75,17 @@ function fn() {
         var sig = enc.encodeToString(mac.doFinal(bytes(signingInput)));
         return "Bearer " + signingInput + "." + sig;
     };
-    var config = { ...endpoints, db, restToken };
+    var config = { ...endpoints, db, restToken, eventSecret };
     karate.configure('headers', function () {
         return {
             'Content-Type': 'application/json',
             'x-hasura-admin-secret': config.adminSecret
         };
     });
-    karate.log("Config initialized:", config);
+    // Log a sanitized copy of the config: eventSecret and adminSecret must never
+    // appear in Karate output. The full config (with eventSecret) is still
+    // returned to the tests below.
+    var safeConfig = { baseUrl: endpoints.baseUrl, webhookUrl: endpoints.webhookUrl };
+    karate.log("Config initialized:", safeConfig);
     return config;
 }

@@ -58,14 +58,14 @@ pub mod transitions;
 pub mod validator;
 
 pub const SELECT_LOCK_SQL: &str = "
-    SELECT ledger_seq, status, balance::text, network
+    SELECT ledger_seq, status, balance::text, network, tenant_id
     FROM safetrust.trustless_work_escrows
     WHERE id::text = $1 OR contract_id = $1
     FOR UPDATE
 ";
 
 pub const BATCH_SELECT_LOCK_SQL: &str = "
-    SELECT id::text, contract_id, ledger_seq, status, balance::text, network
+    SELECT id::text, contract_id, ledger_seq, status, balance::text, network, tenant_id
     FROM safetrust.trustless_work_escrows
     WHERE id::text = ANY($1) OR contract_id = ANY($1)
     FOR UPDATE
@@ -93,7 +93,7 @@ pub const UPDATE_ROW_SQL: &str = "
 pub const INSERT_ROW_SQL: &str = "
     INSERT INTO safetrust.trustless_work_escrows
       (contract_id, status, amount, balance, marker, approver, releaser, escrow_type, ledger_seq, network, updated_at, tenant_id)
-    VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NULLIF(TRIM($10), ''), NOW(), 'safetrust')
+    VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6, $7, $8, $9, NULLIF(TRIM($10), ''), NOW(), $11)
     ON CONFLICT (contract_id) DO NOTHING
 ";
 
@@ -147,6 +147,8 @@ pub struct EscrowUpdate {
     pub ledger_seq: Option<i64>,
     #[serde(default)]
     pub network: Option<String>,
+    #[serde(default)]
+    pub tenant_id: String,
 }
 
 /// Stored database state for an escrow record.
@@ -158,6 +160,7 @@ pub struct StoredEscrowRow {
     pub balance: String,
     pub ledger_seq: Option<i64>,
     pub network: Option<String>,
+    pub tenant_id: String,
 }
 
 /// Decision outcome for applying an incoming observation to an existing or new escrow record.
@@ -184,6 +187,10 @@ pub enum EvaluationOutcome {
         to: String,
     },
     RejectNetworkMismatch {
+        stored: String,
+        incoming: String,
+    },
+    RejectTenantMismatch {
         stored: String,
         incoming: String,
     },
@@ -315,6 +322,25 @@ pub fn evaluate_observation(
         return EvaluationOutcome::RejectNetworkMismatch {
             stored: stored.contract_id.clone(),
             incoming: incoming.contract_id.clone(),
+        };
+    }
+
+    // Tenant ownership: an observation must never update a row owned by a
+    // different tenant. An empty tenant means the legacy default ('safetrust').
+    let stored_tenant = if stored.tenant_id.trim().is_empty() {
+        "safetrust"
+    } else {
+        stored.tenant_id.trim()
+    };
+    let incoming_tenant = if incoming.tenant_id.trim().is_empty() {
+        "safetrust"
+    } else {
+        incoming.tenant_id.trim()
+    };
+    if stored_tenant != incoming_tenant {
+        return EvaluationOutcome::RejectTenantMismatch {
+            stored: stored.tenant_id.clone(),
+            incoming: incoming.tenant_id.clone(),
         };
     }
 
@@ -576,6 +602,10 @@ async fn run_bulk_upsert(
             Err(e) => return Err(format!("failed to get balance for contract {contract_id}: {e}")),
         };
         let network: Option<String> = row.get(5);
+        let tenant_id: String = match row.try_get::<_, Option<String>>(6) {
+            Ok(Some(t)) if !t.trim().is_empty() => t,
+            _ => "safetrust".to_string(),
+        };
         let stored = StoredEscrowRow {
             id: id_str.clone(),
             contract_id: contract_id.clone(),
@@ -583,6 +613,7 @@ async fn run_bulk_upsert(
             balance,
             ledger_seq: seq,
             network,
+            tenant_id,
         };
         stored_map.insert(id_str, stored.clone());
         stored_map.insert(contract_id, stored);
@@ -616,6 +647,11 @@ async fn run_bulk_upsert(
                     "0"
                 } else {
                     u.amount.as_str()
+                };
+                let tenant_id = if u.tenant_id.is_empty() {
+                    "safetrust"
+                } else {
+                    u.tenant_id.as_str()
                 };
 
                 if stored.is_some() {
@@ -653,6 +689,7 @@ async fn run_bulk_upsert(
                                 &escrow_type,
                                 &new_ledger_seq,
                                 &u.network,
+                                &tenant_id,
                             ],
                         )
                         .await
@@ -674,6 +711,10 @@ async fn run_bulk_upsert(
                                 Err(e) => return Err(format!("failed to get balance for contract {}: {e}", u.contract_id)),
                             };
                             let network: Option<String> = row.get(3);
+                            let tenant_id: String = match row.try_get::<_, Option<String>>(4) {
+                                Ok(Some(t)) if !t.trim().is_empty() => t,
+                                _ => "safetrust".to_string(),
+                            };
                             let stored_conflicted = StoredEscrowRow {
                                 id: u.contract_id.clone(),
                                 contract_id: u.contract_id.clone(),
@@ -681,6 +722,7 @@ async fn run_bulk_upsert(
                                 balance,
                                 ledger_seq: seq,
                                 network,
+                                tenant_id,
                             };
 
                             match evaluate_observation(Some(&stored_conflicted), u) {
@@ -744,6 +786,13 @@ async fn run_bulk_upsert(
                                     );
                                     unchanged += 1;
                                 }
+                                EvaluationOutcome::RejectTenantMismatch { stored, incoming } => {
+                                    eprintln!(
+                                        "[pg-bulk-upsert] Tenant mismatch rejected for escrow {}: stored is {}, incoming is {}",
+                                        key, stored, incoming
+                                    );
+                                    unchanged += 1;
+                                }
                             }
                         }
                     } else {
@@ -759,6 +808,7 @@ async fn run_bulk_upsert(
                     balance: new_balance.clone(),
                     ledger_seq: new_ledger_seq,
                     network: u.network.clone().or_else(|| stored.and_then(|s| s.network.clone())),
+                    tenant_id: tenant_id.to_string(),
                 };
                 stored_map.insert(u.contract_id.clone(), new_stored.clone());
                 if let Some(ref id) = u.id {
@@ -798,6 +848,13 @@ async fn run_bulk_upsert(
             EvaluationOutcome::RejectNetworkMismatch { stored, incoming } => {
                 eprintln!(
                     "[pg-bulk-upsert] Network mismatch rejected for escrow {}: stored={}, incoming={}",
+                    key, stored, incoming
+                );
+                unchanged += 1;
+            }
+            EvaluationOutcome::RejectTenantMismatch { stored, incoming } => {
+                eprintln!(
+                    "[pg-bulk-upsert] Tenant mismatch rejected for escrow {}: stored={}, incoming={}",
                     key, stored, incoming
                 );
                 unchanged += 1;
@@ -889,6 +946,7 @@ mod tests {
             escrow_type: "single_release".to_string(),
             ledger_seq: seq,
             network: Some("testnet".to_string()),
+            tenant_id: "safetrust".to_string(),
         }
     }
 
@@ -900,6 +958,7 @@ mod tests {
             balance: balance.to_string(),
             ledger_seq: seq,
             network: Some("testnet".to_string()),
+            tenant_id: "safetrust".to_string(),
         }
     }
 
@@ -948,6 +1007,41 @@ mod tests {
                 new_status: "active".to_string(),
                 new_balance: "100.0000000".to_string(),
                 new_ledger_seq: Some(150),
+            }
+        );
+    }
+
+    #[test]
+    fn cross_tenant_observation_is_rejected() {
+        // CodeRabbit's example: a safetrust row for C1 at created/ledger 10, and a
+        // hotel_industry observation for C1 at funded/ledger 11. The transition
+        // created -> funded is valid, but the observation must never update a row
+        // owned by another tenant.
+        let stored = stored_row("C1", "created", "0.0000000", Some(10));
+        let mut incoming = sample("C1", "funded", "100.0000000", Some(11));
+        incoming.tenant_id = "hotel_industry".to_string();
+
+        assert_eq!(
+            evaluate_observation(Some(&stored), &incoming),
+            EvaluationOutcome::RejectTenantMismatch {
+                stored: "safetrust".to_string(),
+                incoming: "hotel_industry".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn same_tenant_observation_still_writes() {
+        // The same observation from the owning tenant must still write.
+        let stored = stored_row("C1", "created", "0.0000000", Some(10));
+        let incoming = sample("C1", "funded", "100.0000000", Some(11));
+
+        assert_eq!(
+            evaluate_observation(Some(&stored), &incoming),
+            EvaluationOutcome::Write {
+                new_status: "funded".to_string(),
+                new_balance: "100.0000000".to_string(),
+                new_ledger_seq: Some(11),
             }
         );
     }
