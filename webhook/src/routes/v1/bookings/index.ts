@@ -8,7 +8,6 @@ import {
 import { createHoldHandler, releaseHoldHandler } from './hold.handler'
 import { releaseHold } from '../../../repositories/hold.repository'
 import { requireRole } from '../../../middleware/require-role'
-import { requireX402Enabled } from '../../../middleware/x402-feature-gate'
 import { logger } from '../../../middleware/logger'
 import { ServiceUnavailableError } from '../../../utils/errors'
 
@@ -133,7 +132,6 @@ const router: Router = Router()
 router.post(
   '/hold',
   requireRole(['guest']),
-  requireX402Enabled,
   requireHoldX402Payment,
   createHoldHandler as unknown as RequestHandler
 )

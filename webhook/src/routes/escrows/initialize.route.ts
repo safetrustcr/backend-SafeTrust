@@ -1,7 +1,6 @@
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
 import { paymentMiddleware } from '@x402/express'
 import { initializeEscrowHandler } from './initialize.handler'
-import { requireX402Enabled } from '../../middleware/x402-feature-gate'
 import {
   consumeVerifiedPayer,
   getX402Config,
@@ -81,7 +80,6 @@ export function setPaymentMiddleware(mw: RequestHandler | null): void {
 
 router.post(
   '/api/escrows/initialize',
-  requireX402Enabled,
   (req: Request, res: Response, next: NextFunction) => {
     if (process.env.X402_ENABLED !== 'true') {
       // Fails closed with a typed 503 so the shared error handler owns the
