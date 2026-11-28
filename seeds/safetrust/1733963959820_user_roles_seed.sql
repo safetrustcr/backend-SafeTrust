@@ -1,4 +1,4 @@
--- Keep both role sources aligned until the legacy users.role column is removed.
+-- Seed normalized role assignments for the demo users.
 -- The demo owner has the host role; all other seeded demo users have guest.
 INSERT INTO safetrust.user_roles (user_id, role_id)
 SELECT u.id, r.id

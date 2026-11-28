@@ -1,6 +1,6 @@
 -- SafeTrust demo seed users
 -- id must be TEXT (Firebase UID format), not UUID
--- Keep the legacy role column aligned with user_roles until the column is removed.
+-- Role assignments are seeded separately in user_roles.
 
 INSERT INTO safetrust.users (
     id,
@@ -11,8 +11,7 @@ INSERT INTO safetrust.users (
     phone_number,
     country_code,
     location,
-    last_seen,
-    role
+    last_seen
 )
 VALUES
     (
@@ -24,8 +23,7 @@ VALUES
         '88001122',
         '+506',
         'San José, Costa Rica',
-        NOW(),
-        'guest'
+        NOW()
     ),
     (
         'demo-owner-uid-002',
@@ -36,8 +34,7 @@ VALUES
         '88003344',
         '+506',
         'Escazú, Costa Rica',
-        NOW(),
-        'host'
+        NOW()
     ),
     (
         'demo-user-uid-003',
@@ -48,8 +45,7 @@ VALUES
         '88005566',
         '+506',
         'San José, Costa Rica',
-        NOW(),
-        'guest'
+        NOW()
     ),
     (
         'demo-user-uid-004',
@@ -60,8 +56,7 @@ VALUES
         '88007788',
         '+506',
         'San José, Costa Rica',
-        NOW(),
-        'guest'
+        NOW()
     ),
     (
         'demo-user-uid-005',
@@ -72,8 +67,7 @@ VALUES
         '88009900',
         '+506',
         'San José, Costa Rica',
-        NOW(),
-        'guest'
+        NOW()
     ),
     (
         'demo-user-uid-006',
@@ -84,8 +78,7 @@ VALUES
         '88001133',
         '+506',
         'San José, Costa Rica',
-        NOW(),
-        'guest'
+        NOW()
     ),
     (
         'demo-user-uid-007',
@@ -96,8 +89,7 @@ VALUES
         '88002244',
         '+506',
         'San José, Costa Rica',
-        NOW(),
-        'guest'
+        NOW()
     ),
     (
         'demo-user-uid-008',
@@ -108,8 +100,6 @@ VALUES
         '88003355',
         '+506',
         'San José, Costa Rica',
-        NOW(),
-        'guest'
+        NOW()
     )
-ON CONFLICT (id) DO UPDATE SET
-    role = EXCLUDED.role;
+ON CONFLICT (id) DO NOTHING;

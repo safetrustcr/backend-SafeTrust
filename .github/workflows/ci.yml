@@ -1,5 +1,9 @@
 name: CI
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
@@ -11,12 +15,14 @@ on:
       - 'tests/**'
       - 'migrations/**'
       - 'metadata/**'
+      - 'seeds/**'
       - 'webhook/**'
       - 'Dockerfile'
       - 'docker-compose-test.yml'
       - 'Dockerfile.test'
       - 'bin/test'
       - 'bin/prepare-test-db'
+      - 'bin/start'
       - '.github/workflows/ci.yml'
   pull_request:
     branches:
@@ -28,12 +34,14 @@ on:
       - 'tests/**'
       - 'migrations/**'
       - 'metadata/**'
+      - 'seeds/**'
       - 'webhook/**'
       - 'Dockerfile'
       - 'docker-compose-test.yml'
       - 'Dockerfile.test'
       - 'bin/test'
       - 'bin/prepare-test-db'
+      - 'bin/start'
       - '.github/workflows/ci.yml'
 
 permissions:

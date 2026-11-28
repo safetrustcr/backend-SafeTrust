@@ -306,6 +306,9 @@ Reports are generated at:
 - `Dockerfile.test`
 
 > 📍`bin/test` uses an isolated `safetrust-test` Compose project and excludes the `@timing` benchmark, which requires a separate `bin/start safetrust` timing report. It runs `docker compose -p safetrust-test -f docker-compose-test.yml run --rm --build karate` internally.
+> The test database applies migrations and then seeds both `safetrust` and
+> `hotel_industry` before Karate starts, so integration tests run against the
+> same seeded data that CI validates.
 
 ## TypeScript sources and builds
 
